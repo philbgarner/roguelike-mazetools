@@ -15,6 +15,7 @@ type Layer =
   | "content"
   | "featureType"
   | "featureId"
+  | "featureParam"
   | "danger"
   | "lootTier";
 
@@ -53,8 +54,27 @@ function featureName(ft: number) {
       return "Chest";
     case 3:
       return "Secret Door";
+    case 4:
+      return "Door";
+    case 5:
+      return "Key";
+    case 6:
+      return "Lever";
     default:
       return "None";
+  }
+}
+
+function doorKindName(param: number) {
+  // Matches Milestone 2 plan:
+  // 1 = locked door, 2 = lever-controlled door
+  switch (param) {
+    case 1:
+      return "Locked";
+    case 2:
+      return "Lever";
+    default:
+      return "Unknown";
   }
 }
 
@@ -82,9 +102,13 @@ function makeContentCompositeImageData(
       let r = isWall ? 25 : 235;
       let g = isWall ? 25 : 235;
       let b = isWall ? 25 : 235;
-      let a = 255;
+      const a = 255;
 
-      // Overlay feature colors
+      // Overlay feature colors (logical colors):
+      // - monsters red
+      // - loot/chests green
+      // - doors brown (includes secret doors + doors)
+      // - anything else yellow (keys/levers/future)
       const t = ft[i] | 0;
       if (t !== 0) {
         // Slightly darken base first so overlay pops
@@ -92,21 +116,23 @@ function makeContentCompositeImageData(
         g = Math.max(0, g - 40);
         b = Math.max(0, b - 40);
 
-        // logical colours:
-        // monsters red, chests green, secret doors brown, anything else yellow
         if (t === 1) {
+          // monster
           r = 220;
           g = 60;
           b = 60;
         } else if (t === 2) {
+          // chest
           r = 70;
           g = 200;
           b = 90;
-        } else if (t === 3) {
+        } else if (t === 3 || t === 4) {
+          // secret door OR door
           r = 150;
           g = 105;
           b = 60;
         } else {
+          // key / lever / unknown future
           r = 230;
           g = 200;
           b = 70;
@@ -168,6 +194,7 @@ const App: React.FC = () => {
 
     featureType: ImageData | null;
     featureId: ImageData | null;
+    featureParam: ImageData | null;
     danger: ImageData | null;
     lootTier: ImageData | null;
   }>({
@@ -179,6 +206,7 @@ const App: React.FC = () => {
 
     featureType: null,
     featureId: null,
+    featureParam: null,
     danger: null,
     lootTier: null,
   });
@@ -196,6 +224,10 @@ const App: React.FC = () => {
     monsters: number;
     chests: number;
     secrets: number;
+
+    doors: number;
+    keys: number;
+    levers: number;
   } | null>(null);
 
   // Keep latest generator outputs around for tooltip lookups
@@ -272,6 +304,7 @@ const App: React.FC = () => {
 
       featureType: content.debug.imageData.featureType,
       featureId: content.debug.imageData.featureId,
+      featureParam: content.debug.imageData.featureParam,
       danger: content.debug.imageData.danger,
       lootTier: content.debug.imageData.lootTier,
     });
@@ -289,6 +322,10 @@ const App: React.FC = () => {
       monsters: content.meta.monsters.length,
       chests: content.meta.chests.length,
       secrets: content.meta.secrets.length,
+
+      doors: content.meta.doors.length,
+      keys: content.meta.keys.length,
+      levers: content.meta.levers.length,
     });
   }, [opts]);
 
@@ -341,6 +378,7 @@ const App: React.FC = () => {
 
     const ft = content.masks.featureType[i];
     const fid = content.masks.featureId[i];
+    const fparam = content.masks.featureParam[i];
     const dng = content.masks.danger[i];
     const tier = content.masks.lootTier[i];
 
@@ -353,8 +391,23 @@ const App: React.FC = () => {
     lines.push(`featureType: ${ft} (${featureName(ft)})`);
     lines.push(`featureId: ${fid}`);
 
+    // Milestone 2 extra info
+    if (ft === 4) {
+      lines.push(`featureParam: ${fparam} (Door: ${doorKindName(fparam)})`);
+    } else if (fparam !== 0) {
+      // Useful for future feature types
+      lines.push(`featureParam: ${fparam}`);
+    }
+
     if (ft === 1) lines.push(`danger: ${dng}`);
     if (ft === 2) lines.push(`lootTier: ${tier}`);
+
+    // Helpful relationship hints (best-effort, based on circuit ids)
+    if (ft === 5 && fid !== 0)
+      lines.push(`Hint: key unlocks door circuit ${fid}`);
+    if (ft === 6 && fid !== 0)
+      lines.push(`Hint: lever controls door circuit ${fid}`);
+    if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
 
     return lines;
   }
@@ -677,6 +730,18 @@ const App: React.FC = () => {
                 <div>
                   <b>Secrets</b>: {meta.secrets}
                 </div>
+
+                <div style={{ height: 8 }} />
+
+                <div>
+                  <b>Doors</b>: {meta.doors}
+                </div>
+                <div>
+                  <b>Keys</b>: {meta.keys}
+                </div>
+                <div>
+                  <b>Levers</b>: {meta.levers}
+                </div>
               </div>
             ) : (
               <div>Generating…</div>
@@ -727,6 +792,13 @@ const App: React.FC = () => {
               className={`maze-tab ${layer === "featureType" ? "maze-tab--active" : ""}`}
             >
               featureType
+            </button>
+
+            <button
+              onClick={() => setLayer("featureParam")}
+              className={`maze-tab ${layer === "featureParam" ? "maze-tab--active" : ""}`}
+            >
+              featureParam
             </button>
 
             <button
@@ -798,7 +870,7 @@ const App: React.FC = () => {
           <div>
             <b>Legend</b>:{" "}
             {layer === "content"
-              ? "Walls/floors base + overlay: red=monsters, green=chests, brown=secret doors, yellow=other"
+              ? "Walls/floors base + overlay: red=monsters, green=chests, brown=doors, yellow=keys/levers/other"
               : layer === "solid"
                 ? "white=wall, black=floor"
                 : layer === "regionId"
@@ -806,12 +878,14 @@ const App: React.FC = () => {
                   : layer === "distanceToWall"
                     ? "grayscale Manhattan distance (0=wall)"
                     : layer === "featureType"
-                      ? "0=none, 1=monster, 2=chest, 3=secretDoor"
-                      : layer === "danger"
-                        ? "monster danger/level (0..255)"
-                        : layer === "lootTier"
-                          ? "chest tier (1..N)"
-                          : "feature instance id (1..255)"}
+                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever"
+                      : layer === "featureParam"
+                        ? "door kind / feature subtype (e.g. 1=locked door, 2=lever door)"
+                        : layer === "danger"
+                          ? "monster danger/level (0..255)"
+                          : layer === "lootTier"
+                            ? "chest tier (1..N)"
+                            : "feature instance/circuit id (1..255)"}
           </div>
         </div>
       </div>

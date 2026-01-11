@@ -876,34 +876,44 @@ export function generateBspDungeonTexture(options: BspDungeonOptions) {
 }
 
 // -----------------------------
-// Content generation (Milestone 1)
+// Content generation (Milestone 2)
 // -----------------------------
 
 export type FeatureType =
   | 0 // none
   | 1 // monster spawn
   | 2 // chest
-  | 3; // secret door
+  | 3 // secret door (wall tile)
+  | 4 // door (floor tile)
+  | 5 // key (floor tile)
+  | 6; // lever (floor tile)
+
+export type DoorKind =
+  | 0 // unused
+  | 1 // locked door (requires key)
+  | 2; // lever door (requires lever toggle)
 
 export type ContentOptions = {
   seed?: number | string;
 
   // How to pick the entrance room.
-  // - "bottom": room whose center has the largest y
-  // - "top": room whose center has the smallest y
-  // - "random": random room
   entranceMode?: "bottom" | "top" | "random";
 
   // Placement tuning
-  minClearanceToWall?: number; // distanceToWall threshold for placing things on floor
+  minClearanceToWall?: number;
   monstersPerRoomMin?: number;
   monstersPerRoomMax?: number;
-  monsterRoomChance?: number; // 0..1 chance a room gets spawns (except entrance)
-  chestsTargetCount?: number; // total chests to place (best-effort)
-  secretRoomChance?: number; // 0..1 chance a leaf room gets a secret door
-  maxLootTier?: number; // tiers scale with depth, 1..maxLootTier
+  monsterRoomChance?: number;
 
-  // Debug
+  chestsTargetCount?: number;
+  secretRoomChance?: number;
+  maxLootTier?: number;
+
+  // Milestone 2 gating knobs
+  lockedDoorCount?: number; // best-effort (default based on path length)
+  leverDoorCount?: number; // best-effort (default based on path length)
+  gateMinDepth?: number; // avoid placing gates too close to entrance
+
   includeAsciiOverlay?: boolean;
 };
 
@@ -913,14 +923,16 @@ export type ContentOutputs = {
 
   masks: {
     featureType: Uint8Array; // FeatureType enum
-    featureId: Uint8Array; // 1..255 id
-    danger: Uint8Array; // 0..255 (meaningful at monster spawns)
-    lootTier: Uint8Array; // 0..255 (meaningful at chests)
+    featureId: Uint8Array; // circuit id (1..255)
+    featureParam: Uint8Array; // subtype/flags (door kind, etc.)
+    danger: Uint8Array; // meaningful at monster spawns
+    lootTier: Uint8Array; // meaningful at chests
   };
 
   textures: {
     featureType: THREE.DataTexture;
     featureId: THREE.DataTexture;
+    featureParam: THREE.DataTexture;
     danger: THREE.DataTexture;
     lootTier: THREE.DataTexture;
   };
@@ -930,6 +942,7 @@ export type ContentOutputs = {
     imageData: {
       featureType: ImageData;
       featureId: ImageData;
+      featureParam: ImageData;
       danger: ImageData;
       lootTier: ImageData;
     };
@@ -938,16 +951,10 @@ export type ContentOutputs = {
   meta: {
     seedUsed: number;
 
-    // Room graph (roomId -> neighbor roomIds)
     roomGraph: Map<number, Set<number>>;
-
     entranceRoomId: number;
     farthestRoomId: number;
-
-    // BFS distance by roomId (room ids are 1..255)
     roomDistance: Map<number, number>;
-
-    // A main path (entrance -> farthest) derived from BFS parents
     mainPathRoomIds: number[];
 
     // Placement records
@@ -966,6 +973,19 @@ export type ContentOutputs = {
       tier: number;
     }>;
     secrets: Array<{ id: number; x: number; y: number; roomId: number }>;
+
+    // Milestone 2: circuits
+    doors: Array<{
+      id: number; // circuit id
+      x: number;
+      y: number;
+      roomA: number;
+      roomB: number;
+      kind: DoorKind; // 1=locked, 2=lever
+      depth: number; // depth of the edge on main path
+    }>;
+    keys: Array<{ id: number; x: number; y: number; roomId: number }>;
+    levers: Array<{ id: number; x: number; y: number; roomId: number }>;
   };
 };
 
@@ -1031,6 +1051,89 @@ function findNearestRoomId(
   }
 
   return 0;
+}
+
+function findCorridorConnectingRooms(
+  dungeon: BspDungeonOutputs,
+  roomA: number,
+  roomB: number,
+): { a: Point; b: Point } | null {
+  const { width: W, height: H } = dungeon;
+  const regionId = dungeon.masks.regionId;
+
+  for (const c of dungeon.meta.corridors) {
+    const ra = findNearestRoomId(regionId, W, H, c.a, 10);
+    const rb = findNearestRoomId(regionId, W, H, c.b, 10);
+    if ((ra === roomA && rb === roomB) || (ra === roomB && rb === roomA))
+      return c;
+  }
+  return null;
+}
+
+// Build candidate points along two L-shaped Manhattan paths.
+// We choose the first point that is floor and (preferably) corridor (regionId == 0).
+function pickDoorTileOnCorridor(
+  dungeon: BspDungeonOutputs,
+  corridor: { a: Point; b: Point },
+): Point | null {
+  const { width: W, height: H } = dungeon;
+  const solid = dungeon.masks.solid;
+  const regionId = dungeon.masks.regionId;
+  const distWall = dungeon.masks.distanceToWall;
+
+  const a = corridor.a;
+  const b = corridor.b;
+
+  const corner1: Point = { x: a.x, y: b.y };
+  const corner2: Point = { x: b.x, y: a.y };
+
+  function pathPoints(p0: Point, p1: Point, p2: Point): Point[] {
+    const pts: Point[] = [];
+    // p0 -> p1 (axis-aligned)
+    if (p0.x === p1.x) {
+      const sy = p0.y <= p1.y ? 1 : -1;
+      for (let y = p0.y; y !== p1.y + sy; y += sy) pts.push({ x: p0.x, y });
+    } else {
+      const sx = p0.x <= p1.x ? 1 : -1;
+      for (let x = p0.x; x !== p1.x + sx; x += sx) pts.push({ x, y: p0.y });
+    }
+    // p1 -> p2
+    if (p1.x === p2.x) {
+      const sy = p1.y <= p2.y ? 1 : -1;
+      for (let y = p1.y; y !== p2.y + sy; y += sy) pts.push({ x: p2.x, y });
+    } else {
+      const sx = p1.x <= p2.x ? 1 : -1;
+      for (let x = p1.x; x !== p2.x + sx; x += sx) pts.push({ x, y: p2.y });
+    }
+    return pts;
+  }
+
+  const candidates = [pathPoints(a, corner1, b), pathPoints(a, corner2, b)];
+
+  function isGoodFloor(p: Point) {
+    if (!inBounds(p.x, p.y, W, H)) return false;
+    const i = p.y * W + p.x;
+    if (solid[i] !== 0) return false; // must be floor
+    if (distWall[i] < 1) return false; // avoid hugging walls
+    return true;
+  }
+
+  // Prefer corridor floor tiles (regionId == 0), fall back to any floor.
+  for (const pts of candidates) {
+    for (const p of pts) {
+      if (!isGoodFloor(p)) continue;
+      const i = p.y * W + p.x;
+      if (regionId[i] === 0) return p;
+    }
+  }
+  for (const pts of candidates) {
+    for (const p of pts) {
+      if (!isGoodFloor(p)) continue;
+      return p;
+    }
+  }
+
+  return null;
 }
 
 function buildRoomGraphFromCorridors(
@@ -1282,6 +1385,11 @@ export function generateDungeonContent(
 
     maxLootTier: opts?.maxLootTier ?? 5,
 
+    // Milestone 2 gating knobs (derived defaults computed later, after mainPathRoomIds exists)
+    lockedDoorCount: opts?.lockedDoorCount ?? 0,
+    leverDoorCount: opts?.leverDoorCount ?? 0,
+    gateMinDepth: opts?.gateMinDepth ?? 2,
+
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
   };
 
@@ -1319,6 +1427,7 @@ export function generateDungeonContent(
   // Allocate masks
   const featureType = new Uint8Array(N);
   const featureId = new Uint8Array(N);
+  const featureParam = new Uint8Array(N);
   const danger = new Uint8Array(N);
   const lootTier = new Uint8Array(N);
 
@@ -1326,6 +1435,9 @@ export function generateDungeonContent(
   const monsters: ContentOutputs["meta"]["monsters"] = [];
   const chests: ContentOutputs["meta"]["chests"] = [];
   const secrets: ContentOutputs["meta"]["secrets"] = [];
+  const doors: ContentOutputs["meta"]["doors"] = [];
+  const keys: ContentOutputs["meta"]["keys"] = [];
+  const levers: ContentOutputs["meta"]["levers"] = [];
 
   let nextId = 1;
 
@@ -1471,16 +1583,168 @@ export function generateDungeonContent(
     secrets.push({ id, x: wallP.x, y: wallP.y, roomId });
   }
 
+  // -----------------------------
+  // Milestone 2: Doors + Keys + Levers (circuits)
+  // -----------------------------
+
+  const gateMinDepth = options.gateMinDepth;
+
+  // mainPathRoomIds MUST already be computed above this point.
+  const mainPathLen = mainPathRoomIds.length;
+
+  const desiredLocked =
+    opts?.lockedDoorCount !== undefined
+      ? opts.lockedDoorCount
+      : Math.max(1, Math.floor(mainPathLen / 5));
+
+  const desiredLever =
+    opts?.leverDoorCount !== undefined
+      ? opts.leverDoorCount
+      : Math.max(0, Math.floor(mainPathLen / 7));
+  // We place gates on edges along the main path: (room[i] -> room[i+1]).
+  // Avoid edges too close to entrance, and avoid reusing the same edge twice.
+  type PathEdge = { a: number; b: number; depth: number };
+  const pathEdges: PathEdge[] = [];
+  for (let i = 0; i < mainPathRoomIds.length - 1; i++) {
+    const a = mainPathRoomIds[i];
+    const b = mainPathRoomIds[i + 1];
+    const depth = Math.max(depthForRoom(a), depthForRoom(b));
+    pathEdges.push({ a, b, depth });
+  }
+
+  const eligibleEdges = pathEdges.filter((e) => e.depth >= gateMinDepth);
+  // Shuffle edges
+  for (let i = eligibleEdges.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [eligibleEdges[i], eligibleEdges[j]] = [eligibleEdges[j], eligibleEdges[i]];
+  }
+
+  function pickKeyOrLeverRoom(maxDepthAllowed: number): number | null {
+    // Prefer side rooms, but any reachable room <= depth works (backtracking allowed)
+    const candidates = Array.from(roomGraph.keys()).filter((rid) => {
+      if (rid === entranceRoomId) return false;
+      const d = depthForRoom(rid);
+      if (d > maxDepthAllowed) return false;
+      return roomDistance.has(rid);
+    });
+
+    const sideFirst = candidates.filter(
+      (rid) => (roomDegree.get(rid) ?? 0) <= 1,
+    );
+    const pool = sideFirst.length > 0 ? sideFirst : candidates;
+    if (pool.length === 0) return null;
+    return pickRandom(rng, pool);
+  }
+
+  function placeKeyInRoom(roomId: number, circuitId: number) {
+    const room = rooms[roomId - 1];
+    if (!room) return;
+
+    const p = sampleRoomFloorPoint(
+      dungeon,
+      room,
+      rng,
+      Math.max(1, options.minClearanceToWall),
+    );
+    if (!p) return;
+
+    const idx = keyXY(W, p.x, p.y);
+    if (featureType[idx] !== 0) return;
+
+    featureType[idx] = 5; // key
+    featureId[idx] = clamp255(circuitId);
+
+    keys.push({ id: circuitId, x: p.x, y: p.y, roomId });
+  }
+
+  function placeLeverInRoom(roomId: number, circuitId: number) {
+    const room = rooms[roomId - 1];
+    if (!room) return;
+
+    const p = sampleRoomFloorPoint(
+      dungeon,
+      room,
+      rng,
+      Math.max(1, options.minClearanceToWall),
+    );
+    if (!p) return;
+
+    const idx = keyXY(W, p.x, p.y);
+    if (featureType[idx] !== 0) return;
+
+    featureType[idx] = 6; // lever
+    featureId[idx] = clamp255(circuitId);
+
+    levers.push({ id: circuitId, x: p.x, y: p.y, roomId });
+  }
+
+  function placeDoorOnEdge(edge: PathEdge, kind: DoorKind): boolean {
+    const corr = findCorridorConnectingRooms(dungeon, edge.a, edge.b);
+    if (!corr) return false;
+
+    const doorP = pickDoorTileOnCorridor(dungeon, corr);
+    if (!doorP) return false;
+
+    const idx = keyXY(W, doorP.x, doorP.y);
+    if (featureType[idx] !== 0) return false;
+
+    const circuitId = clamp255(nextId++);
+
+    featureType[idx] = 4; // door
+    featureId[idx] = circuitId;
+    featureParam[idx] = kind; // 1 locked, 2 lever
+
+    doors.push({
+      id: circuitId,
+      x: doorP.x,
+      y: doorP.y,
+      roomA: edge.a,
+      roomB: edge.b,
+      kind,
+      depth: edge.depth,
+    });
+
+    // Place corresponding key/lever in an allowed room <= door depth
+    const keyRoom = pickKeyOrLeverRoom(edge.depth);
+    if (keyRoom == null) return true; // still keep door; worst-case it's "future content"
+
+    if (kind === 1) placeKeyInRoom(keyRoom, circuitId);
+    if (kind === 2) placeLeverInRoom(keyRoom, circuitId);
+
+    return true;
+  }
+
+  // Place locked doors
+  let placedLocked = 0;
+  for (const e of eligibleEdges) {
+    if (placedLocked >= desiredLocked) break;
+    if (placeDoorOnEdge(e, 1)) placedLocked++;
+  }
+
+  // Place lever doors (avoid reusing same edges by skipping first chunk)
+  let placedLever = 0;
+  for (let i = placedLocked; i < eligibleEdges.length; i++) {
+    if (placedLever >= desiredLever) break;
+    if (placeDoorOnEdge(eligibleEdges[i], 2)) placedLever++;
+  }
+
   // Textures + debug ImageData
   const featureTypeTex = maskToDataTextureR8(featureType, W, H, "featureType");
   const featureIdTex = maskToDataTextureR8(featureId, W, H, "featureId");
   const dangerTex = maskToDataTextureR8(danger, W, H, "danger");
   const lootTierTex = maskToDataTextureR8(lootTier, W, H, "lootTier");
+  const featureParamTex = maskToDataTextureR8(
+    featureParam,
+    W,
+    H,
+    "featureParam",
+  );
 
   const featureTypeImg = maskToImageDataGrayscale(featureType, W, H);
   const featureIdImg = maskToImageDataGrayscale(featureId, W, H);
   const dangerImg = maskToImageDataGrayscale(danger, W, H);
   const lootTierImg = maskToImageDataGrayscale(lootTier, W, H);
+  const featureParamImg = maskToImageDataGrayscale(featureParam, W, H);
 
   // ASCII overlay (optional)
   let ascii = dungeon.debug.ascii;
@@ -1495,6 +1759,9 @@ export function generateDungeonContent(
     if (eRoom) {
       const ec = roomCenter(eRoom);
       overlay.push({ x: ec.x, y: ec.y, ch: "E" });
+      for (const d of doors) overlay.push({ x: d.x, y: d.y, ch: "D" });
+      for (const k of keys) overlay.push({ x: k.x, y: k.y, ch: "K" });
+      for (const l of levers) overlay.push({ x: l.x, y: l.y, ch: "L" });
     }
 
     ascii = overlayAscii(ascii, W, H, overlay);
@@ -1509,6 +1776,7 @@ export function generateDungeonContent(
       featureId,
       danger,
       lootTier,
+      featureParam,
     },
 
     textures: {
@@ -1516,6 +1784,7 @@ export function generateDungeonContent(
       featureId: featureIdTex,
       danger: dangerTex,
       lootTier: lootTierTex,
+      featureParam: featureParamTex,
     },
 
     debug: {
@@ -1525,6 +1794,7 @@ export function generateDungeonContent(
         featureId: featureIdImg,
         danger: dangerImg,
         lootTier: lootTierImg,
+        featureParam: featureParamImg,
       },
     },
 
@@ -1538,6 +1808,9 @@ export function generateDungeonContent(
       monsters,
       chests,
       secrets,
+      doors,
+      keys,
+      levers,
     },
   };
 }
