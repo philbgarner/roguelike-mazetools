@@ -29,6 +29,10 @@ export type LeverRuntimeState = {
   toggled: boolean;
 };
 
+export type PlateRuntimeState = {
+  pressed: boolean;
+};
+
 export type HazardRuntimeState = {
   hazardType: HazardType;
   enabled: boolean;
@@ -52,6 +56,7 @@ export type DungeonRuntimeState = {
   doors: Record<number, DoorRuntimeState>;
   keys: Record<number, KeyRuntimeState>;
   levers: Record<number, LeverRuntimeState>;
+  plates: Record<number, PlateRuntimeState>;
   hazards: Record<number, HazardRuntimeState>;
   secrets: Record<number, SecretRuntimeState>;
   circuits: Record<number, CircuitRuntimeState>;
@@ -69,6 +74,7 @@ export function initDungeonRuntimeState(
   const doors: Record<number, DoorRuntimeState> = {};
   const keys: Record<number, KeyRuntimeState> = {};
   const levers: Record<number, LeverRuntimeState> = {};
+  const plates: Record<number, PlateRuntimeState> = {};
   const hazards: Record<number, HazardRuntimeState> = {};
   const secrets: Record<number, SecretRuntimeState> = {};
   const circuits: Record<number, CircuitRuntimeState> = {};
@@ -99,12 +105,18 @@ export function initDungeonRuntimeState(
     levers[l.id] = { toggled: false };
   }
 
+  // Plates exist as triggers; runtime starts unpressed
+  // (Placement is currently scaffolding, but this keeps the model complete.)
+  for (const p of content.meta.plates) {
+    plates[p.id] = { pressed: false };
+  }
+
   // Hazards and secrets may exist as targets, but the content meta
   // may not list them explicitly yet — keep resilient.
   // If you later add content.meta.hazards/meta.secrets, you can initialize here.
   // For now, we build lazily by circuit targets in evaluator.
 
-  return { doors, keys, levers, hazards, secrets, circuits };
+  return { doors, keys, levers, plates, hazards, secrets, circuits };
 }
 
 // ----------------- Runtime actions -----------------
@@ -130,6 +142,31 @@ export function collectKey(
     next.keys[keyCircuitId] = { collected: false };
   }
   next.keys[keyCircuitId].collected = true;
+  return next;
+}
+
+export function setPlatePressed(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+  pressed: boolean,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId]) {
+    next.plates[plateCircuitId] = { pressed: false };
+  }
+  next.plates[plateCircuitId].pressed = pressed;
+  return next;
+}
+
+export function togglePlate(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId]) {
+    next.plates[plateCircuitId] = { pressed: false };
+  }
+  next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
   return next;
 }
 
@@ -161,4 +198,8 @@ export function ensureHazard(
 
 export function ensureSecret(state: DungeonRuntimeState, id: number): void {
   if (!state.secrets[id]) state.secrets[id] = { revealed: false };
+}
+
+export function ensurePlate(state: DungeonRuntimeState, id: number): void {
+  if (!state.plates[id]) state.plates[id] = { pressed: false };
 }

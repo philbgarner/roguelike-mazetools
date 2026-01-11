@@ -9,6 +9,7 @@ import {
   initDungeonRuntimeState,
   collectKey,
   toggleLever,
+  togglePlate,
   resetRuntimeState,
   type DungeonRuntimeState,
 } from "./dungeonState";
@@ -207,6 +208,12 @@ function makeContentCompositeImageData(
             g = 90;
             b = 50;
           }
+        } else if (t === 7) {
+          // pressure plate (milestone 3)
+          // neutral stone-grey
+          r = 150;
+          g = 150;
+          b = 150;
         } else {
           // key / lever / unknown future
           r = 230;
@@ -316,6 +323,7 @@ const App: React.FC = () => {
     doors: number;
     keys: number;
     levers: number;
+    plates: number;
   } | null>(null);
 
   // Keep latest generator outputs around for tooltip lookups
@@ -460,6 +468,7 @@ const App: React.FC = () => {
       doors: content.meta.doors.length,
       keys: content.meta.keys.length,
       levers: content.meta.levers.length,
+      plates: content.meta.plates.length,
     });
   }, [opts, showStateOverlay]);
 
@@ -562,15 +571,31 @@ const App: React.FC = () => {
     if (ft === 2) lines.push(`lootTier: ${tier}`);
     if (ft === 10) lines.push(`hazardType: ${hz}`);
 
+    // Plate details (Milestone 3)
+    if (ft === 7 && fid !== 0) {
+      const plate = content.meta.plates.find((p) => p.id === fid);
+      if (plate) {
+        lines.push(`Plate mode: ${plate.mode}`);
+        lines.push(
+          `Plate triggers: player=${plate.activatedByPlayer ? "Y" : "N"}, block=${plate.activatedByBlock ? "Y" : "N"}`,
+        );
+        if (plate.inverted) lines.push(`Plate: inverted`);
+      } else {
+        lines.push(`Plate: id ${fid}`);
+      }
+    }
+
     // relationship hints
     if (ft === 5 && fid !== 0) lines.push(`Hint: key unlocks circuit ${fid}`);
     if (ft === 6 && fid !== 0)
       lines.push(`Hint: lever controls circuit ${fid}`);
     if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
+    if (ft === 7 && fid !== 0) lines.push(`Circuit: plate id ${fid}`);
 
     // interaction hint
     if (ft === 5) lines.push("Click: collect key");
     if (ft === 6) lines.push("Click: toggle lever");
+    if (ft === 7) lines.push("Click: toggle plate (debug)");
     if (ft === 4) lines.push("Click: toggle door (debug)");
 
     return lines;
@@ -681,6 +706,13 @@ const App: React.FC = () => {
     if (ft === 6) {
       // Lever
       const next = toggleLever(runtime, fid);
+      applyRuntime(next);
+      return;
+    }
+
+    if (ft === 7) {
+      // Pressure plate (debug): toggle pressed state
+      const next = togglePlate(runtime, fid);
       applyRuntime(next);
       return;
     }
@@ -984,6 +1016,9 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <b>Levers</b>: {meta.levers}
+                </div>
+                <div>
+                  <b>Plates</b>: {meta.plates}
                 </div>
               </div>
             ) : (

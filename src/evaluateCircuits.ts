@@ -16,7 +16,12 @@ import type {
   HazardType,
 } from "./mazeGen";
 import type { DungeonRuntimeState } from "./dungeonState";
-import { ensureDoor, ensureHazard, ensureSecret } from "./dungeonState";
+import {
+  ensureDoor,
+  ensureHazard,
+  ensureSecret,
+  ensurePlate,
+} from "./dungeonState";
 
 export type CircuitEvalDebug = Record<
   number,
@@ -48,8 +53,10 @@ function isTriggerSatisfied(
       return !!state.levers[t.refId]?.toggled;
     }
     case "PLATE": {
-      // not implemented yet: treat as false
-      return false;
+      // Phase 2: plates are now real runtime state
+      // (ensure resilience if the plate wasn't initialized for some reason)
+      if (!state.plates?.[t.refId]) ensurePlate(state, t.refId);
+      return !!state.plates[t.refId]?.pressed;
     }
     case "COMBAT_CLEAR": {
       // not implemented yet: treat as false
