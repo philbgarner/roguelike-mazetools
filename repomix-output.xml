@@ -45,6 +45,8 @@ public/
 src/
   App.tsx
   CONTEXT.md
+  dungeonState.ts
+  evaluateCircuits.ts
   main.tsx
   mazeGen.ts
   styles.css
@@ -60,6 +62,411 @@ This section contains the contents of the repository's files.
 
 <file path="public/vite.svg">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="src/dungeonState.ts">
+// src/dungeonState.ts
+//
+// Milestone 3 — Phase 2
+// Runtime puzzle state model + action helpers.
+//
+// This layer is intentionally independent from generation.
+// It is initialized from ContentOutputs.meta and then mutated by runtime actions.
+
+import type {
+  ContentOutputs,
+  DoorKind,
+  HazardType,
+  CircuitDef,
+} from "./mazeGen";
+
+export type DoorRuntimeState = {
+  kind: DoorKind;
+  isOpen: boolean;
+  // Optional: if you later want to support “opened forever”
+  // (but circuit behavior already handles this)
+  forcedOpen?: boolean;
+};
+
+export type KeyRuntimeState = {
+  collected: boolean;
+};
+
+export type LeverRuntimeState = {
+  toggled: boolean;
+};
+
+export type HazardRuntimeState = {
+  hazardType: HazardType;
+  enabled: boolean;
+};
+
+export type SecretRuntimeState = {
+  revealed: boolean;
+};
+
+export type CircuitRuntimeState = {
+  // “Active” is the output of behavior mode after evaluation.
+  active: boolean;
+  // For edge detection on satisfiable (raw) signal:
+  // used by TOGGLE mode and for “toggle target” effects.
+  lastSatisfied: boolean;
+  // Debug info: helpful to show in UI.
+  lastSatisfiedCount: number;
+};
+
+export type DungeonRuntimeState = {
+  doors: Record<number, DoorRuntimeState>;
+  keys: Record<number, KeyRuntimeState>;
+  levers: Record<number, LeverRuntimeState>;
+  hazards: Record<number, HazardRuntimeState>;
+  secrets: Record<number, SecretRuntimeState>;
+  circuits: Record<number, CircuitRuntimeState>;
+};
+
+function cloneState<S>(s: S): S {
+  // runtime state is shallow objects + maps, so structuredClone is ideal if available
+  // but we keep it simple and explicit.
+  return JSON.parse(JSON.stringify(s)) as S;
+}
+
+export function initDungeonRuntimeState(
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const doors: Record<number, DoorRuntimeState> = {};
+  const keys: Record<number, KeyRuntimeState> = {};
+  const levers: Record<number, LeverRuntimeState> = {};
+  const hazards: Record<number, HazardRuntimeState> = {};
+  const secrets: Record<number, SecretRuntimeState> = {};
+  const circuits: Record<number, CircuitRuntimeState> = {};
+
+  // Initialize circuits to inert
+  for (const c of content.meta.circuits) {
+    circuits[c.id] = {
+      active: false,
+      lastSatisfied: false,
+      lastSatisfiedCount: 0,
+    };
+  }
+
+  // Doors: start closed by default
+  for (const d of content.meta.doors) {
+    doors[d.id] = {
+      kind: d.kind,
+      isOpen: false,
+    };
+  }
+
+  // Keys/levers exist as triggers; runtime starts uncollected/untoggled
+  for (const k of content.meta.keys) {
+    keys[k.id] = { collected: false };
+  }
+
+  for (const l of content.meta.levers) {
+    levers[l.id] = { toggled: false };
+  }
+
+  // Hazards and secrets may exist as targets, but the content meta
+  // may not list them explicitly yet — keep resilient.
+  // If you later add content.meta.hazards/meta.secrets, you can initialize here.
+  // For now, we build lazily by circuit targets in evaluator.
+
+  return { doors, keys, levers, hazards, secrets, circuits };
+}
+
+// ----------------- Runtime actions -----------------
+
+export function toggleLever(
+  state: DungeonRuntimeState,
+  leverCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.levers[leverCircuitId]) {
+    next.levers[leverCircuitId] = { toggled: false };
+  }
+  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
+  return next;
+}
+
+export function collectKey(
+  state: DungeonRuntimeState,
+  keyCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.keys[keyCircuitId]) {
+    next.keys[keyCircuitId] = { collected: false };
+  }
+  next.keys[keyCircuitId].collected = true;
+  return next;
+}
+
+export function resetRuntimeState(
+  state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  // Re-init from current content meta
+  return initDungeonRuntimeState(content);
+}
+
+// ----------------- Target application helpers -----------------
+
+export function ensureDoor(
+  state: DungeonRuntimeState,
+  id: number,
+  kind: DoorKind,
+): void {
+  if (!state.doors[id]) state.doors[id] = { kind, isOpen: false };
+}
+
+export function ensureHazard(
+  state: DungeonRuntimeState,
+  id: number,
+  hazardType: HazardType,
+): void {
+  if (!state.hazards[id]) state.hazards[id] = { hazardType, enabled: false };
+}
+
+export function ensureSecret(state: DungeonRuntimeState, id: number): void {
+  if (!state.secrets[id]) state.secrets[id] = { revealed: false };
+}
+</file>
+
+<file path="src/evaluateCircuits.ts">
+// src/evaluateCircuits.ts
+//
+// Milestone 3 — Phase 2
+// Data-driven circuit evaluation pass.
+//
+// The evaluator is pure: it takes the current runtime state + content metadata
+// and returns the next runtime state after computing circuit activeness and
+// applying targets.
+
+import type {
+  CircuitDef,
+  CircuitLogicType,
+  CircuitBehaviorMode,
+  CircuitTargetEffect,
+  DoorKind,
+  HazardType,
+} from "./mazeGen";
+import type { DungeonRuntimeState } from "./dungeonState";
+import { ensureDoor, ensureHazard, ensureSecret } from "./dungeonState";
+
+export type CircuitEvalDebug = Record<
+  number,
+  {
+    satisfied: boolean;
+    satisfiedCount: number;
+    active: boolean;
+  }
+>;
+
+export type CircuitEvalResult = {
+  next: DungeonRuntimeState;
+  debug: CircuitEvalDebug;
+};
+
+function cloneState<S>(s: S): S {
+  return JSON.parse(JSON.stringify(s)) as S;
+}
+
+function isTriggerSatisfied(
+  state: DungeonRuntimeState,
+  t: CircuitDef["triggers"][number],
+): boolean {
+  switch (t.kind) {
+    case "KEY": {
+      return !!state.keys[t.refId]?.collected;
+    }
+    case "LEVER": {
+      return !!state.levers[t.refId]?.toggled;
+    }
+    case "PLATE": {
+      // not implemented yet: treat as false
+      return false;
+    }
+    case "PUSHBLOCK": {
+      // not implemented yet: treat as false
+      return false;
+    }
+    default:
+      return false;
+  }
+}
+
+function computeSatisfied(
+  logicType: CircuitLogicType,
+  threshold: number,
+  totalTriggers: number,
+  satisfiedCount: number,
+): boolean {
+  switch (logicType) {
+    case "ANY":
+      return satisfiedCount >= 1;
+    case "ALL":
+      return totalTriggers > 0 ? satisfiedCount === totalTriggers : false;
+    case "THRESHOLD":
+      return satisfiedCount >= Math.max(1, threshold | 0);
+    default:
+      return false;
+  }
+}
+
+function nextActiveFromBehavior(
+  mode: CircuitBehaviorMode,
+  prevActive: boolean,
+  prevSatisfied: boolean,
+  nowSatisfied: boolean,
+): boolean {
+  switch (mode) {
+    case "MOMENTARY":
+      return nowSatisfied;
+    case "PERSISTENT":
+      return prevActive || nowSatisfied;
+    case "TOGGLE": {
+      const risingEdge = !prevSatisfied && nowSatisfied;
+      return risingEdge ? !prevActive : prevActive;
+    }
+    default:
+      return nowSatisfied;
+  }
+}
+
+function applyTarget(
+  state: DungeonRuntimeState,
+  target: CircuitDef["targets"][number],
+  effect: CircuitTargetEffect,
+): void {
+  // Target kind determines which state bucket it lives in.
+  // Effects:
+  // - OPEN/CLOSE for DOOR
+  // - ENABLE/DISABLE for HAZARD
+  // - REVEAL/HIDE for SECRET (HIDE not used yet)
+  // - TOGGLE is applied using edge logic outside
+
+  switch (target.kind) {
+    case "DOOR": {
+      const doorId = target.refId;
+      // We don’t know DoorKind here unless you decide to embed it on targets;
+      // best-effort keep existing, otherwise assume Locked.
+      const existing = state.doors[doorId];
+      const kind: DoorKind = existing?.kind ?? "Locked";
+      ensureDoor(state, doorId, kind);
+
+      if (effect === "OPEN") state.doors[doorId].isOpen = true;
+      if (effect === "CLOSE") state.doors[doorId].isOpen = false;
+      if (effect === "TOGGLE")
+        state.doors[doorId].isOpen = !state.doors[doorId].isOpen;
+      break;
+    }
+
+    case "HAZARD": {
+      const hzId = target.refId;
+      const existing = state.hazards[hzId];
+      const hzType: HazardType = existing?.hazardType ?? 1; // default lava
+      ensureHazard(state, hzId, hzType);
+
+      if (effect === "ENABLE") state.hazards[hzId].enabled = true;
+      if (effect === "DISABLE") state.hazards[hzId].enabled = false;
+      if (effect === "TOGGLE")
+        state.hazards[hzId].enabled = !state.hazards[hzId].enabled;
+      break;
+    }
+
+    case "SECRET": {
+      const secId = target.refId;
+      ensureSecret(state, secId);
+
+      if (effect === "REVEAL") state.secrets[secId].revealed = true;
+      if (effect === "HIDE") state.secrets[secId].revealed = false;
+      if (effect === "TOGGLE")
+        state.secrets[secId].revealed = !state.secrets[secId].revealed;
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
+export function evaluateCircuits(
+  current: DungeonRuntimeState,
+  circuits: CircuitDef[],
+): CircuitEvalResult {
+  const list = Array.isArray(circuits) ? circuits : [];
+
+  const next = cloneState(current);
+  const debug: CircuitEvalDebug = {};
+
+  // 1) compute satisfied + active for each circuit
+  for (const c of list) {
+    const prev = current.circuits[c.id] ?? {
+      active: false,
+      lastSatisfied: false,
+      lastSatisfiedCount: 0,
+    };
+
+    const total = c.triggers.length;
+    let satisfiedCount = 0;
+    for (const t of c.triggers) {
+      if (isTriggerSatisfied(current, t)) satisfiedCount++;
+    }
+
+    let satisfied = computeSatisfied(
+      c.logic.type,
+      c.logic.type === "THRESHOLD" ? c.logic.threshold | 0 : 1,
+      total,
+      satisfiedCount,
+    );
+
+    // support inversion
+    if (c.logic.invert) satisfied = !satisfied;
+
+    const active = nextActiveFromBehavior(
+      c.behavior.mode,
+      prev.active,
+      prev.lastSatisfied,
+      satisfied,
+    );
+
+    next.circuits[c.id] = {
+      active,
+      lastSatisfied: satisfied,
+      lastSatisfiedCount: satisfiedCount,
+    };
+
+    debug[c.id] = { satisfied, satisfiedCount, active };
+  }
+
+  // 2) apply targets
+  for (const c of circuits) {
+    const prev = current.circuits[c.id] ?? {
+      active: false,
+      lastSatisfied: false,
+      lastSatisfiedCount: 0,
+    };
+    const now = next.circuits[c.id];
+
+    const satisfiedRisingEdge = !prev.lastSatisfied && now.lastSatisfied;
+
+    // Apply effects:
+    // - If circuit is active: apply OPEN/CLOSE/ENABLE/DISABLE/REVEAL/HIDE.
+    // - If effect is TOGGLE: apply only on rising edge of satisfied.
+    for (const t of c.targets) {
+      if (t.effect === "TOGGLE") {
+        if (satisfiedRisingEdge) {
+          applyTarget(next, t, "TOGGLE");
+        }
+      } else {
+        if (now.active) {
+          applyTarget(next, t, t.effect);
+        }
+      }
+    }
+  }
+
+  return { next, debug };
+}
 </file>
 
 <file path="src/main.tsx">
@@ -1127,6 +1534,14 @@ This separation is intentional and foundational.
 // - distanceToWall: Manhattan distance to nearest wall (0 at walls), capped to 255
 
 import * as THREE from "three";
+import type { DungeonRuntimeState } from "./dungeonState";
+import {
+  collectKey,
+  initDungeonRuntimeState,
+  resetRuntimeState,
+  toggleLever,
+} from "./dungeonState";
+import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
 // -----------------------------
 // Types
@@ -3119,6 +3534,15 @@ import {
   generateDungeonContent,
   imageDataToPngDataUrl,
 } from "./mazeGen";
+import {
+  initDungeonRuntimeState,
+  collectKey,
+  toggleLever,
+  resetRuntimeState,
+  type DungeonRuntimeState,
+} from "./dungeonState";
+
+import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
 import "./styles.css";
 
@@ -3201,15 +3625,46 @@ function doorKindName(param: number) {
   }
 }
 
+/**
+ * Shared door-state derivation used by:
+ * - content composite rendering (door color overlay)
+ * - tooltips
+ *
+ * IMPORTANT: door "locked" is derived from runtime key/lever state.
+ */
+function readDoorState(
+  runtime: DungeonRuntimeState,
+  doorId: number,
+): { isOpen: boolean; isLocked: boolean; kind: number } {
+  const door = runtime.doors?.[doorId];
+  if (!door) return { isOpen: false, isLocked: false, kind: 0 };
+
+  // Your DoorKind is numeric: 1 locked, 2 lever.
+  const kind = (door.kind as any) | 0;
+
+  // Derive gated state by matching “circuit id” (doorId) convention.
+  const hasKey = !!runtime.keys?.[doorId]?.collected;
+  const leverOn = !!runtime.levers?.[doorId]?.toggled;
+
+  const isLocked = kind === 1 ? !hasKey : kind === 2 ? !leverOn : false;
+
+  const isOpen = !!(door.isOpen || (door as any).forcedOpen);
+
+  return { kind, isOpen, isLocked };
+}
+
 function makeContentCompositeImageData(
   dungeon: ReturnType<typeof generateBspDungeon>,
   content: ReturnType<typeof generateDungeonContent>,
+  runtime: DungeonRuntimeState | null,
+  showStateOverlay: boolean,
 ): ImageData {
   const W = dungeon.width;
   const H = dungeon.height;
 
   const solid = dungeon.masks.solid; // 255 wall, 0 floor
   const ft = content.masks.featureType; // 0..n
+  const fid = content.masks.featureId;
 
   const img = new ImageData(W, H);
   const data = img.data;
@@ -3227,11 +3682,7 @@ function makeContentCompositeImageData(
       let b = isWall ? 25 : 235;
       const a = 255;
 
-      // Overlay feature colors (logical colors):
-      // - monsters red
-      // - loot/chests green
-      // - doors brown (includes secret doors + doors)
-      // - anything else yellow (keys/levers/future)
+      // Overlay by feature type
       const t = ft[i] | 0;
       if (t !== 0) {
         // Slightly darken base first so overlay pops
@@ -3251,9 +3702,40 @@ function makeContentCompositeImageData(
           b = 90;
         } else if (t === 3 || t === 4) {
           // secret door OR door
+          // Default (no runtime overlay): brown
           r = 150;
           g = 105;
           b = 60;
+
+          // Milestone 3 overlay for doors only (featureType == 4)
+          if (t === 4 && showStateOverlay && runtime) {
+            const doorId = fid[i] | 0;
+            const { isOpen, isLocked } = readDoorState(runtime, doorId);
+
+            if (isOpen) {
+              // OPEN door: lighter tan
+              r = 205;
+              g = 170;
+              b = 120;
+            } else if (isLocked) {
+              // CLOSED + LOCKED: darker brown
+              r = 105;
+              g = 70;
+              b = 40;
+            } else {
+              // CLOSED but not locked
+              r = 145;
+              g = 95;
+              b = 55;
+            }
+          }
+
+          // Optional: make secret doors distinct when overlay is enabled
+          if (t === 3 && showStateOverlay) {
+            r = 135;
+            g = 90;
+            b = 50;
+          }
         } else {
           // key / lever / unknown future
           r = 230;
@@ -3263,7 +3745,6 @@ function makeContentCompositeImageData(
 
         // Keep walls visible if a feature is on a wall (secret doors are walls)
         if (isWall) {
-          // blend 60% overlay, 40% base
           const br = 25,
             bg = 25,
             bb = 25;
@@ -3311,6 +3792,11 @@ const App: React.FC = () => {
   const [content, setContent] = useState<ReturnType<
     typeof generateDungeonContent
   > | null>(null);
+  const [runtime, setRuntime] = useState<DungeonRuntimeState | null>(null);
+  const [circuitDebug, setCircuitDebug] = useState<CircuitEvalResult["debug"]>(
+    {},
+  );
+  const [showStateOverlay, setShowStateOverlay] = useState(true);
 
   const [imageDataByLayer, setImageDataByLayer] = useState<{
     solid: ImageData | null;
@@ -3380,7 +3866,18 @@ const App: React.FC = () => {
     screenX: number;
     screenY: number;
     lines: string[];
-  }>({ visible: false, x: 0, y: 0, screenX: 0, screenY: 0, lines: [] });
+    featureType: number;
+    featureId: number;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    screenX: 0,
+    screenY: 0,
+    lines: [],
+    featureType: 0,
+    featureId: 0,
+  });
 
   const opts = useMemo(
     () => ({
@@ -3415,17 +3912,48 @@ const App: React.FC = () => {
     ],
   );
 
+  function applyRuntime(next: DungeonRuntimeState) {
+    const content = contentRef.current;
+    if (!content) {
+      setRuntime(next);
+      return;
+    }
+    const res = evaluateCircuits(next, content.meta.circuits);
+    setRuntime(res.next);
+    setCircuitDebug(res.debug);
+  }
+
+  const regenerateRuntimeFromContent = React.useCallback(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const initialRuntime = initDungeonRuntimeState(content);
+    const evalOut = evaluateCircuits(initialRuntime, content.meta.circuits);
+
+    setRuntime(evalOut.next);
+    setCircuitDebug(evalOut.debug);
+  }, []);
+
   const generate = React.useCallback(() => {
     const out = generateBspDungeon(opts);
     const content = generateDungeonContent(out);
+
+    const initialRuntime = initDungeonRuntimeState(content);
+    const evalOut = evaluateCircuits(initialRuntime, content.meta.circuits);
+
+    setRuntime(evalOut.next);
+    setCircuitDebug(evalOut.debug);
+
+    const composite = makeContentCompositeImageData(
+      out,
+      content,
+      evalOut.next,
+      showStateOverlay,
+    );
 
     dungeonRef.current = out;
     contentRef.current = content;
 
     setContent(content);
-
-    const composite = makeContentCompositeImageData(out, content);
-
     setAscii(content.debug.ascii);
 
     setImageDataByLayer({
@@ -3462,12 +3990,31 @@ const App: React.FC = () => {
       keys: content.meta.keys.length,
       levers: content.meta.levers.length,
     });
-  }, [opts]);
+  }, [opts, showStateOverlay]);
 
   // initial generation
   useEffect(() => {
     generate();
   }, [generate]);
+
+  // recompute composite when runtime overlay changes
+  useEffect(() => {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return;
+
+    const composite = makeContentCompositeImageData(
+      dungeon,
+      content,
+      runtime,
+      showStateOverlay,
+    );
+
+    setImageDataByLayer((prev) => ({
+      ...prev,
+      content: composite,
+    }));
+  }, [runtime, showStateOverlay]);
 
   // redraw canvas whenever layer changes or new images arrive
   useEffect(() => {
@@ -3527,25 +4074,33 @@ const App: React.FC = () => {
     lines.push(`featureType: ${ft} (${featureName(ft)})`);
     lines.push(`featureId: ${fid}`);
 
-    // Milestone 2 extra info
     if (ft === 4) {
       lines.push(`featureParam: ${fparam} (Door: ${doorKindName(fparam)})`);
     } else if (fparam !== 0) {
-      // Useful for future feature types
       lines.push(`featureParam: ${fparam}`);
+    }
+
+    if (ft === 4 && runtime && showStateOverlay && fid !== 0) {
+      const { isOpen, isLocked } = readDoorState(runtime, fid);
+      lines.push(
+        `Door state: ${isOpen ? "OPEN" : "CLOSED"}${isLocked ? " (LOCKED)" : ""}`,
+      );
     }
 
     if (ft === 1) lines.push(`danger: ${dng}`);
     if (ft === 2) lines.push(`lootTier: ${tier}`);
+    if (ft === 10) lines.push(`hazardType: ${hz}`);
 
-    // Helpful relationship hints (best-effort, based on circuit ids)
-    if (ft === 5 && fid !== 0)
-      lines.push(`Hint: key unlocks door circuit ${fid}`);
+    // relationship hints
+    if (ft === 5 && fid !== 0) lines.push(`Hint: key unlocks circuit ${fid}`);
     if (ft === 6 && fid !== 0)
-      lines.push(`Hint: lever controls door circuit ${fid}`);
+      lines.push(`Hint: lever controls circuit ${fid}`);
     if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
 
-    if (ft === 10) lines.push(`hazardType: ${hz}`);
+    // interaction hint
+    if (ft === 5) lines.push("Click: collect key");
+    if (ft === 6) lines.push("Click: toggle lever");
+    if (ft === 4) lines.push("Click: toggle door (debug)");
 
     return lines;
   }
@@ -3570,7 +4125,6 @@ const App: React.FC = () => {
 
     if (localX < 0 || localY < 0) return null;
 
-    // Convert display pixels to cell coords
     const x = Math.floor(localX / scale);
     const y = Math.floor(localY / scale);
 
@@ -3586,8 +4140,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // Update tooltip anchor position immediately (so it tracks the cursor),
-    // but only show content after hover delay.
     setTooltip((t) => ({
       ...t,
       x: cell.x,
@@ -3597,15 +4149,23 @@ const App: React.FC = () => {
     }));
 
     const last = lastHoverCellRef.current;
-    if (last && last.x === cell.x && last.y === cell.y) {
-      return; // same cell; timer already running / tooltip already shown
-    }
+    if (last && last.x === cell.x && last.y === cell.y) return;
 
     lastHoverCellRef.current = { x: cell.x, y: cell.y };
     clearHoverTimer();
+    setTooltip((t) => ({ ...t, visible: false }));
 
     hoverTimerRef.current = window.setTimeout(() => {
+      const dungeon = dungeonRef.current;
+      const content = contentRef.current;
+      if (!dungeon || !content) return;
+
+      const i = idxOf(dungeon.width, cell.x, cell.y);
+      const ft = content.masks.featureType[i] | 0;
+      const fid = content.masks.featureId[i] | 0;
+
       const lines = buildTooltipLines(cell.x, cell.y);
+
       setTooltip((t) => ({
         ...t,
         visible: true,
@@ -3614,6 +4174,8 @@ const App: React.FC = () => {
         screenX: cell.screenX,
         screenY: cell.screenY,
         lines,
+        featureType: ft,
+        featureId: fid,
       }));
     }, 350);
   }
@@ -3622,7 +4184,61 @@ const App: React.FC = () => {
     hideTooltip();
   }
 
+  function onCanvasClick(e: React.MouseEvent) {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return;
+    if (!runtime) return;
+
+    const cell = getCellFromMouseEvent(e);
+    if (!cell) return;
+
+    const i = idxOf(dungeon.width, cell.x, cell.y);
+    const ft = content.masks.featureType[i] | 0;
+    const fid = content.masks.featureId[i] | 0;
+
+    if (fid === 0) return;
+
+    // Click interactions are purely debug/runtime-driving for Milestone 3 overlay testing.
+    if (ft === 5) {
+      // Key
+      const next = collectKey(runtime, fid);
+      applyRuntime(next);
+      return;
+    }
+
+    if (ft === 6) {
+      // Lever
+      const next = toggleLever(runtime, fid);
+      applyRuntime(next);
+      return;
+    }
+
+    if (ft === 4) {
+      // Door (debug convenience): toggle door state directly.
+      // If you have a dedicated dungeonState helper later, swap it in here.
+      const next = structuredClone(runtime) as DungeonRuntimeState;
+      const door = next.doors?.[fid];
+      if (door) {
+        (door as any).isOpen = !(door as any).isOpen;
+        // clearing forcedOpen is usually sensible when manually toggling
+        if ("forcedOpen" in (door as any)) (door as any).forcedOpen = false;
+        applyRuntime(next);
+      }
+      return;
+    }
+  }
+
   const imgForDownload = imageDataByLayer[layer];
+
+  // Lightweight circuit debug rendering
+  const circuitDebugKeys = useMemo(() => {
+    try {
+      return Object.keys(circuitDebug ?? {});
+    } catch {
+      return [];
+    }
+  }, [circuitDebug]);
 
   return (
     <div className="maze-app">
@@ -3635,6 +4251,15 @@ const App: React.FC = () => {
         <div className="maze-controls-row">
           <button className="maze-btn" onClick={generate}>
             Generate
+          </button>
+
+          <button
+            className="maze-btn"
+            onClick={regenerateRuntimeFromContent}
+            disabled={!content}
+            title="Reset runtime state from current generated content"
+          >
+            Reset Runtime
           </button>
 
           <button
@@ -3827,6 +4452,15 @@ const App: React.FC = () => {
               />
               <span>Keep outer walls</span>
             </label>
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={showStateOverlay}
+                onChange={(e) => setShowStateOverlay(e.target.checked)}
+              />
+              <span>Show state overlay</span>
+            </label>
           </div>
         </details>
 
@@ -3891,6 +4525,7 @@ const App: React.FC = () => {
           <summary className="maze-summary">ASCII preview</summary>
           <pre className="maze-ascii-pre">{ascii}</pre>
         </details>
+
         {content && (
           <div className="panel">
             <div className="panelTitle">Circuits</div>
@@ -3940,6 +4575,31 @@ const App: React.FC = () => {
                 ))}
               </div>
             )}
+
+            <div style={{ height: 12 }} />
+
+            <details>
+              <summary className="maze-summary">Circuit Debug</summary>
+              {circuitDebugKeys.length === 0 ? (
+                <div className="muted">No debug entries.</div>
+              ) : (
+                <div
+                  className="mono"
+                  style={{ fontSize: 12, lineHeight: 1.35 }}
+                >
+                  {circuitDebugKeys.slice(0, 60).map((k) => (
+                    <div key={k}>
+                      {k}: {JSON.stringify((circuitDebug as any)[k])}
+                    </div>
+                  ))}
+                  {circuitDebugKeys.length > 60 ? (
+                    <div className="muted">
+                      (showing first 60 of {circuitDebugKeys.length})
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </details>
           </div>
         )}
       </div>
@@ -4039,6 +4699,8 @@ const App: React.FC = () => {
           className="maze-canvas-panel"
           onMouseMove={onCanvasMouseMove}
           onMouseLeave={onCanvasMouseLeave}
+          onClick={onCanvasClick}
+          title="Hover for tooltip. Click keys/levers/doors to update runtime."
         >
           <canvas ref={canvasRef} className="maze-canvas" style={canvasStyle} />
 

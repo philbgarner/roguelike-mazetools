@@ -239,10 +239,10 @@ meta.levers : array of { id, x, y, roomId }
 meta.circuits : array of
   {
     id: number,
-    logic: { type: "ANY" | "ALL" | "THRESHOLD", threshold?: number },
-    behavior: { mode: "TOGGLE" | "MOMENTARY" | "LATCH" },
+    logic: { type: "OR" | "AND" | "THRESHOLD", threshold?: number },
+    behavior: { mode: "TOGGLE" | "MOMENTARY" | "PERSISTENT" },
     triggers: { kind: string, refId: number }[],
-    targets:  { kind: string, refId: number, effect: string }[],
+    targets:  { kind: "DOOR" | "HAZARD" | "HIDDEN", refId: number, effect: string }[],
   }
 
 NOTE

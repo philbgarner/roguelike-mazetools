@@ -930,6 +930,7 @@ export type CircuitTargetEffect =
   | "CLOSE"
   | "TOGGLE"
   | "REVEAL"
+  | "HIDE"
   | "ENABLE"
   | "DISABLE";
 
@@ -1970,7 +1971,7 @@ export function generateDungeonContent(
       danger: dangerTex,
       lootTier: lootTierTex,
       featureParam: featureParamTex,
-      hazardTypeTex: hazardTypeTex,
+      hazardType: hazardTypeTex,
     },
 
     debug: {

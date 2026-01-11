@@ -51,7 +51,11 @@ function isTriggerSatisfied(
       // not implemented yet: treat as false
       return false;
     }
-    case "PUSHBLOCK": {
+    case "COMBAT_CLEAR": {
+      // not implemented yet: treat as false
+      return false;
+    }
+    case "INTERACT": {
       // not implemented yet: treat as false
       return false;
     }
@@ -67,9 +71,9 @@ function computeSatisfied(
   satisfiedCount: number,
 ): boolean {
   switch (logicType) {
-    case "ANY":
+    case "OR":
       return satisfiedCount >= 1;
-    case "ALL":
+    case "AND":
       return totalTriggers > 0 ? satisfiedCount === totalTriggers : false;
     case "THRESHOLD":
       return satisfiedCount >= Math.max(1, threshold | 0);
@@ -107,7 +111,7 @@ function applyTarget(
   // Effects:
   // - OPEN/CLOSE for DOOR
   // - ENABLE/DISABLE for HAZARD
-  // - REVEAL/HIDE for SECRET (HIDE not used yet)
+  // - REVEAL/HIDE for HIDDEN (HIDE not used yet)
   // - TOGGLE is applied using edge logic outside
 
   switch (target.kind) {
@@ -139,7 +143,7 @@ function applyTarget(
       break;
     }
 
-    case "SECRET": {
+    case "HIDDEN": {
       const secId = target.refId;
       ensureSecret(state, secId);
 
@@ -180,13 +184,13 @@ export function evaluateCircuits(
 
     let satisfied = computeSatisfied(
       c.logic.type,
-      c.logic.type === "THRESHOLD" ? c.logic.threshold | 0 : 1,
+      c.logic.type === "THRESHOLD" ? c.logic.threshold || 0 : 1,
       total,
       satisfiedCount,
     );
 
     // support inversion
-    if (c.logic.invert) satisfied = !satisfied;
+    if (c.behavior.invert) satisfied = !satisfied;
 
     const active = nextActiveFromBehavior(
       c.behavior.mode,
