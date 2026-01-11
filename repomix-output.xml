@@ -209,8 +209,494 @@ npm install
 }
 </file>
 
+<file path="src/styles.css">
+/* src/styles.css */
+
+:root {
+    --bg: #0b0f17;
+    --panel: #0f1624;
+    --panel2: #121b2b;
+    --border: rgba(255, 255, 255, 0.1);
+    --border2: rgba(255, 255, 255, 0.14);
+    --text: rgba(255, 255, 255, 0.92);
+    --muted: rgba(255, 255, 255, 0.62);
+    --muted2: rgba(255, 255, 255, 0.48);
+
+    --accent: #7dd3fc; /* light cyan */
+    --accent2: #a78bfa; /* violet */
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad: #fb7185;
+
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --radius: 14px;
+    --radius2: 18px;
+
+    --mono:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+    --sans:
+        ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
+        Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background:
+        radial-gradient(
+            1200px 700px at 25% 0%,
+            rgba(125, 211, 252, 0.1),
+            transparent 55%
+        ),
+        radial-gradient(
+            1000px 600px at 90% 20%,
+            rgba(167, 139, 250, 0.09),
+            transparent 55%
+        ),
+        var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+}
+
+button,
+input {
+    font-family: inherit;
+}
+
+.maze-app {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 14px;
+    padding: 14px;
+    min-height: 100vh;
+}
+
+/* ---------- Left: Controls ---------- */
+
+.maze-controls {
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.05),
+        rgba(255, 255, 255, 0.02)
+    );
+    border: 1px solid var(--border);
+    border-radius: var(--radius2);
+    box-shadow: var(--shadow);
+    padding: 14px;
+    overflow: auto;
+}
+
+.maze-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.maze-title {
+    margin: 0;
+    font-size: 16px;
+    letter-spacing: 0.2px;
+}
+
+.maze-controls-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.maze-btn {
+    appearance: none;
+    border: 1px solid var(--border2);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    padding: 9px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    transition:
+        transform 120ms ease,
+        background 120ms ease,
+        border-color 120ms ease;
+}
+
+.maze-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
+}
+
+.maze-btn:active {
+    transform: translateY(0px);
+}
+
+.maze-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.maze-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.maze-field {
+    display: grid;
+    gap: 6px;
+}
+
+.maze-field span {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.maze-field input[type="number"],
+.maze-field input[type="text"],
+.maze-field input:not([type]) {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--text);
+    outline: none;
+}
+
+.maze-field input:focus {
+    border-color: rgba(125, 211, 252, 0.35);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.12);
+}
+
+.maze-field--seed {
+    grid-column: 1 / -1;
+}
+
+.maze-seed-row {
+    display: grid;
+    grid-template-columns: 1fr 38px;
+    gap: 8px;
+    align-items: center;
+}
+
+.maze-seed-row button {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        transform 120ms ease;
+}
+
+.maze-seed-row button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+}
+
+.maze-checkbox {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.maze-checkbox span {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.maze-summary {
+    cursor: pointer;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font-weight: 700;
+    margin-bottom: 10px;
+    user-select: none;
+}
+
+details {
+    margin-bottom: 10px;
+}
+
+details[open] > .maze-summary {
+    border-color: rgba(125, 211, 252, 0.22);
+}
+
+/* ---------- Stats / ASCII ---------- */
+
+.maze-stats {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(0, 0, 0, 0.15);
+    padding: 10px;
+}
+
+.maze-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 10px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.maze-stats-grid b {
+    color: var(--text);
+}
+
+.maze-ascii-pre {
+    margin: 0;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-height: 300px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.25;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* ---------- Generic panel + circuits ---------- */
+
+.panel {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius2);
+    background: rgba(0, 0, 0, 0.16);
+    padding: 10px;
+}
+
+.panelTitle {
+    font-weight: 800;
+    font-size: 13px;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.mono {
+    font-family: var(--mono);
+}
+
+.circuitsList {
+    display: grid;
+    gap: 10px;
+}
+
+.circuitCard {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 10px;
+}
+
+.circuitHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.circuitRow {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 8px;
+    padding: 6px 0;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.circuitRow:first-of-type {
+    border-top: none;
+}
+
+.circuitLabel {
+    color: var(--muted2);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.circuitItems {
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+/* ---------- Right: Preview ---------- */
+
+.maze-preview {
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.04),
+        rgba(255, 255, 255, 0.02)
+    );
+    border: 1px solid var(--border);
+    border-radius: var(--radius2);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+}
+
+.maze-preview-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.maze-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.maze-tab {
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.8);
+    padding: 7px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 12px;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        transform 120ms ease;
+}
+
+.maze-tab:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+.maze-tab--active {
+    border-color: rgba(125, 211, 252, 0.4);
+    background: rgba(125, 211, 252, 0.13);
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.maze-scale {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    user-select: none;
+}
+
+.maze-scale input[type="range"] {
+    width: 150px;
+}
+
+.maze-scale-value {
+    min-width: 34px;
+    text-align: right;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 700;
+}
+
+/* Canvas panel: IMPORTANT: padding must match your JS (-12px) math */
+.maze-canvas-panel {
+    position: relative;
+    padding: 12px; /* MUST remain 12px unless you change getCellFromMouseEvent */
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.maze-canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    display: block;
+}
+
+/* Tooltip uses screen coords, so we keep it fixed to viewport */
+.maze-tooltip {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    min-width: 220px;
+    max-width: 340px;
+    padding: 10px 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(10, 14, 22, 0.92);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(8px);
+}
+
+.maze-tooltip-line {
+    font-size: 12px;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.86);
+    font-family: var(--mono);
+}
+
+/* Legend */
+.maze-legend {
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.12);
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.maze-legend b {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 1100px) {
+    .maze-app {
+        grid-template-columns: 1fr;
+    }
+    .maze-controls {
+        order: 2;
+    }
+    .maze-preview {
+        order: 1;
+        min-height: 60vh;
+    }
+}
+</file>
+
 <file path="src/CONTEXT.md">
-PROJECT CONTEXT — BSP DUNGEON & CONTENT GENERATION
+# PROJECT CONTEXT — BSP DUNGEON & CONTENT GENERATION
 
 This project is an experimental procedural dungeon generator built in TypeScript
 with a small React preview app.
@@ -219,7 +705,7 @@ It is designed to evolve toward a JRPG / metroidvania-style dungeon system with
 backtracking, secrets, puzzles, monsters, and loot.
 
 The code is intentionally layered so that structural generation and gameplay
-content generation are separated.
+content generation are separated, and puzzle/state logic is built *on top*.
 
 
 ============================================================
@@ -228,16 +714,17 @@ HIGH-LEVEL ARCHITECTURE
 
 The system has three conceptual layers:
 
-1) Structural Dungeon Generation
-   Function: generateBspDungeon() in mazeGen.ts
+1) Structural Dungeon Generation (BSP)
+   - Entry: generateBspDungeon() in mazeGen.ts
 
-2) Content Generation (Milestones 1–2)
-   Function: generateDungeonContent() in mazeGen.ts
+2) Content Generation (Milestones 1–2 + early Milestone 3 wiring)
+   - Entry: generateDungeonContent() in mazeGen.ts
 
 3) Stateful / Puzzle Logic (Milestone 3 and beyond)
-   Built on top of content metadata and feature circuits
+   - Built on top of content metadata + feature circuits
+   - Ultimately drives actual gameplay interactions
 
-The React app (App.tsx) visualizes all layers using selectable debug views,
+The React app (App.tsx) visualizes these layers using selectable debug views,
 including composite content overlays and per-cell inspection tooltips.
 
 
@@ -252,7 +739,7 @@ RESPONSIBILITIES
 - BSP partitioning of the grid
 - Room carving
 - Corridor carving
-- Wall preservation
+- Wall preservation (optional outer wall retention)
 - Distance-to-wall calculation
 - Region (room) identification
 
@@ -262,14 +749,14 @@ index = y * width + x
 
 Mask: solid
 - 255 = wall
-- 0 = floor
+- 0   = floor
 
 Mask: regionId
-- 0 = not a room
+- 0      = not a room
 - 1..255 = room id
 
 Mask: distanceToWall
-- Manhattan distance from nearest wall
+- Manhattan distance to nearest wall
 - 0 means wall tile
 
 STRUCTURAL METADATA
@@ -281,7 +768,7 @@ meta.seedUsed     : number
 DEBUG OUTPUT
 - ASCII map (# = wall, . = floor)
 - Grayscale ImageData per mask
-- PNG export support
+- PNG export support via imageDataToPngDataUrl()
 
 
 ============================================================
@@ -298,7 +785,7 @@ DESIGN GOALS
 - Metroidvania-friendly (supports backtracking)
 - Deterministic from seed
 - Solvable by construction
-- Fully inspectable via debug layers
+- Fully inspectable via debug layers and metadata
 
 
 ============================================================
@@ -326,6 +813,7 @@ PROGRESSION GATING (MILESTONE 2)
 - Keys placed in reachable side or earlier rooms
 - Lever doors linked via featureId circuits
 - Backtracking is guaranteed by construction
+- No door blocks progress without its solution
 
 
 ============================================================
@@ -335,13 +823,17 @@ CONTENT LAYERS (MASKS)
 MASK: featureType (Uint8)
 Encodes what exists at a tile.
 
-0 = none
-1 = monster spawn
-2 = loot chest
-3 = secret door
-4 = door (locked or lever)
-5 = key
-6 = lever
+0  = none
+1  = monster spawn
+2  = loot chest
+3  = secret door
+4  = door
+5  = key
+6  = lever
+7  = pressure plate                (Milestone 3)
+8  = push block / movable object   (Milestone 3)
+9  = hidden passage                (Milestone 3)
+10 = hazard                         (Milestone 3)
 
 MASK: featureId (Uint8)
 Instance / circuit identifier (1..255).
@@ -350,13 +842,14 @@ All tiles sharing a featureId belong to the same logical circuit.
 Used for:
 - Door + key relationships
 - Lever-door circuits
+- Multi-target circuits (one trigger affects multiple doors/hazards)
 - Future multi-tile puzzles
 
 MASK: featureParam (Uint8)
-Subtype or behavior flags.
+Subtype / behavior flags.
 Examples:
-- Door kind (locked vs lever)
-- Puzzle mode (toggle, momentary, etc)
+- Door kind (Milestone 2): 1 = locked, 2 = lever-controlled
+- Future: plate mode, block type, hazard behavior, logic modes, etc.
 
 MASK: danger (Uint8)
 Used for monster spawns only.
@@ -368,9 +861,19 @@ Used for chests only.
 - Scales with room depth
 - Interpreted later by gameplay logic
 
+MASK: hazardType (Uint8)
+Used for hazard tiles only.
+- 0 = none
+- 1 = lava
+- 2 = poison gas
+- 3 = water
+- 4 = spikes
+(Exact mapping is debug-facing and can evolve; the mask exists so hazards can be
+visualized and later simulated.)
+
 
 ============================================================
-CONTENT PLACEMENT RULES
+CONTENT PLACEMENT RULES (CURRENT)
 ============================================================
 
 MONSTERS
@@ -397,9 +900,14 @@ DOORS / KEYS / LEVERS (MILESTONE 2)
 - No door blocks progress without its solution
 - featureId links all components of a circuit
 
+MILSTONE 3 WIRES (EARLY)
+- The system already reserves featureType slots for:
+  pressure plates, push blocks, hidden passages, and hazards
+- hazardType mask exists as a dedicated debug layer
+
 
 ============================================================
-CONTENT METADATA OUTPUT
+CONTENT METADATA OUTPUT (AUTHORITATIVE)
 ============================================================
 
 meta.seedUsed : number
@@ -426,36 +934,63 @@ meta.doors : array of
 meta.keys   : array of { id, x, y, roomId }
 meta.levers : array of { id, x, y, roomId }
 
-This metadata is the authoritative source for all gameplay logic.
+meta.circuits : array of
+  {
+    id: number,
+    logic: { type: "ANY" | "ALL" | "THRESHOLD", threshold?: number },
+    behavior: { mode: "TOGGLE" | "MOMENTARY" | "LATCH" },
+    triggers: { kind: string, refId: number }[],
+    targets:  { kind: string, refId: number, effect: string }[],
+  }
+
+NOTE
+- Metadata is the authoritative source for gameplay logic.
+- Masks are for rendering/debugging and for compact “field maps”.
 
 
 ============================================================
-DEBUG & VISUALIZATION
+DEBUG & VISUALIZATION (React Preview)
 ============================================================
 
-ASCII OVERLAY SYMBOLS
-M = monster spawn
-$ = loot chest
-? = secret door
-D = door
-K = key
-L = lever
-E = entrance room center
+APP OVERVIEW
+App.tsx runs:
+- generateBspDungeon(opts)
+- generateDungeonContent(out)
+…and visualizes the outputs.
 
-REACT PREVIEW LAYERS
+LAYER TABS (current)
+- content (composited overlay view)
 - solid
 - regionId
 - distanceToWall
-- content (composited)
 - featureType
 - featureId
 - featureParam
 - danger
 - lootTier
+- hazardType
+
+COMPOSITE CONTENT VIEW
+Walls/floors base + feature overlay colors:
+- red   = monsters
+- green = chests/loot
+- brown = doors + secret doors
+- yellow= keys/levers/other feature types
+(Composite is a *human-friendly* debug view; numeric masks remain authoritative.)
 
 HOVER TOOLTIP
-- Shows per-cell terrain, room, feature, and circuit data
-- Used for generator debugging and puzzle validation
+- Per-cell terrain + room + distance data
+- Feature identity:
+  - featureType → human name
+  - featureId (circuit/instance id)
+  - featureParam (door kind / future subtype)
+  - hazardType when relevant
+- Circuit hints (best-effort):
+  - key/lever → “controls/unlocks circuit X”
+  - door → “Circuit: door id X”
+
+EXPORT
+- “Download PNG” exports the current selected layer’s ImageData
 
 
 ============================================================
@@ -464,10 +999,11 @@ KEY INVARIANTS & CONSTRAINTS
 
 - Dungeon carving must occur before content generation
 - Content generation must occur before puzzle/state logic
-- inBounds(x, y, width, height) argument order is critical
-- All masks are Uint8Array for GPU-friendly textures
-- Content generation is deterministic from seed
+- All masks are Uint8Array (GPU-friendly, compact)
+- Content generation is deterministic from seed/options
 - No unsolvable progression gates are allowed
+- featureId defines logical circuits (links triggers ↔ targets)
+- Debug layers must remain consistent with metadata
 
 
 ============================================================
@@ -477,45 +1013,84 @@ PLANNED NEXT MILESTONE — MILESTONE 3
 MILESTONE 3: STATEFUL / PHYSICAL PUZZLES
 
 GOAL
-Introduce puzzles that depend on persistent state, spatial reasoning,
-and multi-step interactions rather than simple possession of items.
+Introduce puzzles that depend on persistent state, spatial reasoning, and multi-step
+interactions (not just possession checks), while remaining solvable by construction
+and supporting backtracking.
 
-CORE FEATURES
+CORE FEATURE SET
+- Pressure plates (momentary/toggle/latch)
+- Pushable blocks / movable objects (grid + collision)
+- Multi-door & multi-target circuits (AND/OR/THRESHOLD logic)
+- Hidden passages (revealable / permanent or temporary)
+- Environmental hazards (toggled or mitigated via circuits)
 
-PRESSURE PLATES
-- Floor tiles that activate when weighted
-- Activated by player or pushable blocks
-- Can be momentary or toggle-based
-- Linked to doors or other features via featureId
 
-PUSHABLE BLOCKS / FURNITURE
-- Grid-aligned, collision-aware objects
-- Can rest on pressure plates
-- Used for spatial and timing puzzles
+============================================================
+MILESTONE 3 — PHASED IMPLEMENTATION PLAN
+============================================================
 
-MULTI-DOOR CIRCUITS
-- One trigger controls multiple doors
-- AND / OR style logic
-- Implemented via shared featureId and featureParam flags
+PHASE 1 (FOUNDATION / WIRING) — Mostly complete / in-progress
+- Reserve featureType slots for new puzzle features (7..10)
+- Add hazardType mask + debug layer
+- Extend preview UI to show new layers and inspect per-cell data
+- Ensure featureId/circuit concept is generalized enough for multi-target puzzles
 
-HIDDEN PASSAGES
-- Illusion walls or breakable walls
-- Revealed by triggers, combat, or interaction
-- May be temporary or permanent
+PHASE 2 (MILSTONE 3) — NEXT UP (IMPLEMENTATION TARGET)
+This phase focuses on making puzzles *real*, not just painted onto masks.
 
-ENVIRONMENTAL HAZARDS
-- Lava, poison gas, water, etc
-- Toggled or mitigated via puzzle logic
-- Adds time pressure and movement constraints
+A) PUZZLE STATE MODEL (RUNTIME)
+- Introduce a dungeon “state” object independent from generation:
+  - doorState[doorId] = open/closed/locked
+  - circuitState[circuitId] = active/inactive (and/or partial counts)
+  - plateState[plateId] = pressed/not pressed
+  - blockState[blockId] = x,y (and any type flags)
+  - hazardState[hazardId or circuitId] = active/inactive
+  - revealState[hiddenPassageId] = revealed/not revealed
+- Define how state is initialized from metadata (deterministic).
 
-PUZZLE GRAMMAR
-- Generator places complete puzzle patterns, not random objects
-- Examples:
-  [ plate + block ] -> [ door ] -> [ reward ]
-  [ lever ] -> [ multiple doors ]
-  [ combat clear ] -> [ reveal passage ]
+B) CIRCUIT EVALUATOR
+- Implement a single “evaluateCircuits(state, meta)” pass that:
+  1) computes trigger satisfaction (plates pressed, levers toggled, keys consumed, etc.)
+  2) applies logic (ANY / ALL / THRESHOLD)
+  3) updates targets (doors open/close, hazards toggle, passages reveal)
+- Keep it data-driven from meta.circuits:
+  - triggers[] and targets[] are the source of truth
+  - featureId ties mask cells to circuit membership
 
-All puzzles must be solvable by construction and support backtracking.
+C) NEW GENERATOR PATTERNS (PUZZLE GRAMMAR, NOT RANDOM SPAM)
+Add deterministic “puzzle patterns” placed by construction:
+- Plate + Block → Door → Reward
+- Lever → Multiple Doors (gate + shortcut)
+- Plate(s) → Hazard Toggle (timed corridor / safe window)
+- Hidden Passage reveal behind optional trigger
+Rules:
+- Patterns are placed as a *set* with internal validity checks.
+- Placement must respect path solvability (main path never becomes impossible).
+- Side content can be optional/harder but still solvable.
+
+D) VALIDATION / SOLVABILITY CHECKS (OFFLINE, GENERATION-TIME)
+- Add a lightweight solver/validator that checks:
+  - The main path remains traversable with required interactions.
+  - Each gated element has reachable triggers (and blocks if required).
+  - No “softlocks” (e.g., block trapped permanently, plate impossible to press).
+- Validator can be conservative (over-approximations acceptable) but must catch obvious
+  invalid layouts.
+
+E) DEBUG VISUALIZATION UPGRADES (APP)
+- Add a “state overlay mode” (optional) showing:
+  - active circuits
+  - open/closed doors
+  - pressed plates
+  - block positions
+  - active hazards
+- Add tooltip lines for:
+  - current state values at (x,y) when relevant
+  - circuit evaluation results (active/inactive + reason)
+
+OUTPUT OF PHASE 2
+- You can generate a dungeon *and* simulate puzzle interactions via state changes.
+- Circuits become executable logic rather than just metadata.
+- The debug UI can prove (visually) that puzzles are wired correctly and solvable.
 
 
 ============================================================
@@ -525,10 +1100,10 @@ MENTAL MODEL SUMMARY
 - BSP decides where you can walk
 - Content generation decides why you care
 - Room graph defines progression and backtracking
-- featureId defines logical circuits
-- Masks are for rendering and debugging
-- Metadata drives actual gameplay
-- Milestone 3 adds state and memory to the dungeon
+- featureId + circuits define logical wiring
+- Masks are for rendering + quick inspection
+- Metadata drives authoritative gameplay intent
+- Milestone 3 adds state, interactions, and simulation on top of the content layer
 
 This separation is intentional and foundational.
 </file>
@@ -1422,12 +1997,67 @@ export type FeatureType =
   | 3 // secret door (wall tile)
   | 4 // door (floor tile)
   | 5 // key (floor tile)
-  | 6; // lever (floor tile)
+  | 6 // lever (floor tile)
+  // Milestone 3 (stateful puzzles)
+  | 7 // pressure plate (floor tile)
+  | 8 // pushable block (floor tile; entity)
+  | 9 // hidden passage (wall tile; illusion/breakable)
+  | 10; // hazard (floor tile; hard-block for now)
 
 export type DoorKind =
   | 0 // unused
   | 1 // locked door (requires key)
   | 2; // lever door (requires lever toggle)
+
+export type HazardType =
+  | 0 // none
+  | 1 // lava
+  | 2 // poison gas
+  | 3 // water
+  | 4; // spikes (etc; extend later)
+
+export type CircuitLogicType = "OR" | "AND" | "THRESHOLD";
+export type CircuitBehaviorMode = "MOMENTARY" | "TOGGLE" | "PERSISTENT";
+
+export type CircuitTriggerKind =
+  | "LEVER"
+  | "KEY"
+  | "PLATE"
+  | "COMBAT_CLEAR"
+  | "INTERACT";
+
+export type CircuitTargetKind = "DOOR" | "HAZARD" | "HIDDEN";
+
+export type CircuitTargetEffect =
+  | "OPEN"
+  | "CLOSE"
+  | "TOGGLE"
+  | "REVEAL"
+  | "ENABLE"
+  | "DISABLE";
+
+export type CircuitTriggerRef = {
+  kind: CircuitTriggerKind;
+  /**
+   * For Milestone 2 items (key/lever/door), this is the circuit id (featureId).
+   * For future puzzle entities, we can evolve this to be a true unique id.
+   */
+  refId: number;
+};
+
+export type CircuitTargetRef = {
+  kind: CircuitTargetKind;
+  refId: number; // see note above
+  effect: CircuitTargetEffect;
+};
+
+export type CircuitDef = {
+  id: number; // featureId (1..255)
+  logic: { type: CircuitLogicType; threshold?: number };
+  behavior: { mode: CircuitBehaviorMode; invert?: boolean };
+  triggers: CircuitTriggerRef[];
+  targets: CircuitTargetRef[];
+};
 
 export type ContentOptions = {
   seed?: number | string;
@@ -1458,11 +2088,15 @@ export type ContentOutputs = {
   height: number;
 
   masks: {
-    featureType: Uint8Array; // FeatureType enum
-    featureId: Uint8Array; // circuit id (1..255)
-    featureParam: Uint8Array; // subtype/flags (door kind, etc.)
-    danger: Uint8Array; // meaningful at monster spawns
-    lootTier: Uint8Array; // meaningful at chests
+    featureType: Uint8Array;
+    featureId: Uint8Array;
+    featureParam: Uint8Array;
+
+    danger: Uint8Array;
+    lootTier: Uint8Array;
+
+    // Milestone 3 scaffolding
+    hazardType: Uint8Array; // meaningful only when featureType == 10
   };
 
   textures: {
@@ -1471,6 +2105,9 @@ export type ContentOutputs = {
     featureParam: THREE.DataTexture;
     danger: THREE.DataTexture;
     lootTier: THREE.DataTexture;
+
+    // Milestone 3 scaffolding
+    hazardType: THREE.DataTexture;
   };
 
   debug: {
@@ -1481,6 +2118,9 @@ export type ContentOutputs = {
       featureParam: ImageData;
       danger: ImageData;
       lootTier: ImageData;
+
+      // Milestone 3 scaffolding
+      hazardType: ImageData;
     };
   };
 
@@ -1522,6 +2162,53 @@ export type ContentOutputs = {
     }>;
     keys: Array<{ id: number; x: number; y: number; roomId: number }>;
     levers: Array<{ id: number; x: number; y: number; roomId: number }>;
+
+    // Milestone 3 scaffolding (no placement yet)
+    plates: Array<{
+      id: number; // circuit id for now
+      x: number;
+      y: number;
+      roomId: number;
+      // Param decoding (redundant with featureParam, but convenient runtime view)
+      mode: "momentary" | "toggle";
+      activatedByPlayer: boolean;
+      activatedByBlock: boolean;
+      /**
+       * Explicit mode derived from the two flags:
+       * true when (activatedByPlayer && activatedByBlock).
+       */
+      activatedByBlockOrPlayer: boolean;
+      inverted: boolean;
+    }>;
+
+    blocks: Array<{
+      id: number; // unique entity id (can be simple increment)
+      x: number;
+      y: number;
+      roomId: number;
+      weightClass: number; // 0..3
+    }>;
+
+    hidden: Array<{
+      id: number; // circuit id for now
+      x: number;
+      y: number;
+      roomId: number;
+      kind: "illusion" | "breakable" | "crumble";
+      revealedInitial: boolean;
+      permanent: boolean;
+    }>;
+
+    hazards: Array<{
+      id: number; // circuit id for now
+      x: number;
+      y: number;
+      roomId: number;
+      hazardType: HazardType;
+      activeInitial: boolean;
+    }>;
+
+    circuits: CircuitDef[];
   };
 };
 
@@ -1966,6 +2653,7 @@ export function generateDungeonContent(
   const featureParam = new Uint8Array(N);
   const danger = new Uint8Array(N);
   const lootTier = new Uint8Array(N);
+  const hazardType = new Uint8Array(N); // Milestone 3 (scaffold)
 
   // Placement results
   const monsters: ContentOutputs["meta"]["monsters"] = [];
@@ -1974,6 +2662,11 @@ export function generateDungeonContent(
   const doors: ContentOutputs["meta"]["doors"] = [];
   const keys: ContentOutputs["meta"]["keys"] = [];
   const levers: ContentOutputs["meta"]["levers"] = [];
+  // Milestone 3 scaffolding (no placement yet)
+  const plates: ContentOutputs["meta"]["plates"] = [];
+  const blocks: ContentOutputs["meta"]["blocks"] = [];
+  const hidden: ContentOutputs["meta"]["hidden"] = [];
+  const hazards: ContentOutputs["meta"]["hazards"] = [];
 
   let nextId = 1;
 
@@ -2264,6 +2957,62 @@ export function generateDungeonContent(
     if (placeDoorOnEdge(eligibleEdges[i], 2)) placedLever++;
   }
 
+  // ------------------------------------
+  // Phase 1: Build meta.circuits (from Milestone 2 gates)
+  // ------------------------------------
+  const circuitsById = new Map<number, CircuitDef>();
+
+  function ensureCircuit(id: number): CircuitDef {
+    let c = circuitsById.get(id);
+    if (!c) {
+      c = {
+        id,
+        logic: { type: "OR" },
+        behavior: { mode: "PERSISTENT" },
+        triggers: [],
+        targets: [],
+      };
+      circuitsById.set(id, c);
+    }
+    return c;
+  }
+
+  // Locked doors: key -> open door (persistent)
+  for (const d of doors) {
+    const c = ensureCircuit(d.id);
+
+    if (d.kind === 1) {
+      c.behavior = { mode: "PERSISTENT" };
+      c.triggers.push({ kind: "KEY", refId: d.id });
+      c.targets.push({ kind: "DOOR", refId: d.id, effect: "OPEN" });
+    } else if (d.kind === 2) {
+      // Lever doors: lever -> toggle door
+      c.behavior = { mode: "TOGGLE" };
+      c.triggers.push({ kind: "LEVER", refId: d.id });
+      c.targets.push({ kind: "DOOR", refId: d.id, effect: "TOGGLE" });
+    }
+  }
+
+  // If there are keys/levers that exist without a door record (should be rare),
+  // ensure we still show them as circuits in the inspector.
+  for (const k of keys) {
+    const c = ensureCircuit(k.id);
+    // best-effort: don’t duplicate if door loop already pushed a KEY trigger
+    if (!c.triggers.some((t) => t.kind === "KEY" && t.refId === k.id)) {
+      c.triggers.push({ kind: "KEY", refId: k.id });
+    }
+  }
+  for (const l of levers) {
+    const c = ensureCircuit(l.id);
+    if (!c.triggers.some((t) => t.kind === "LEVER" && t.refId === l.id)) {
+      c.triggers.push({ kind: "LEVER", refId: l.id });
+    }
+  }
+
+  const circuits = Array.from(circuitsById.values()).sort(
+    (a, b) => a.id - b.id,
+  );
+
   // Textures + debug ImageData
   const featureTypeTex = maskToDataTextureR8(featureType, W, H, "featureType");
   const featureIdTex = maskToDataTextureR8(featureId, W, H, "featureId");
@@ -2275,12 +3024,14 @@ export function generateDungeonContent(
     H,
     "featureParam",
   );
+  const hazardTypeTex = maskToDataTextureR8(hazardType, W, H, "hazardType");
 
   const featureTypeImg = maskToImageDataGrayscale(featureType, W, H);
   const featureIdImg = maskToImageDataGrayscale(featureId, W, H);
   const dangerImg = maskToImageDataGrayscale(danger, W, H);
   const lootTierImg = maskToImageDataGrayscale(lootTier, W, H);
   const featureParamImg = maskToImageDataGrayscale(featureParam, W, H);
+  const hazardTypeImg = maskToImageDataGrayscale(hazardType, W, H);
 
   // ASCII overlay (optional)
   let ascii = dungeon.debug.ascii;
@@ -2310,9 +3061,10 @@ export function generateDungeonContent(
     masks: {
       featureType,
       featureId,
+      featureParam,
       danger,
       lootTier,
-      featureParam,
+      hazardType,
     },
 
     textures: {
@@ -2321,6 +3073,7 @@ export function generateDungeonContent(
       danger: dangerTex,
       lootTier: lootTierTex,
       featureParam: featureParamTex,
+      hazardTypeTex: hazardTypeTex,
     },
 
     debug: {
@@ -2331,6 +3084,7 @@ export function generateDungeonContent(
         danger: dangerImg,
         lootTier: lootTierImg,
         featureParam: featureParamImg,
+        hazardType: hazardTypeImg,
       },
     },
 
@@ -2347,253 +3101,13 @@ export function generateDungeonContent(
       doors,
       keys,
       levers,
+      plates,
+      blocks,
+      hidden,
+      hazards,
+      circuits,
     },
   };
-}
-</file>
-
-<file path="src/styles.css">
-/* src/styles.css */
-
-:root {
-    --panel-bg: #ffffff;
-    --panel-border: #e4e4e4;
-    --muted: #666;
-    --text: #111;
-    --accent: #4f46e5;
-}
-
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-    font-family:
-        ui-sans-serif,
-        system-ui,
-        -apple-system,
-        Segoe UI,
-        Roboto,
-        Ubuntu,
-        Cantarell,
-        Noto Sans,
-        sans-serif;
-    color: var(--text);
-    background: #f5f5f7;
-}
-
-.maze-app {
-    display: grid;
-    grid-template-columns: 420px 1fr;
-    gap: 16px;
-    padding: 16px;
-}
-
-.maze-controls,
-.maze-preview {
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: 14px;
-    padding: 14px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.05);
-}
-
-.maze-header-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.maze-title {
-    margin: 0 0 10px 0;
-    font-size: 18px;
-}
-
-.maze-controls-row {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 12px;
-}
-
-.maze-btn {
-    border: 1px solid var(--panel-border);
-    background: #fff;
-    border-radius: 10px;
-    padding: 8px 10px;
-    cursor: pointer;
-}
-
-.maze-btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-}
-
-.maze-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-bottom: 12px;
-}
-
-.maze-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--muted);
-}
-
-.maze-field input {
-    padding: 8px 10px;
-    border-radius: 10px;
-    border: 1px solid var(--panel-border);
-    font-size: 14px;
-    color: var(--text);
-}
-
-.maze-field--seed {
-    grid-column: 1 / -1;
-}
-
-.maze-seed-row {
-    display: grid;
-    grid-template-columns: 1fr 44px;
-    gap: 8px;
-}
-
-.maze-seed-row button {
-    border: 1px solid var(--panel-border);
-    background: #fff;
-    border-radius: 10px;
-    cursor: pointer;
-}
-
-.maze-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-    font-size: 13px;
-}
-
-.maze-summary {
-    cursor: pointer;
-    user-select: none;
-    font-weight: 600;
-    margin: 10px 0;
-}
-
-.maze-ascii-pre {
-    font-family:
-        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-        "Liberation Mono", "Courier New", monospace;
-    font-size: 12px;
-    line-height: 1.1;
-    max-height: 320px;
-    overflow: auto;
-    background: #0f172a;
-    color: #e2e8f0;
-    padding: 10px;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.maze-stats {
-    font-size: 13px;
-    color: var(--muted);
-}
-
-.maze-stats-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-}
-
-/* Right panel */
-.maze-preview-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
-}
-
-.maze-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.maze-tab {
-    border: 1px solid var(--panel-border);
-    background: #fff;
-    border-radius: 999px;
-    padding: 6px 10px;
-    cursor: pointer;
-    font-size: 13px;
-}
-
-.maze-tab--active {
-    border-color: rgba(79, 70, 229, 0.35);
-    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
-}
-
-.maze-scale {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--muted);
-    font-size: 13px;
-}
-
-.maze-scale-value {
-    min-width: 34px;
-    text-align: right;
-}
-
-/* Canvas panel */
-.maze-canvas-panel {
-    position: relative;
-    border: 1px solid #ccc;
-    border-radius: 12px;
-    padding: 12px;
-    background: #fafafa;
-    overflow: auto;
-    max-width: 100%;
-    max-height: 80vh;
-    width: fit-content;
-}
-
-/* Canvas itself */
-.maze-canvas {
-    image-rendering: pixelated;
-    display: block;
-}
-
-/* Tooltip */
-.maze-tooltip {
-    position: fixed;
-    z-index: 1000;
-    pointer-events: none;
-    background: rgba(15, 23, 42, 0.95);
-    color: #e2e8f0;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 12px;
-    padding: 10px 12px;
-    font-size: 12px;
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
-    max-width: 320px;
-}
-
-.maze-tooltip-line {
-    white-space: nowrap;
-}
-
-.maze-legend {
-    margin-top: 10px;
-    font-size: 13px;
-    color: var(--muted);
 }
 </file>
 
@@ -2617,7 +3131,8 @@ type Layer =
   | "featureId"
   | "featureParam"
   | "danger"
-  | "lootTier";
+  | "lootTier"
+  | "hazardType";
 
 function clampInt(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
@@ -2660,6 +3175,14 @@ function featureName(ft: number) {
       return "Key";
     case 6:
       return "Lever";
+    case 7:
+      return "Pressure Plate";
+    case 8:
+      return "Push Block";
+    case 9:
+      return "Hidden Passage";
+    case 10:
+      return "Hazard";
     default:
       return "None";
   }
@@ -2785,6 +3308,10 @@ const App: React.FC = () => {
   // --- Output ---
   const [ascii, setAscii] = useState<string>("");
 
+  const [content, setContent] = useState<ReturnType<
+    typeof generateDungeonContent
+  > | null>(null);
+
   const [imageDataByLayer, setImageDataByLayer] = useState<{
     solid: ImageData | null;
     regionId: ImageData | null;
@@ -2797,6 +3324,8 @@ const App: React.FC = () => {
     featureParam: ImageData | null;
     danger: ImageData | null;
     lootTier: ImageData | null;
+
+    hazardType: ImageData | null;
   }>({
     solid: null,
     regionId: null,
@@ -2809,6 +3338,8 @@ const App: React.FC = () => {
     featureParam: null,
     danger: null,
     lootTier: null,
+
+    hazardType: null,
   });
 
   const [meta, setMeta] = useState<{
@@ -2891,6 +3422,8 @@ const App: React.FC = () => {
     dungeonRef.current = out;
     contentRef.current = content;
 
+    setContent(content);
+
     const composite = makeContentCompositeImageData(out, content);
 
     setAscii(content.debug.ascii);
@@ -2907,6 +3440,8 @@ const App: React.FC = () => {
       featureParam: content.debug.imageData.featureParam,
       danger: content.debug.imageData.danger,
       lootTier: content.debug.imageData.lootTier,
+
+      hazardType: content.debug.imageData.hazardType,
     });
 
     setMeta({
@@ -2981,6 +3516,7 @@ const App: React.FC = () => {
     const fparam = content.masks.featureParam[i];
     const dng = content.masks.danger[i];
     const tier = content.masks.lootTier[i];
+    const hz = content.masks.hazardType[i];
 
     const lines: string[] = [];
     lines.push(`Cell: (${x}, ${y})`);
@@ -3008,6 +3544,8 @@ const App: React.FC = () => {
     if (ft === 6 && fid !== 0)
       lines.push(`Hint: lever controls door circuit ${fid}`);
     if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
+
+    if (ft === 10) lines.push(`hazardType: ${hz}`);
 
     return lines;
   }
@@ -3353,6 +3891,57 @@ const App: React.FC = () => {
           <summary className="maze-summary">ASCII preview</summary>
           <pre className="maze-ascii-pre">{ascii}</pre>
         </details>
+        {content && (
+          <div className="panel">
+            <div className="panelTitle">Circuits</div>
+
+            {content.meta.circuits.length === 0 ? (
+              <div className="muted">No circuits.</div>
+            ) : (
+              <div className="circuitsList">
+                {content.meta.circuits.map((c) => (
+                  <div key={c.id} className="circuitCard">
+                    <div className="circuitHeader">
+                      <span className="mono">#{c.id}</span>{" "}
+                      <span className="muted">
+                        {c.logic.type}
+                        {c.logic.type === "THRESHOLD"
+                          ? `(${c.logic.threshold})`
+                          : ""}
+                        {" · "}
+                        {c.behavior.mode}
+                      </span>
+                    </div>
+
+                    <div className="circuitRow">
+                      <div className="circuitLabel">Triggers</div>
+                      <div className="circuitItems mono">
+                        {c.triggers.map((t, i) => (
+                          <span key={i}>
+                            {t.kind}:{t.refId}
+                            {i < c.triggers.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="circuitRow">
+                      <div className="circuitLabel">Targets</div>
+                      <div className="circuitItems mono">
+                        {c.targets.map((t, i) => (
+                          <span key={i}>
+                            {t.kind}:{t.refId}→{t.effect}
+                            {i < c.targets.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Right: Preview */}
@@ -3421,6 +4010,13 @@ const App: React.FC = () => {
             >
               featureId
             </button>
+
+            <button
+              onClick={() => setLayer("hazardType")}
+              className={`maze-tab ${layer === "hazardType" ? "maze-tab--active" : ""}`}
+            >
+              hazardType
+            </button>
           </div>
 
           <label className="maze-scale">
@@ -3478,14 +4074,16 @@ const App: React.FC = () => {
                   : layer === "distanceToWall"
                     ? "grayscale Manhattan distance (0=wall)"
                     : layer === "featureType"
-                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever"
+                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever, 7=pressurePlate, 8=pushBlock, 9=hiddenPassage, 10=hazard"
                       : layer === "featureParam"
                         ? "door kind / feature subtype (e.g. 1=locked door, 2=lever door)"
                         : layer === "danger"
                           ? "monster danger/level (0..255)"
                           : layer === "lootTier"
                             ? "chest tier (1..N)"
-                            : "feature instance/circuit id (1..255)"}
+                            : layer === "hazardType"
+                              ? "hazard kind (0=none, 1=lava, 2=poison gas, 3=water, 4=spikes)"
+                              : "feature instance/circuit id (1..255)"}
           </div>
         </div>
       </div>

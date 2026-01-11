@@ -5,6 +5,15 @@ import {
   generateDungeonContent,
   imageDataToPngDataUrl,
 } from "./mazeGen";
+import {
+  initDungeonRuntimeState,
+  collectKey,
+  toggleLever,
+  resetRuntimeState,
+  type DungeonRuntimeState,
+} from "./dungeonState";
+
+import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
 import "./styles.css";
 
@@ -87,15 +96,46 @@ function doorKindName(param: number) {
   }
 }
 
+/**
+ * Shared door-state derivation used by:
+ * - content composite rendering (door color overlay)
+ * - tooltips
+ *
+ * IMPORTANT: door "locked" is derived from runtime key/lever state.
+ */
+function readDoorState(
+  runtime: DungeonRuntimeState,
+  doorId: number,
+): { isOpen: boolean; isLocked: boolean; kind: number } {
+  const door = runtime.doors?.[doorId];
+  if (!door) return { isOpen: false, isLocked: false, kind: 0 };
+
+  // Your DoorKind is numeric: 1 locked, 2 lever.
+  const kind = (door.kind as any) | 0;
+
+  // Derive gated state by matching “circuit id” (doorId) convention.
+  const hasKey = !!runtime.keys?.[doorId]?.collected;
+  const leverOn = !!runtime.levers?.[doorId]?.toggled;
+
+  const isLocked = kind === 1 ? !hasKey : kind === 2 ? !leverOn : false;
+
+  const isOpen = !!(door.isOpen || (door as any).forcedOpen);
+
+  return { kind, isOpen, isLocked };
+}
+
 function makeContentCompositeImageData(
   dungeon: ReturnType<typeof generateBspDungeon>,
   content: ReturnType<typeof generateDungeonContent>,
+  runtime: DungeonRuntimeState | null,
+  showStateOverlay: boolean,
 ): ImageData {
   const W = dungeon.width;
   const H = dungeon.height;
 
   const solid = dungeon.masks.solid; // 255 wall, 0 floor
   const ft = content.masks.featureType; // 0..n
+  const fid = content.masks.featureId;
 
   const img = new ImageData(W, H);
   const data = img.data;
@@ -113,11 +153,7 @@ function makeContentCompositeImageData(
       let b = isWall ? 25 : 235;
       const a = 255;
 
-      // Overlay feature colors (logical colors):
-      // - monsters red
-      // - loot/chests green
-      // - doors brown (includes secret doors + doors)
-      // - anything else yellow (keys/levers/future)
+      // Overlay by feature type
       const t = ft[i] | 0;
       if (t !== 0) {
         // Slightly darken base first so overlay pops
@@ -137,9 +173,40 @@ function makeContentCompositeImageData(
           b = 90;
         } else if (t === 3 || t === 4) {
           // secret door OR door
+          // Default (no runtime overlay): brown
           r = 150;
           g = 105;
           b = 60;
+
+          // Milestone 3 overlay for doors only (featureType == 4)
+          if (t === 4 && showStateOverlay && runtime) {
+            const doorId = fid[i] | 0;
+            const { isOpen, isLocked } = readDoorState(runtime, doorId);
+
+            if (isOpen) {
+              // OPEN door: lighter tan
+              r = 205;
+              g = 170;
+              b = 120;
+            } else if (isLocked) {
+              // CLOSED + LOCKED: darker brown
+              r = 105;
+              g = 70;
+              b = 40;
+            } else {
+              // CLOSED but not locked
+              r = 145;
+              g = 95;
+              b = 55;
+            }
+          }
+
+          // Optional: make secret doors distinct when overlay is enabled
+          if (t === 3 && showStateOverlay) {
+            r = 135;
+            g = 90;
+            b = 50;
+          }
         } else {
           // key / lever / unknown future
           r = 230;
@@ -149,7 +216,6 @@ function makeContentCompositeImageData(
 
         // Keep walls visible if a feature is on a wall (secret doors are walls)
         if (isWall) {
-          // blend 60% overlay, 40% base
           const br = 25,
             bg = 25,
             bb = 25;
@@ -197,6 +263,11 @@ const App: React.FC = () => {
   const [content, setContent] = useState<ReturnType<
     typeof generateDungeonContent
   > | null>(null);
+  const [runtime, setRuntime] = useState<DungeonRuntimeState | null>(null);
+  const [circuitDebug, setCircuitDebug] = useState<CircuitEvalResult["debug"]>(
+    {},
+  );
+  const [showStateOverlay, setShowStateOverlay] = useState(true);
 
   const [imageDataByLayer, setImageDataByLayer] = useState<{
     solid: ImageData | null;
@@ -266,7 +337,18 @@ const App: React.FC = () => {
     screenX: number;
     screenY: number;
     lines: string[];
-  }>({ visible: false, x: 0, y: 0, screenX: 0, screenY: 0, lines: [] });
+    featureType: number;
+    featureId: number;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    screenX: 0,
+    screenY: 0,
+    lines: [],
+    featureType: 0,
+    featureId: 0,
+  });
 
   const opts = useMemo(
     () => ({
@@ -301,17 +383,48 @@ const App: React.FC = () => {
     ],
   );
 
+  function applyRuntime(next: DungeonRuntimeState) {
+    const content = contentRef.current;
+    if (!content) {
+      setRuntime(next);
+      return;
+    }
+    const res = evaluateCircuits(next, content.meta.circuits);
+    setRuntime(res.next);
+    setCircuitDebug(res.debug);
+  }
+
+  const regenerateRuntimeFromContent = React.useCallback(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const initialRuntime = initDungeonRuntimeState(content);
+    const evalOut = evaluateCircuits(initialRuntime, content.meta.circuits);
+
+    setRuntime(evalOut.next);
+    setCircuitDebug(evalOut.debug);
+  }, []);
+
   const generate = React.useCallback(() => {
     const out = generateBspDungeon(opts);
     const content = generateDungeonContent(out);
+
+    const initialRuntime = initDungeonRuntimeState(content);
+    const evalOut = evaluateCircuits(initialRuntime, content.meta.circuits);
+
+    setRuntime(evalOut.next);
+    setCircuitDebug(evalOut.debug);
+
+    const composite = makeContentCompositeImageData(
+      out,
+      content,
+      evalOut.next,
+      showStateOverlay,
+    );
 
     dungeonRef.current = out;
     contentRef.current = content;
 
     setContent(content);
-
-    const composite = makeContentCompositeImageData(out, content);
-
     setAscii(content.debug.ascii);
 
     setImageDataByLayer({
@@ -348,12 +461,31 @@ const App: React.FC = () => {
       keys: content.meta.keys.length,
       levers: content.meta.levers.length,
     });
-  }, [opts]);
+  }, [opts, showStateOverlay]);
 
   // initial generation
   useEffect(() => {
     generate();
   }, [generate]);
+
+  // recompute composite when runtime overlay changes
+  useEffect(() => {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return;
+
+    const composite = makeContentCompositeImageData(
+      dungeon,
+      content,
+      runtime,
+      showStateOverlay,
+    );
+
+    setImageDataByLayer((prev) => ({
+      ...prev,
+      content: composite,
+    }));
+  }, [runtime, showStateOverlay]);
 
   // redraw canvas whenever layer changes or new images arrive
   useEffect(() => {
@@ -413,25 +545,33 @@ const App: React.FC = () => {
     lines.push(`featureType: ${ft} (${featureName(ft)})`);
     lines.push(`featureId: ${fid}`);
 
-    // Milestone 2 extra info
     if (ft === 4) {
       lines.push(`featureParam: ${fparam} (Door: ${doorKindName(fparam)})`);
     } else if (fparam !== 0) {
-      // Useful for future feature types
       lines.push(`featureParam: ${fparam}`);
+    }
+
+    if (ft === 4 && runtime && showStateOverlay && fid !== 0) {
+      const { isOpen, isLocked } = readDoorState(runtime, fid);
+      lines.push(
+        `Door state: ${isOpen ? "OPEN" : "CLOSED"}${isLocked ? " (LOCKED)" : ""}`,
+      );
     }
 
     if (ft === 1) lines.push(`danger: ${dng}`);
     if (ft === 2) lines.push(`lootTier: ${tier}`);
+    if (ft === 10) lines.push(`hazardType: ${hz}`);
 
-    // Helpful relationship hints (best-effort, based on circuit ids)
-    if (ft === 5 && fid !== 0)
-      lines.push(`Hint: key unlocks door circuit ${fid}`);
+    // relationship hints
+    if (ft === 5 && fid !== 0) lines.push(`Hint: key unlocks circuit ${fid}`);
     if (ft === 6 && fid !== 0)
-      lines.push(`Hint: lever controls door circuit ${fid}`);
+      lines.push(`Hint: lever controls circuit ${fid}`);
     if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
 
-    if (ft === 10) lines.push(`hazardType: ${hz}`);
+    // interaction hint
+    if (ft === 5) lines.push("Click: collect key");
+    if (ft === 6) lines.push("Click: toggle lever");
+    if (ft === 4) lines.push("Click: toggle door (debug)");
 
     return lines;
   }
@@ -456,7 +596,6 @@ const App: React.FC = () => {
 
     if (localX < 0 || localY < 0) return null;
 
-    // Convert display pixels to cell coords
     const x = Math.floor(localX / scale);
     const y = Math.floor(localY / scale);
 
@@ -472,8 +611,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // Update tooltip anchor position immediately (so it tracks the cursor),
-    // but only show content after hover delay.
     setTooltip((t) => ({
       ...t,
       x: cell.x,
@@ -483,15 +620,23 @@ const App: React.FC = () => {
     }));
 
     const last = lastHoverCellRef.current;
-    if (last && last.x === cell.x && last.y === cell.y) {
-      return; // same cell; timer already running / tooltip already shown
-    }
+    if (last && last.x === cell.x && last.y === cell.y) return;
 
     lastHoverCellRef.current = { x: cell.x, y: cell.y };
     clearHoverTimer();
+    setTooltip((t) => ({ ...t, visible: false }));
 
     hoverTimerRef.current = window.setTimeout(() => {
+      const dungeon = dungeonRef.current;
+      const content = contentRef.current;
+      if (!dungeon || !content) return;
+
+      const i = idxOf(dungeon.width, cell.x, cell.y);
+      const ft = content.masks.featureType[i] | 0;
+      const fid = content.masks.featureId[i] | 0;
+
       const lines = buildTooltipLines(cell.x, cell.y);
+
       setTooltip((t) => ({
         ...t,
         visible: true,
@@ -500,6 +645,8 @@ const App: React.FC = () => {
         screenX: cell.screenX,
         screenY: cell.screenY,
         lines,
+        featureType: ft,
+        featureId: fid,
       }));
     }, 350);
   }
@@ -508,7 +655,61 @@ const App: React.FC = () => {
     hideTooltip();
   }
 
+  function onCanvasClick(e: React.MouseEvent) {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return;
+    if (!runtime) return;
+
+    const cell = getCellFromMouseEvent(e);
+    if (!cell) return;
+
+    const i = idxOf(dungeon.width, cell.x, cell.y);
+    const ft = content.masks.featureType[i] | 0;
+    const fid = content.masks.featureId[i] | 0;
+
+    if (fid === 0) return;
+
+    // Click interactions are purely debug/runtime-driving for Milestone 3 overlay testing.
+    if (ft === 5) {
+      // Key
+      const next = collectKey(runtime, fid);
+      applyRuntime(next);
+      return;
+    }
+
+    if (ft === 6) {
+      // Lever
+      const next = toggleLever(runtime, fid);
+      applyRuntime(next);
+      return;
+    }
+
+    if (ft === 4) {
+      // Door (debug convenience): toggle door state directly.
+      // If you have a dedicated dungeonState helper later, swap it in here.
+      const next = structuredClone(runtime) as DungeonRuntimeState;
+      const door = next.doors?.[fid];
+      if (door) {
+        (door as any).isOpen = !(door as any).isOpen;
+        // clearing forcedOpen is usually sensible when manually toggling
+        if ("forcedOpen" in (door as any)) (door as any).forcedOpen = false;
+        applyRuntime(next);
+      }
+      return;
+    }
+  }
+
   const imgForDownload = imageDataByLayer[layer];
+
+  // Lightweight circuit debug rendering
+  const circuitDebugKeys = useMemo(() => {
+    try {
+      return Object.keys(circuitDebug ?? {});
+    } catch {
+      return [];
+    }
+  }, [circuitDebug]);
 
   return (
     <div className="maze-app">
@@ -521,6 +722,15 @@ const App: React.FC = () => {
         <div className="maze-controls-row">
           <button className="maze-btn" onClick={generate}>
             Generate
+          </button>
+
+          <button
+            className="maze-btn"
+            onClick={regenerateRuntimeFromContent}
+            disabled={!content}
+            title="Reset runtime state from current generated content"
+          >
+            Reset Runtime
           </button>
 
           <button
@@ -713,6 +923,15 @@ const App: React.FC = () => {
               />
               <span>Keep outer walls</span>
             </label>
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={showStateOverlay}
+                onChange={(e) => setShowStateOverlay(e.target.checked)}
+              />
+              <span>Show state overlay</span>
+            </label>
           </div>
         </details>
 
@@ -777,6 +996,7 @@ const App: React.FC = () => {
           <summary className="maze-summary">ASCII preview</summary>
           <pre className="maze-ascii-pre">{ascii}</pre>
         </details>
+
         {content && (
           <div className="panel">
             <div className="panelTitle">Circuits</div>
@@ -826,6 +1046,31 @@ const App: React.FC = () => {
                 ))}
               </div>
             )}
+
+            <div style={{ height: 12 }} />
+
+            <details>
+              <summary className="maze-summary">Circuit Debug</summary>
+              {circuitDebugKeys.length === 0 ? (
+                <div className="muted">No debug entries.</div>
+              ) : (
+                <div
+                  className="mono"
+                  style={{ fontSize: 12, lineHeight: 1.35 }}
+                >
+                  {circuitDebugKeys.slice(0, 60).map((k) => (
+                    <div key={k}>
+                      {k}: {JSON.stringify((circuitDebug as any)[k])}
+                    </div>
+                  ))}
+                  {circuitDebugKeys.length > 60 ? (
+                    <div className="muted">
+                      (showing first 60 of {circuitDebugKeys.length})
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </details>
           </div>
         )}
       </div>
@@ -925,6 +1170,8 @@ const App: React.FC = () => {
           className="maze-canvas-panel"
           onMouseMove={onCanvasMouseMove}
           onMouseLeave={onCanvasMouseLeave}
+          onClick={onCanvasClick}
+          title="Hover for tooltip. Click keys/levers/doors to update runtime."
         >
           <canvas ref={canvasRef} className="maze-canvas" style={canvasStyle} />
 

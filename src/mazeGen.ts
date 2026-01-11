@@ -16,6 +16,14 @@
 // - distanceToWall: Manhattan distance to nearest wall (0 at walls), capped to 255
 
 import * as THREE from "three";
+import type { DungeonRuntimeState } from "./dungeonState";
+import {
+  collectKey,
+  initDungeonRuntimeState,
+  resetRuntimeState,
+  toggleLever,
+} from "./dungeonState";
+import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
 // -----------------------------
 // Types
