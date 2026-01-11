@@ -12,6 +12,7 @@ type Layer =
   | "solid"
   | "regionId"
   | "distanceToWall"
+  | "content"
   | "featureType"
   | "featureId"
   | "danger"
@@ -40,6 +41,99 @@ function drawToCanvas(
   ctx.putImageData(imageData, 0, 0);
 }
 
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+function featureName(ft: number) {
+  switch (ft) {
+    case 1:
+      return "Monster Spawn";
+    case 2:
+      return "Chest";
+    case 3:
+      return "Secret Door";
+    default:
+      return "None";
+  }
+}
+
+function makeContentCompositeImageData(
+  dungeon: ReturnType<typeof generateBspDungeon>,
+  content: ReturnType<typeof generateDungeonContent>,
+): ImageData {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  const solid = dungeon.masks.solid; // 255 wall, 0 floor
+  const ft = content.masks.featureType; // 0..n
+
+  const img = new ImageData(W, H);
+  const data = img.data;
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = idxOf(W, x, y);
+      const o = i * 4;
+
+      const isWall = solid[i] === 255;
+
+      // Base: walls dark, floors light
+      let r = isWall ? 25 : 235;
+      let g = isWall ? 25 : 235;
+      let b = isWall ? 25 : 235;
+      let a = 255;
+
+      // Overlay feature colors
+      const t = ft[i] | 0;
+      if (t !== 0) {
+        // Slightly darken base first so overlay pops
+        r = Math.max(0, r - 40);
+        g = Math.max(0, g - 40);
+        b = Math.max(0, b - 40);
+
+        // logical colours:
+        // monsters red, chests green, secret doors brown, anything else yellow
+        if (t === 1) {
+          r = 220;
+          g = 60;
+          b = 60;
+        } else if (t === 2) {
+          r = 70;
+          g = 200;
+          b = 90;
+        } else if (t === 3) {
+          r = 150;
+          g = 105;
+          b = 60;
+        } else {
+          r = 230;
+          g = 200;
+          b = 70;
+        }
+
+        // Keep walls visible if a feature is on a wall (secret doors are walls)
+        if (isWall) {
+          // blend 60% overlay, 40% base
+          const br = 25,
+            bg = 25,
+            bb = 25;
+          r = Math.round(br * 0.4 + r * 0.6);
+          g = Math.round(bg * 0.4 + g * 0.6);
+          b = Math.round(bb * 0.4 + b * 0.6);
+        }
+      }
+
+      data[o + 0] = r;
+      data[o + 1] = g;
+      data[o + 2] = b;
+      data[o + 3] = a;
+    }
+  }
+
+  return img;
+}
+
 const App: React.FC = () => {
   // --- Inputs ---
   const [width, setWidth] = useState(96);
@@ -59,15 +153,19 @@ const App: React.FC = () => {
   const [corridorWidth, setCorridorWidth] = useState(1);
   const [keepOuterWalls, setKeepOuterWalls] = useState(true);
 
-  const [layer, setLayer] = useState<Layer>("solid");
+  const [layer, setLayer] = useState<Layer>("content");
   const [scale, setScale] = useState(6);
 
   // --- Output ---
   const [ascii, setAscii] = useState<string>("");
+
   const [imageDataByLayer, setImageDataByLayer] = useState<{
     solid: ImageData | null;
     regionId: ImageData | null;
     distanceToWall: ImageData | null;
+
+    content: ImageData | null;
+
     featureType: ImageData | null;
     featureId: ImageData | null;
     danger: ImageData | null;
@@ -76,6 +174,9 @@ const App: React.FC = () => {
     solid: null,
     regionId: null,
     distanceToWall: null,
+
+    content: null,
+
     featureType: null,
     featureId: null,
     danger: null,
@@ -88,16 +189,35 @@ const App: React.FC = () => {
     corridors: number;
     bspDepth: number;
 
-    // Content stats (Milestone 1)
     entranceRoomId: number;
     farthestRoomId: number;
     mainPathRooms: number;
+
     monsters: number;
     chests: number;
     secrets: number;
   } | null>(null);
 
+  // Keep latest generator outputs around for tooltip lookups
+  const dungeonRef = useRef<ReturnType<typeof generateBspDungeon> | null>(null);
+  const contentRef = useRef<ReturnType<typeof generateDungeonContent> | null>(
+    null,
+  );
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasPanelRef = useRef<HTMLDivElement | null>(null);
+
+  // Hover tooltip state
+  const hoverTimerRef = useRef<number | null>(null);
+  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
+  const [tooltip, setTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    screenX: number;
+    screenY: number;
+    lines: string[];
+  }>({ visible: false, x: 0, y: 0, screenX: 0, screenY: 0, lines: [] });
 
   const opts = useMemo(
     () => ({
@@ -136,13 +256,19 @@ const App: React.FC = () => {
     const out = generateBspDungeon(opts);
     const content = generateDungeonContent(out);
 
-    // Use the content ASCII so markers (M/$/?) appear in the preview.
+    dungeonRef.current = out;
+    contentRef.current = content;
+
+    const composite = makeContentCompositeImageData(out, content);
+
     setAscii(content.debug.ascii);
 
     setImageDataByLayer({
       solid: out.debug.imageData.solid,
       regionId: out.debug.imageData.regionId,
       distanceToWall: out.debug.imageData.distanceToWall,
+
+      content: composite,
 
       featureType: content.debug.imageData.featureType,
       featureId: content.debug.imageData.featureId,
@@ -159,6 +285,7 @@ const App: React.FC = () => {
       entranceRoomId: content.meta.entranceRoomId,
       farthestRoomId: content.meta.farthestRoomId,
       mainPathRooms: content.meta.mainPathRoomIds.length,
+
       monsters: content.meta.monsters.length,
       chests: content.meta.chests.length,
       secrets: content.meta.secrets.length,
@@ -178,14 +305,133 @@ const App: React.FC = () => {
 
   const currentImageData = imageDataByLayer[layer];
 
-  // Canvas scaled size should be driven by style (CSS) + CSS variables
-  // so we keep the inline style minimal and purely dynamic.
-  const canvasStyle = {
-    // used by .maze-canvas to compute pixelated display size
-    ["--mazeW" as any]: currentImageData ? `${currentImageData.width}` : "0",
-    ["--mazeH" as any]: currentImageData ? `${currentImageData.height}` : "0",
-    ["--mazeScale" as any]: `${scale}`,
-  } as React.CSSProperties;
+  // Set displayed size via inline px (reliable across browsers)
+  const canvasStyle: React.CSSProperties = {
+    width: currentImageData ? currentImageData.width * scale : 0,
+    height: currentImageData ? currentImageData.height * scale : 0,
+  };
+
+  function clearHoverTimer() {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }
+
+  function hideTooltip() {
+    clearHoverTimer();
+    lastHoverCellRef.current = null;
+    setTooltip((t) => ({ ...t, visible: false }));
+  }
+
+  function buildTooltipLines(x: number, y: number): string[] {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return [];
+
+    const W = dungeon.width;
+    const H = dungeon.height;
+    if (x < 0 || y < 0 || x >= W || y >= H) return [];
+
+    const i = idxOf(W, x, y);
+
+    const solid = dungeon.masks.solid[i];
+    const regionId = dungeon.masks.regionId[i];
+    const dist = dungeon.masks.distanceToWall[i];
+
+    const ft = content.masks.featureType[i];
+    const fid = content.masks.featureId[i];
+    const dng = content.masks.danger[i];
+    const tier = content.masks.lootTier[i];
+
+    const lines: string[] = [];
+    lines.push(`Cell: (${x}, ${y})`);
+    lines.push(`Terrain: ${solid === 255 ? "Wall" : "Floor"}`);
+    lines.push(`regionId: ${regionId}`);
+    lines.push(`distanceToWall: ${dist}`);
+
+    lines.push(`featureType: ${ft} (${featureName(ft)})`);
+    lines.push(`featureId: ${fid}`);
+
+    if (ft === 1) lines.push(`danger: ${dng}`);
+    if (ft === 2) lines.push(`lootTier: ${tier}`);
+
+    return lines;
+  }
+
+  function getCellFromMouseEvent(e: React.MouseEvent): {
+    x: number;
+    y: number;
+    screenX: number;
+    screenY: number;
+  } | null {
+    const img = currentImageData;
+    if (!img) return null;
+
+    const panel = canvasPanelRef.current;
+    if (!panel) return null;
+
+    const rect = panel.getBoundingClientRect();
+
+    // Mouse coords relative to the *displayed* canvas area inside the panel
+    const localX = e.clientX - rect.left - 12; // panel padding is 12px (matches CSS)
+    const localY = e.clientY - rect.top - 12;
+
+    if (localX < 0 || localY < 0) return null;
+
+    // Convert display pixels to cell coords
+    const x = Math.floor(localX / scale);
+    const y = Math.floor(localY / scale);
+
+    if (x < 0 || y < 0 || x >= img.width || y >= img.height) return null;
+
+    return { x, y, screenX: e.clientX, screenY: e.clientY };
+  }
+
+  function onCanvasMouseMove(e: React.MouseEvent) {
+    const cell = getCellFromMouseEvent(e);
+    if (!cell) {
+      hideTooltip();
+      return;
+    }
+
+    // Update tooltip anchor position immediately (so it tracks the cursor),
+    // but only show content after hover delay.
+    setTooltip((t) => ({
+      ...t,
+      x: cell.x,
+      y: cell.y,
+      screenX: cell.screenX,
+      screenY: cell.screenY,
+    }));
+
+    const last = lastHoverCellRef.current;
+    if (last && last.x === cell.x && last.y === cell.y) {
+      return; // same cell; timer already running / tooltip already shown
+    }
+
+    lastHoverCellRef.current = { x: cell.x, y: cell.y };
+    clearHoverTimer();
+
+    hoverTimerRef.current = window.setTimeout(() => {
+      const lines = buildTooltipLines(cell.x, cell.y);
+      setTooltip((t) => ({
+        ...t,
+        visible: true,
+        x: cell.x,
+        y: cell.y,
+        screenX: cell.screenX,
+        screenY: cell.screenY,
+        lines,
+      }));
+    }, 350);
+  }
+
+  function onCanvasMouseLeave() {
+    hideTooltip();
+  }
+
+  const imgForDownload = imageDataByLayer[layer];
 
   return (
     <div className="maze-app">
@@ -203,12 +449,12 @@ const App: React.FC = () => {
           <button
             className="maze-btn"
             onClick={() => {
-              const img = imageDataByLayer[layer];
+              const img = imgForDownload;
               if (!img) return;
               const dataUrl = imageDataToPngDataUrl(img);
               downloadDataUrl(`dungeon-${layer}.png`, dataUrl);
             }}
-            disabled={!imageDataByLayer[layer]}
+            disabled={!imgForDownload}
             title="Download current layer as PNG"
           >
             Download PNG
@@ -449,6 +695,13 @@ const App: React.FC = () => {
         <div className="maze-preview-toolbar">
           <div className="maze-tabs">
             <button
+              onClick={() => setLayer("content")}
+              className={`maze-tab ${layer === "content" ? "maze-tab--active" : ""}`}
+            >
+              content
+            </button>
+
+            <button
               onClick={() => setLayer("solid")}
               className={`maze-tab ${layer === "solid" ? "maze-tab--active" : ""}`}
             >
@@ -513,8 +766,29 @@ const App: React.FC = () => {
           </label>
         </div>
 
-        <div className="maze-canvas-panel">
+        <div
+          ref={canvasPanelRef}
+          className="maze-canvas-panel"
+          onMouseMove={onCanvasMouseMove}
+          onMouseLeave={onCanvasMouseLeave}
+        >
           <canvas ref={canvasRef} className="maze-canvas" style={canvasStyle} />
+
+          {tooltip.visible && (
+            <div
+              className="maze-tooltip"
+              style={{
+                left: tooltip.screenX + 14,
+                top: tooltip.screenY + 14,
+              }}
+            >
+              {tooltip.lines.map((ln, i) => (
+                <div key={i} className="maze-tooltip-line">
+                  {ln}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="maze-legend">
@@ -523,19 +797,21 @@ const App: React.FC = () => {
           </div>
           <div>
             <b>Legend</b>:{" "}
-            {layer === "solid"
-              ? "white=wall, black=floor"
-              : layer === "regionId"
-                ? "grayscale room id (0=not room)"
-                : layer === "distanceToWall"
-                  ? "grayscale Manhattan distance (0=wall)"
-                  : layer === "featureType"
-                    ? "0=none, 1=monster, 2=chest, 3=secretDoor"
-                    : layer === "danger"
-                      ? "monster danger/level (0..255)"
-                      : layer === "lootTier"
-                        ? "chest tier (1..N)"
-                        : "feature instance id (1..255)"}
+            {layer === "content"
+              ? "Walls/floors base + overlay: red=monsters, green=chests, brown=secret doors, yellow=other"
+              : layer === "solid"
+                ? "white=wall, black=floor"
+                : layer === "regionId"
+                  ? "grayscale room id (0=not room)"
+                  : layer === "distanceToWall"
+                    ? "grayscale Manhattan distance (0=wall)"
+                    : layer === "featureType"
+                      ? "0=none, 1=monster, 2=chest, 3=secretDoor"
+                      : layer === "danger"
+                        ? "monster danger/level (0..255)"
+                        : layer === "lootTier"
+                          ? "chest tier (1..N)"
+                          : "feature instance id (1..255)"}
           </div>
         </div>
       </div>
