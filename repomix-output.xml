@@ -62,6 +62,505 @@ This section contains the contents of the repository's files.
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
 </file>
 
+<file path="src/CONTEXT.md">
+# Dungeon BSP Lab — Context
+
+## What this repo is
+A small in-browser TypeScript + React project that generates a BSP-style dungeon (RogueBasin-inspired) and previews the results.
+
+Primary goal: quickly iterate on dungeon generation logic while having strong debug outputs (ASCII + PNG-like previews + GPU-friendly data textures).
+
+## Current UX
+The React UI (App.tsx) provides:
+- parameter controls (map size, BSP params, room params, corridor params)
+- a canvas preview with layer tabs:
+  - `solid` (walls/floor)
+  - `regionId` (room IDs)
+  - `distanceToWall` (distance field)
+- “Download ASCII” and “Download PNG” for debugging/export
+- scale slider for pixelated zoom (canvas display size)
+
+Styling is in `styles.css`, with App using classNames (minimal inline style only for CSS variables that drive canvas scaling).
+
+## Generator outputs (mazeGen.ts)
+The generator exposes `generateBspDungeon(options)` returning:
+- `masks` (Uint8Array, width*height):
+  - `solid`: 0=floor, 255=wall
+  - `regionId`: 0=not room, 1..255 room id (corridors default to 0)
+  - `distanceToWall`: 0 at walls, increases into open space (Manhattan), clamped to 255
+- `textures` (THREE.DataTexture, R8 single-channel):
+  - `solid`, `regionId`, `distanceToWall`
+- `debug`:
+  - `ascii`: string map (# = wall, . = floor)
+  - `imageData`: ImageData per layer for canvas preview + PNG export
+
+Design choice: keep masks and textures single-channel (R8) for flexibility and easier debugging.
+
+## Coordinate system & conventions
+- grid origin: (0,0) = top-left
+- x increases right, y increases down
+- “wall” is 255, “floor” is 0 (byte-based)
+- textures use `THREE.RedFormat` + `THREE.UnsignedByteType`, nearest filtering, clamp wrap, no mipmaps
+
+## Key files
+- `src/mazeGen.ts` — dungeon generation + masks/textures + debug helpers
+- `src/App.tsx` — “Dungeon Lab” UI and preview wiring
+- `src/styles.css` — all layout styling, includes MazeLab class names
+- `src/main.tsx` — React entry point (React 18) mounting into `#app`
+
+## Common gotchas (already fixed)
+- React entry must mount into `#app` (matches index.html)
+- JSX requires `tsconfig.json` to include `"jsx": "react-jsx"`
+- React 18 needs `react@latest` + `react-dom@latest` (and types)
+
+## Next ideas (likely future work)
+- Add more textures (separate, not packed):
+  - corridorId, feature flags, door placement, spawn heatmap
+  - distance-to-room-center, distance-to-corridor, or signed distance field
+- Let corridors inherit nearest roomId (optional)
+- Add “validate connectivity” and “find path between rooms” debug overlay
+- Add “render colored preview” (palette by roomId) for easier differentiation
+
+## What to tell ChatGPT if you’re resuming later
+“I have a TS+React dungeon BSP lab. The generator is in src/mazeGen.ts returning Uint8 masks + THREE R8 DataTextures + ImageData/ASCII debug. App.tsx is a parameter UI + canvas preview with layer tabs. styles.css holds layout. We’re using bytes (0 floor, 255 wall).”
+</file>
+
+<file path="src/main.tsx">
+// src/main.tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("app")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
+</file>
+
+<file path="src/styles.css">
+:root {
+    font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+
+    color-scheme: light dark;
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #242424;
+
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    font-weight: 500;
+    color: #646cff;
+    text-decoration: inherit;
+}
+a:hover {
+    color: #535bf2;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    place-items: center;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+h1 {
+    font-size: 3.2em;
+    line-height: 1.1;
+}
+
+#app {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.logo {
+    height: 6em;
+    padding: 1.5em;
+    will-change: filter;
+    transition: filter 300ms;
+}
+.logo:hover {
+    filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.vanilla:hover {
+    filter: drop-shadow(0 0 2em #3178c6aa);
+}
+
+.card {
+    padding: 2em;
+}
+
+.read-the-docs {
+    color: #888;
+}
+
+button {
+    border-radius: 8px;
+    border: 1px solid transparent;
+    padding: 0.6em 1.2em;
+    font-size: 1em;
+    font-weight: 500;
+    font-family: inherit;
+    background-color: #1a1a1a;
+    cursor: pointer;
+    transition: border-color 0.25s;
+}
+button:hover {
+    border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+    outline: 4px auto -webkit-focus-ring-color;
+}
+
+/* ---------------------------------------
+   Maze / Dungeon Preview (App.tsx)
+   Replace inline styles with these classes
+---------------------------------------- */
+
+/* Outer app layout */
+.maze-app {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    font-family: system-ui, sans-serif;
+}
+
+/* Left controls column */
+.maze-controls {
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Header row (title) */
+.maze-header-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.maze-title {
+    margin: 0;
+}
+
+/* Grid for width/height/seed */
+.maze-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.maze-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.maze-seed-field {
+    grid-column: 1 / span 2;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.maze-seed-row {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-seed-input {
+    flex: 1;
+}
+
+/* Details sections */
+.maze-summary {
+    cursor: pointer;
+}
+
+.maze-subgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* Checkbox row in corridors/borders */
+.maze-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 22px;
+}
+
+/* Action buttons row */
+.maze-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-action-btn {
+    padding: 8px 12px;
+}
+
+/* Meta info */
+.maze-meta {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.maze-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+/* ASCII preview */
+.maze-ascii-pre {
+    white-space: pre;
+    max-height: 320px;
+    overflow: auto;
+    background: #111;
+    color: #ddd;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.1;
+}
+
+/* Right preview column */
+.maze-preview {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Top row: tabs + scale slider */
+.maze-preview-toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.maze-tabs {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-tab {
+    color: #090909;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+}
+
+/* Active tab variations */
+.maze-tab--active {
+    border: 2px solid #444;
+    background: #f2f2f2;
+}
+
+/* Scale control (right aligned) */
+.maze-scale {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.maze-scale-value {
+    width: 24px;
+    text-align: right;
+}
+
+/* Canvas container panel */
+.maze-canvas-panel {
+    border: 1px solid #ccc;
+    border-radius: 12px;
+    padding: 12px;
+    background: #fafafa;
+    width: fit-content;
+}
+
+/* Canvas itself */
+.maze-canvas {
+    image-rendering: pixelated;
+    display: block;
+
+    /* Use CSS variables set on the element via style={} */
+    width: calc(var(--mazeW, 0) * var(--mazeScale, 1) * 1px);
+    height: calc(var(--mazeH, 0) * var(--mazeScale, 1) * 1px);
+}
+
+/* Legend */
+.maze-legend {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+/* Light mode overrides */
+@media (prefers-color-scheme: light) {
+    :root {
+        color: #213547;
+        background-color: #ffffff;
+    }
+    a:hover {
+        color: #747bff;
+    }
+    button {
+        background-color: #f9f9f9;
+    }
+}
+</file>
+
+<file path=".gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>mazegen</title>
+    </head>
+    <body>
+        <div id="app"></div>
+        <script type="module" src="/src/main.tsx"></script>
+    </body>
+</html>
+</file>
+
+<file path="package.json">
+{
+  "name": "mazegen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}
+</file>
+
+<file path="README.md">
+# BSP Dungeon Generator Lab
+
+A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).
+
+The project focuses on **data-first dungeon generation** with strong debugging tools:
+- byte-based grid masks
+- GPU-friendly `THREE.DataTexture` outputs
+- ASCII and PNG-style visualizations for inspection
+
+This repo is intended as a **generator playground**, not a finished game.
+
+---
+
+## Features
+
+- BSP dungeon generation (rooms + corridors)
+- Deterministic generation via seed
+- Multiple output layers:
+  - **solid** — wall / floor mask
+  - **regionId** — room identifiers
+  - **distanceToWall** — Manhattan distance field
+- Interactive parameter UI
+- Pixel-perfect canvas preview
+- Export:
+  - ASCII map
+  - PNG image per layer
+
+---
+
+## Tech Stack
+
+- **TypeScript**
+- **React 18**
+- **Vite**
+- **Three.js** (for `DataTexture` outputs only — no 3D scene)
+
+---
+
+## Running the project
+
+Install dependencies:
+
+```bash
+npm install
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true,
+  },
+  "include": ["src"],
+}
+</file>
+
 <file path="src/App.tsx">
 // src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -609,82 +1108,6 @@ const App: React.FC = () => {
 };
 
 export default App;
-</file>
-
-<file path="src/CONTEXT.md">
-# Dungeon BSP Lab — Context
-
-## What this repo is
-A small in-browser TypeScript + React project that generates a BSP-style dungeon (RogueBasin-inspired) and previews the results.
-
-Primary goal: quickly iterate on dungeon generation logic while having strong debug outputs (ASCII + PNG-like previews + GPU-friendly data textures).
-
-## Current UX
-The React UI (App.tsx) provides:
-- parameter controls (map size, BSP params, room params, corridor params)
-- a canvas preview with layer tabs:
-  - `solid` (walls/floor)
-  - `regionId` (room IDs)
-  - `distanceToWall` (distance field)
-- “Download ASCII” and “Download PNG” for debugging/export
-- scale slider for pixelated zoom (canvas display size)
-
-Styling is in `styles.css`, with App using classNames (minimal inline style only for CSS variables that drive canvas scaling).
-
-## Generator outputs (mazeGen.ts)
-The generator exposes `generateBspDungeon(options)` returning:
-- `masks` (Uint8Array, width*height):
-  - `solid`: 0=floor, 255=wall
-  - `regionId`: 0=not room, 1..255 room id (corridors default to 0)
-  - `distanceToWall`: 0 at walls, increases into open space (Manhattan), clamped to 255
-- `textures` (THREE.DataTexture, R8 single-channel):
-  - `solid`, `regionId`, `distanceToWall`
-- `debug`:
-  - `ascii`: string map (# = wall, . = floor)
-  - `imageData`: ImageData per layer for canvas preview + PNG export
-
-Design choice: keep masks and textures single-channel (R8) for flexibility and easier debugging.
-
-## Coordinate system & conventions
-- grid origin: (0,0) = top-left
-- x increases right, y increases down
-- “wall” is 255, “floor” is 0 (byte-based)
-- textures use `THREE.RedFormat` + `THREE.UnsignedByteType`, nearest filtering, clamp wrap, no mipmaps
-
-## Key files
-- `src/mazeGen.ts` — dungeon generation + masks/textures + debug helpers
-- `src/App.tsx` — “Dungeon Lab” UI and preview wiring
-- `src/styles.css` — all layout styling, includes MazeLab class names
-- `src/main.tsx` — React entry point (React 18) mounting into `#app`
-
-## Common gotchas (already fixed)
-- React entry must mount into `#app` (matches index.html)
-- JSX requires `tsconfig.json` to include `"jsx": "react-jsx"`
-- React 18 needs `react@latest` + `react-dom@latest` (and types)
-
-## Next ideas (likely future work)
-- Add more textures (separate, not packed):
-  - corridorId, feature flags, door placement, spawn heatmap
-  - distance-to-room-center, distance-to-corridor, or signed distance field
-- Let corridors inherit nearest roomId (optional)
-- Add “validate connectivity” and “find path between rooms” debug overlay
-- Add “render colored preview” (palette by roomId) for easier differentiation
-
-## What to tell ChatGPT if you’re resuming later
-“I have a TS+React dungeon BSP lab. The generator is in src/mazeGen.ts returning Uint8 masks + THREE R8 DataTextures + ImageData/ASCII debug. App.tsx is a parameter UI + canvas preview with layer tabs. styles.css holds layout. We’re using bytes (0 floor, 255 wall).”
-</file>
-
-<file path="src/main.tsx">
-// src/main.tsx
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-
-ReactDOM.createRoot(document.getElementById("app")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
 </file>
 
 <file path="src/mazeGen.ts">
@@ -1675,7 +2098,7 @@ function keyXY(W: number, x: number, y: number) {
   return y * W + x;
 }
 
-function inBounds(W: number, H: number, x: number, y: number) {
+function inBounds(x: number, y: number, W: number, H: number) {
   return x >= 0 && y >= 0 && x < W && y < H;
 }
 
@@ -1692,7 +2115,7 @@ function findNearestRoomId(
   maxRadius = 8,
 ): number {
   const { x: cx, y: cy } = p;
-  if (inBounds(W, H, cx, cy)) {
+  if (inBounds(cx, cy, W, H)) {
     const v = regionId[keyXY(W, cx, cy)];
     if (v !== 0) return v;
   }
@@ -1706,14 +2129,14 @@ function findNearestRoomId(
 
     for (let x = x0; x <= x1; x++) {
       for (const y of [y0, y1]) {
-        if (!inBounds(W, H, x, y)) continue;
+        if (!inBounds(x, y, W, H)) continue;
         const v = regionId[keyXY(W, x, y)];
         if (v !== 0) return v;
       }
     }
     for (let y = y0 + 1; y <= y1 - 1; y++) {
       for (const x of [x0, x1]) {
-        if (!inBounds(W, H, x, y)) continue;
+        if (!inBounds(x, y, W, H)) continue;
         const v = regionId[keyXY(W, x, y)];
         if (v !== 0) return v;
       }
@@ -1863,7 +2286,7 @@ function sampleRoomFloorPoint(
   for (let t = 0; t < tries; t++) {
     const x = xMin + Math.floor(rng() * Math.max(1, xMax - xMin + 1));
     const y = yMin + Math.floor(rng() * Math.max(1, yMax - yMin + 1));
-    if (!inBounds(W, H, x, y)) continue;
+    if (!inBounds(x, y, W, H)) continue;
 
     const i = keyXY(W, x, y);
     if (solid[i] !== 0) continue; // must be floor
@@ -1898,7 +2321,7 @@ function findSecretDoorWallTile(
 
   for (let y = yMin; y <= yMax; y++) {
     for (let x = xMin; x <= xMax; x++) {
-      if (!inBounds(W, H, x, y)) continue;
+      if (!inBounds(x, y, W, H)) continue;
       const i = keyXY(W, x, y);
       if (solid[i] !== 0) continue; // floor only
 
@@ -1909,7 +2332,7 @@ function findSecretDoorWallTile(
         { x, y: y - 1 },
       ];
       for (const nb of nbs) {
-        if (!inBounds(W, H, nb.x, nb.y)) continue;
+        if (!inBounds(nb.x, nb.y, W, H)) continue;
         const j = keyXY(W, nb.x, nb.y);
         if (solid[j] === 255) {
           // avoid putting secrets on the outermost border (usually ugly / trivial)
@@ -2230,429 +2653,6 @@ export function generateDungeonContent(
       secrets,
     },
   };
-}
-</file>
-
-<file path="src/styles.css">
-:root {
-    font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-    line-height: 1.5;
-    font-weight: 400;
-
-    color-scheme: light dark;
-    color: rgba(255, 255, 255, 0.87);
-    background-color: #242424;
-
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-    font-weight: 500;
-    color: #646cff;
-    text-decoration: inherit;
-}
-a:hover {
-    color: #535bf2;
-}
-
-body {
-    margin: 0;
-    display: flex;
-    place-items: center;
-    min-width: 320px;
-    min-height: 100vh;
-}
-
-h1 {
-    font-size: 3.2em;
-    line-height: 1.1;
-}
-
-#app {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 2rem;
-    text-align: center;
-}
-
-.logo {
-    height: 6em;
-    padding: 1.5em;
-    will-change: filter;
-    transition: filter 300ms;
-}
-.logo:hover {
-    filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.vanilla:hover {
-    filter: drop-shadow(0 0 2em #3178c6aa);
-}
-
-.card {
-    padding: 2em;
-}
-
-.read-the-docs {
-    color: #888;
-}
-
-button {
-    border-radius: 8px;
-    border: 1px solid transparent;
-    padding: 0.6em 1.2em;
-    font-size: 1em;
-    font-weight: 500;
-    font-family: inherit;
-    background-color: #1a1a1a;
-    cursor: pointer;
-    transition: border-color 0.25s;
-}
-button:hover {
-    border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-    outline: 4px auto -webkit-focus-ring-color;
-}
-
-/* ---------------------------------------
-   Maze / Dungeon Preview (App.tsx)
-   Replace inline styles with these classes
----------------------------------------- */
-
-/* Outer app layout */
-.maze-app {
-    display: flex;
-    gap: 16px;
-    padding: 16px;
-    font-family: system-ui, sans-serif;
-}
-
-/* Left controls column */
-.maze-controls {
-    width: 360px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-/* Header row (title) */
-.maze-header-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.maze-title {
-    margin: 0;
-}
-
-/* Grid for width/height/seed */
-.maze-form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-}
-
-.maze-field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.maze-seed-field {
-    grid-column: 1 / span 2;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.maze-seed-row {
-    display: flex;
-    gap: 8px;
-}
-
-.maze-seed-input {
-    flex: 1;
-}
-
-/* Details sections */
-.maze-summary {
-    cursor: pointer;
-}
-
-.maze-subgrid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-top: 8px;
-}
-
-/* Checkbox row in corridors/borders */
-.maze-checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 22px;
-}
-
-/* Action buttons row */
-.maze-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.maze-action-btn {
-    padding: 8px 12px;
-}
-
-/* Meta info */
-.maze-meta {
-    font-size: 12px;
-    opacity: 0.85;
-}
-
-.maze-meta-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-}
-
-/* ASCII preview */
-.maze-ascii-pre {
-    white-space: pre;
-    max-height: 320px;
-    overflow: auto;
-    background: #111;
-    color: #ddd;
-    padding: 12px;
-    border-radius: 8px;
-    margin-top: 8px;
-    font-size: 10px;
-    line-height: 1.1;
-}
-
-/* Right preview column */
-.maze-preview {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-/* Top row: tabs + scale slider */
-.maze-preview-toolbar {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-}
-
-.maze-tabs {
-    display: flex;
-    gap: 8px;
-}
-
-.maze-tab {
-    color: #090909;
-    padding: 6px 10px;
-    border-radius: 8px;
-    border: 1px solid #ccc;
-    background: #fff;
-}
-
-/* Active tab variations */
-.maze-tab--active {
-    border: 2px solid #444;
-    background: #f2f2f2;
-}
-
-/* Scale control (right aligned) */
-.maze-scale {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.maze-scale-value {
-    width: 24px;
-    text-align: right;
-}
-
-/* Canvas container panel */
-.maze-canvas-panel {
-    border: 1px solid #ccc;
-    border-radius: 12px;
-    padding: 12px;
-    background: #fafafa;
-    width: fit-content;
-}
-
-/* Canvas itself */
-.maze-canvas {
-    image-rendering: pixelated;
-    display: block;
-
-    /* Use CSS variables set on the element via style={} */
-    width: calc(var(--mazeW, 0) * var(--mazeScale, 1) * 1px);
-    height: calc(var(--mazeH, 0) * var(--mazeScale, 1) * 1px);
-}
-
-/* Legend */
-.maze-legend {
-    font-size: 12px;
-    opacity: 0.8;
-}
-
-/* Light mode overrides */
-@media (prefers-color-scheme: light) {
-    :root {
-        color: #213547;
-        background-color: #ffffff;
-    }
-    a:hover {
-        color: #747bff;
-    }
-    button {
-        background-color: #f9f9f9;
-    }
-}
-</file>
-
-<file path=".gitignore">
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-</file>
-
-<file path="index.html">
-<!doctype html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>mazegen</title>
-    </head>
-    <body>
-        <div id="app"></div>
-        <script type="module" src="/src/main.tsx"></script>
-    </body>
-</html>
-</file>
-
-<file path="package.json">
-{
-  "name": "mazegen",
-  "version": "0.0.0",
-  "private": true,
-  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
-  "license": "ISC",
-  "author": "",
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.8",
-    "@types/react-dom": "^19.2.3",
-    "typescript": "~5.9.3",
-    "vite": "^7.2.4"
-  }
-}
-</file>
-
-<file path="README.md">
-# BSP Dungeon Generator Lab
-
-A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).
-
-The project focuses on **data-first dungeon generation** with strong debugging tools:
-- byte-based grid masks
-- GPU-friendly `THREE.DataTexture` outputs
-- ASCII and PNG-style visualizations for inspection
-
-This repo is intended as a **generator playground**, not a finished game.
-
----
-
-## Features
-
-- BSP dungeon generation (rooms + corridors)
-- Deterministic generation via seed
-- Multiple output layers:
-  - **solid** — wall / floor mask
-  - **regionId** — room identifiers
-  - **distanceToWall** — Manhattan distance field
-- Interactive parameter UI
-- Pixel-perfect canvas preview
-- Export:
-  - ASCII map
-  - PNG image per layer
-
----
-
-## Tech Stack
-
-- **TypeScript**
-- **React 18**
-- **Vite**
-- **Three.js** (for `DataTexture` outputs only — no 3D scene)
-
----
-
-## Running the project
-
-Install dependencies:
-
-```bash
-npm install
-</file>
-
-<file path="tsconfig.json">
-{
-  "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "noEmit": true,
-  },
-  "include": ["src"],
 }
 </file>
 
