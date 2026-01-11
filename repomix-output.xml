@@ -1,0 +1,1721 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+public/
+  vite.svg
+src/
+  App.tsx
+  main.ts
+  mazeGen.ts
+  style.css
+.gitignore
+index.html
+package.json
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="public/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="src/App.tsx">
+// src/App.tsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { generateBspDungeon, imageDataToPngDataUrl } from "./mazeGen";
+
+type Layer = "solid" | "regionId" | "distanceToWall";
+
+function clampInt(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function downloadDataUrl(filename: string, dataUrl: string) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  a.click();
+}
+
+function drawToCanvas(
+  canvas: HTMLCanvasElement | null,
+  imageData: ImageData | null,
+) {
+  if (!canvas || !imageData) return;
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.putImageData(imageData, 0, 0);
+}
+
+const App: React.FC = () => {
+  // --- Controls ---
+  const [width, setWidth] = useState(128);
+  const [height, setHeight] = useState(96);
+  const [seed, setSeed] = useState("demo-seed");
+
+  const [maxDepth, setMaxDepth] = useState(6);
+  const [minLeafSize, setMinLeafSize] = useState(12);
+  const [maxLeafSize, setMaxLeafSize] = useState(28);
+  const [splitPadding, setSplitPadding] = useState(2);
+
+  const [roomPadding, setRoomPadding] = useState(1);
+  const [minRoomSize, setMinRoomSize] = useState(5);
+  const [maxRoomSize, setMaxRoomSize] = useState(14);
+  const [roomFillLeafChance, setRoomFillLeafChance] = useState(0.08);
+
+  const [corridorWidth, setCorridorWidth] = useState(1);
+  const [keepOuterWalls, setKeepOuterWalls] = useState(true);
+
+  const [layer, setLayer] = useState<Layer>("solid");
+  const [scale, setScale] = useState(6);
+
+  // --- Output ---
+  const [ascii, setAscii] = useState<string>("");
+  const [imageDataByLayer, setImageDataByLayer] = useState<{
+    solid: ImageData | null;
+    regionId: ImageData | null;
+    distanceToWall: ImageData | null;
+  }>({ solid: null, regionId: null, distanceToWall: null });
+
+  const [meta, setMeta] = useState<{
+    seedUsed: number;
+    rooms: number;
+    corridors: number;
+    bspDepth: number;
+  } | null>(null);
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const opts = useMemo(
+    () => ({
+      width,
+      height,
+      seed,
+      maxDepth,
+      minLeafSize,
+      maxLeafSize,
+      splitPadding,
+      roomPadding,
+      minRoomSize,
+      maxRoomSize,
+      roomFillLeafChance,
+      corridorWidth,
+      keepOuterWalls,
+    }),
+    [
+      width,
+      height,
+      seed,
+      maxDepth,
+      minLeafSize,
+      maxLeafSize,
+      splitPadding,
+      roomPadding,
+      minRoomSize,
+      maxRoomSize,
+      roomFillLeafChance,
+      corridorWidth,
+      keepOuterWalls,
+    ],
+  );
+
+  const generate = React.useCallback(() => {
+    const out = generateBspDungeon(opts);
+
+    setAscii(out.debug.ascii);
+    setImageDataByLayer({
+      solid: out.debug.imageData.solid,
+      regionId: out.debug.imageData.regionId,
+      distanceToWall: out.debug.imageData.distanceToWall,
+    });
+
+    setMeta({
+      seedUsed: out.meta.seedUsed,
+      rooms: out.meta.rooms.length,
+      corridors: out.meta.corridors.length,
+      bspDepth: out.meta.bspDepth,
+    });
+  }, [opts]);
+
+  // initial generation
+  useEffect(() => {
+    generate();
+  }, [generate]);
+
+  // redraw canvas whenever layer changes or new images arrive
+  useEffect(() => {
+    const img = imageDataByLayer[layer];
+    drawToCanvas(canvasRef.current, img);
+  }, [layer, imageDataByLayer]);
+
+  const currentImageData = imageDataByLayer[layer];
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 16,
+        padding: 16,
+        fontFamily: "system-ui, sans-serif",
+      }}
+    >
+      {/* Left: Controls */}
+      <div
+        style={{
+          width: 360,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <h2 style={{ margin: 0 }}>Maze / Dungeon Preview</h2>
+        </div>
+
+        <div
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
+        >
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span>Width</span>
+            <input
+              type="number"
+              value={width}
+              min={16}
+              max={1024}
+              onChange={(e) =>
+                setWidth(clampInt(Number(e.target.value || 0), 16, 2048))
+              }
+            />
+          </label>
+
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span>Height</span>
+            <input
+              type="number"
+              value={height}
+              min={16}
+              max={1024}
+              onChange={(e) =>
+                setHeight(clampInt(Number(e.target.value || 0), 16, 2048))
+              }
+            />
+          </label>
+
+          <label
+            style={{
+              gridColumn: "1 / span 2",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            <span>Seed</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                style={{ flex: 1 }}
+                value={seed}
+                onChange={(e) => setSeed(e.target.value)}
+              />
+              <button
+                onClick={() =>
+                  setSeed(`seed-${Math.random().toString(16).slice(2)}`)
+                }
+                title="Randomize seed string"
+              >
+                🎲
+              </button>
+            </div>
+          </label>
+        </div>
+
+        <details open>
+          <summary style={{ cursor: "pointer" }}>BSP</summary>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              marginTop: 8,
+            }}
+          >
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Max depth</span>
+              <input
+                type="number"
+                value={maxDepth}
+                min={1}
+                max={20}
+                onChange={(e) =>
+                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 30))
+                }
+              />
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Split padding</span>
+              <input
+                type="number"
+                value={splitPadding}
+                min={0}
+                max={10}
+                onChange={(e) =>
+                  setSplitPadding(clampInt(Number(e.target.value || 0), 0, 32))
+                }
+              />
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Min leaf size</span>
+              <input
+                type="number"
+                value={minLeafSize}
+                min={4}
+                max={256}
+                onChange={(e) =>
+                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 512))
+                }
+              />
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Max leaf size</span>
+              <input
+                type="number"
+                value={maxLeafSize}
+                min={8}
+                max={512}
+                onChange={(e) =>
+                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 8, 1024))
+                }
+              />
+            </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary style={{ cursor: "pointer" }}>Rooms</summary>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              marginTop: 8,
+            }}
+          >
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Room padding</span>
+              <input
+                type="number"
+                value={roomPadding}
+                min={0}
+                max={10}
+                onChange={(e) =>
+                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 64))
+                }
+              />
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Fill-leaf chance</span>
+              <input
+                type="number"
+                value={roomFillLeafChance}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(e) =>
+                  setRoomFillLeafChance(
+                    Math.max(0, Math.min(1, Number(e.target.value || 0))),
+                  )
+                }
+              />
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Min room size</span>
+              <input
+                type="number"
+                value={minRoomSize}
+                min={2}
+                max={256}
+                onChange={(e) =>
+                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 512))
+                }
+              />
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Max room size</span>
+              <input
+                type="number"
+                value={maxRoomSize}
+                min={2}
+                max={512}
+                onChange={(e) =>
+                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 1024))
+                }
+              />
+            </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary style={{ cursor: "pointer" }}>Corridors / Borders</summary>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              marginTop: 8,
+            }}
+          >
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>Corridor width</span>
+              <input
+                type="number"
+                value={corridorWidth}
+                min={1}
+                max={9}
+                onChange={(e) =>
+                  setCorridorWidth(clampInt(Number(e.target.value || 0), 1, 32))
+                }
+              />
+            </label>
+
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 22,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={keepOuterWalls}
+                onChange={(e) => setKeepOuterWalls(e.target.checked)}
+              />
+              <span>Keep outer walls</span>
+            </label>
+          </div>
+        </details>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={generate} style={{ padding: "8px 12px" }}>
+            Generate
+          </button>
+
+          <button
+            onClick={() => {
+              const blob = new Blob([ascii], {
+                type: "text/plain;charset=utf-8",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `dungeon_${seed}.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            style={{ padding: "8px 12px" }}
+          >
+            Download ASCII
+          </button>
+
+          <button
+            onClick={() => {
+              if (!currentImageData) return;
+              const url = imageDataToPngDataUrl(currentImageData);
+              downloadDataUrl(`dungeon_${seed}_${layer}.png`, url);
+            }}
+            style={{ padding: "8px 12px" }}
+          >
+            Download PNG
+          </button>
+        </div>
+
+        <div style={{ fontSize: 12, opacity: 0.85 }}>
+          {meta ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 6,
+              }}
+            >
+              <div>
+                <b>Seed used</b>: {meta.seedUsed}
+              </div>
+              <div>
+                <b>BSP depth</b>: {meta.bspDepth}
+              </div>
+              <div>
+                <b>Rooms</b>: {meta.rooms}
+              </div>
+              <div>
+                <b>Corridors</b>: {meta.corridors}
+              </div>
+            </div>
+          ) : (
+            <div>Generating…</div>
+          )}
+        </div>
+
+        <details>
+          <summary style={{ cursor: "pointer" }}>ASCII preview</summary>
+          <pre
+            style={{
+              whiteSpace: "pre",
+              maxHeight: 320,
+              overflow: "auto",
+              background: "#111",
+              color: "#ddd",
+              padding: 12,
+              borderRadius: 8,
+              marginTop: 8,
+              fontSize: 10,
+              lineHeight: 1.1,
+            }}
+          >
+            {ascii}
+          </pre>
+        </details>
+      </div>
+
+      {/* Right: Preview */}
+      <div
+        style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}
+      >
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => setLayer("solid")}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: layer === "solid" ? "2px solid #444" : "1px solid #ccc",
+                background: layer === "solid" ? "#f2f2f2" : "#fff",
+              }}
+            >
+              solid
+            </button>
+            <button
+              onClick={() => setLayer("regionId")}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border:
+                  layer === "regionId" ? "2px solid #444" : "1px solid #ccc",
+                background: layer === "regionId" ? "#f2f2f2" : "#fff",
+              }}
+            >
+              regionId
+            </button>
+            <button
+              onClick={() => setLayer("distanceToWall")}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border:
+                  layer === "distanceToWall"
+                    ? "2px solid #444"
+                    : "1px solid #ccc",
+                background: layer === "distanceToWall" ? "#f2f2f2" : "#fff",
+              }}
+            >
+              distanceToWall
+            </button>
+          </div>
+
+          <label
+            style={{
+              marginLeft: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <span>Scale</span>
+            <input
+              type="range"
+              min={1}
+              max={16}
+              value={scale}
+              onChange={(e) =>
+                setScale(clampInt(Number(e.target.value || 0), 1, 32))
+              }
+            />
+            <span style={{ width: 24, textAlign: "right" }}>{scale}×</span>
+          </label>
+        </div>
+
+        <div
+          style={{
+            border: "1px solid #ccc",
+            borderRadius: 12,
+            padding: 12,
+            background: "#fafafa",
+            width: "fit-content",
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            style={{
+              imageRendering: "pixelated",
+              width: currentImageData ? currentImageData.width * scale : 0,
+              height: currentImageData ? currentImageData.height * scale : 0,
+              display: "block",
+            }}
+          />
+        </div>
+
+        <div style={{ fontSize: 12, opacity: 0.8 }}>
+          <div>
+            <b>Layer</b>: {layer}
+          </div>
+          <div>
+            <b>Legend</b>:{" "}
+            {layer === "solid"
+              ? "white=wall, black=floor"
+              : layer === "regionId"
+                ? "grayscale room id (0=not room)"
+                : "grayscale Manhattan distance (0=wall)"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
+</file>
+
+<file path="src/main.ts">
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+import "./index.css";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+</file>
+
+<file path="src/mazeGen.ts">
+// src/mazeGen.ts
+//
+// Basic BSP dungeon generator (RogueBasin-inspired):
+// - Split space into a BSP tree
+// - Create one room per leaf
+// - Connect sibling subtrees bottom-up with straight or Z corridors
+//
+// Outputs (browser-friendly):
+// - ASCII debug string
+// - ImageData debug previews (grayscale layers)
+// - THREE.DataTextures (single-channel R8 masks)
+//
+// Masks / textures included:
+// - solid         : 0=floor, 255=wall
+// - regionId      : 0=not room, 1..255=room id (corridors remain 0 by default)
+// - distanceToWall: Manhattan distance to nearest wall (0 at walls), capped to 255
+
+import * as THREE from "three";
+
+// -----------------------------
+// Types
+// -----------------------------
+
+export type Point = { x: number; y: number };
+export type Rect = { x: number; y: number; w: number; h: number };
+
+export type BspDungeonOptions = {
+  width: number;
+  height: number;
+
+  // Determinism
+  seed?: number | string;
+
+  // BSP splitting
+  maxDepth?: number; // default 6
+  minLeafSize?: number; // default 12
+  maxLeafSize?: number; // default 28
+  splitPadding?: number; // default 2 (prevents splits too close to edges)
+
+  // Room generation
+  roomPadding?: number; // default 1 (padding inside leaf)
+  minRoomSize?: number; // default 5
+  maxRoomSize?: number; // default 14
+  roomFillLeafChance?: number; // default 0.08 (occasionally make room fill most of leaf)
+
+  // Corridors
+  corridorWidth?: number; // default 1
+  corridorStyle?: "straight-or-z"; // only style supported for now
+
+  // Borders
+  keepOuterWalls?: boolean; // default true (do not carve outermost border)
+};
+
+export type BspDungeonOutputs = {
+  width: number;
+  height: number;
+
+  // Core data
+  masks: {
+    solid: Uint8Array; // length = width*height ; 0=floor, 255=wall
+    regionId: Uint8Array; // 0=not room, 1..255=room id
+    distanceToWall: Uint8Array; // 0 at walls, increasing into walkable cells, capped at 255
+  };
+
+  // THREE textures
+  textures: {
+    solid: THREE.DataTexture;
+    regionId: THREE.DataTexture;
+    distanceToWall: THREE.DataTexture;
+  };
+
+  // Debug
+  debug: {
+    ascii: string;
+    imageData: {
+      solid: ImageData; // white=wall black=floor
+      regionId: ImageData; // grayscale (value=room id)
+      distanceToWall: ImageData; // grayscale (value=distance)
+    };
+  };
+
+  // Optional metadata for debugging / future expansions
+  meta: {
+    seedUsed: number;
+    rooms: Rect[];
+    corridors: Array<{ a: Point; b: Point; bends?: Point[] }>;
+    bspDepth: number;
+  };
+};
+
+// -----------------------------
+// RNG (seeded)
+// -----------------------------
+
+function hashSeedToUint32(seed: number | string | undefined): number {
+  if (seed === undefined) return 0x12345678;
+  if (typeof seed === "number") return seed >>> 0 || 0x12345678;
+
+  // FNV-1a 32-bit
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number) {
+  let t = seed >>> 0;
+  return function rand() {
+    t += 0x6d2b79f5;
+    let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+type RNG = {
+  next(): number; // [0,1)
+  int(minIncl: number, maxIncl: number): number;
+  chance(p: number): boolean;
+};
+
+function makeRng(seedU32: number): RNG {
+  const r = mulberry32(seedU32);
+  return {
+    next: () => r(),
+    int: (minIncl, maxIncl) => {
+      const lo = Math.min(minIncl, maxIncl);
+      const hi = Math.max(minIncl, maxIncl);
+      return lo + Math.floor(r() * (hi - lo + 1));
+    },
+    chance: (p) => r() < p,
+  };
+}
+
+// -----------------------------
+// Grid helpers
+// -----------------------------
+
+function idx(x: number, y: number, w: number) {
+  return y * w + x;
+}
+
+function inBounds(x: number, y: number, w: number, h: number) {
+  return x >= 0 && y >= 0 && x < w && y < h;
+}
+
+function carveRect(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+  r: Rect,
+  keepOuterWalls: boolean,
+) {
+  const x0 = r.x;
+  const y0 = r.y;
+  const x1 = r.x + r.w - 1;
+  const y1 = r.y + r.h - 1;
+
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!inBounds(x, y, W, H)) continue;
+      if (keepOuterWalls) {
+        if (x === 0 || y === 0 || x === W - 1 || y === H - 1) continue;
+      }
+      solid[idx(x, y, W)] = 0; // floor
+    }
+  }
+}
+
+function carvePoint(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+  p: Point,
+  keepOuterWalls: boolean,
+) {
+  if (!inBounds(p.x, p.y, W, H)) return;
+  if (keepOuterWalls) {
+    if (p.x === 0 || p.y === 0 || p.x === W - 1 || p.y === H - 1) return;
+  }
+  solid[idx(p.x, p.y, W)] = 0;
+}
+
+function carveCorridor(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+  a: Point,
+  b: Point,
+  corridorWidth: number,
+  keepOuterWalls: boolean,
+) {
+  // Thickened Manhattan segment between points a and b.
+  const w = Math.max(1, corridorWidth);
+
+  const dx = Math.sign(b.x - a.x);
+  const dy = Math.sign(b.y - a.y);
+
+  const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+  let x = a.x;
+  let y = a.y;
+
+  for (let i = 0; i <= steps; i++) {
+    const half = Math.floor(w / 2);
+    for (let oy = -half; oy <= half; oy++) {
+      for (let ox = -half; ox <= half; ox++) {
+        carvePoint(solid, W, H, { x: x + ox, y: y + oy }, keepOuterWalls);
+      }
+    }
+    x += dx;
+    y += dy;
+  }
+}
+
+// -----------------------------
+// BSP tree
+// -----------------------------
+
+type BspNode = {
+  rect: Rect;
+  depth: number;
+  left?: BspNode;
+  right?: BspNode;
+
+  room?: Rect; // set for leaf nodes
+  rep?: Point; // representative point for connections (set bottom-up)
+  roomId?: number; // 1..255 for leaf room
+};
+
+function rectCenter(r: Rect): Point {
+  return {
+    x: r.x + Math.floor(r.w / 2),
+    y: r.y + Math.floor(r.h / 2),
+  };
+}
+
+function clampInt(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function buildBsp(
+  rect: Rect,
+  depth: number,
+  opts: Required<
+    Pick<
+      BspDungeonOptions,
+      "maxDepth" | "minLeafSize" | "maxLeafSize" | "splitPadding"
+    >
+  >,
+  rng: RNG,
+): { node: BspNode; maxDepthReached: number } {
+  const node: BspNode = { rect, depth };
+
+  const canSplitBySize = rect.w > opts.maxLeafSize || rect.h > opts.maxLeafSize;
+  const shouldSplitByDepth = depth < opts.maxDepth;
+
+  if (!shouldSplitByDepth && !canSplitBySize) {
+    return { node, maxDepthReached: depth };
+  }
+
+  const aspect = rect.w / rect.h;
+  let splitVertical: boolean;
+  if (aspect > 1.25) splitVertical = true;
+  else if (aspect < 0.8) splitVertical = false;
+  else splitVertical = rng.chance(0.5);
+
+  if (splitVertical) {
+    const minSplitX = rect.x + opts.splitPadding + opts.minLeafSize;
+    const maxSplitX = rect.x + rect.w - opts.splitPadding - opts.minLeafSize;
+    if (minSplitX > maxSplitX) return { node, maxDepthReached: depth };
+
+    const splitX = rng.int(minSplitX, maxSplitX);
+    const leftRect: Rect = {
+      x: rect.x,
+      y: rect.y,
+      w: splitX - rect.x,
+      h: rect.h,
+    };
+    const rightRect: Rect = {
+      x: splitX,
+      y: rect.y,
+      w: rect.x + rect.w - splitX,
+      h: rect.h,
+    };
+
+    const L = buildBsp(leftRect, depth + 1, opts, rng);
+    const R = buildBsp(rightRect, depth + 1, opts, rng);
+    node.left = L.node;
+    node.right = R.node;
+    return {
+      node,
+      maxDepthReached: Math.max(L.maxDepthReached, R.maxDepthReached),
+    };
+  } else {
+    const minSplitY = rect.y + opts.splitPadding + opts.minLeafSize;
+    const maxSplitY = rect.y + rect.h - opts.splitPadding - opts.minLeafSize;
+    if (minSplitY > maxSplitY) return { node, maxDepthReached: depth };
+
+    const splitY = rng.int(minSplitY, maxSplitY);
+    const topRect: Rect = {
+      x: rect.x,
+      y: rect.y,
+      w: rect.w,
+      h: splitY - rect.y,
+    };
+    const bottomRect: Rect = {
+      x: rect.x,
+      y: splitY,
+      w: rect.w,
+      h: rect.y + rect.h - splitY,
+    };
+
+    const L = buildBsp(topRect, depth + 1, opts, rng);
+    const R = buildBsp(bottomRect, depth + 1, opts, rng);
+    node.left = L.node;
+    node.right = R.node;
+    return {
+      node,
+      maxDepthReached: Math.max(L.maxDepthReached, R.maxDepthReached),
+    };
+  }
+}
+
+function forEachLeaf(node: BspNode, fn: (leaf: BspNode) => void) {
+  if (!node.left && !node.right) {
+    fn(node);
+    return;
+  }
+  if (node.left) forEachLeaf(node.left, fn);
+  if (node.right) forEachLeaf(node.right, fn);
+}
+
+function pickRandomPointInRect(r: Rect, rng: RNG): Point {
+  return {
+    x: rng.int(r.x, r.x + r.w - 1),
+    y: rng.int(r.y, r.y + r.h - 1),
+  };
+}
+
+// -----------------------------
+// Rooms + regionId labeling
+// -----------------------------
+
+function writeRegionRect(
+  regionId: Uint8Array,
+  W: number,
+  H: number,
+  r: Rect,
+  idVal: number,
+) {
+  const x0 = r.x;
+  const y0 = r.y;
+  const x1 = r.x + r.w - 1;
+  const y1 = r.y + r.h - 1;
+
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!inBounds(x, y, W, H)) continue;
+      regionId[idx(x, y, W)] = idVal;
+    }
+  }
+}
+
+function createRooms(
+  root: BspNode,
+  solid: Uint8Array,
+  regionId: Uint8Array,
+  W: number,
+  H: number,
+  opts: Required<
+    Pick<
+      BspDungeonOptions,
+      | "roomPadding"
+      | "minRoomSize"
+      | "maxRoomSize"
+      | "roomFillLeafChance"
+      | "keepOuterWalls"
+    >
+  >,
+  rng: RNG,
+): Rect[] {
+  const rooms: Rect[] = [];
+
+  let nextRoomId = 1; // 1..255 (wrap if huge counts)
+  forEachLeaf(root, (leaf) => {
+    const leafRect = leaf.rect;
+    const pad = Math.max(0, opts.roomPadding);
+
+    const availW = Math.max(1, leafRect.w - pad * 2);
+    const availH = Math.max(1, leafRect.h - pad * 2);
+
+    let rw: number;
+    let rh: number;
+
+    if (rng.chance(opts.roomFillLeafChance)) {
+      rw = clampInt(availW, 1, availW);
+      rh = clampInt(availH, 1, availH);
+      rw = clampInt(rw, Math.min(opts.minRoomSize, availW), availW);
+      rh = clampInt(rh, Math.min(opts.minRoomSize, availH), availH);
+    } else {
+      rw = rng.int(opts.minRoomSize, opts.maxRoomSize);
+      rh = rng.int(opts.minRoomSize, opts.maxRoomSize);
+      rw = clampInt(rw, 1, availW);
+      rh = clampInt(rh, 1, availH);
+    }
+
+    rw = clampInt(rw, 1, availW);
+    rh = clampInt(rh, 1, availH);
+
+    const minX = leafRect.x + pad;
+    const minY = leafRect.y + pad;
+    const maxX = leafRect.x + leafRect.w - pad - rw;
+    const maxY = leafRect.y + leafRect.h - pad - rh;
+
+    const rx = rng.int(minX, Math.max(minX, maxX));
+    const ry = rng.int(minY, Math.max(minY, maxY));
+
+    const room: Rect = { x: rx, y: ry, w: rw, h: rh };
+    leaf.room = room;
+
+    // Assign a room id (wrap at 255 to keep it in Uint8 range)
+    const rid = nextRoomId;
+    leaf.roomId = rid;
+    nextRoomId++;
+    if (nextRoomId > 255) nextRoomId = 1;
+
+    // Representative point (used for corridor connections)
+    leaf.rep = pickRandomPointInRect(room, rng);
+
+    // Carve room in solid
+    carveRect(solid, W, H, room, opts.keepOuterWalls);
+
+    // Label regionId for room cells (corridors remain 0)
+    writeRegionRect(regionId, W, H, room, rid);
+
+    rooms.push(room);
+  });
+
+  return rooms;
+}
+
+// -----------------------------
+// Corridors (connect siblings bottom-up)
+// -----------------------------
+
+function connectSiblings(
+  node: BspNode,
+  solid: Uint8Array,
+  W: number,
+  H: number,
+  opts: Required<Pick<BspDungeonOptions, "corridorWidth" | "keepOuterWalls">>,
+  rng: RNG,
+  corridorsOut: Array<{ a: Point; b: Point; bends?: Point[] }>,
+): Point {
+  if (!node.left && !node.right) {
+    if (!node.rep)
+      node.rep = node.room ? rectCenter(node.room) : rectCenter(node.rect);
+    return node.rep;
+  }
+
+  const left = node.left!;
+  const right = node.right!;
+  const repL = connectSiblings(left, solid, W, H, opts, rng, corridorsOut);
+  const repR = connectSiblings(right, solid, W, H, opts, rng, corridorsOut);
+
+  const a = repL;
+  const b = repR;
+
+  const bends: Point[] = [];
+
+  if (a.x === b.x || a.y === b.y) {
+    carveCorridor(solid, W, H, a, b, opts.corridorWidth, opts.keepOuterWalls);
+  } else {
+    const horizFirst = rng.chance(0.5);
+    if (horizFirst) {
+      const mid: Point = { x: b.x, y: a.y };
+      bends.push(mid);
+      carveCorridor(
+        solid,
+        W,
+        H,
+        a,
+        mid,
+        opts.corridorWidth,
+        opts.keepOuterWalls,
+      );
+      carveCorridor(
+        solid,
+        W,
+        H,
+        mid,
+        b,
+        opts.corridorWidth,
+        opts.keepOuterWalls,
+      );
+    } else {
+      const mid: Point = { x: a.x, y: b.y };
+      bends.push(mid);
+      carveCorridor(
+        solid,
+        W,
+        H,
+        a,
+        mid,
+        opts.corridorWidth,
+        opts.keepOuterWalls,
+      );
+      carveCorridor(
+        solid,
+        W,
+        H,
+        mid,
+        b,
+        opts.corridorWidth,
+        opts.keepOuterWalls,
+      );
+    }
+  }
+
+  corridorsOut.push({ a, b, bends: bends.length ? bends : undefined });
+
+  node.rep = rng.chance(0.5) ? a : b;
+  return node.rep;
+}
+
+// -----------------------------
+// Distance-to-wall (Manhattan) via multi-source BFS
+// -----------------------------
+
+function computeDistanceToWall(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+): Uint8Array {
+  // We compute Manhattan distance to nearest wall for every cell.
+  // Walls start at distance 0 and flood outward.
+  //
+  // This results in:
+  // - wall cells: 0
+  // - floor cells: >= 1 (unless entire map is floor)
+  //
+  // We cap results to 255 for Uint8 storage.
+  const dist = new Uint16Array(W * H);
+  const INF = 0xffff;
+  dist.fill(INF);
+
+  // Queue for BFS (store indices)
+  const q = new Int32Array(W * H);
+  let qh = 0;
+  let qt = 0;
+
+  // Initialize with all walls as sources distance 0
+  for (let i = 0; i < W * H; i++) {
+    if (solid[i] === 255) {
+      dist[i] = 0;
+      q[qt++] = i;
+    }
+  }
+
+  // If somehow no walls exist, return all 255 (max distance) for floors
+  if (qt === 0) {
+    const out = new Uint8Array(W * H);
+    out.fill(255);
+    return out;
+  }
+
+  const neighbors = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ];
+
+  while (qh < qt) {
+    const i = q[qh++];
+    const x = i % W;
+    const y = (i / W) | 0;
+
+    const base = dist[i];
+    const next = base + 1;
+
+    for (const n of neighbors) {
+      const nx = x + n.dx;
+      const ny = y + n.dy;
+      if (!inBounds(nx, ny, W, H)) continue;
+      const ni = idx(nx, ny, W);
+      if (next < dist[ni]) {
+        dist[ni] = next;
+        q[qt++] = ni;
+      }
+    }
+  }
+
+  const out = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const d = dist[i];
+    // Cap and clamp
+    out[i] = d === INF ? 255 : d > 255 ? 255 : d;
+  }
+  return out;
+}
+
+// -----------------------------
+// Debug outputs
+// -----------------------------
+
+export function solidMaskToAscii(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+  chars: { wall?: string; floor?: string } = {},
+): string {
+  const wall = chars.wall ?? "#";
+  const floor = chars.floor ?? ".";
+  let out = "";
+  for (let y = 0; y < H; y++) {
+    let row = "";
+    for (let x = 0; x < W; x++) {
+      const v = solid[idx(x, y, W)];
+      row += v === 255 ? wall : floor;
+    }
+    out += row + (y === H - 1 ? "" : "\n");
+  }
+  return out;
+}
+
+export function maskToImageDataGrayscale(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+): ImageData {
+  const rgba = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    const v = mask[i];
+    const o = i * 4;
+    rgba[o + 0] = v;
+    rgba[o + 1] = v;
+    rgba[o + 2] = v;
+    rgba[o + 3] = 255;
+  }
+  return new ImageData(rgba, W, H);
+}
+
+// White = wall (255), Black = floor (0)
+export function solidMaskToImageData(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+): ImageData {
+  return maskToImageDataGrayscale(solid, W, H);
+}
+
+// Helper: render debug ImageData to a canvas (nearest-neighbor scaling recommended via CSS)
+export function drawImageDataToCanvas(
+  canvas: HTMLCanvasElement,
+  imageData: ImageData,
+) {
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// Helper: get a PNG data URL from ImageData (in-browser "PNG view")
+export function imageDataToPngDataUrl(imageData: ImageData): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+// -----------------------------
+// THREE.DataTexture (single-channel)
+// -----------------------------
+
+export function maskToDataTextureR8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Data textures should not be treated as color
+  tex.colorSpace = THREE.NoColorSpace;
+
+  tex.flipY = false;
+  return tex;
+}
+
+export function solidMaskToDataTexture(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+): THREE.DataTexture {
+  return maskToDataTextureR8(solid, W, H, "bsp_dungeon_solid_mask");
+}
+
+// -----------------------------
+// Public generator
+// -----------------------------
+
+/**
+ * Generates a BSP-based dungeon using a RogueBasin-style algorithm.
+ *
+ * The dungeon is created by:
+ * 1. Recursively splitting the map into a BSP tree.
+ * 2. Placing one rectangular room inside each leaf node.
+ * 3. Connecting sibling subtrees bottom-up with straight or Z-shaped corridors.
+ *
+ * Outputs:
+ * - `masks.solid` (0=floor, 255=wall)
+ * - `masks.regionId` (0=not room/corridor, 1..255=room id for room cells)
+ * - `masks.distanceToWall` (0 at walls, increasing into walkable space, capped at 255)
+ *
+ * Each mask is also provided as a single-channel `THREE.DataTexture` (RedFormat, UnsignedByteType)
+ * with nearest-neighbor sampling and no mipmaps.
+ */
+export function generateBspDungeon(
+  options: BspDungeonOptions,
+): BspDungeonOutputs {
+  const opts: Required<BspDungeonOptions> = {
+    width: options.width,
+    height: options.height,
+    seed: options.seed ?? 0x12345678,
+
+    maxDepth: options.maxDepth ?? 6,
+    minLeafSize: options.minLeafSize ?? 12,
+    maxLeafSize: options.maxLeafSize ?? 28,
+    splitPadding: options.splitPadding ?? 2,
+
+    roomPadding: options.roomPadding ?? 1,
+    minRoomSize: options.minRoomSize ?? 5,
+    maxRoomSize: options.maxRoomSize ?? 14,
+    roomFillLeafChance: options.roomFillLeafChance ?? 0.08,
+
+    corridorWidth: options.corridorWidth ?? 1,
+    corridorStyle: options.corridorStyle ?? "straight-or-z",
+
+    keepOuterWalls: options.keepOuterWalls ?? true,
+  };
+
+  if (opts.width <= 2 || opts.height <= 2) {
+    throw new Error("generateBspDungeon: width/height must be > 2");
+  }
+  if (opts.minLeafSize < 4) {
+    throw new Error(
+      "generateBspDungeon: minLeafSize too small (recommend >= 4)",
+    );
+  }
+
+  const seedUsed = hashSeedToUint32(opts.seed);
+  const rng = makeRng(seedUsed);
+
+  const W = opts.width;
+  const H = opts.height;
+
+  // Masks
+  const solid = new Uint8Array(W * H);
+  solid.fill(255); // start as all walls
+
+  const regionId = new Uint8Array(W * H);
+  regionId.fill(0);
+
+  // Build BSP
+  const rootRect: Rect = { x: 0, y: 0, w: W, h: H };
+  const { node: root, maxDepthReached } = buildBsp(
+    rootRect,
+    0,
+    {
+      maxDepth: opts.maxDepth,
+      minLeafSize: opts.minLeafSize,
+      maxLeafSize: opts.maxLeafSize,
+      splitPadding: opts.splitPadding,
+    },
+    rng,
+  );
+
+  // Rooms + region labeling
+  const rooms = createRooms(
+    root,
+    solid,
+    regionId,
+    W,
+    H,
+    {
+      roomPadding: opts.roomPadding,
+      minRoomSize: opts.minRoomSize,
+      maxRoomSize: opts.maxRoomSize,
+      roomFillLeafChance: opts.roomFillLeafChance,
+      keepOuterWalls: opts.keepOuterWalls,
+    },
+    rng,
+  );
+
+  // Corridors
+  const corridors: Array<{ a: Point; b: Point; bends?: Point[] }> = [];
+  connectSiblings(
+    root,
+    solid,
+    W,
+    H,
+    { corridorWidth: opts.corridorWidth, keepOuterWalls: opts.keepOuterWalls },
+    rng,
+    corridors,
+  );
+
+  // Distance field
+  const distanceToWall = computeDistanceToWall(solid, W, H);
+
+  // Debug outputs
+  const ascii = solidMaskToAscii(solid, W, H);
+  const solidImageData = solidMaskToImageData(solid, W, H);
+  const regionImageData = maskToImageDataGrayscale(regionId, W, H);
+  const distanceImageData = maskToImageDataGrayscale(distanceToWall, W, H);
+
+  // Textures
+  const solidTex = solidMaskToDataTexture(solid, W, H);
+  const regionTex = maskToDataTextureR8(
+    regionId,
+    W,
+    H,
+    "bsp_dungeon_region_id",
+  );
+  const distTex = maskToDataTextureR8(
+    distanceToWall,
+    W,
+    H,
+    "bsp_dungeon_distance_to_wall",
+  );
+
+  return {
+    width: W,
+    height: H,
+    masks: { solid, regionId, distanceToWall },
+    textures: { solid: solidTex, regionId: regionTex, distanceToWall: distTex },
+    debug: {
+      ascii,
+      imageData: {
+        solid: solidImageData,
+        regionId: regionImageData,
+        distanceToWall: distanceImageData,
+      },
+    },
+    meta: {
+      seedUsed,
+      rooms,
+      corridors,
+      bspDepth: maxDepthReached,
+    },
+  };
+}
+
+// Convenience wrapper matching your earlier naming
+export function generateBspDungeonTexture(options: BspDungeonOptions) {
+  return generateBspDungeon(options);
+}
+</file>
+
+<file path="src/style.css">
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+#app {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.vanilla:hover {
+  filter: drop-shadow(0 0 2em #3178c6aa);
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+</file>
+
+<file path=".gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mazegen</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+</file>
+
+<file path="package.json">
+{
+  "name": "mazegen",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["src"]
+}
+</file>
+
+</files>

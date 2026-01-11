@@ -1,0 +1,25 @@
+{
+  "name": "mazegen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}

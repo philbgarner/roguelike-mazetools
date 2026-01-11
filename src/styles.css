@@ -1,0 +1,286 @@
+:root {
+    font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+
+    color-scheme: light dark;
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #242424;
+
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    font-weight: 500;
+    color: #646cff;
+    text-decoration: inherit;
+}
+a:hover {
+    color: #535bf2;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    place-items: center;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+h1 {
+    font-size: 3.2em;
+    line-height: 1.1;
+}
+
+#app {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.logo {
+    height: 6em;
+    padding: 1.5em;
+    will-change: filter;
+    transition: filter 300ms;
+}
+.logo:hover {
+    filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.vanilla:hover {
+    filter: drop-shadow(0 0 2em #3178c6aa);
+}
+
+.card {
+    padding: 2em;
+}
+
+.read-the-docs {
+    color: #888;
+}
+
+button {
+    border-radius: 8px;
+    border: 1px solid transparent;
+    padding: 0.6em 1.2em;
+    font-size: 1em;
+    font-weight: 500;
+    font-family: inherit;
+    background-color: #1a1a1a;
+    cursor: pointer;
+    transition: border-color 0.25s;
+}
+button:hover {
+    border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+    outline: 4px auto -webkit-focus-ring-color;
+}
+
+/* ---------------------------------------
+   Maze / Dungeon Preview (App.tsx)
+   Replace inline styles with these classes
+---------------------------------------- */
+
+/* Outer app layout */
+.maze-app {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    font-family: system-ui, sans-serif;
+}
+
+/* Left controls column */
+.maze-controls {
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Header row (title) */
+.maze-header-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.maze-title {
+    margin: 0;
+}
+
+/* Grid for width/height/seed */
+.maze-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.maze-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.maze-seed-field {
+    grid-column: 1 / span 2;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.maze-seed-row {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-seed-input {
+    flex: 1;
+}
+
+/* Details sections */
+.maze-summary {
+    cursor: pointer;
+}
+
+.maze-subgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* Checkbox row in corridors/borders */
+.maze-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 22px;
+}
+
+/* Action buttons row */
+.maze-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-action-btn {
+    padding: 8px 12px;
+}
+
+/* Meta info */
+.maze-meta {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.maze-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+/* ASCII preview */
+.maze-ascii-pre {
+    white-space: pre;
+    max-height: 320px;
+    overflow: auto;
+    background: #111;
+    color: #ddd;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.1;
+}
+
+/* Right preview column */
+.maze-preview {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Top row: tabs + scale slider */
+.maze-preview-toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.maze-tabs {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-tab {
+    color: #090909;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+}
+
+/* Active tab variations */
+.maze-tab--active {
+    border: 2px solid #444;
+    background: #f2f2f2;
+}
+
+/* Scale control (right aligned) */
+.maze-scale {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.maze-scale-value {
+    width: 24px;
+    text-align: right;
+}
+
+/* Canvas container panel */
+.maze-canvas-panel {
+    border: 1px solid #ccc;
+    border-radius: 12px;
+    padding: 12px;
+    background: #fafafa;
+    width: fit-content;
+}
+
+/* Canvas itself */
+.maze-canvas {
+    image-rendering: pixelated;
+    display: block;
+
+    /* Use CSS variables set on the element via style={} */
+    width: calc(var(--mazeW, 0) * var(--mazeScale, 1) * 1px);
+    height: calc(var(--mazeH, 0) * var(--mazeScale, 1) * 1px);
+}
+
+/* Legend */
+.maze-legend {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+/* Light mode overrides */
+@media (prefers-color-scheme: light) {
+    :root {
+        color: #213547;
+        background-color: #ffffff;
+    }
+    a:hover {
+        color: #747bff;
+    }
+    button {
+        background-color: #f9f9f9;
+    }
+}
