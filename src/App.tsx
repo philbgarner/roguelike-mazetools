@@ -1,10 +1,21 @@
 // src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { generateBspDungeon, imageDataToPngDataUrl } from "./mazeGen";
+import {
+  generateBspDungeon,
+  generateDungeonContent,
+  imageDataToPngDataUrl,
+} from "./mazeGen";
 
 import "./styles.css";
 
-type Layer = "solid" | "regionId" | "distanceToWall";
+type Layer =
+  | "solid"
+  | "regionId"
+  | "distanceToWall"
+  | "featureType"
+  | "featureId"
+  | "danger"
+  | "lootTier";
 
 function clampInt(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
@@ -30,19 +41,19 @@ function drawToCanvas(
 }
 
 const App: React.FC = () => {
-  // --- Controls ---
-  const [width, setWidth] = useState(128);
-  const [height, setHeight] = useState(96);
-  const [seed, setSeed] = useState("demo-seed");
+  // --- Inputs ---
+  const [width, setWidth] = useState(96);
+  const [height, setHeight] = useState(64);
+  const [seed, setSeed] = useState("seed-1234");
 
-  const [maxDepth, setMaxDepth] = useState(6);
-  const [minLeafSize, setMinLeafSize] = useState(12);
-  const [maxLeafSize, setMaxLeafSize] = useState(28);
-  const [splitPadding, setSplitPadding] = useState(2);
+  const [maxDepth, setMaxDepth] = useState(9);
+  const [minLeafSize, setMinLeafSize] = useState(16);
+  const [maxLeafSize, setMaxLeafSize] = useState(26);
+  const [splitPadding, setSplitPadding] = useState(1);
 
-  const [roomPadding, setRoomPadding] = useState(1);
-  const [minRoomSize, setMinRoomSize] = useState(5);
-  const [maxRoomSize, setMaxRoomSize] = useState(14);
+  const [roomPadding, setRoomPadding] = useState(2);
+  const [minRoomSize, setMinRoomSize] = useState(6);
+  const [maxRoomSize, setMaxRoomSize] = useState(18);
   const [roomFillLeafChance, setRoomFillLeafChance] = useState(0.08);
 
   const [corridorWidth, setCorridorWidth] = useState(1);
@@ -57,13 +68,33 @@ const App: React.FC = () => {
     solid: ImageData | null;
     regionId: ImageData | null;
     distanceToWall: ImageData | null;
-  }>({ solid: null, regionId: null, distanceToWall: null });
+    featureType: ImageData | null;
+    featureId: ImageData | null;
+    danger: ImageData | null;
+    lootTier: ImageData | null;
+  }>({
+    solid: null,
+    regionId: null,
+    distanceToWall: null,
+    featureType: null,
+    featureId: null,
+    danger: null,
+    lootTier: null,
+  });
 
   const [meta, setMeta] = useState<{
     seedUsed: number;
     rooms: number;
     corridors: number;
     bspDepth: number;
+
+    // Content stats (Milestone 1)
+    entranceRoomId: number;
+    farthestRoomId: number;
+    mainPathRooms: number;
+    monsters: number;
+    chests: number;
+    secrets: number;
   } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -103,12 +134,20 @@ const App: React.FC = () => {
 
   const generate = React.useCallback(() => {
     const out = generateBspDungeon(opts);
+    const content = generateDungeonContent(out);
 
-    setAscii(out.debug.ascii);
+    // Use the content ASCII so markers (M/$/?) appear in the preview.
+    setAscii(content.debug.ascii);
+
     setImageDataByLayer({
       solid: out.debug.imageData.solid,
       regionId: out.debug.imageData.regionId,
       distanceToWall: out.debug.imageData.distanceToWall,
+
+      featureType: content.debug.imageData.featureType,
+      featureId: content.debug.imageData.featureId,
+      danger: content.debug.imageData.danger,
+      lootTier: content.debug.imageData.lootTier,
     });
 
     setMeta({
@@ -116,6 +155,13 @@ const App: React.FC = () => {
       rooms: out.meta.rooms.length,
       corridors: out.meta.corridors.length,
       bspDepth: out.meta.bspDepth,
+
+      entranceRoomId: content.meta.entranceRoomId,
+      farthestRoomId: content.meta.farthestRoomId,
+      mainPathRooms: content.meta.mainPathRoomIds.length,
+      monsters: content.meta.monsters.length,
+      chests: content.meta.chests.length,
+      secrets: content.meta.secrets.length,
     });
   }, [opts]);
 
@@ -149,16 +195,36 @@ const App: React.FC = () => {
           <h2 className="maze-title">Maze / Dungeon Preview</h2>
         </div>
 
-        <div className="maze-form-grid">
+        <div className="maze-controls-row">
+          <button className="maze-btn" onClick={generate}>
+            Generate
+          </button>
+
+          <button
+            className="maze-btn"
+            onClick={() => {
+              const img = imageDataByLayer[layer];
+              if (!img) return;
+              const dataUrl = imageDataToPngDataUrl(img);
+              downloadDataUrl(`dungeon-${layer}.png`, dataUrl);
+            }}
+            disabled={!imageDataByLayer[layer]}
+            title="Download current layer as PNG"
+          >
+            Download PNG
+          </button>
+        </div>
+
+        <div className="maze-grid">
           <label className="maze-field">
             <span>Width</span>
             <input
               type="number"
               value={width}
               min={16}
-              max={1024}
+              max={512}
               onChange={(e) =>
-                setWidth(clampInt(Number(e.target.value || 0), 16, 2048))
+                setWidth(clampInt(Number(e.target.value || 0), 16, 512))
               }
             />
           </label>
@@ -169,21 +235,17 @@ const App: React.FC = () => {
               type="number"
               value={height}
               min={16}
-              max={1024}
+              max={512}
               onChange={(e) =>
-                setHeight(clampInt(Number(e.target.value || 0), 16, 2048))
+                setHeight(clampInt(Number(e.target.value || 0), 16, 512))
               }
             />
           </label>
 
-          <label className="maze-seed-field">
+          <label className="maze-field maze-field--seed">
             <span>Seed</span>
             <div className="maze-seed-row">
-              <input
-                className="maze-seed-input"
-                value={seed}
-                onChange={(e) => setSeed(e.target.value)}
-              />
+              <input value={seed} onChange={(e) => setSeed(e.target.value)} />
               <button
                 onClick={() =>
                   setSeed(`seed-${Math.random().toString(16).slice(2)}`)
@@ -198,27 +260,54 @@ const App: React.FC = () => {
 
         <details open>
           <summary className="maze-summary">BSP</summary>
-          <div className="maze-subgrid">
+
+          <div className="maze-grid">
             <label className="maze-field">
-              <span>Max depth</span>
+              <span>Max Depth</span>
               <input
                 type="number"
                 value={maxDepth}
                 min={1}
                 max={20}
                 onChange={(e) =>
-                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 30))
+                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 40))
                 }
               />
             </label>
 
             <label className="maze-field">
-              <span>Split padding</span>
+              <span>Min Leaf Size</span>
+              <input
+                type="number"
+                value={minLeafSize}
+                min={4}
+                max={128}
+                onChange={(e) =>
+                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Max Leaf Size</span>
+              <input
+                type="number"
+                value={maxLeafSize}
+                min={4}
+                max={256}
+                onChange={(e) =>
+                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Split Padding</span>
               <input
                 type="number"
                 value={splitPadding}
                 min={0}
-                max={10}
+                max={8}
                 onChange={(e) =>
                   setSplitPadding(clampInt(Number(e.target.value || 0), 0, 32))
                 }
@@ -226,57 +315,52 @@ const App: React.FC = () => {
             </label>
 
             <label className="maze-field">
-              <span>Min leaf size</span>
-              <input
-                type="number"
-                value={minLeafSize}
-                min={4}
-                max={256}
-                onChange={(e) =>
-                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 512))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Max leaf size</span>
-              <input
-                type="number"
-                value={maxLeafSize}
-                min={8}
-                max={512}
-                onChange={(e) =>
-                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 8, 1024))
-                }
-              />
-            </label>
-          </div>
-        </details>
-
-        <details open>
-          <summary className="maze-summary">Rooms</summary>
-          <div className="maze-subgrid">
-            <label className="maze-field">
-              <span>Room padding</span>
+              <span>Room Padding</span>
               <input
                 type="number"
                 value={roomPadding}
                 min={0}
-                max={10}
+                max={8}
                 onChange={(e) =>
-                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 64))
+                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 32))
                 }
               />
             </label>
 
             <label className="maze-field">
-              <span>Fill-leaf chance</span>
+              <span>Min Room Size</span>
               <input
                 type="number"
+                value={minRoomSize}
+                min={2}
+                max={128}
+                onChange={(e) =>
+                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Max Room Size</span>
+              <input
+                type="number"
+                value={maxRoomSize}
+                min={2}
+                max={256}
+                onChange={(e) =>
+                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Room Fill Chance</span>
+              <input
+                type="number"
+                step={0.01}
                 value={roomFillLeafChance}
                 min={0}
                 max={1}
-                step={0.01}
                 onChange={(e) =>
                   setRoomFillLeafChance(
                     Math.max(0, Math.min(1, Number(e.target.value || 0))),
@@ -286,50 +370,19 @@ const App: React.FC = () => {
             </label>
 
             <label className="maze-field">
-              <span>Min room size</span>
-              <input
-                type="number"
-                value={minRoomSize}
-                min={2}
-                max={256}
-                onChange={(e) =>
-                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 512))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Max room size</span>
-              <input
-                type="number"
-                value={maxRoomSize}
-                min={2}
-                max={512}
-                onChange={(e) =>
-                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 1024))
-                }
-              />
-            </label>
-          </div>
-        </details>
-
-        <details open>
-          <summary className="maze-summary">Corridors / Borders</summary>
-          <div className="maze-subgrid">
-            <label className="maze-field">
-              <span>Corridor width</span>
+              <span>Corridor Width</span>
               <input
                 type="number"
                 value={corridorWidth}
                 min={1}
-                max={9}
+                max={8}
                 onChange={(e) =>
                   setCorridorWidth(clampInt(Number(e.target.value || 0), 1, 32))
                 }
               />
             </label>
 
-            <label className="maze-checkbox-row">
+            <label className="maze-checkbox">
               <input
                 type="checkbox"
                 checked={keepOuterWalls}
@@ -340,60 +393,50 @@ const App: React.FC = () => {
           </div>
         </details>
 
-        <div className="maze-actions">
-          <button onClick={generate} className="maze-action-btn">
-            Generate
-          </button>
+        <details open>
+          <summary className="maze-summary">Stats</summary>
+          <div className="maze-stats">
+            {meta ? (
+              <div className="maze-stats-grid">
+                <div>
+                  <b>Seed used</b>: {meta.seedUsed}
+                </div>
+                <div>
+                  <b>BSP depth</b>: {meta.bspDepth}
+                </div>
+                <div>
+                  <b>Rooms</b>: {meta.rooms}
+                </div>
+                <div>
+                  <b>Corridors</b>: {meta.corridors}
+                </div>
 
-          <button
-            onClick={() => {
-              const blob = new Blob([ascii], {
-                type: "text/plain;charset=utf-8",
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `dungeon_${seed}.txt`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-            className="maze-action-btn"
-          >
-            Download ASCII
-          </button>
+                <div style={{ height: 8 }} />
 
-          <button
-            onClick={() => {
-              if (!currentImageData) return;
-              const url = imageDataToPngDataUrl(currentImageData);
-              downloadDataUrl(`dungeon_${seed}_${layer}.png`, url);
-            }}
-            className="maze-action-btn"
-          >
-            Download PNG
-          </button>
-        </div>
-
-        <div className="maze-meta">
-          {meta ? (
-            <div className="maze-meta-grid">
-              <div>
-                <b>Seed used</b>: {meta.seedUsed}
+                <div>
+                  <b>Entrance room</b>: {meta.entranceRoomId}
+                </div>
+                <div>
+                  <b>Farthest room</b>: {meta.farthestRoomId}
+                </div>
+                <div>
+                  <b>Main path rooms</b>: {meta.mainPathRooms}
+                </div>
+                <div>
+                  <b>Monsters</b>: {meta.monsters}
+                </div>
+                <div>
+                  <b>Chests</b>: {meta.chests}
+                </div>
+                <div>
+                  <b>Secrets</b>: {meta.secrets}
+                </div>
               </div>
-              <div>
-                <b>BSP depth</b>: {meta.bspDepth}
-              </div>
-              <div>
-                <b>Rooms</b>: {meta.rooms}
-              </div>
-              <div>
-                <b>Corridors</b>: {meta.corridors}
-              </div>
-            </div>
-          ) : (
-            <div>Generating…</div>
-          )}
-        </div>
+            ) : (
+              <div>Generating…</div>
+            )}
+          </div>
+        </details>
 
         <details>
           <summary className="maze-summary">ASCII preview</summary>
@@ -424,6 +467,34 @@ const App: React.FC = () => {
               className={`maze-tab ${layer === "distanceToWall" ? "maze-tab--active" : ""}`}
             >
               distanceToWall
+            </button>
+
+            <button
+              onClick={() => setLayer("featureType")}
+              className={`maze-tab ${layer === "featureType" ? "maze-tab--active" : ""}`}
+            >
+              featureType
+            </button>
+
+            <button
+              onClick={() => setLayer("danger")}
+              className={`maze-tab ${layer === "danger" ? "maze-tab--active" : ""}`}
+            >
+              danger
+            </button>
+
+            <button
+              onClick={() => setLayer("lootTier")}
+              className={`maze-tab ${layer === "lootTier" ? "maze-tab--active" : ""}`}
+            >
+              lootTier
+            </button>
+
+            <button
+              onClick={() => setLayer("featureId")}
+              className={`maze-tab ${layer === "featureId" ? "maze-tab--active" : ""}`}
+            >
+              featureId
             </button>
           </div>
 
@@ -456,7 +527,15 @@ const App: React.FC = () => {
               ? "white=wall, black=floor"
               : layer === "regionId"
                 ? "grayscale room id (0=not room)"
-                : "grayscale Manhattan distance (0=wall)"}
+                : layer === "distanceToWall"
+                  ? "grayscale Manhattan distance (0=wall)"
+                  : layer === "featureType"
+                    ? "0=none, 1=monster, 2=chest, 3=secretDoor"
+                    : layer === "danger"
+                      ? "monster danger/level (0..255)"
+                      : layer === "lootTier"
+                        ? "chest tier (1..N)"
+                        : "feature instance id (1..255)"}
           </div>
         </div>
       </div>

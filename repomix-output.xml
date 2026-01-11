@@ -44,12 +44,14 @@ public/
   vite.svg
 src/
   App.tsx
-  main.ts
+  CONTEXT.md
+  main.tsx
   mazeGen.ts
-  style.css
+  styles.css
 .gitignore
 index.html
 package.json
+README.md
 tsconfig.json
 </directory_structure>
 
@@ -63,9 +65,22 @@ This section contains the contents of the repository's files.
 <file path="src/App.tsx">
 // src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { generateBspDungeon, imageDataToPngDataUrl } from "./mazeGen";
+import {
+  generateBspDungeon,
+  generateDungeonContent,
+  imageDataToPngDataUrl,
+} from "./mazeGen";
 
-type Layer = "solid" | "regionId" | "distanceToWall";
+import "./styles.css";
+
+type Layer =
+  | "solid"
+  | "regionId"
+  | "distanceToWall"
+  | "featureType"
+  | "featureId"
+  | "danger"
+  | "lootTier";
 
 function clampInt(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
@@ -91,19 +106,19 @@ function drawToCanvas(
 }
 
 const App: React.FC = () => {
-  // --- Controls ---
-  const [width, setWidth] = useState(128);
-  const [height, setHeight] = useState(96);
-  const [seed, setSeed] = useState("demo-seed");
+  // --- Inputs ---
+  const [width, setWidth] = useState(96);
+  const [height, setHeight] = useState(64);
+  const [seed, setSeed] = useState("seed-1234");
 
-  const [maxDepth, setMaxDepth] = useState(6);
-  const [minLeafSize, setMinLeafSize] = useState(12);
-  const [maxLeafSize, setMaxLeafSize] = useState(28);
-  const [splitPadding, setSplitPadding] = useState(2);
+  const [maxDepth, setMaxDepth] = useState(9);
+  const [minLeafSize, setMinLeafSize] = useState(16);
+  const [maxLeafSize, setMaxLeafSize] = useState(26);
+  const [splitPadding, setSplitPadding] = useState(1);
 
-  const [roomPadding, setRoomPadding] = useState(1);
-  const [minRoomSize, setMinRoomSize] = useState(5);
-  const [maxRoomSize, setMaxRoomSize] = useState(14);
+  const [roomPadding, setRoomPadding] = useState(2);
+  const [minRoomSize, setMinRoomSize] = useState(6);
+  const [maxRoomSize, setMaxRoomSize] = useState(18);
   const [roomFillLeafChance, setRoomFillLeafChance] = useState(0.08);
 
   const [corridorWidth, setCorridorWidth] = useState(1);
@@ -118,13 +133,33 @@ const App: React.FC = () => {
     solid: ImageData | null;
     regionId: ImageData | null;
     distanceToWall: ImageData | null;
-  }>({ solid: null, regionId: null, distanceToWall: null });
+    featureType: ImageData | null;
+    featureId: ImageData | null;
+    danger: ImageData | null;
+    lootTier: ImageData | null;
+  }>({
+    solid: null,
+    regionId: null,
+    distanceToWall: null,
+    featureType: null,
+    featureId: null,
+    danger: null,
+    lootTier: null,
+  });
 
   const [meta, setMeta] = useState<{
     seedUsed: number;
     rooms: number;
     corridors: number;
     bspDepth: number;
+
+    // Content stats (Milestone 1)
+    entranceRoomId: number;
+    farthestRoomId: number;
+    mainPathRooms: number;
+    monsters: number;
+    chests: number;
+    secrets: number;
   } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -164,12 +199,20 @@ const App: React.FC = () => {
 
   const generate = React.useCallback(() => {
     const out = generateBspDungeon(opts);
+    const content = generateDungeonContent(out);
 
-    setAscii(out.debug.ascii);
+    // Use the content ASCII so markers (M/$/?) appear in the preview.
+    setAscii(content.debug.ascii);
+
     setImageDataByLayer({
       solid: out.debug.imageData.solid,
       regionId: out.debug.imageData.regionId,
       distanceToWall: out.debug.imageData.distanceToWall,
+
+      featureType: content.debug.imageData.featureType,
+      featureId: content.debug.imageData.featureId,
+      danger: content.debug.imageData.danger,
+      lootTier: content.debug.imageData.lootTier,
     });
 
     setMeta({
@@ -177,6 +220,13 @@ const App: React.FC = () => {
       rooms: out.meta.rooms.length,
       corridors: out.meta.corridors.length,
       bspDepth: out.meta.bspDepth,
+
+      entranceRoomId: content.meta.entranceRoomId,
+      farthestRoomId: content.meta.farthestRoomId,
+      mainPathRooms: content.meta.mainPathRoomIds.length,
+      monsters: content.meta.monsters.length,
+      chests: content.meta.chests.length,
+      secrets: content.meta.secrets.length,
     });
   }, [opts]);
 
@@ -193,72 +243,74 @@ const App: React.FC = () => {
 
   const currentImageData = imageDataByLayer[layer];
 
+  // Canvas scaled size should be driven by style (CSS) + CSS variables
+  // so we keep the inline style minimal and purely dynamic.
+  const canvasStyle = {
+    // used by .maze-canvas to compute pixelated display size
+    ["--mazeW" as any]: currentImageData ? `${currentImageData.width}` : "0",
+    ["--mazeH" as any]: currentImageData ? `${currentImageData.height}` : "0",
+    ["--mazeScale" as any]: `${scale}`,
+  } as React.CSSProperties;
+
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 16,
-        padding: 16,
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
+    <div className="maze-app">
       {/* Left: Controls */}
-      <div
-        style={{
-          width: 360,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <h2 style={{ margin: 0 }}>Maze / Dungeon Preview</h2>
+      <div className="maze-controls">
+        <div className="maze-header-row">
+          <h2 className="maze-title">Maze / Dungeon Preview</h2>
         </div>
 
-        <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
-        >
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div className="maze-controls-row">
+          <button className="maze-btn" onClick={generate}>
+            Generate
+          </button>
+
+          <button
+            className="maze-btn"
+            onClick={() => {
+              const img = imageDataByLayer[layer];
+              if (!img) return;
+              const dataUrl = imageDataToPngDataUrl(img);
+              downloadDataUrl(`dungeon-${layer}.png`, dataUrl);
+            }}
+            disabled={!imageDataByLayer[layer]}
+            title="Download current layer as PNG"
+          >
+            Download PNG
+          </button>
+        </div>
+
+        <div className="maze-grid">
+          <label className="maze-field">
             <span>Width</span>
             <input
               type="number"
               value={width}
               min={16}
-              max={1024}
+              max={512}
               onChange={(e) =>
-                setWidth(clampInt(Number(e.target.value || 0), 16, 2048))
+                setWidth(clampInt(Number(e.target.value || 0), 16, 512))
               }
             />
           </label>
 
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label className="maze-field">
             <span>Height</span>
             <input
               type="number"
               value={height}
               min={16}
-              max={1024}
+              max={512}
               onChange={(e) =>
-                setHeight(clampInt(Number(e.target.value || 0), 16, 2048))
+                setHeight(clampInt(Number(e.target.value || 0), 16, 512))
               }
             />
           </label>
 
-          <label
-            style={{
-              gridColumn: "1 / span 2",
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-            }}
-          >
+          <label className="maze-field maze-field--seed">
             <span>Seed</span>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                style={{ flex: 1 }}
-                value={seed}
-                onChange={(e) => setSeed(e.target.value)}
-              />
+            <div className="maze-seed-row">
+              <input value={seed} onChange={(e) => setSeed(e.target.value)} />
               <button
                 onClick={() =>
                   setSeed(`seed-${Math.random().toString(16).slice(2)}`)
@@ -272,100 +324,108 @@ const App: React.FC = () => {
         </div>
 
         <details open>
-          <summary style={{ cursor: "pointer" }}>BSP</summary>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 8,
-              marginTop: 8,
-            }}
-          >
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Max depth</span>
+          <summary className="maze-summary">BSP</summary>
+
+          <div className="maze-grid">
+            <label className="maze-field">
+              <span>Max Depth</span>
               <input
                 type="number"
                 value={maxDepth}
                 min={1}
                 max={20}
                 onChange={(e) =>
-                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 30))
+                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 40))
                 }
               />
             </label>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Split padding</span>
+            <label className="maze-field">
+              <span>Min Leaf Size</span>
+              <input
+                type="number"
+                value={minLeafSize}
+                min={4}
+                max={128}
+                onChange={(e) =>
+                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Max Leaf Size</span>
+              <input
+                type="number"
+                value={maxLeafSize}
+                min={4}
+                max={256}
+                onChange={(e) =>
+                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Split Padding</span>
               <input
                 type="number"
                 value={splitPadding}
                 min={0}
-                max={10}
+                max={8}
                 onChange={(e) =>
                   setSplitPadding(clampInt(Number(e.target.value || 0), 0, 32))
                 }
               />
             </label>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Min leaf size</span>
-              <input
-                type="number"
-                value={minLeafSize}
-                min={4}
-                max={256}
-                onChange={(e) =>
-                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 512))
-                }
-              />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Max leaf size</span>
-              <input
-                type="number"
-                value={maxLeafSize}
-                min={8}
-                max={512}
-                onChange={(e) =>
-                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 8, 1024))
-                }
-              />
-            </label>
-          </div>
-        </details>
-
-        <details open>
-          <summary style={{ cursor: "pointer" }}>Rooms</summary>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 8,
-              marginTop: 8,
-            }}
-          >
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Room padding</span>
+            <label className="maze-field">
+              <span>Room Padding</span>
               <input
                 type="number"
                 value={roomPadding}
                 min={0}
-                max={10}
+                max={8}
                 onChange={(e) =>
-                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 64))
+                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 32))
                 }
               />
             </label>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Fill-leaf chance</span>
+            <label className="maze-field">
+              <span>Min Room Size</span>
               <input
                 type="number"
+                value={minRoomSize}
+                min={2}
+                max={128}
+                onChange={(e) =>
+                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Max Room Size</span>
+              <input
+                type="number"
+                value={maxRoomSize}
+                min={2}
+                max={256}
+                onChange={(e) =>
+                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Room Fill Chance</span>
+              <input
+                type="number"
+                step={0.01}
                 value={roomFillLeafChance}
                 min={0}
                 max={1}
-                step={0.01}
                 onChange={(e) =>
                   setRoomFillLeafChance(
                     Math.max(0, Math.min(1, Number(e.target.value || 0))),
@@ -374,65 +434,20 @@ const App: React.FC = () => {
               />
             </label>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Min room size</span>
-              <input
-                type="number"
-                value={minRoomSize}
-                min={2}
-                max={256}
-                onChange={(e) =>
-                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 512))
-                }
-              />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Max room size</span>
-              <input
-                type="number"
-                value={maxRoomSize}
-                min={2}
-                max={512}
-                onChange={(e) =>
-                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 1024))
-                }
-              />
-            </label>
-          </div>
-        </details>
-
-        <details open>
-          <summary style={{ cursor: "pointer" }}>Corridors / Borders</summary>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 8,
-              marginTop: 8,
-            }}
-          >
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span>Corridor width</span>
+            <label className="maze-field">
+              <span>Corridor Width</span>
               <input
                 type="number"
                 value={corridorWidth}
                 min={1}
-                max={9}
+                max={8}
                 onChange={(e) =>
                   setCorridorWidth(clampInt(Number(e.target.value || 0), 1, 32))
                 }
               />
             </label>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 22,
-              }}
-            >
+            <label className="maze-checkbox">
               <input
                 type="checkbox"
                 checked={keepOuterWalls}
@@ -443,141 +458,112 @@ const App: React.FC = () => {
           </div>
         </details>
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={generate} style={{ padding: "8px 12px" }}>
-            Generate
-          </button>
+        <details open>
+          <summary className="maze-summary">Stats</summary>
+          <div className="maze-stats">
+            {meta ? (
+              <div className="maze-stats-grid">
+                <div>
+                  <b>Seed used</b>: {meta.seedUsed}
+                </div>
+                <div>
+                  <b>BSP depth</b>: {meta.bspDepth}
+                </div>
+                <div>
+                  <b>Rooms</b>: {meta.rooms}
+                </div>
+                <div>
+                  <b>Corridors</b>: {meta.corridors}
+                </div>
 
-          <button
-            onClick={() => {
-              const blob = new Blob([ascii], {
-                type: "text/plain;charset=utf-8",
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `dungeon_${seed}.txt`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-            style={{ padding: "8px 12px" }}
-          >
-            Download ASCII
-          </button>
+                <div style={{ height: 8 }} />
 
-          <button
-            onClick={() => {
-              if (!currentImageData) return;
-              const url = imageDataToPngDataUrl(currentImageData);
-              downloadDataUrl(`dungeon_${seed}_${layer}.png`, url);
-            }}
-            style={{ padding: "8px 12px" }}
-          >
-            Download PNG
-          </button>
-        </div>
-
-        <div style={{ fontSize: 12, opacity: 0.85 }}>
-          {meta ? (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 6,
-              }}
-            >
-              <div>
-                <b>Seed used</b>: {meta.seedUsed}
+                <div>
+                  <b>Entrance room</b>: {meta.entranceRoomId}
+                </div>
+                <div>
+                  <b>Farthest room</b>: {meta.farthestRoomId}
+                </div>
+                <div>
+                  <b>Main path rooms</b>: {meta.mainPathRooms}
+                </div>
+                <div>
+                  <b>Monsters</b>: {meta.monsters}
+                </div>
+                <div>
+                  <b>Chests</b>: {meta.chests}
+                </div>
+                <div>
+                  <b>Secrets</b>: {meta.secrets}
+                </div>
               </div>
-              <div>
-                <b>BSP depth</b>: {meta.bspDepth}
-              </div>
-              <div>
-                <b>Rooms</b>: {meta.rooms}
-              </div>
-              <div>
-                <b>Corridors</b>: {meta.corridors}
-              </div>
-            </div>
-          ) : (
-            <div>Generating…</div>
-          )}
-        </div>
+            ) : (
+              <div>Generating…</div>
+            )}
+          </div>
+        </details>
 
         <details>
-          <summary style={{ cursor: "pointer" }}>ASCII preview</summary>
-          <pre
-            style={{
-              whiteSpace: "pre",
-              maxHeight: 320,
-              overflow: "auto",
-              background: "#111",
-              color: "#ddd",
-              padding: 12,
-              borderRadius: 8,
-              marginTop: 8,
-              fontSize: 10,
-              lineHeight: 1.1,
-            }}
-          >
-            {ascii}
-          </pre>
+          <summary className="maze-summary">ASCII preview</summary>
+          <pre className="maze-ascii-pre">{ascii}</pre>
         </details>
       </div>
 
       {/* Right: Preview */}
-      <div
-        style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}
-      >
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <div style={{ display: "flex", gap: 8 }}>
+      <div className="maze-preview">
+        <div className="maze-preview-toolbar">
+          <div className="maze-tabs">
             <button
               onClick={() => setLayer("solid")}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: layer === "solid" ? "2px solid #444" : "1px solid #ccc",
-                background: layer === "solid" ? "#f2f2f2" : "#fff",
-              }}
+              className={`maze-tab ${layer === "solid" ? "maze-tab--active" : ""}`}
             >
               solid
             </button>
+
             <button
               onClick={() => setLayer("regionId")}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border:
-                  layer === "regionId" ? "2px solid #444" : "1px solid #ccc",
-                background: layer === "regionId" ? "#f2f2f2" : "#fff",
-              }}
+              className={`maze-tab ${layer === "regionId" ? "maze-tab--active" : ""}`}
             >
               regionId
             </button>
+
             <button
               onClick={() => setLayer("distanceToWall")}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border:
-                  layer === "distanceToWall"
-                    ? "2px solid #444"
-                    : "1px solid #ccc",
-                background: layer === "distanceToWall" ? "#f2f2f2" : "#fff",
-              }}
+              className={`maze-tab ${layer === "distanceToWall" ? "maze-tab--active" : ""}`}
             >
               distanceToWall
             </button>
+
+            <button
+              onClick={() => setLayer("featureType")}
+              className={`maze-tab ${layer === "featureType" ? "maze-tab--active" : ""}`}
+            >
+              featureType
+            </button>
+
+            <button
+              onClick={() => setLayer("danger")}
+              className={`maze-tab ${layer === "danger" ? "maze-tab--active" : ""}`}
+            >
+              danger
+            </button>
+
+            <button
+              onClick={() => setLayer("lootTier")}
+              className={`maze-tab ${layer === "lootTier" ? "maze-tab--active" : ""}`}
+            >
+              lootTier
+            </button>
+
+            <button
+              onClick={() => setLayer("featureId")}
+              className={`maze-tab ${layer === "featureId" ? "maze-tab--active" : ""}`}
+            >
+              featureId
+            </button>
           </div>
 
-          <label
-            style={{
-              marginLeft: "auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
+          <label className="maze-scale">
             <span>Scale</span>
             <input
               type="range"
@@ -588,31 +574,15 @@ const App: React.FC = () => {
                 setScale(clampInt(Number(e.target.value || 0), 1, 32))
               }
             />
-            <span style={{ width: 24, textAlign: "right" }}>{scale}×</span>
+            <span className="maze-scale-value">{scale}×</span>
           </label>
         </div>
 
-        <div
-          style={{
-            border: "1px solid #ccc",
-            borderRadius: 12,
-            padding: 12,
-            background: "#fafafa",
-            width: "fit-content",
-          }}
-        >
-          <canvas
-            ref={canvasRef}
-            style={{
-              imageRendering: "pixelated",
-              width: currentImageData ? currentImageData.width * scale : 0,
-              height: currentImageData ? currentImageData.height * scale : 0,
-              display: "block",
-            }}
-          />
+        <div className="maze-canvas-panel">
+          <canvas ref={canvasRef} className="maze-canvas" style={canvasStyle} />
         </div>
 
-        <div style={{ fontSize: 12, opacity: 0.8 }}>
+        <div className="maze-legend">
           <div>
             <b>Layer</b>: {layer}
           </div>
@@ -622,7 +592,15 @@ const App: React.FC = () => {
               ? "white=wall, black=floor"
               : layer === "regionId"
                 ? "grayscale room id (0=not room)"
-                : "grayscale Manhattan distance (0=wall)"}
+                : layer === "distanceToWall"
+                  ? "grayscale Manhattan distance (0=wall)"
+                  : layer === "featureType"
+                    ? "0=none, 1=monster, 2=chest, 3=secretDoor"
+                    : layer === "danger"
+                      ? "monster danger/level (0..255)"
+                      : layer === "lootTier"
+                        ? "chest tier (1..N)"
+                        : "feature instance id (1..255)"}
           </div>
         </div>
       </div>
@@ -633,16 +611,79 @@ const App: React.FC = () => {
 export default App;
 </file>
 
-<file path="src/main.ts">
+<file path="src/CONTEXT.md">
+# Dungeon BSP Lab — Context
+
+## What this repo is
+A small in-browser TypeScript + React project that generates a BSP-style dungeon (RogueBasin-inspired) and previews the results.
+
+Primary goal: quickly iterate on dungeon generation logic while having strong debug outputs (ASCII + PNG-like previews + GPU-friendly data textures).
+
+## Current UX
+The React UI (App.tsx) provides:
+- parameter controls (map size, BSP params, room params, corridor params)
+- a canvas preview with layer tabs:
+  - `solid` (walls/floor)
+  - `regionId` (room IDs)
+  - `distanceToWall` (distance field)
+- “Download ASCII” and “Download PNG” for debugging/export
+- scale slider for pixelated zoom (canvas display size)
+
+Styling is in `styles.css`, with App using classNames (minimal inline style only for CSS variables that drive canvas scaling).
+
+## Generator outputs (mazeGen.ts)
+The generator exposes `generateBspDungeon(options)` returning:
+- `masks` (Uint8Array, width*height):
+  - `solid`: 0=floor, 255=wall
+  - `regionId`: 0=not room, 1..255 room id (corridors default to 0)
+  - `distanceToWall`: 0 at walls, increases into open space (Manhattan), clamped to 255
+- `textures` (THREE.DataTexture, R8 single-channel):
+  - `solid`, `regionId`, `distanceToWall`
+- `debug`:
+  - `ascii`: string map (# = wall, . = floor)
+  - `imageData`: ImageData per layer for canvas preview + PNG export
+
+Design choice: keep masks and textures single-channel (R8) for flexibility and easier debugging.
+
+## Coordinate system & conventions
+- grid origin: (0,0) = top-left
+- x increases right, y increases down
+- “wall” is 255, “floor” is 0 (byte-based)
+- textures use `THREE.RedFormat` + `THREE.UnsignedByteType`, nearest filtering, clamp wrap, no mipmaps
+
+## Key files
+- `src/mazeGen.ts` — dungeon generation + masks/textures + debug helpers
+- `src/App.tsx` — “Dungeon Lab” UI and preview wiring
+- `src/styles.css` — all layout styling, includes MazeLab class names
+- `src/main.tsx` — React entry point (React 18) mounting into `#app`
+
+## Common gotchas (already fixed)
+- React entry must mount into `#app` (matches index.html)
+- JSX requires `tsconfig.json` to include `"jsx": "react-jsx"`
+- React 18 needs `react@latest` + `react-dom@latest` (and types)
+
+## Next ideas (likely future work)
+- Add more textures (separate, not packed):
+  - corridorId, feature flags, door placement, spawn heatmap
+  - distance-to-room-center, distance-to-corridor, or signed distance field
+- Let corridors inherit nearest roomId (optional)
+- Add “validate connectivity” and “find path between rooms” debug overlay
+- Add “render colored preview” (palette by roomId) for easier differentiation
+
+## What to tell ChatGPT if you’re resuming later
+“I have a TS+React dungeon BSP lab. The generator is in src/mazeGen.ts returning Uint8 masks + THREE R8 DataTextures + ImageData/ASCII debug. App.tsx is a parameter UI + canvas preview with layer tabs. styles.css holds layout. We’re using bytes (0 floor, 255 wall).”
+</file>
+
+<file path="src/main.tsx">
+// src/main.tsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "./index.css";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+ReactDOM.createRoot(document.getElementById("app")!).render(
   <React.StrictMode>
     <App />
-  </React.StrictMode>
+  </React.StrictMode>,
 );
 </file>
 
@@ -790,10 +831,6 @@ function makeRng(seedU32: number): RNG {
 
 function idx(x: number, y: number, w: number) {
   return y * w + x;
-}
-
-function inBounds(x: number, y: number, w: number, h: number) {
-  return x >= 0 && y >= 0 && x < w && y < h;
 }
 
 function carveRect(
@@ -1527,104 +1564,961 @@ export function generateBspDungeon(
 export function generateBspDungeonTexture(options: BspDungeonOptions) {
   return generateBspDungeon(options);
 }
+
+// -----------------------------
+// Content generation (Milestone 1)
+// -----------------------------
+
+export type FeatureType =
+  | 0 // none
+  | 1 // monster spawn
+  | 2 // chest
+  | 3; // secret door
+
+export type ContentOptions = {
+  seed?: number | string;
+
+  // How to pick the entrance room.
+  // - "bottom": room whose center has the largest y
+  // - "top": room whose center has the smallest y
+  // - "random": random room
+  entranceMode?: "bottom" | "top" | "random";
+
+  // Placement tuning
+  minClearanceToWall?: number; // distanceToWall threshold for placing things on floor
+  monstersPerRoomMin?: number;
+  monstersPerRoomMax?: number;
+  monsterRoomChance?: number; // 0..1 chance a room gets spawns (except entrance)
+  chestsTargetCount?: number; // total chests to place (best-effort)
+  secretRoomChance?: number; // 0..1 chance a leaf room gets a secret door
+  maxLootTier?: number; // tiers scale with depth, 1..maxLootTier
+
+  // Debug
+  includeAsciiOverlay?: boolean;
+};
+
+export type ContentOutputs = {
+  width: number;
+  height: number;
+
+  masks: {
+    featureType: Uint8Array; // FeatureType enum
+    featureId: Uint8Array; // 1..255 id
+    danger: Uint8Array; // 0..255 (meaningful at monster spawns)
+    lootTier: Uint8Array; // 0..255 (meaningful at chests)
+  };
+
+  textures: {
+    featureType: THREE.DataTexture;
+    featureId: THREE.DataTexture;
+    danger: THREE.DataTexture;
+    lootTier: THREE.DataTexture;
+  };
+
+  debug: {
+    ascii: string;
+    imageData: {
+      featureType: ImageData;
+      featureId: ImageData;
+      danger: ImageData;
+      lootTier: ImageData;
+    };
+  };
+
+  meta: {
+    seedUsed: number;
+
+    // Room graph (roomId -> neighbor roomIds)
+    roomGraph: Map<number, Set<number>>;
+
+    entranceRoomId: number;
+    farthestRoomId: number;
+
+    // BFS distance by roomId (room ids are 1..255)
+    roomDistance: Map<number, number>;
+
+    // A main path (entrance -> farthest) derived from BFS parents
+    mainPathRoomIds: number[];
+
+    // Placement records
+    monsters: Array<{
+      id: number;
+      x: number;
+      y: number;
+      roomId: number;
+      danger: number;
+    }>;
+    chests: Array<{
+      id: number;
+      x: number;
+      y: number;
+      roomId: number;
+      tier: number;
+    }>;
+    secrets: Array<{ id: number; x: number; y: number; roomId: number }>;
+  };
+};
+
+function clamp255(v: number) {
+  return Math.max(0, Math.min(255, v | 0));
+}
+
+function pickRandom<T>(rng: () => number, arr: T[]): T {
+  return arr[Math.floor(rng() * arr.length)];
+}
+
+function roomCenter(r: Rect): Point {
+  return { x: Math.floor(r.x + r.w / 2), y: Math.floor(r.y + r.h / 2) };
+}
+
+function keyXY(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+function inBounds(W: number, H: number, x: number, y: number) {
+  return x >= 0 && y >= 0 && x < W && y < H;
+}
+
+/**
+ * Find the nearest room id around a point.
+ * Corridor endpoints often land in a room, but we allow searching outward
+ * so we can robustly map corridors to room-room edges.
+ */
+function findNearestRoomId(
+  regionId: Uint8Array,
+  W: number,
+  H: number,
+  p: Point,
+  maxRadius = 8,
+): number {
+  const { x: cx, y: cy } = p;
+  if (inBounds(W, H, cx, cy)) {
+    const v = regionId[keyXY(W, cx, cy)];
+    if (v !== 0) return v;
+  }
+
+  for (let r = 1; r <= maxRadius; r++) {
+    // scan square ring
+    const x0 = cx - r;
+    const x1 = cx + r;
+    const y0 = cy - r;
+    const y1 = cy + r;
+
+    for (let x = x0; x <= x1; x++) {
+      for (const y of [y0, y1]) {
+        if (!inBounds(W, H, x, y)) continue;
+        const v = regionId[keyXY(W, x, y)];
+        if (v !== 0) return v;
+      }
+    }
+    for (let y = y0 + 1; y <= y1 - 1; y++) {
+      for (const x of [x0, x1]) {
+        if (!inBounds(W, H, x, y)) continue;
+        const v = regionId[keyXY(W, x, y)];
+        if (v !== 0) return v;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function buildRoomGraphFromCorridors(
+  dungeon: BspDungeonOutputs,
+): Map<number, Set<number>> {
+  const { width: W, height: H } = dungeon;
+  const regionId = dungeon.masks.regionId;
+
+  const graph = new Map<number, Set<number>>();
+
+  // Ensure all rooms appear as nodes
+  for (let i = 0; i < dungeon.meta.rooms.length; i++) {
+    const id = i + 1;
+    graph.set(id, new Set<number>());
+  }
+
+  for (const c of dungeon.meta.corridors) {
+    const ra = findNearestRoomId(regionId, W, H, c.a, 10);
+    const rb = findNearestRoomId(regionId, W, H, c.b, 10);
+    if (ra === 0 || rb === 0) continue;
+    if (ra === rb) continue;
+
+    if (!graph.has(ra)) graph.set(ra, new Set());
+    if (!graph.has(rb)) graph.set(rb, new Set());
+
+    graph.get(ra)!.add(rb);
+    graph.get(rb)!.add(ra);
+  }
+
+  return graph;
+}
+
+function bfsRoomDistances(
+  graph: Map<number, Set<number>>,
+  startRoomId: number,
+): { dist: Map<number, number>; parent: Map<number, number> } {
+  const dist = new Map<number, number>();
+  const parent = new Map<number, number>();
+  const q: number[] = [];
+
+  dist.set(startRoomId, 0);
+  q.push(startRoomId);
+
+  while (q.length) {
+    const cur = q.shift()!;
+    const dcur = dist.get(cur)!;
+
+    for (const nb of graph.get(cur) ?? []) {
+      if (dist.has(nb)) continue;
+      dist.set(nb, dcur + 1);
+      parent.set(nb, cur);
+      q.push(nb);
+    }
+  }
+
+  return { dist, parent };
+}
+
+function reconstructPath(
+  parent: Map<number, number>,
+  start: number,
+  end: number,
+): number[] {
+  if (start === end) return [start];
+  const path: number[] = [];
+  let cur = end;
+
+  // If unreachable, return just end
+  const seen = new Set<number>();
+  while (cur !== start) {
+    path.push(cur);
+    seen.add(cur);
+    const p = parent.get(cur);
+    if (p === undefined || seen.has(p)) {
+      path.push(start);
+      path.reverse();
+      return path;
+    }
+    cur = p;
+  }
+  path.push(start);
+  path.reverse();
+  return path;
+}
+
+function pickEntranceRoomId(
+  dungeon: BspDungeonOutputs,
+  rng: () => number,
+  mode: ContentOptions["entranceMode"],
+): number {
+  const rooms = dungeon.meta.rooms;
+  if (rooms.length === 0) return 1;
+
+  if (mode === "random") {
+    return 1 + Math.floor(rng() * rooms.length);
+  }
+
+  let bestIdx = 0;
+  let bestY =
+    mode === "top" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+
+  for (let i = 0; i < rooms.length; i++) {
+    const c = roomCenter(rooms[i]);
+    if (mode === "top") {
+      if (c.y < bestY) {
+        bestY = c.y;
+        bestIdx = i;
+      }
+    } else {
+      // bottom
+      if (c.y > bestY) {
+        bestY = c.y;
+        bestIdx = i;
+      }
+    }
+  }
+  return bestIdx + 1;
+}
+
+/**
+ * Sample a walkable (floor) point inside a room rectangle with clearance to walls.
+ * Returns null if no suitable tile found within tries.
+ */
+function sampleRoomFloorPoint(
+  dungeon: BspDungeonOutputs,
+  room: Rect,
+  rng: () => number,
+  minClearance: number,
+  tries = 80,
+): Point | null {
+  const { width: W, height: H } = dungeon;
+  const solid = dungeon.masks.solid;
+  const distWall = dungeon.masks.distanceToWall;
+
+  const xMin = room.x;
+  const xMax = room.x + room.w - 1;
+  const yMin = room.y;
+  const yMax = room.y + room.h - 1;
+
+  for (let t = 0; t < tries; t++) {
+    const x = xMin + Math.floor(rng() * Math.max(1, xMax - xMin + 1));
+    const y = yMin + Math.floor(rng() * Math.max(1, yMax - yMin + 1));
+    if (!inBounds(W, H, x, y)) continue;
+
+    const i = keyXY(W, x, y);
+    if (solid[i] !== 0) continue; // must be floor
+    if (distWall[i] < minClearance) continue;
+
+    return { x, y };
+  }
+
+  return null;
+}
+
+/**
+ * Pick a wall tile adjacent to a room’s floor (good for secret doors).
+ * Returns the wall tile position (not the floor tile).
+ */
+function findSecretDoorWallTile(
+  dungeon: BspDungeonOutputs,
+  room: Rect,
+  rng: () => number,
+  tries = 200,
+): Point | null {
+  const { width: W, height: H } = dungeon;
+  const solid = dungeon.masks.solid;
+
+  // gather candidate wall tiles adjacent to floor within the room bounds
+  const candidates: Point[] = [];
+
+  const xMin = room.x;
+  const xMax = room.x + room.w - 1;
+  const yMin = room.y;
+  const yMax = room.y + room.h - 1;
+
+  for (let y = yMin; y <= yMax; y++) {
+    for (let x = xMin; x <= xMax; x++) {
+      if (!inBounds(W, H, x, y)) continue;
+      const i = keyXY(W, x, y);
+      if (solid[i] !== 0) continue; // floor only
+
+      const nbs = [
+        { x: x + 1, y },
+        { x: x - 1, y },
+        { x, y: y + 1 },
+        { x, y: y - 1 },
+      ];
+      for (const nb of nbs) {
+        if (!inBounds(W, H, nb.x, nb.y)) continue;
+        const j = keyXY(W, nb.x, nb.y);
+        if (solid[j] === 255) {
+          // avoid putting secrets on the outermost border (usually ugly / trivial)
+          if (nb.x === 0 || nb.y === 0 || nb.x === W - 1 || nb.y === H - 1)
+            continue;
+          candidates.push({ x: nb.x, y: nb.y });
+        }
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // try random picks (bias away from corners by repeated sampling)
+  for (let t = 0; t < tries; t++) {
+    const p = candidates[Math.floor(rng() * candidates.length)];
+    return p;
+  }
+
+  return null;
+}
+
+function overlayAscii(
+  baseAscii: string,
+  W: number,
+  H: number,
+  overlay: Array<{ x: number; y: number; ch: string }>,
+): string {
+  const lines = baseAscii.split("\n");
+  const grid: string[][] = [];
+  for (let y = 0; y < H; y++) {
+    grid.push((lines[y] ?? "").padEnd(W, " ").slice(0, W).split(""));
+  }
+
+  for (const o of overlay) {
+    if (o.x < 0 || o.y < 0 || o.x >= W || o.y >= H) continue;
+    grid[o.y][o.x] = o.ch;
+  }
+
+  return grid.map((row) => row.join("")).join("\n");
+}
+
+export function generateDungeonContent(
+  dungeon: BspDungeonOutputs,
+  opts?: Partial<ContentOptions>,
+): ContentOutputs {
+  const options: Required<ContentOptions> = {
+    seed: opts?.seed ?? dungeon.meta.seedUsed + 1337,
+    entranceMode: opts?.entranceMode ?? "bottom",
+
+    minClearanceToWall: opts?.minClearanceToWall ?? 2,
+    monstersPerRoomMin: opts?.monstersPerRoomMin ?? 1,
+    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 3,
+    monsterRoomChance: opts?.monsterRoomChance ?? 0.75,
+
+    chestsTargetCount:
+      opts?.chestsTargetCount ??
+      Math.max(1, Math.floor(dungeon.meta.rooms.length / 4)),
+    secretRoomChance: opts?.secretRoomChance ?? 0.45,
+
+    maxLootTier: opts?.maxLootTier ?? 5,
+
+    includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
+  };
+
+  const seedUsed = hashSeedToUint32(options.seed);
+  const rng = mulberry32(seedUsed);
+
+  const W = dungeon.width;
+  const H = dungeon.height;
+  const N = W * H;
+
+  // Build room graph and BFS distances
+  const roomGraph = buildRoomGraphFromCorridors(dungeon);
+  const entranceRoomId = pickEntranceRoomId(dungeon, rng, options.entranceMode);
+
+  const { dist: roomDistance, parent } = bfsRoomDistances(
+    roomGraph,
+    entranceRoomId,
+  );
+
+  // Find farthest reachable room
+  let farthestRoomId = entranceRoomId;
+  let farthestDist = 0;
+  for (const [rid, d] of roomDistance.entries()) {
+    if (d > farthestDist) {
+      farthestDist = d;
+      farthestRoomId = rid;
+    }
+  }
+  const mainPathRoomIds = reconstructPath(
+    parent,
+    entranceRoomId,
+    farthestRoomId,
+  );
+
+  // Allocate masks
+  const featureType = new Uint8Array(N);
+  const featureId = new Uint8Array(N);
+  const danger = new Uint8Array(N);
+  const lootTier = new Uint8Array(N);
+
+  // Placement results
+  const monsters: ContentOutputs["meta"]["monsters"] = [];
+  const chests: ContentOutputs["meta"]["chests"] = [];
+  const secrets: ContentOutputs["meta"]["secrets"] = [];
+
+  let nextId = 1;
+
+  const rooms = dungeon.meta.rooms;
+
+  // Helper for depth normalization
+  const maxDepth = Math.max(1, farthestDist);
+
+  function depthForRoom(roomId: number) {
+    return roomDistance.get(roomId) ?? 0;
+  }
+
+  function dangerForDepth(d: number) {
+    // 32..255 range feels better than 0..255
+    const t = d / maxDepth;
+    return clamp255(32 + t * 223);
+  }
+
+  function tierForDepth(d: number) {
+    const t = d / maxDepth;
+    return Math.max(
+      1,
+      Math.min(
+        options.maxLootTier,
+        1 + Math.floor(t * (options.maxLootTier - 1)),
+      ),
+    );
+  }
+
+  // Identify side rooms (degree 1) excluding entrance (best-effort)
+  const roomDegree = new Map<number, number>();
+  for (const [rid, nbs] of roomGraph.entries()) roomDegree.set(rid, nbs.size);
+
+  const sideRoomIds = Array.from(roomGraph.keys()).filter((rid) => {
+    if (rid === entranceRoomId) return false;
+    const deg = roomDegree.get(rid) ?? 0;
+    return deg <= 1;
+  });
+
+  // -----------------------------
+  // Monsters
+  // -----------------------------
+  for (let i = 0; i < rooms.length; i++) {
+    const roomId = i + 1;
+    if (roomId === entranceRoomId) continue;
+
+    // unreachable rooms: skip
+    if (!roomDistance.has(roomId)) continue;
+
+    if (rng() > options.monsterRoomChance) continue;
+
+    const d = depthForRoom(roomId);
+    const room = rooms[i];
+
+    const count =
+      options.monstersPerRoomMin +
+      Math.floor(
+        rng() * (options.monstersPerRoomMax - options.monstersPerRoomMin + 1),
+      );
+
+    for (let k = 0; k < count; k++) {
+      const p = sampleRoomFloorPoint(
+        dungeon,
+        room,
+        rng,
+        options.minClearanceToWall,
+      );
+      if (!p) continue;
+
+      const idx = keyXY(W, p.x, p.y);
+      if (featureType[idx] !== 0) continue; // don't overlap with something else
+
+      const id = clamp255(nextId++);
+      const dng = dangerForDepth(d);
+
+      featureType[idx] = 1;
+      featureId[idx] = id;
+      danger[idx] = dng;
+
+      monsters.push({ id, x: p.x, y: p.y, roomId, danger: dng });
+    }
+  }
+
+  // -----------------------------
+  // Chests (biased to side rooms & depth)
+  // -----------------------------
+  const chestCandidates =
+    sideRoomIds.length > 0 ? sideRoomIds.slice() : mainPathRoomIds.slice(1);
+
+  // Sort candidates by depth descending so deeper rooms tend to get chests
+  chestCandidates.sort((a, b) => depthForRoom(b) - depthForRoom(a));
+
+  let chestPlaced = 0;
+  for (const roomId of chestCandidates) {
+    if (chestPlaced >= options.chestsTargetCount) break;
+
+    const room = rooms[roomId - 1];
+    if (!room) continue;
+
+    const p = sampleRoomFloorPoint(
+      dungeon,
+      room,
+      rng,
+      Math.max(1, options.minClearanceToWall),
+    );
+    if (!p) continue;
+
+    const idx = keyXY(W, p.x, p.y);
+    if (featureType[idx] !== 0) continue;
+
+    const id = clamp255(nextId++);
+    const d = depthForRoom(roomId);
+    const tier = clamp255(tierForDepth(d));
+
+    featureType[idx] = 2;
+    featureId[idx] = id;
+    lootTier[idx] = tier;
+
+    chests.push({ id, x: p.x, y: p.y, roomId, tier });
+    chestPlaced++;
+  }
+
+  // -----------------------------
+  // Secrets (secret doors placed on wall tiles adjacent to leaf rooms)
+  // -----------------------------
+  for (const roomId of sideRoomIds) {
+    if (rng() > options.secretRoomChance) continue;
+
+    const room = rooms[roomId - 1];
+    if (!room) continue;
+
+    const wallP = findSecretDoorWallTile(dungeon, room, rng);
+    if (!wallP) continue;
+
+    const idx = keyXY(W, wallP.x, wallP.y);
+    if (featureType[idx] !== 0) continue;
+
+    const id = clamp255(nextId++);
+
+    featureType[idx] = 3;
+    featureId[idx] = id;
+
+    secrets.push({ id, x: wallP.x, y: wallP.y, roomId });
+  }
+
+  // Textures + debug ImageData
+  const featureTypeTex = maskToDataTextureR8(featureType, W, H, "featureType");
+  const featureIdTex = maskToDataTextureR8(featureId, W, H, "featureId");
+  const dangerTex = maskToDataTextureR8(danger, W, H, "danger");
+  const lootTierTex = maskToDataTextureR8(lootTier, W, H, "lootTier");
+
+  const featureTypeImg = maskToImageDataGrayscale(featureType, W, H);
+  const featureIdImg = maskToImageDataGrayscale(featureId, W, H);
+  const dangerImg = maskToImageDataGrayscale(danger, W, H);
+  const lootTierImg = maskToImageDataGrayscale(lootTier, W, H);
+
+  // ASCII overlay (optional)
+  let ascii = dungeon.debug.ascii;
+  if (options.includeAsciiOverlay) {
+    const overlay: Array<{ x: number; y: number; ch: string }> = [];
+    for (const m of monsters) overlay.push({ x: m.x, y: m.y, ch: "M" });
+    for (const c of chests) overlay.push({ x: c.x, y: c.y, ch: "$" });
+    for (const s of secrets) overlay.push({ x: s.x, y: s.y, ch: "?" });
+
+    // Mark entrance room center with "E"
+    const eRoom = rooms[entranceRoomId - 1];
+    if (eRoom) {
+      const ec = roomCenter(eRoom);
+      overlay.push({ x: ec.x, y: ec.y, ch: "E" });
+    }
+
+    ascii = overlayAscii(ascii, W, H, overlay);
+  }
+
+  return {
+    width: W,
+    height: H,
+
+    masks: {
+      featureType,
+      featureId,
+      danger,
+      lootTier,
+    },
+
+    textures: {
+      featureType: featureTypeTex,
+      featureId: featureIdTex,
+      danger: dangerTex,
+      lootTier: lootTierTex,
+    },
+
+    debug: {
+      ascii,
+      imageData: {
+        featureType: featureTypeImg,
+        featureId: featureIdImg,
+        danger: dangerImg,
+        lootTier: lootTierImg,
+      },
+    },
+
+    meta: {
+      seedUsed,
+      roomGraph,
+      entranceRoomId,
+      farthestRoomId,
+      roomDistance,
+      mainPathRoomIds,
+      monsters,
+      chests,
+      secrets,
+    },
+  };
+}
 </file>
 
-<file path="src/style.css">
+<file path="src/styles.css">
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+    font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+    color-scheme: light dark;
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #242424;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+    font-weight: 500;
+    color: #646cff;
+    text-decoration: inherit;
 }
 a:hover {
-  color: #535bf2;
+    color: #535bf2;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+    margin: 0;
+    display: flex;
+    place-items: center;
+    min-width: 320px;
+    min-height: 100vh;
 }
 
 h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+    font-size: 3.2em;
+    line-height: 1.1;
 }
 
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
 }
 
 .logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
+    height: 6em;
+    padding: 1.5em;
+    will-change: filter;
+    transition: filter 300ms;
 }
 .logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+    filter: drop-shadow(0 0 2em #646cffaa);
 }
 .logo.vanilla:hover {
-  filter: drop-shadow(0 0 2em #3178c6aa);
+    filter: drop-shadow(0 0 2em #3178c6aa);
 }
 
 .card {
-  padding: 2em;
+    padding: 2em;
 }
 
 .read-the-docs {
-  color: #888;
+    color: #888;
 }
 
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    padding: 0.6em 1.2em;
+    font-size: 1em;
+    font-weight: 500;
+    font-family: inherit;
+    background-color: #1a1a1a;
+    cursor: pointer;
+    transition: border-color 0.25s;
 }
 button:hover {
-  border-color: #646cff;
+    border-color: #646cff;
 }
 button:focus,
 button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+    outline: 4px auto -webkit-focus-ring-color;
 }
 
+/* ---------------------------------------
+   Maze / Dungeon Preview (App.tsx)
+   Replace inline styles with these classes
+---------------------------------------- */
+
+/* Outer app layout */
+.maze-app {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    font-family: system-ui, sans-serif;
+}
+
+/* Left controls column */
+.maze-controls {
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Header row (title) */
+.maze-header-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.maze-title {
+    margin: 0;
+}
+
+/* Grid for width/height/seed */
+.maze-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.maze-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.maze-seed-field {
+    grid-column: 1 / span 2;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.maze-seed-row {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-seed-input {
+    flex: 1;
+}
+
+/* Details sections */
+.maze-summary {
+    cursor: pointer;
+}
+
+.maze-subgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* Checkbox row in corridors/borders */
+.maze-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 22px;
+}
+
+/* Action buttons row */
+.maze-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-action-btn {
+    padding: 8px 12px;
+}
+
+/* Meta info */
+.maze-meta {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.maze-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+/* ASCII preview */
+.maze-ascii-pre {
+    white-space: pre;
+    max-height: 320px;
+    overflow: auto;
+    background: #111;
+    color: #ddd;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.1;
+}
+
+/* Right preview column */
+.maze-preview {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Top row: tabs + scale slider */
+.maze-preview-toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.maze-tabs {
+    display: flex;
+    gap: 8px;
+}
+
+.maze-tab {
+    color: #090909;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+}
+
+/* Active tab variations */
+.maze-tab--active {
+    border: 2px solid #444;
+    background: #f2f2f2;
+}
+
+/* Scale control (right aligned) */
+.maze-scale {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.maze-scale-value {
+    width: 24px;
+    text-align: right;
+}
+
+/* Canvas container panel */
+.maze-canvas-panel {
+    border: 1px solid #ccc;
+    border-radius: 12px;
+    padding: 12px;
+    background: #fafafa;
+    width: fit-content;
+}
+
+/* Canvas itself */
+.maze-canvas {
+    image-rendering: pixelated;
+    display: block;
+
+    /* Use CSS variables set on the element via style={} */
+    width: calc(var(--mazeW, 0) * var(--mazeScale, 1) * 1px);
+    height: calc(var(--mazeH, 0) * var(--mazeScale, 1) * 1px);
+}
+
+/* Legend */
+.maze-legend {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+/* Light mode overrides */
 @media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+    :root {
+        color: #213547;
+        background-color: #ffffff;
+    }
+    a:hover {
+        color: #747bff;
+    }
+    button {
+        background-color: #f9f9f9;
+    }
 }
 </file>
 
@@ -1658,63 +2552,107 @@ dist-ssr
 <file path="index.html">
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>mazegen</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+    <head>
+        <meta charset="UTF-8" />
+        <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>mazegen</title>
+    </head>
+    <body>
+        <div id="app"></div>
+        <script type="module" src="/src/main.tsx"></script>
+    </body>
 </html>
 </file>
 
 <file path="package.json">
 {
   "name": "mazegen",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
+  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
+  "license": "ISC",
+  "author": "",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
   "devDependencies": {
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
   }
 }
 </file>
 
+<file path="README.md">
+# BSP Dungeon Generator Lab
+
+A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).
+
+The project focuses on **data-first dungeon generation** with strong debugging tools:
+- byte-based grid masks
+- GPU-friendly `THREE.DataTexture` outputs
+- ASCII and PNG-style visualizations for inspection
+
+This repo is intended as a **generator playground**, not a finished game.
+
+---
+
+## Features
+
+- BSP dungeon generation (rooms + corridors)
+- Deterministic generation via seed
+- Multiple output layers:
+  - **solid** — wall / floor mask
+  - **regionId** — room identifiers
+  - **distanceToWall** — Manhattan distance field
+- Interactive parameter UI
+- Pixel-perfect canvas preview
+- Export:
+  - ASCII map
+  - PNG image per layer
+
+---
+
+## Tech Stack
+
+- **TypeScript**
+- **React 18**
+- **Vite**
+- **Three.js** (for `DataTexture` outputs only — no 3D scene)
+
+---
+
+## Running the project
+
+Install dependencies:
+
+```bash
+npm install
+</file>
+
 <file path="tsconfig.json">
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "useDefineForClassFields": true,
+    "target": "ESNext",
     "module": "ESNext",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
-    "skipLibCheck": true,
-
-    /* Bundler mode */
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-
-    /* Linting */
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true,
   },
-  "include": ["src"]
+  "include": ["src"],
 }
 </file>
 

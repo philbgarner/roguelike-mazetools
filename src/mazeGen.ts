@@ -143,10 +143,6 @@ function idx(x: number, y: number, w: number) {
   return y * w + x;
 }
 
-function inBounds(x: number, y: number, w: number, h: number) {
-  return x >= 0 && y >= 0 && x < w && y < h;
-}
-
 function carveRect(
   solid: Uint8Array,
   W: number,
@@ -877,4 +873,671 @@ export function generateBspDungeon(
 // Convenience wrapper matching your earlier naming
 export function generateBspDungeonTexture(options: BspDungeonOptions) {
   return generateBspDungeon(options);
+}
+
+// -----------------------------
+// Content generation (Milestone 1)
+// -----------------------------
+
+export type FeatureType =
+  | 0 // none
+  | 1 // monster spawn
+  | 2 // chest
+  | 3; // secret door
+
+export type ContentOptions = {
+  seed?: number | string;
+
+  // How to pick the entrance room.
+  // - "bottom": room whose center has the largest y
+  // - "top": room whose center has the smallest y
+  // - "random": random room
+  entranceMode?: "bottom" | "top" | "random";
+
+  // Placement tuning
+  minClearanceToWall?: number; // distanceToWall threshold for placing things on floor
+  monstersPerRoomMin?: number;
+  monstersPerRoomMax?: number;
+  monsterRoomChance?: number; // 0..1 chance a room gets spawns (except entrance)
+  chestsTargetCount?: number; // total chests to place (best-effort)
+  secretRoomChance?: number; // 0..1 chance a leaf room gets a secret door
+  maxLootTier?: number; // tiers scale with depth, 1..maxLootTier
+
+  // Debug
+  includeAsciiOverlay?: boolean;
+};
+
+export type ContentOutputs = {
+  width: number;
+  height: number;
+
+  masks: {
+    featureType: Uint8Array; // FeatureType enum
+    featureId: Uint8Array; // 1..255 id
+    danger: Uint8Array; // 0..255 (meaningful at monster spawns)
+    lootTier: Uint8Array; // 0..255 (meaningful at chests)
+  };
+
+  textures: {
+    featureType: THREE.DataTexture;
+    featureId: THREE.DataTexture;
+    danger: THREE.DataTexture;
+    lootTier: THREE.DataTexture;
+  };
+
+  debug: {
+    ascii: string;
+    imageData: {
+      featureType: ImageData;
+      featureId: ImageData;
+      danger: ImageData;
+      lootTier: ImageData;
+    };
+  };
+
+  meta: {
+    seedUsed: number;
+
+    // Room graph (roomId -> neighbor roomIds)
+    roomGraph: Map<number, Set<number>>;
+
+    entranceRoomId: number;
+    farthestRoomId: number;
+
+    // BFS distance by roomId (room ids are 1..255)
+    roomDistance: Map<number, number>;
+
+    // A main path (entrance -> farthest) derived from BFS parents
+    mainPathRoomIds: number[];
+
+    // Placement records
+    monsters: Array<{
+      id: number;
+      x: number;
+      y: number;
+      roomId: number;
+      danger: number;
+    }>;
+    chests: Array<{
+      id: number;
+      x: number;
+      y: number;
+      roomId: number;
+      tier: number;
+    }>;
+    secrets: Array<{ id: number; x: number; y: number; roomId: number }>;
+  };
+};
+
+function clamp255(v: number) {
+  return Math.max(0, Math.min(255, v | 0));
+}
+
+function pickRandom<T>(rng: () => number, arr: T[]): T {
+  return arr[Math.floor(rng() * arr.length)];
+}
+
+function roomCenter(r: Rect): Point {
+  return { x: Math.floor(r.x + r.w / 2), y: Math.floor(r.y + r.h / 2) };
+}
+
+function keyXY(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+function inBounds(x: number, y: number, W: number, H: number) {
+  return x >= 0 && y >= 0 && x < W && y < H;
+}
+
+/**
+ * Find the nearest room id around a point.
+ * Corridor endpoints often land in a room, but we allow searching outward
+ * so we can robustly map corridors to room-room edges.
+ */
+function findNearestRoomId(
+  regionId: Uint8Array,
+  W: number,
+  H: number,
+  p: Point,
+  maxRadius = 8,
+): number {
+  const { x: cx, y: cy } = p;
+  if (inBounds(cx, cy, W, H)) {
+    const v = regionId[keyXY(W, cx, cy)];
+    if (v !== 0) return v;
+  }
+
+  for (let r = 1; r <= maxRadius; r++) {
+    // scan square ring
+    const x0 = cx - r;
+    const x1 = cx + r;
+    const y0 = cy - r;
+    const y1 = cy + r;
+
+    for (let x = x0; x <= x1; x++) {
+      for (const y of [y0, y1]) {
+        if (!inBounds(x, y, W, H)) continue;
+        const v = regionId[keyXY(W, x, y)];
+        if (v !== 0) return v;
+      }
+    }
+    for (let y = y0 + 1; y <= y1 - 1; y++) {
+      for (const x of [x0, x1]) {
+        if (!inBounds(x, y, W, H)) continue;
+        const v = regionId[keyXY(W, x, y)];
+        if (v !== 0) return v;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function buildRoomGraphFromCorridors(
+  dungeon: BspDungeonOutputs,
+): Map<number, Set<number>> {
+  const { width: W, height: H } = dungeon;
+  const regionId = dungeon.masks.regionId;
+
+  const graph = new Map<number, Set<number>>();
+
+  // Ensure all rooms appear as nodes
+  for (let i = 0; i < dungeon.meta.rooms.length; i++) {
+    const id = i + 1;
+    graph.set(id, new Set<number>());
+  }
+
+  for (const c of dungeon.meta.corridors) {
+    const ra = findNearestRoomId(regionId, W, H, c.a, 10);
+    const rb = findNearestRoomId(regionId, W, H, c.b, 10);
+    if (ra === 0 || rb === 0) continue;
+    if (ra === rb) continue;
+
+    if (!graph.has(ra)) graph.set(ra, new Set());
+    if (!graph.has(rb)) graph.set(rb, new Set());
+
+    graph.get(ra)!.add(rb);
+    graph.get(rb)!.add(ra);
+  }
+
+  return graph;
+}
+
+function bfsRoomDistances(
+  graph: Map<number, Set<number>>,
+  startRoomId: number,
+): { dist: Map<number, number>; parent: Map<number, number> } {
+  const dist = new Map<number, number>();
+  const parent = new Map<number, number>();
+  const q: number[] = [];
+
+  dist.set(startRoomId, 0);
+  q.push(startRoomId);
+
+  while (q.length) {
+    const cur = q.shift()!;
+    const dcur = dist.get(cur)!;
+
+    for (const nb of graph.get(cur) ?? []) {
+      if (dist.has(nb)) continue;
+      dist.set(nb, dcur + 1);
+      parent.set(nb, cur);
+      q.push(nb);
+    }
+  }
+
+  return { dist, parent };
+}
+
+function reconstructPath(
+  parent: Map<number, number>,
+  start: number,
+  end: number,
+): number[] {
+  if (start === end) return [start];
+  const path: number[] = [];
+  let cur = end;
+
+  // If unreachable, return just end
+  const seen = new Set<number>();
+  while (cur !== start) {
+    path.push(cur);
+    seen.add(cur);
+    const p = parent.get(cur);
+    if (p === undefined || seen.has(p)) {
+      path.push(start);
+      path.reverse();
+      return path;
+    }
+    cur = p;
+  }
+  path.push(start);
+  path.reverse();
+  return path;
+}
+
+function pickEntranceRoomId(
+  dungeon: BspDungeonOutputs,
+  rng: () => number,
+  mode: ContentOptions["entranceMode"],
+): number {
+  const rooms = dungeon.meta.rooms;
+  if (rooms.length === 0) return 1;
+
+  if (mode === "random") {
+    return 1 + Math.floor(rng() * rooms.length);
+  }
+
+  let bestIdx = 0;
+  let bestY =
+    mode === "top" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+
+  for (let i = 0; i < rooms.length; i++) {
+    const c = roomCenter(rooms[i]);
+    if (mode === "top") {
+      if (c.y < bestY) {
+        bestY = c.y;
+        bestIdx = i;
+      }
+    } else {
+      // bottom
+      if (c.y > bestY) {
+        bestY = c.y;
+        bestIdx = i;
+      }
+    }
+  }
+  return bestIdx + 1;
+}
+
+/**
+ * Sample a walkable (floor) point inside a room rectangle with clearance to walls.
+ * Returns null if no suitable tile found within tries.
+ */
+function sampleRoomFloorPoint(
+  dungeon: BspDungeonOutputs,
+  room: Rect,
+  rng: () => number,
+  minClearance: number,
+  tries = 80,
+): Point | null {
+  const { width: W, height: H } = dungeon;
+  const solid = dungeon.masks.solid;
+  const distWall = dungeon.masks.distanceToWall;
+
+  const xMin = room.x;
+  const xMax = room.x + room.w - 1;
+  const yMin = room.y;
+  const yMax = room.y + room.h - 1;
+
+  for (let t = 0; t < tries; t++) {
+    const x = xMin + Math.floor(rng() * Math.max(1, xMax - xMin + 1));
+    const y = yMin + Math.floor(rng() * Math.max(1, yMax - yMin + 1));
+    if (!inBounds(x, y, W, H)) continue;
+
+    const i = keyXY(W, x, y);
+    if (solid[i] !== 0) continue; // must be floor
+    if (distWall[i] < minClearance) continue;
+
+    return { x, y };
+  }
+
+  return null;
+}
+
+/**
+ * Pick a wall tile adjacent to a room’s floor (good for secret doors).
+ * Returns the wall tile position (not the floor tile).
+ */
+function findSecretDoorWallTile(
+  dungeon: BspDungeonOutputs,
+  room: Rect,
+  rng: () => number,
+  tries = 200,
+): Point | null {
+  const { width: W, height: H } = dungeon;
+  const solid = dungeon.masks.solid;
+
+  // gather candidate wall tiles adjacent to floor within the room bounds
+  const candidates: Point[] = [];
+
+  const xMin = room.x;
+  const xMax = room.x + room.w - 1;
+  const yMin = room.y;
+  const yMax = room.y + room.h - 1;
+
+  for (let y = yMin; y <= yMax; y++) {
+    for (let x = xMin; x <= xMax; x++) {
+      if (!inBounds(x, y, W, H)) continue;
+      const i = keyXY(W, x, y);
+      if (solid[i] !== 0) continue; // floor only
+
+      const nbs = [
+        { x: x + 1, y },
+        { x: x - 1, y },
+        { x, y: y + 1 },
+        { x, y: y - 1 },
+      ];
+      for (const nb of nbs) {
+        if (!inBounds(nb.x, nb.y, W, H)) continue;
+        const j = keyXY(W, nb.x, nb.y);
+        if (solid[j] === 255) {
+          // avoid putting secrets on the outermost border (usually ugly / trivial)
+          if (nb.x === 0 || nb.y === 0 || nb.x === W - 1 || nb.y === H - 1)
+            continue;
+          candidates.push({ x: nb.x, y: nb.y });
+        }
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // try random picks (bias away from corners by repeated sampling)
+  for (let t = 0; t < tries; t++) {
+    const p = candidates[Math.floor(rng() * candidates.length)];
+    return p;
+  }
+
+  return null;
+}
+
+function overlayAscii(
+  baseAscii: string,
+  W: number,
+  H: number,
+  overlay: Array<{ x: number; y: number; ch: string }>,
+): string {
+  const lines = baseAscii.split("\n");
+  const grid: string[][] = [];
+  for (let y = 0; y < H; y++) {
+    grid.push((lines[y] ?? "").padEnd(W, " ").slice(0, W).split(""));
+  }
+
+  for (const o of overlay) {
+    if (o.x < 0 || o.y < 0 || o.x >= W || o.y >= H) continue;
+    grid[o.y][o.x] = o.ch;
+  }
+
+  return grid.map((row) => row.join("")).join("\n");
+}
+
+export function generateDungeonContent(
+  dungeon: BspDungeonOutputs,
+  opts?: Partial<ContentOptions>,
+): ContentOutputs {
+  const options: Required<ContentOptions> = {
+    seed: opts?.seed ?? dungeon.meta.seedUsed + 1337,
+    entranceMode: opts?.entranceMode ?? "bottom",
+
+    minClearanceToWall: opts?.minClearanceToWall ?? 2,
+    monstersPerRoomMin: opts?.monstersPerRoomMin ?? 1,
+    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 3,
+    monsterRoomChance: opts?.monsterRoomChance ?? 0.75,
+
+    chestsTargetCount:
+      opts?.chestsTargetCount ??
+      Math.max(1, Math.floor(dungeon.meta.rooms.length / 4)),
+    secretRoomChance: opts?.secretRoomChance ?? 0.45,
+
+    maxLootTier: opts?.maxLootTier ?? 5,
+
+    includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
+  };
+
+  const seedUsed = hashSeedToUint32(options.seed);
+  const rng = mulberry32(seedUsed);
+
+  const W = dungeon.width;
+  const H = dungeon.height;
+  const N = W * H;
+
+  // Build room graph and BFS distances
+  const roomGraph = buildRoomGraphFromCorridors(dungeon);
+  const entranceRoomId = pickEntranceRoomId(dungeon, rng, options.entranceMode);
+
+  const { dist: roomDistance, parent } = bfsRoomDistances(
+    roomGraph,
+    entranceRoomId,
+  );
+
+  // Find farthest reachable room
+  let farthestRoomId = entranceRoomId;
+  let farthestDist = 0;
+  for (const [rid, d] of roomDistance.entries()) {
+    if (d > farthestDist) {
+      farthestDist = d;
+      farthestRoomId = rid;
+    }
+  }
+  const mainPathRoomIds = reconstructPath(
+    parent,
+    entranceRoomId,
+    farthestRoomId,
+  );
+
+  // Allocate masks
+  const featureType = new Uint8Array(N);
+  const featureId = new Uint8Array(N);
+  const danger = new Uint8Array(N);
+  const lootTier = new Uint8Array(N);
+
+  // Placement results
+  const monsters: ContentOutputs["meta"]["monsters"] = [];
+  const chests: ContentOutputs["meta"]["chests"] = [];
+  const secrets: ContentOutputs["meta"]["secrets"] = [];
+
+  let nextId = 1;
+
+  const rooms = dungeon.meta.rooms;
+
+  // Helper for depth normalization
+  const maxDepth = Math.max(1, farthestDist);
+
+  function depthForRoom(roomId: number) {
+    return roomDistance.get(roomId) ?? 0;
+  }
+
+  function dangerForDepth(d: number) {
+    // 32..255 range feels better than 0..255
+    const t = d / maxDepth;
+    return clamp255(32 + t * 223);
+  }
+
+  function tierForDepth(d: number) {
+    const t = d / maxDepth;
+    return Math.max(
+      1,
+      Math.min(
+        options.maxLootTier,
+        1 + Math.floor(t * (options.maxLootTier - 1)),
+      ),
+    );
+  }
+
+  // Identify side rooms (degree 1) excluding entrance (best-effort)
+  const roomDegree = new Map<number, number>();
+  for (const [rid, nbs] of roomGraph.entries()) roomDegree.set(rid, nbs.size);
+
+  const sideRoomIds = Array.from(roomGraph.keys()).filter((rid) => {
+    if (rid === entranceRoomId) return false;
+    const deg = roomDegree.get(rid) ?? 0;
+    return deg <= 1;
+  });
+
+  // -----------------------------
+  // Monsters
+  // -----------------------------
+  for (let i = 0; i < rooms.length; i++) {
+    const roomId = i + 1;
+    if (roomId === entranceRoomId) continue;
+
+    // unreachable rooms: skip
+    if (!roomDistance.has(roomId)) continue;
+
+    if (rng() > options.monsterRoomChance) continue;
+
+    const d = depthForRoom(roomId);
+    const room = rooms[i];
+
+    const count =
+      options.monstersPerRoomMin +
+      Math.floor(
+        rng() * (options.monstersPerRoomMax - options.monstersPerRoomMin + 1),
+      );
+
+    for (let k = 0; k < count; k++) {
+      const p = sampleRoomFloorPoint(
+        dungeon,
+        room,
+        rng,
+        options.minClearanceToWall,
+      );
+      if (!p) continue;
+
+      const idx = keyXY(W, p.x, p.y);
+      if (featureType[idx] !== 0) continue; // don't overlap with something else
+
+      const id = clamp255(nextId++);
+      const dng = dangerForDepth(d);
+
+      featureType[idx] = 1;
+      featureId[idx] = id;
+      danger[idx] = dng;
+
+      monsters.push({ id, x: p.x, y: p.y, roomId, danger: dng });
+    }
+  }
+
+  // -----------------------------
+  // Chests (biased to side rooms & depth)
+  // -----------------------------
+  const chestCandidates =
+    sideRoomIds.length > 0 ? sideRoomIds.slice() : mainPathRoomIds.slice(1);
+
+  // Sort candidates by depth descending so deeper rooms tend to get chests
+  chestCandidates.sort((a, b) => depthForRoom(b) - depthForRoom(a));
+
+  let chestPlaced = 0;
+  for (const roomId of chestCandidates) {
+    if (chestPlaced >= options.chestsTargetCount) break;
+
+    const room = rooms[roomId - 1];
+    if (!room) continue;
+
+    const p = sampleRoomFloorPoint(
+      dungeon,
+      room,
+      rng,
+      Math.max(1, options.minClearanceToWall),
+    );
+    if (!p) continue;
+
+    const idx = keyXY(W, p.x, p.y);
+    if (featureType[idx] !== 0) continue;
+
+    const id = clamp255(nextId++);
+    const d = depthForRoom(roomId);
+    const tier = clamp255(tierForDepth(d));
+
+    featureType[idx] = 2;
+    featureId[idx] = id;
+    lootTier[idx] = tier;
+
+    chests.push({ id, x: p.x, y: p.y, roomId, tier });
+    chestPlaced++;
+  }
+
+  // -----------------------------
+  // Secrets (secret doors placed on wall tiles adjacent to leaf rooms)
+  // -----------------------------
+  for (const roomId of sideRoomIds) {
+    if (rng() > options.secretRoomChance) continue;
+
+    const room = rooms[roomId - 1];
+    if (!room) continue;
+
+    const wallP = findSecretDoorWallTile(dungeon, room, rng);
+    if (!wallP) continue;
+
+    const idx = keyXY(W, wallP.x, wallP.y);
+    if (featureType[idx] !== 0) continue;
+
+    const id = clamp255(nextId++);
+
+    featureType[idx] = 3;
+    featureId[idx] = id;
+
+    secrets.push({ id, x: wallP.x, y: wallP.y, roomId });
+  }
+
+  // Textures + debug ImageData
+  const featureTypeTex = maskToDataTextureR8(featureType, W, H, "featureType");
+  const featureIdTex = maskToDataTextureR8(featureId, W, H, "featureId");
+  const dangerTex = maskToDataTextureR8(danger, W, H, "danger");
+  const lootTierTex = maskToDataTextureR8(lootTier, W, H, "lootTier");
+
+  const featureTypeImg = maskToImageDataGrayscale(featureType, W, H);
+  const featureIdImg = maskToImageDataGrayscale(featureId, W, H);
+  const dangerImg = maskToImageDataGrayscale(danger, W, H);
+  const lootTierImg = maskToImageDataGrayscale(lootTier, W, H);
+
+  // ASCII overlay (optional)
+  let ascii = dungeon.debug.ascii;
+  if (options.includeAsciiOverlay) {
+    const overlay: Array<{ x: number; y: number; ch: string }> = [];
+    for (const m of monsters) overlay.push({ x: m.x, y: m.y, ch: "M" });
+    for (const c of chests) overlay.push({ x: c.x, y: c.y, ch: "$" });
+    for (const s of secrets) overlay.push({ x: s.x, y: s.y, ch: "?" });
+
+    // Mark entrance room center with "E"
+    const eRoom = rooms[entranceRoomId - 1];
+    if (eRoom) {
+      const ec = roomCenter(eRoom);
+      overlay.push({ x: ec.x, y: ec.y, ch: "E" });
+    }
+
+    ascii = overlayAscii(ascii, W, H, overlay);
+  }
+
+  return {
+    width: W,
+    height: H,
+
+    masks: {
+      featureType,
+      featureId,
+      danger,
+      lootTier,
+    },
+
+    textures: {
+      featureType: featureTypeTex,
+      featureId: featureIdTex,
+      danger: dangerTex,
+      lootTier: lootTierTex,
+    },
+
+    debug: {
+      ascii,
+      imageData: {
+        featureType: featureTypeImg,
+        featureId: featureIdImg,
+        danger: dangerImg,
+        lootTier: lootTierImg,
+      },
+    },
+
+    meta: {
+      seedUsed,
+      roomGraph,
+      entranceRoomId,
+      farthestRoomId,
+      roomDistance,
+      mainPathRoomIds,
+      monsters,
+      chests,
+      secrets,
+    },
+  };
 }
