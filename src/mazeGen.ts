@@ -886,12 +886,67 @@ export type FeatureType =
   | 3 // secret door (wall tile)
   | 4 // door (floor tile)
   | 5 // key (floor tile)
-  | 6; // lever (floor tile)
+  | 6 // lever (floor tile)
+  // Milestone 3 (stateful puzzles)
+  | 7 // pressure plate (floor tile)
+  | 8 // pushable block (floor tile; entity)
+  | 9 // hidden passage (wall tile; illusion/breakable)
+  | 10; // hazard (floor tile; hard-block for now)
 
 export type DoorKind =
   | 0 // unused
   | 1 // locked door (requires key)
   | 2; // lever door (requires lever toggle)
+
+export type HazardType =
+  | 0 // none
+  | 1 // lava
+  | 2 // poison gas
+  | 3 // water
+  | 4; // spikes (etc; extend later)
+
+export type CircuitLogicType = "OR" | "AND" | "THRESHOLD";
+export type CircuitBehaviorMode = "MOMENTARY" | "TOGGLE" | "PERSISTENT";
+
+export type CircuitTriggerKind =
+  | "LEVER"
+  | "KEY"
+  | "PLATE"
+  | "COMBAT_CLEAR"
+  | "INTERACT";
+
+export type CircuitTargetKind = "DOOR" | "HAZARD" | "HIDDEN";
+
+export type CircuitTargetEffect =
+  | "OPEN"
+  | "CLOSE"
+  | "TOGGLE"
+  | "REVEAL"
+  | "ENABLE"
+  | "DISABLE";
+
+export type CircuitTriggerRef = {
+  kind: CircuitTriggerKind;
+  /**
+   * For Milestone 2 items (key/lever/door), this is the circuit id (featureId).
+   * For future puzzle entities, we can evolve this to be a true unique id.
+   */
+  refId: number;
+};
+
+export type CircuitTargetRef = {
+  kind: CircuitTargetKind;
+  refId: number; // see note above
+  effect: CircuitTargetEffect;
+};
+
+export type CircuitDef = {
+  id: number; // featureId (1..255)
+  logic: { type: CircuitLogicType; threshold?: number };
+  behavior: { mode: CircuitBehaviorMode; invert?: boolean };
+  triggers: CircuitTriggerRef[];
+  targets: CircuitTargetRef[];
+};
 
 export type ContentOptions = {
   seed?: number | string;
@@ -922,11 +977,15 @@ export type ContentOutputs = {
   height: number;
 
   masks: {
-    featureType: Uint8Array; // FeatureType enum
-    featureId: Uint8Array; // circuit id (1..255)
-    featureParam: Uint8Array; // subtype/flags (door kind, etc.)
-    danger: Uint8Array; // meaningful at monster spawns
-    lootTier: Uint8Array; // meaningful at chests
+    featureType: Uint8Array;
+    featureId: Uint8Array;
+    featureParam: Uint8Array;
+
+    danger: Uint8Array;
+    lootTier: Uint8Array;
+
+    // Milestone 3 scaffolding
+    hazardType: Uint8Array; // meaningful only when featureType == 10
   };
 
   textures: {
@@ -935,6 +994,9 @@ export type ContentOutputs = {
     featureParam: THREE.DataTexture;
     danger: THREE.DataTexture;
     lootTier: THREE.DataTexture;
+
+    // Milestone 3 scaffolding
+    hazardType: THREE.DataTexture;
   };
 
   debug: {
@@ -945,6 +1007,9 @@ export type ContentOutputs = {
       featureParam: ImageData;
       danger: ImageData;
       lootTier: ImageData;
+
+      // Milestone 3 scaffolding
+      hazardType: ImageData;
     };
   };
 
@@ -986,6 +1051,53 @@ export type ContentOutputs = {
     }>;
     keys: Array<{ id: number; x: number; y: number; roomId: number }>;
     levers: Array<{ id: number; x: number; y: number; roomId: number }>;
+
+    // Milestone 3 scaffolding (no placement yet)
+    plates: Array<{
+      id: number; // circuit id for now
+      x: number;
+      y: number;
+      roomId: number;
+      // Param decoding (redundant with featureParam, but convenient runtime view)
+      mode: "momentary" | "toggle";
+      activatedByPlayer: boolean;
+      activatedByBlock: boolean;
+      /**
+       * Explicit mode derived from the two flags:
+       * true when (activatedByPlayer && activatedByBlock).
+       */
+      activatedByBlockOrPlayer: boolean;
+      inverted: boolean;
+    }>;
+
+    blocks: Array<{
+      id: number; // unique entity id (can be simple increment)
+      x: number;
+      y: number;
+      roomId: number;
+      weightClass: number; // 0..3
+    }>;
+
+    hidden: Array<{
+      id: number; // circuit id for now
+      x: number;
+      y: number;
+      roomId: number;
+      kind: "illusion" | "breakable" | "crumble";
+      revealedInitial: boolean;
+      permanent: boolean;
+    }>;
+
+    hazards: Array<{
+      id: number; // circuit id for now
+      x: number;
+      y: number;
+      roomId: number;
+      hazardType: HazardType;
+      activeInitial: boolean;
+    }>;
+
+    circuits: CircuitDef[];
   };
 };
 
@@ -1430,6 +1542,7 @@ export function generateDungeonContent(
   const featureParam = new Uint8Array(N);
   const danger = new Uint8Array(N);
   const lootTier = new Uint8Array(N);
+  const hazardType = new Uint8Array(N); // Milestone 3 (scaffold)
 
   // Placement results
   const monsters: ContentOutputs["meta"]["monsters"] = [];
@@ -1438,6 +1551,11 @@ export function generateDungeonContent(
   const doors: ContentOutputs["meta"]["doors"] = [];
   const keys: ContentOutputs["meta"]["keys"] = [];
   const levers: ContentOutputs["meta"]["levers"] = [];
+  // Milestone 3 scaffolding (no placement yet)
+  const plates: ContentOutputs["meta"]["plates"] = [];
+  const blocks: ContentOutputs["meta"]["blocks"] = [];
+  const hidden: ContentOutputs["meta"]["hidden"] = [];
+  const hazards: ContentOutputs["meta"]["hazards"] = [];
 
   let nextId = 1;
 
@@ -1728,6 +1846,62 @@ export function generateDungeonContent(
     if (placeDoorOnEdge(eligibleEdges[i], 2)) placedLever++;
   }
 
+  // ------------------------------------
+  // Phase 1: Build meta.circuits (from Milestone 2 gates)
+  // ------------------------------------
+  const circuitsById = new Map<number, CircuitDef>();
+
+  function ensureCircuit(id: number): CircuitDef {
+    let c = circuitsById.get(id);
+    if (!c) {
+      c = {
+        id,
+        logic: { type: "OR" },
+        behavior: { mode: "PERSISTENT" },
+        triggers: [],
+        targets: [],
+      };
+      circuitsById.set(id, c);
+    }
+    return c;
+  }
+
+  // Locked doors: key -> open door (persistent)
+  for (const d of doors) {
+    const c = ensureCircuit(d.id);
+
+    if (d.kind === 1) {
+      c.behavior = { mode: "PERSISTENT" };
+      c.triggers.push({ kind: "KEY", refId: d.id });
+      c.targets.push({ kind: "DOOR", refId: d.id, effect: "OPEN" });
+    } else if (d.kind === 2) {
+      // Lever doors: lever -> toggle door
+      c.behavior = { mode: "TOGGLE" };
+      c.triggers.push({ kind: "LEVER", refId: d.id });
+      c.targets.push({ kind: "DOOR", refId: d.id, effect: "TOGGLE" });
+    }
+  }
+
+  // If there are keys/levers that exist without a door record (should be rare),
+  // ensure we still show them as circuits in the inspector.
+  for (const k of keys) {
+    const c = ensureCircuit(k.id);
+    // best-effort: don’t duplicate if door loop already pushed a KEY trigger
+    if (!c.triggers.some((t) => t.kind === "KEY" && t.refId === k.id)) {
+      c.triggers.push({ kind: "KEY", refId: k.id });
+    }
+  }
+  for (const l of levers) {
+    const c = ensureCircuit(l.id);
+    if (!c.triggers.some((t) => t.kind === "LEVER" && t.refId === l.id)) {
+      c.triggers.push({ kind: "LEVER", refId: l.id });
+    }
+  }
+
+  const circuits = Array.from(circuitsById.values()).sort(
+    (a, b) => a.id - b.id,
+  );
+
   // Textures + debug ImageData
   const featureTypeTex = maskToDataTextureR8(featureType, W, H, "featureType");
   const featureIdTex = maskToDataTextureR8(featureId, W, H, "featureId");
@@ -1739,12 +1913,14 @@ export function generateDungeonContent(
     H,
     "featureParam",
   );
+  const hazardTypeTex = maskToDataTextureR8(hazardType, W, H, "hazardType");
 
   const featureTypeImg = maskToImageDataGrayscale(featureType, W, H);
   const featureIdImg = maskToImageDataGrayscale(featureId, W, H);
   const dangerImg = maskToImageDataGrayscale(danger, W, H);
   const lootTierImg = maskToImageDataGrayscale(lootTier, W, H);
   const featureParamImg = maskToImageDataGrayscale(featureParam, W, H);
+  const hazardTypeImg = maskToImageDataGrayscale(hazardType, W, H);
 
   // ASCII overlay (optional)
   let ascii = dungeon.debug.ascii;
@@ -1774,9 +1950,10 @@ export function generateDungeonContent(
     masks: {
       featureType,
       featureId,
+      featureParam,
       danger,
       lootTier,
-      featureParam,
+      hazardType,
     },
 
     textures: {
@@ -1785,6 +1962,7 @@ export function generateDungeonContent(
       danger: dangerTex,
       lootTier: lootTierTex,
       featureParam: featureParamTex,
+      hazardTypeTex: hazardTypeTex,
     },
 
     debug: {
@@ -1795,6 +1973,7 @@ export function generateDungeonContent(
         danger: dangerImg,
         lootTier: lootTierImg,
         featureParam: featureParamImg,
+        hazardType: hazardTypeImg,
       },
     },
 
@@ -1811,6 +1990,11 @@ export function generateDungeonContent(
       doors,
       keys,
       levers,
+      plates,
+      blocks,
+      hidden,
+      hazards,
+      circuits,
     },
   };
 }

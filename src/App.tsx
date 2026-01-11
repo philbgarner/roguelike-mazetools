@@ -17,7 +17,8 @@ type Layer =
   | "featureId"
   | "featureParam"
   | "danger"
-  | "lootTier";
+  | "lootTier"
+  | "hazardType";
 
 function clampInt(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
@@ -60,6 +61,14 @@ function featureName(ft: number) {
       return "Key";
     case 6:
       return "Lever";
+    case 7:
+      return "Pressure Plate";
+    case 8:
+      return "Push Block";
+    case 9:
+      return "Hidden Passage";
+    case 10:
+      return "Hazard";
     default:
       return "None";
   }
@@ -185,6 +194,10 @@ const App: React.FC = () => {
   // --- Output ---
   const [ascii, setAscii] = useState<string>("");
 
+  const [content, setContent] = useState<ReturnType<
+    typeof generateDungeonContent
+  > | null>(null);
+
   const [imageDataByLayer, setImageDataByLayer] = useState<{
     solid: ImageData | null;
     regionId: ImageData | null;
@@ -197,6 +210,8 @@ const App: React.FC = () => {
     featureParam: ImageData | null;
     danger: ImageData | null;
     lootTier: ImageData | null;
+
+    hazardType: ImageData | null;
   }>({
     solid: null,
     regionId: null,
@@ -209,6 +224,8 @@ const App: React.FC = () => {
     featureParam: null,
     danger: null,
     lootTier: null,
+
+    hazardType: null,
   });
 
   const [meta, setMeta] = useState<{
@@ -291,6 +308,8 @@ const App: React.FC = () => {
     dungeonRef.current = out;
     contentRef.current = content;
 
+    setContent(content);
+
     const composite = makeContentCompositeImageData(out, content);
 
     setAscii(content.debug.ascii);
@@ -307,6 +326,8 @@ const App: React.FC = () => {
       featureParam: content.debug.imageData.featureParam,
       danger: content.debug.imageData.danger,
       lootTier: content.debug.imageData.lootTier,
+
+      hazardType: content.debug.imageData.hazardType,
     });
 
     setMeta({
@@ -381,6 +402,7 @@ const App: React.FC = () => {
     const fparam = content.masks.featureParam[i];
     const dng = content.masks.danger[i];
     const tier = content.masks.lootTier[i];
+    const hz = content.masks.hazardType[i];
 
     const lines: string[] = [];
     lines.push(`Cell: (${x}, ${y})`);
@@ -408,6 +430,8 @@ const App: React.FC = () => {
     if (ft === 6 && fid !== 0)
       lines.push(`Hint: lever controls door circuit ${fid}`);
     if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
+
+    if (ft === 10) lines.push(`hazardType: ${hz}`);
 
     return lines;
   }
@@ -753,6 +777,57 @@ const App: React.FC = () => {
           <summary className="maze-summary">ASCII preview</summary>
           <pre className="maze-ascii-pre">{ascii}</pre>
         </details>
+        {content && (
+          <div className="panel">
+            <div className="panelTitle">Circuits</div>
+
+            {content.meta.circuits.length === 0 ? (
+              <div className="muted">No circuits.</div>
+            ) : (
+              <div className="circuitsList">
+                {content.meta.circuits.map((c) => (
+                  <div key={c.id} className="circuitCard">
+                    <div className="circuitHeader">
+                      <span className="mono">#{c.id}</span>{" "}
+                      <span className="muted">
+                        {c.logic.type}
+                        {c.logic.type === "THRESHOLD"
+                          ? `(${c.logic.threshold})`
+                          : ""}
+                        {" · "}
+                        {c.behavior.mode}
+                      </span>
+                    </div>
+
+                    <div className="circuitRow">
+                      <div className="circuitLabel">Triggers</div>
+                      <div className="circuitItems mono">
+                        {c.triggers.map((t, i) => (
+                          <span key={i}>
+                            {t.kind}:{t.refId}
+                            {i < c.triggers.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="circuitRow">
+                      <div className="circuitLabel">Targets</div>
+                      <div className="circuitItems mono">
+                        {c.targets.map((t, i) => (
+                          <span key={i}>
+                            {t.kind}:{t.refId}→{t.effect}
+                            {i < c.targets.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Right: Preview */}
@@ -821,6 +896,13 @@ const App: React.FC = () => {
             >
               featureId
             </button>
+
+            <button
+              onClick={() => setLayer("hazardType")}
+              className={`maze-tab ${layer === "hazardType" ? "maze-tab--active" : ""}`}
+            >
+              hazardType
+            </button>
           </div>
 
           <label className="maze-scale">
@@ -878,14 +960,16 @@ const App: React.FC = () => {
                   : layer === "distanceToWall"
                     ? "grayscale Manhattan distance (0=wall)"
                     : layer === "featureType"
-                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever"
+                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever, 7=pressurePlate, 8=pushBlock, 9=hiddenPassage, 10=hazard"
                       : layer === "featureParam"
                         ? "door kind / feature subtype (e.g. 1=locked door, 2=lever door)"
                         : layer === "danger"
                           ? "monster danger/level (0..255)"
                           : layer === "lootTier"
                             ? "chest tier (1..N)"
-                            : "feature instance/circuit id (1..255)"}
+                            : layer === "hazardType"
+                              ? "hazard kind (0=none, 1=lava, 2=poison gas, 3=water, 4=spikes)"
+                              : "feature instance/circuit id (1..255)"}
           </div>
         </div>
       </div>
