@@ -7,6 +7,7 @@
 // It is initialized from ContentOutputs.meta and then mutated by runtime actions.
 
 import type {
+  BspDungeonOutputs,
   ContentOutputs,
   DoorKind,
   HazardType,
@@ -16,8 +17,6 @@ import type {
 export type DoorRuntimeState = {
   kind: DoorKind;
   isOpen: boolean;
-  // Optional: if you later want to support “opened forever”
-  // (but circuit behavior already handles this)
   forcedOpen?: boolean;
 };
 
@@ -31,6 +30,12 @@ export type LeverRuntimeState = {
 
 export type PlateRuntimeState = {
   pressed: boolean;
+};
+
+export type BlockRuntimeState = {
+  x: number;
+  y: number;
+  weightClass: number; // 0..3
 };
 
 export type HazardRuntimeState = {
@@ -57,6 +62,7 @@ export type DungeonRuntimeState = {
   keys: Record<number, KeyRuntimeState>;
   levers: Record<number, LeverRuntimeState>;
   plates: Record<number, PlateRuntimeState>;
+  blocks: Record<number, BlockRuntimeState>;
   hazards: Record<number, HazardRuntimeState>;
   secrets: Record<number, SecretRuntimeState>;
   circuits: Record<number, CircuitRuntimeState>;
@@ -68,6 +74,10 @@ function cloneState<S>(s: S): S {
   return JSON.parse(JSON.stringify(s)) as S;
 }
 
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
 export function initDungeonRuntimeState(
   content: ContentOutputs,
 ): DungeonRuntimeState {
@@ -75,12 +85,51 @@ export function initDungeonRuntimeState(
   const keys: Record<number, KeyRuntimeState> = {};
   const levers: Record<number, LeverRuntimeState> = {};
   const plates: Record<number, PlateRuntimeState> = {};
+  const blocks: Record<number, BlockRuntimeState> = {};
   const hazards: Record<number, HazardRuntimeState> = {};
   const secrets: Record<number, SecretRuntimeState> = {};
   const circuits: Record<number, CircuitRuntimeState> = {};
 
-  // Initialize circuits to inert
-  for (const c of content.meta.circuits) {
+  // Doors
+  for (const d of content.meta.doors) {
+    doors[d.id] = { kind: d.kind, isOpen: false };
+  }
+
+  // Keys
+  for (const k of content.meta.keys) {
+    keys[k.id] = { collected: false };
+  }
+
+  // Levers
+  for (const l of content.meta.levers) {
+    levers[l.id] = { toggled: false };
+  }
+
+  // Plates
+  for (const p of content.meta.plates) {
+    plates[p.id] = { pressed: false };
+  }
+
+  // Blocks
+  for (const b of content.meta.blocks) {
+    blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
+  }
+
+  // Hazards
+  for (const h of content.meta.hazards) {
+    hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
+  }
+
+  // Secrets / hidden
+  for (const s of content.meta.secrets) {
+    secrets[s.id] = { revealed: false };
+  }
+  for (const h of content.meta.hidden) {
+    secrets[h.id] = { revealed: h.revealedInitial };
+  }
+
+  // Circuits runtime
+  for (const c of content.meta.circuits as CircuitDef[]) {
     circuits[c.id] = {
       active: false,
       lastSatisfied: false,
@@ -88,72 +137,50 @@ export function initDungeonRuntimeState(
     };
   }
 
-  // Doors: start closed by default
-  for (const d of content.meta.doors) {
-    doors[d.id] = {
-      kind: d.kind,
-      isOpen: false,
-    };
-  }
-
-  // Keys/levers exist as triggers; runtime starts uncollected/untoggled
-  for (const k of content.meta.keys) {
-    keys[k.id] = { collected: false };
-  }
-
-  for (const l of content.meta.levers) {
-    levers[l.id] = { toggled: false };
-  }
-
-  // Plates exist as triggers; runtime starts unpressed
-  // (Placement is currently scaffolding, but this keeps the model complete.)
-  for (const p of content.meta.plates) {
-    plates[p.id] = { pressed: false };
-  }
-
-  // Hazards and secrets may exist as targets, but the content meta
-  // may not list them explicitly yet — keep resilient.
-  // If you later add content.meta.hazards/meta.secrets, you can initialize here.
-  // For now, we build lazily by circuit targets in evaluator.
-
-  return { doors, keys, levers, plates, hazards, secrets, circuits };
+  return {
+    doors,
+    keys,
+    levers,
+    plates,
+    blocks,
+    hazards,
+    secrets,
+    circuits,
+  };
 }
 
-// ----------------- Runtime actions -----------------
-
-export function toggleLever(
-  state: DungeonRuntimeState,
-  leverCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.levers[leverCircuitId]) {
-    next.levers[leverCircuitId] = { toggled: false };
-  }
-  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
-  return next;
-}
+// ----------------- Simple interactions (debug / prototype) -----------------
 
 export function collectKey(
   state: DungeonRuntimeState,
   keyCircuitId: number,
 ): DungeonRuntimeState {
   const next = cloneState(state);
-  if (!next.keys[keyCircuitId]) {
-    next.keys[keyCircuitId] = { collected: false };
-  }
+  if (!next.keys[keyCircuitId]) next.keys[keyCircuitId] = { collected: false };
   next.keys[keyCircuitId].collected = true;
   return next;
 }
 
+export function toggleLever(
+  state: DungeonRuntimeState,
+  leverCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.levers[leverCircuitId])
+    next.levers[leverCircuitId] = { toggled: false };
+  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
+  return next;
+}
+
+// Plates are now DERIVED — keep these for compatibility/testing, but App.tsx no longer calls them.
 export function setPlatePressed(
   state: DungeonRuntimeState,
   plateCircuitId: number,
   pressed: boolean,
 ): DungeonRuntimeState {
   const next = cloneState(state);
-  if (!next.plates[plateCircuitId]) {
+  if (!next.plates[plateCircuitId])
     next.plates[plateCircuitId] = { pressed: false };
-  }
   next.plates[plateCircuitId].pressed = pressed;
   return next;
 }
@@ -163,19 +190,145 @@ export function togglePlate(
   plateCircuitId: number,
 ): DungeonRuntimeState {
   const next = cloneState(state);
-  if (!next.plates[plateCircuitId]) {
+  if (!next.plates[plateCircuitId])
     next.plates[plateCircuitId] = { pressed: false };
-  }
   next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
   return next;
 }
 
 export function resetRuntimeState(
-  state: DungeonRuntimeState,
+  _state: DungeonRuntimeState,
   content: ContentOutputs,
 ): DungeonRuntimeState {
   // Re-init from current content meta
   return initDungeonRuntimeState(content);
+}
+
+// ----------------- Derived state -----------------
+
+/**
+ * DERIVED PLATES:
+ * Plate.pressed is computed from block occupancy (and plate config), not directly mutated.
+ *
+ * This should be called any time blocks move (and once after init).
+ */
+export function derivePlatesFromBlocks(
+  state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+
+  // Precompute a quick occupancy set for blocks
+  const occupied = new Set<number>();
+  for (const b of Object.values(next.blocks)) {
+    occupied.add(idxOf(content.width, b.x, b.y));
+  }
+
+  for (const p of content.meta.plates) {
+    if (!next.plates[p.id]) next.plates[p.id] = { pressed: false };
+
+    const onBlock = occupied.has(idxOf(content.width, p.x, p.y));
+    let pressed = false;
+
+    // For now we only have blocks in the prototype, but we respect the plate flags:
+    if (p.activatedByBlock && onBlock) pressed = true;
+
+    // (Player activation can be added later)
+    if (p.inverted) pressed = !pressed;
+
+    next.plates[p.id].pressed = pressed;
+  }
+
+  return next;
+}
+
+// ----------------- Block push (prototype) -----------------
+
+export type PushResult =
+  | { ok: true; next: DungeonRuntimeState }
+  | { ok: false; next: DungeonRuntimeState; error: string };
+
+function hasBlockAt(
+  state: DungeonRuntimeState,
+  x: number,
+  y: number,
+  ignoreBlockId?: number,
+): boolean {
+  for (const [idStr, b] of Object.entries(state.blocks)) {
+    const id = Number(idStr);
+    if (ignoreBlockId != null && id === ignoreBlockId) continue;
+    if (b.x === x && b.y === y) return true;
+  }
+  return false;
+}
+
+function isWalkableForBlock(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  runtime: DungeonRuntimeState,
+  x: number,
+  y: number,
+): boolean {
+  const W = dungeon.width;
+  const H = dungeon.height;
+  if (x < 0 || y < 0 || x >= W || y >= H) return false;
+
+  const i = idxOf(W, x, y);
+
+  // walls
+  if (dungeon.masks.solid[i] === 255) return false;
+
+  // doors: only passable if open
+  const ft = content.masks.featureType[i];
+  const fid = content.masks.featureId[i];
+  if (ft === 4 && fid !== 0) {
+    const door = runtime.doors[fid];
+    const isOpen = !!(door?.isOpen || (door as any)?.forcedOpen);
+    if (!isOpen) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Attempt to push a specific block by (dx,dy).
+ * - checks bounds/walls
+ * - blocks cannot overlap
+ * - doors block movement unless currently open
+ */
+export function tryPushBlock(
+  state: DungeonRuntimeState,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  blockId: number,
+  dx: number,
+  dy: number,
+): PushResult {
+  const b = state.blocks[blockId];
+  if (!b) return { ok: false, next: state, error: `Unknown block ${blockId}` };
+  if ((dx | 0) === 0 && (dy | 0) === 0)
+    return { ok: false, next: state, error: "No movement" };
+  if (Math.abs(dx) + Math.abs(dy) !== 1)
+    return {
+      ok: false,
+      next: state,
+      error: "Only cardinal pushes are supported",
+    };
+
+  const nx = b.x + dx;
+  const ny = b.y + dy;
+
+  if (!isWalkableForBlock(dungeon, content, state, nx, ny)) {
+    return { ok: false, next: state, error: "Blocked" };
+  }
+
+  if (hasBlockAt(state, nx, ny, blockId)) {
+    return { ok: false, next: state, error: "Another block is in the way" };
+  }
+
+  const next = cloneState(state);
+  next.blocks[blockId] = { ...next.blocks[blockId], x: nx, y: ny };
+  return { ok: true, next };
 }
 
 // ----------------- Target application helpers -----------------

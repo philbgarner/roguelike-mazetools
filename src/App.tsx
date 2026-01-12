@@ -11,6 +11,8 @@ import {
   toggleLever,
   togglePlate,
   resetRuntimeState,
+  derivePlatesFromBlocks,
+  tryPushBlock,
   type DungeonRuntimeState,
 } from "./dungeonState";
 
@@ -130,6 +132,7 @@ function makeContentCompositeImageData(
   content: ReturnType<typeof generateDungeonContent>,
   runtime: DungeonRuntimeState | null,
   showStateOverlay: boolean,
+  selectedBlockId: number | null,
 ): ImageData {
   const W = dungeon.width;
   const H = dungeon.height;
@@ -140,6 +143,20 @@ function makeContentCompositeImageData(
 
   const img = new ImageData(W, H);
   const data = img.data;
+
+  // Runtime blocks overlay (blocks move; masks do not)
+  const blockOcc = new Uint8Array(W * H);
+  const selectedOcc = new Uint8Array(W * H);
+  if (runtime) {
+    for (const [idStr, b] of Object.entries(runtime.blocks ?? {})) {
+      const id = Number(idStr);
+      const bi = idxOf(W, b.x, b.y);
+      if (bi >= 0 && bi < blockOcc.length) blockOcc[bi] = 1;
+      if (selectedBlockId != null && id === selectedBlockId) {
+        if (bi >= 0 && bi < selectedOcc.length) selectedOcc[bi] = 1;
+      }
+    }
+  }
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -214,11 +231,38 @@ function makeContentCompositeImageData(
           r = 150;
           g = 150;
           b = 150;
+          // stone-grey; brighten when pressed (derived)
+          r = 150;
+          g = 150;
+          b = 150;
+          if (runtime && showStateOverlay) {
+            const plateId = fid[i] | 0;
+            const pressed = !!runtime.plates?.[plateId]?.pressed;
+            if (pressed) {
+              r = 205;
+              g = 205;
+              b = 205;
+            }
+          }
         } else {
           // key / lever / unknown future
           r = 230;
           g = 200;
           b = 70;
+        }
+
+        // Draw blocks on top (they move)
+        if (runtime && blockOcc[i]) {
+          // warm “wood” tone
+          r = 140;
+          g = 105;
+          b = 60;
+          if (selectedOcc[i]) {
+            // highlight selected
+            r = 210;
+            g = 170;
+            b = 90;
+          }
         }
 
         // Keep walls visible if a feature is on a wall (secret doors are walls)
@@ -324,6 +368,7 @@ const App: React.FC = () => {
     keys: number;
     levers: number;
     plates: number;
+    blocks: number;
   } | null>(null);
 
   // Keep latest generator outputs around for tooltip lookups
@@ -338,6 +383,7 @@ const App: React.FC = () => {
   // Hover tooltip state
   const hoverTimerRef = useRef<number | null>(null);
   const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
+  const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
@@ -391,22 +437,25 @@ const App: React.FC = () => {
     ],
   );
 
-  function applyRuntime(next: DungeonRuntimeState) {
+  const applyRuntime = React.useCallback((next: DungeonRuntimeState) => {
     const content = contentRef.current;
     if (!content) {
       setRuntime(next);
       return;
     }
-    const res = evaluateCircuits(next, content.meta.circuits);
+    // DERIVED: plates come from block occupancy
+    const derived = derivePlatesFromBlocks(next, content);
+    const res = evaluateCircuits(derived, content.meta.circuits);
     setRuntime(res.next);
     setCircuitDebug(res.debug);
-  }
+  }, []);
 
   const regenerateRuntimeFromContent = React.useCallback(() => {
     const content = contentRef.current;
     if (!content) return;
     const initialRuntime = initDungeonRuntimeState(content);
-    const evalOut = evaluateCircuits(initialRuntime, content.meta.circuits);
+    const derived = derivePlatesFromBlocks(initialRuntime, content);
+    const evalOut = evaluateCircuits(derived, content.meta.circuits);
 
     setRuntime(evalOut.next);
     setCircuitDebug(evalOut.debug);
@@ -417,16 +466,19 @@ const App: React.FC = () => {
     const content = generateDungeonContent(out);
 
     const initialRuntime = initDungeonRuntimeState(content);
-    const evalOut = evaluateCircuits(initialRuntime, content.meta.circuits);
+    const derived = derivePlatesFromBlocks(initialRuntime, content);
+    const evalOut = evaluateCircuits(derived, content.meta.circuits);
 
     setRuntime(evalOut.next);
     setCircuitDebug(evalOut.debug);
+    setSelectedBlockId(null);
 
     const composite = makeContentCompositeImageData(
       out,
       content,
       evalOut.next,
       showStateOverlay,
+      null,
     );
 
     dungeonRef.current = out;
@@ -469,6 +521,7 @@ const App: React.FC = () => {
       keys: content.meta.keys.length,
       levers: content.meta.levers.length,
       plates: content.meta.plates.length,
+      blocks: content.meta.blocks.length,
     });
   }, [opts, showStateOverlay]);
 
@@ -488,13 +541,62 @@ const App: React.FC = () => {
       content,
       runtime,
       showStateOverlay,
+      selectedBlockId,
     );
 
     setImageDataByLayer((prev) => ({
       ...prev,
       content: composite,
     }));
-  }, [runtime, showStateOverlay]);
+  }, [runtime, showStateOverlay, selectedBlockId]);
+
+  // Keyboard push: select a block (click), then WASD/Arrows to push
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (selectedBlockId == null) return;
+      const dungeon = dungeonRef.current;
+      const content = contentRef.current;
+      const r = runtime;
+      if (!dungeon || !content || !r) return;
+
+      let dx = 0;
+      let dy = 0;
+      switch (e.key) {
+        case "ArrowUp":
+        case "w":
+        case "W":
+          dy = -1;
+          break;
+        case "ArrowDown":
+        case "s":
+        case "S":
+          dy = 1;
+          break;
+        case "ArrowLeft":
+        case "a":
+        case "A":
+          dx = -1;
+          break;
+        case "ArrowRight":
+        case "d":
+        case "D":
+          dx = 1;
+          break;
+        case "Escape":
+          setSelectedBlockId(null);
+          return;
+      }
+
+      if (dx !== 0 || dy !== 0) {
+        e.preventDefault();
+        const res = tryPushBlock(r, dungeon, content, selectedBlockId, dx, dy);
+        if (res.ok) applyRuntime(res.next);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown, { passive: false } as any);
+    return () => window.removeEventListener("keydown", onKeyDown as any);
+  }, [runtime, selectedBlockId, applyRuntime]);
 
   // redraw canvas whenever layer changes or new images arrive
   useEffect(() => {
@@ -538,9 +640,21 @@ const App: React.FC = () => {
     const regionId = dungeon.masks.regionId[i];
     const dist = dungeon.masks.distanceToWall[i];
 
-    const ft = content.masks.featureType[i];
-    const fid = content.masks.featureId[i];
+    let ft = content.masks.featureType[i];
+    let fid = content.masks.featureId[i];
     const fparam = content.masks.featureParam[i];
+    // If a runtime block is at this cell, treat it as the active feature for tooltip purposes
+    if (runtime?.blocks) {
+      for (const [idStr, b] of Object.entries(runtime.blocks)) {
+        const id = Number(idStr);
+        if (b.x === x && b.y === y) {
+          ft = 8;
+          fid = id;
+          break;
+        }
+      }
+    }
+
     const dng = content.masks.danger[i];
     const tier = content.masks.lootTier[i];
     const hz = content.masks.hazardType[i];
@@ -580,8 +694,27 @@ const App: React.FC = () => {
           `Plate triggers: player=${plate.activatedByPlayer ? "Y" : "N"}, block=${plate.activatedByBlock ? "Y" : "N"}`,
         );
         if (plate.inverted) lines.push(`Plate: inverted`);
+        if (runtime && showStateOverlay) {
+          lines.push(
+            `Plate pressed (derived): ${runtime.plates?.[fid]?.pressed ? "YES" : "NO"}`,
+          );
+        }
       } else {
         lines.push(`Plate: id ${fid}`);
+      }
+    }
+
+    if (ft === 8 && fid !== 0) {
+      const b = runtime?.blocks?.[fid];
+      if (b) {
+        lines.push(`Block: id ${fid}`);
+        lines.push(`Block pos: (${b.x}, ${b.y})`);
+        lines.push(`Block weightClass: ${b.weightClass ?? 0}`);
+        lines.push("Click: select block");
+        lines.push("WASD / Arrows: push selected");
+        lines.push("Esc: clear selection");
+      } else {
+        lines.push(`Block: id ${fid}`);
       }
     }
 
@@ -693,6 +826,17 @@ const App: React.FC = () => {
     const ft = content.masks.featureType[i] | 0;
     const fid = content.masks.featureId[i] | 0;
 
+    // If you clicked a runtime block, select it (blocks move; masks don't)
+    if (runtime?.blocks) {
+      for (const [idStr, b] of Object.entries(runtime.blocks)) {
+        const id = Number(idStr);
+        if (b.x === cell.x && b.y === cell.y) {
+          setSelectedBlockId(id);
+          return;
+        }
+      }
+    }
+
     if (fid === 0) return;
 
     // Click interactions are purely debug/runtime-driving for Milestone 3 overlay testing.
@@ -716,6 +860,7 @@ const App: React.FC = () => {
       applyRuntime(next);
       return;
     }
+    // Plates are derived now; no click toggling.
 
     if (ft === 4) {
       // Door (debug convenience): toggle door state directly.

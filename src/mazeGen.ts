@@ -978,6 +978,14 @@ export type ContentOptions = {
   leverDoorCount?: number; // best-effort (default based on path length)
   gateMinDepth?: number; // avoid placing gates too close to entrance
 
+  // Milestone 3 tuning
+  // If true, place a tiny “fixture” puzzle:
+  // - 1 push-block (featureType=8)
+  // - 1 pressure plate (featureType=7)
+  // - 1 extra door (featureType=4, kind=0)
+  // And add a circuit: PLATE toggles the door.
+  includePuzzleFixture?: boolean;
+
   includeAsciiOverlay?: boolean;
 };
 
@@ -1511,6 +1519,8 @@ export function generateDungeonContent(
     leverDoorCount: opts?.leverDoorCount ?? 0,
     gateMinDepth: opts?.gateMinDepth ?? 2,
 
+    // Milestone 3
+    includePuzzleFixture: opts?.includePuzzleFixture ?? true,
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
   };
 
@@ -1855,6 +1865,152 @@ export function generateDungeonContent(
     if (placeDoorOnEdge(eligibleEdges[i], 2)) placedLever++;
   }
 
+  // -----------------------------
+  // Milestone 3: Simple plate + block + door fixture
+  //
+  // NOTE: Plates are “derived” at runtime from block occupancy (see dungeonState.ts/App.tsx).
+  // This just ensures there’s something to interact with right away.
+  // -----------------------------
+
+  // Small bitfield for featureParam on plates (debug / future use)
+  // bit0: modeToggle (1=toggle, 0=momentary)
+  // bit1: activatedByPlayer
+  // bit2: activatedByBlock
+  // bit3: inverted
+  function encodePlateParam(o: {
+    mode: "momentary" | "toggle";
+    activatedByPlayer: boolean;
+    activatedByBlock: boolean;
+    inverted: boolean;
+  }): number {
+    let p = 0;
+    if (o.mode === "toggle") p |= 1 << 0;
+    if (o.activatedByPlayer) p |= 1 << 1;
+    if (o.activatedByBlock) p |= 1 << 2;
+    if (o.inverted) p |= 1 << 3;
+    return p & 0xff;
+  }
+
+  let fixtureDoorId = 0;
+  let fixturePlateCircuitId = 0;
+
+  if (options.includePuzzleFixture && rooms.length > 0) {
+    // (A) Place an “extra” door on a floor tile in the farthest room (kind=0 => not key/lever-locked)
+    {
+      const doorRoomId = farthestRoomId;
+      const doorRoom = rooms[doorRoomId - 1] ?? rooms[0];
+      const p = sampleRoomFloorPoint(
+        dungeon,
+        doorRoom,
+        rng,
+        Math.max(1, options.minClearanceToWall),
+      );
+      if (p) {
+        const idx = keyXY(W, p.x, p.y);
+        if (featureType[idx] === 0) {
+          fixtureDoorId = clamp255(nextId++);
+          featureType[idx] = 4; // door
+          featureId[idx] = fixtureDoorId;
+          featureParam[idx] = 0; // DoorKind “unused” => not locked by key/lever logic
+
+          doors.push({
+            id: fixtureDoorId,
+            x: p.x,
+            y: p.y,
+            roomA: doorRoomId,
+            roomB: doorRoomId,
+            kind: 0,
+            depth: depthForRoom(doorRoomId),
+          });
+        }
+      }
+    }
+
+    // (B) Place a pressure plate + adjacent push block in the entrance room
+    {
+      const plateRoomId = entranceRoomId;
+      const plateRoom = rooms[plateRoomId - 1] ?? rooms[0];
+
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+      ];
+
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const p = sampleRoomFloorPoint(
+          dungeon,
+          plateRoom,
+          rng,
+          Math.max(1, options.minClearanceToWall),
+        );
+        if (!p) break;
+
+        const pi = keyXY(W, p.x, p.y);
+        if (featureType[pi] !== 0) continue;
+
+        // shuffle dirs
+        for (let i = dirs.length - 1; i > 0; i--) {
+          const j = Math.floor(rng() * (i + 1));
+          [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+        }
+
+        let bp: Point | null = null;
+        for (const d of dirs) {
+          const bx = p.x + d.dx;
+          const by = p.y + d.dy;
+          if (bx < 0 || by < 0 || bx >= W || by >= H) continue;
+          const bi = keyXY(W, bx, by);
+          if (dungeon.masks.solid[bi] === 255) continue;
+          if (featureType[bi] !== 0) continue;
+          bp = { x: bx, y: by };
+          break;
+        }
+        if (!bp) continue;
+
+        fixturePlateCircuitId = clamp255(nextId++);
+        const blockId = clamp255(nextId++);
+
+        // plate
+        featureType[pi] = 7;
+        featureId[pi] = fixturePlateCircuitId;
+        featureParam[pi] = encodePlateParam({
+          mode: "toggle",
+          activatedByPlayer: false,
+          activatedByBlock: true,
+          inverted: false,
+        });
+        plates.push({
+          id: fixturePlateCircuitId,
+          x: p.x,
+          y: p.y,
+          roomId: plateRoomId,
+          mode: "toggle",
+          activatedByPlayer: false,
+          activatedByBlock: true,
+          activatedByBlockOrPlayer: false,
+          inverted: false,
+        });
+
+        // block
+        const bi = keyXY(W, bp.x, bp.y);
+        featureType[bi] = 8;
+        featureId[bi] = blockId;
+        featureParam[bi] = 0; // weightClass (0..3)
+        blocks.push({
+          id: blockId,
+          x: bp.x,
+          y: bp.y,
+          roomId: plateRoomId,
+          weightClass: 0,
+        });
+
+        break; // done
+      }
+    }
+  }
+
   // ------------------------------------
   // Phase 1: Build meta.circuits (from Milestone 2 gates)
   // ------------------------------------
@@ -1905,6 +2061,15 @@ export function generateDungeonContent(
     if (!c.triggers.some((t) => t.kind === "LEVER" && t.refId === l.id)) {
       c.triggers.push({ kind: "LEVER", refId: l.id });
     }
+  }
+
+  // Milestone 3 fixture circuit: plate toggles the extra door.
+  if (fixturePlateCircuitId !== 0 && fixtureDoorId !== 0) {
+    const c = ensureCircuit(fixturePlateCircuitId);
+    c.logic = { type: "OR" };
+    c.behavior = { mode: "TOGGLE" };
+    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
+    c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
   }
 
   const circuits = Array.from(circuitsById.values()).sort(
