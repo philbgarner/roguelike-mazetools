@@ -1,410 +1,361 @@
-# PROJECT CONTEXT — BSP DUNGEON & CONTENT GENERATION
+PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-This project is an experimental procedural dungeon generator built in TypeScript
-with a small React preview app.
+This project is an experimental procedural dungeon generator built in TypeScript with a small React preview/debug app.
 
-It is designed to evolve toward a JRPG / metroidvania-style dungeon system with
-backtracking, secrets, puzzles, monsters, and loot.
+It is designed to evolve toward a JRPG / metroidvania-style dungeon system with backtracking, secrets, puzzles, monsters, and loot.
 
-The code is intentionally layered so that structural generation and gameplay
-content generation are separated, and puzzle/state logic is built *on top*.
-
+The system is intentionally layered so that geometry, gameplay intent, and puzzle logic are cleanly separated. This separation is foundational and already enforced in code.
 
 ============================================================
 HIGH-LEVEL ARCHITECTURE
-============================================================
 
 The system has three conceptual layers:
 
-1) Structural Dungeon Generation (BSP)
-   - Entry: generateBspDungeon() in mazeGen.ts
+Structural Dungeon Generation (BSP)
+Entry: generateBspDungeon() in mazeGen.ts
 
-2) Content Generation (Milestones 1–2 + early Milestone 3 wiring)
-   - Entry: generateDungeonContent() in mazeGen.ts
+Responsibilities:
 
-3) Stateful / Puzzle Logic (Milestone 3 and beyond)
-   - Built on top of content metadata + feature circuits
-   - Ultimately drives actual gameplay interactions
+BSP partitioning of the grid
 
-The React app (App.tsx) visualizes these layers using selectable debug views,
-including composite content overlays and per-cell inspection tooltips.
+Room carving
 
+Corridor carving
+
+Wall preservation (optional outer wall retention)
+
+Distance-to-wall calculation
+
+Region (room) identification
+
+This layer is pure geometry and has no gameplay knowledge.
+
+Content Generation (Milestones 1–2 + early Milestone 3 wiring)
+Entry: generateDungeonContent() in mazeGen.ts
+
+Responsibilities:
+
+Place gameplay content on top of BSP geometry
+
+Encode progression, gating, and optional content
+
+Guarantee solvability by construction
+
+Remain deterministic from seed/options
+
+This layer expresses gameplay intent but does not execute logic.
+
+Runtime / Puzzle Logic (Milestone 3)
+Core files:
+
+dungeonState.ts
+
+evaluateCircuits.ts
+
+App.tsx (debug/preview harness)
+
+Responsibilities:
+
+Hold mutable gameplay state (doors, levers, plates, hazards, etc.)
+
+Evaluate circuits based on runtime state
+
+Apply effects (open doors, toggle hazards, reveal passages)
+
+Drive interactive puzzle simulation
 
 ============================================================
-1) STRUCTURAL DUNGEON GENERATION (BSP)
-============================================================
+STRUCTURAL MASKS (BSP OUTPUT)
 
-ENTRY POINT
-generateBspDungeon(options)
+All masks are Uint8Array with size width * height, indexed as:
 
-RESPONSIBILITIES
-- BSP partitioning of the grid
-- Room carving
-- Corridor carving
-- Wall preservation (optional outer wall retention)
-- Distance-to-wall calculation
-- Region (room) identification
-
-CORE MASKS (Uint8Array)
-All masks are width * height arrays indexed as:
 index = y * width + x
 
 Mask: solid
-- 255 = wall
-- 0   = floor
+
+255 = wall
+
+0 = floor
 
 Mask: regionId
-- 0      = not a room
-- 1..255 = room id
+
+0 = not a room
+
+1..255 = room id
 
 Mask: distanceToWall
-- Manhattan distance to nearest wall
-- 0 means wall tile
 
-STRUCTURAL METADATA
-meta.rooms        : Rect[] (carved rooms)
-meta.corridors    : { a: Point, b: Point }[]
-meta.bspDepth     : number
-meta.seedUsed     : number
+Manhattan distance to nearest wall
 
-DEBUG OUTPUT
-- ASCII map (# = wall, . = floor)
-- Grayscale ImageData per mask
-- PNG export support via imageDataToPngDataUrl()
+0 means wall tile
 
+Structural metadata:
 
-============================================================
-2) CONTENT GENERATION (MILESTONES 1–2)
-============================================================
+meta.rooms : Rect[]
 
-ENTRY POINT
-generateDungeonContent(dungeon, options?)
+meta.corridors : { a, b }[]
 
-This function does NOT modify dungeon structure.
-It consumes the output of generateBspDungeon() and layers gameplay content on top.
+meta.bspDepth : number
 
-DESIGN GOALS
-- Metroidvania-friendly (supports backtracking)
-- Deterministic from seed
-- Solvable by construction
-- Fully inspectable via debug layers and metadata
-
+meta.seedUsed : number
 
 ============================================================
-CONTENT CONCEPTS IMPLEMENTED (MILESTONES 1–2)
-============================================================
+CONTENT MASKS (GAMEPLAY LAYERS)
 
-ROOM GRAPH
-A graph is constructed from corridor connections.
-
-Nodes:
-- Room IDs (1..255)
-
-Edges:
-- Corridors connecting rooms
-
-Derived data:
-- Entrance room (default: bottom-most room)
-- BFS room depth (distance from entrance)
-- Farthest room (defines dungeon depth)
-- Main path (entrance -> farthest)
-- Side rooms (degree <= 1)
-
-PROGRESSION GATING (MILESTONE 2)
-- Locked doors placed on main-path edges
-- Keys placed in reachable side or earlier rooms
-- Lever doors linked via featureId circuits
-- Backtracking is guaranteed by construction
-- No door blocks progress without its solution
-
-
-============================================================
-CONTENT LAYERS (MASKS)
-============================================================
-
-MASK: featureType (Uint8)
+Mask: featureType (Uint8)
 Encodes what exists at a tile.
 
-0  = none
-1  = monster spawn
-2  = loot chest
-3  = secret door
-4  = door
-5  = key
-6  = lever
-7  = pressure plate                (Milestone 3)
-8  = push block / movable object   (Milestone 3)
-9  = hidden passage                (Milestone 3)
-10 = hazard                         (Milestone 3)
+0 = none
+1 = monster spawn
+2 = loot chest
+3 = secret door
+4 = door
+5 = key
+6 = lever
+7 = pressure plate (Milestone 3)
+8 = push block (reserved)
+9 = hidden passage (reserved)
+10 = hazard (Milestone 3)
 
-MASK: featureId (Uint8)
+Mask: featureId (Uint8)
 Instance / circuit identifier (1..255).
 All tiles sharing a featureId belong to the same logical circuit.
 
 Used for:
-- Door + key relationships
-- Lever-door circuits
-- Multi-target circuits (one trigger affects multiple doors/hazards)
-- Future multi-tile puzzles
 
-MASK: featureParam (Uint8)
-Subtype / behavior flags.
+Door + key relationships
+
+Lever/plate → multi-target circuits
+
+Hazard toggles
+
+Future multi-step puzzles
+
+Mask: featureParam (Uint8)
+Subtype or behavior flags.
 Examples:
-- Door kind (Milestone 2): 1 = locked, 2 = lever-controlled
-- Future: plate mode, block type, hazard behavior, logic modes, etc.
 
-MASK: danger (Uint8)
-Used for monster spawns only.
-- Scales with room depth
-- Higher value = more dangerous encounter
+Door kind: 1 = locked, 2 = lever-controlled
 
-MASK: lootTier (Uint8)
-Used for chests only.
-- Scales with room depth
-- Interpreted later by gameplay logic
+Future: plate mode, hazard behavior, block type
 
-MASK: hazardType (Uint8)
-Used for hazard tiles only.
-- 0 = none
-- 1 = lava
-- 2 = poison gas
-- 3 = water
-- 4 = spikes
-(Exact mapping is debug-facing and can evolve; the mask exists so hazards can be
-visualized and later simulated.)
+Mask: danger (Uint8)
+Monster difficulty / danger value.
 
+Mask: lootTier (Uint8)
+Chest tier scaling with room depth.
 
-============================================================
-CONTENT PLACEMENT RULES (CURRENT)
-============================================================
+Mask: hazardType (Uint8)
+Hazard subtype:
 
-MONSTERS
-- Never placed in the entrance room
-- Placed only on floor tiles
-- Require minimum distance from walls
-- Count per room is randomized
-- Danger scales with BFS depth
+0 = none
 
-LOOT CHESTS
-- Biased toward side rooms (dead ends)
-- Deeper rooms yield higher tiers
-- One chest per room (best-effort)
+1 = lava
 
-SECRET DOORS
-- Placed on wall tiles adjacent to floor
-- Only in side rooms
-- Never placed on outer boundary walls
-- Intended to hide optional content
+2 = poison gas
 
-DOORS / KEYS / LEVERS (MILESTONE 2)
-- Doors are placed on main-path corridor tiles
-- Keys / levers are placed in reachable rooms
-- No door blocks progress without its solution
-- featureId links all components of a circuit
+3 = water
 
-MILSTONE 3 WIRES (EARLY)
-- The system already reserves featureType slots for:
-  pressure plates, push blocks, hidden passages, and hazards
-- hazardType mask exists as a dedicated debug layer
-
+4 = spikes
 
 ============================================================
-CONTENT METADATA OUTPUT (AUTHORITATIVE)
-============================================================
+CONTENT METADATA (AUTHORITATIVE)
+
+Metadata is the authoritative source of gameplay intent.
+Masks are for rendering and inspection only.
+
+Key fields:
 
 meta.seedUsed : number
 
-meta.roomGraph       : Map<roomId, Set<roomId>>
-meta.roomDistance    : Map<roomId, distance>
+meta.roomGraph : Map<roomId, Set<roomId>>
+meta.roomDistance : Map<roomId, distance>
 
-meta.entranceRoomId  : number
-meta.farthestRoomId  : number
+meta.entranceRoomId : number
+meta.farthestRoomId : number
 meta.mainPathRoomIds : number[]
 
-meta.monsters : array of
-  { id, x, y, roomId, danger }
+meta.monsters : { id, x, y, roomId, danger }[]
+meta.chests : { id, x, y, roomId, tier }[]
+meta.secrets : { id, x, y, roomId }[]
+meta.doors : { id, x, y, roomA, roomB, kind, depth }[]
+meta.keys : { id, x, y, roomId }[]
+meta.levers : { id, x, y, roomId }[]
 
-meta.chests : array of
-  { id, x, y, roomId, tier }
+Milestone 3 additions:
+meta.plates : { id, x, y, roomId, mode, activatedByPlayer, activatedByBlock, inverted }[]
 
-meta.secrets : array of
-  { id, x, y, roomId }
-
-meta.doors : array of
-  { id, x, y, roomA, roomB, kind, depth }
-
-meta.keys   : array of { id, x, y, roomId }
-meta.levers : array of { id, x, y, roomId }
-
-meta.circuits : array of
-  {
-    id: number,
-    logic: { type: "OR" | "AND" | "THRESHOLD", threshold?: number },
-    behavior: { mode: "TOGGLE" | "MOMENTARY" | "PERSISTENT" },
-    triggers: { kind: string, refId: number }[],
-    targets:  { kind: "DOOR" | "HAZARD" | "HIDDEN", refId: number, effect: string }[],
-  }
-
-NOTE
-- Metadata is the authoritative source for gameplay logic.
-- Masks are for rendering/debugging and for compact “field maps”.
-
+meta.circuits : {
+id: number,
+logic: { type: "OR" | "AND" | "THRESHOLD", threshold?: number },
+behavior: { mode: "TOGGLE" | "MOMENTARY" | "PERSISTENT" },
+triggers: { kind, refId }[],
+targets: { kind, refId, effect }[],
+}[]
 
 ============================================================
-DEBUG & VISUALIZATION (React Preview)
-============================================================
+RUNTIME STATE MODEL (MILESTONE 3)
 
-APP OVERVIEW
-App.tsx runs:
-- generateBspDungeon(opts)
-- generateDungeonContent(out)
-…and visualizes the outputs.
+DungeonRuntimeState is mutable and independent from generation.
 
-LAYER TABS (current)
-- content (composited overlay view)
-- solid
-- regionId
-- distanceToWall
-- featureType
-- featureId
-- featureParam
-- danger
-- lootTier
-- hazardType
+Current runtime buckets:
 
-COMPOSITE CONTENT VIEW
-Walls/floors base + feature overlay colors:
-- red   = monsters
-- green = chests/loot
-- brown = doors + secret doors
-- yellow= keys/levers/other feature types
-(Composite is a *human-friendly* debug view; numeric masks remain authoritative.)
+doors[id] : { kind, isOpen, forcedOpen? }
 
-HOVER TOOLTIP
-- Per-cell terrain + room + distance data
-- Feature identity:
-  - featureType → human name
-  - featureId (circuit/instance id)
-  - featureParam (door kind / future subtype)
-  - hazardType when relevant
-- Circuit hints (best-effort):
-  - key/lever → “controls/unlocks circuit X”
-  - door → “Circuit: door id X”
+keys[id] : { collected }
 
-EXPORT
-- “Download PNG” exports the current selected layer’s ImageData
+levers[id] : { toggled }
 
+plates[id] : { pressed }
+
+hazards[id] : { hazardType, enabled }
+
+secrets[id] : { revealed }
+
+circuits[id] : { active, lastSatisfied, lastSatisfiedCount }
+
+Initialization:
+
+initDungeonRuntimeState(contentMeta)
+
+All runtime state is derived deterministically from content metadata
+
+Runtime actions (debug + gameplay):
+
+collectKey()
+
+toggleLever()
+
+togglePlate()
 
 ============================================================
-KEY INVARIANTS & CONSTRAINTS
+CIRCUIT EVALUATION (CORE LOGIC)
+
+evaluateCircuits(currentState, meta.circuits) is a pure function.
+
+Evaluation steps:
+
+Determine trigger satisfaction
+
+KEY → collected
+
+LEVER → toggled
+
+PLATE → pressed
+
+(future) blocks, combat clear, interaction
+
+Apply logic
+
+OR / AND / THRESHOLD
+
+Optional inversion
+
+Apply behavior
+
+MOMENTARY
+
+PERSISTENT
+
+TOGGLE (edge-based)
+
+Apply targets
+
+DOOR → open / close / toggle
+
+HAZARD → enable / disable / toggle
+
+HIDDEN → reveal / hide / toggle
+
+The evaluator outputs:
+
+next DungeonRuntimeState
+
+debug info per circuit (for UI inspection)
+
 ============================================================
+DEBUG / PREVIEW UI (App.tsx)
 
-- Dungeon carving must occur before content generation
-- Content generation must occur before puzzle/state logic
-- All masks are Uint8Array (GPU-friendly, compact)
-- Content generation is deterministic from seed/options
-- No unsolvable progression gates are allowed
-- featureId defines logical circuits (links triggers ↔ targets)
-- Debug layers must remain consistent with metadata
+The React app is a first-class debug harness for Milestone 3.
 
+Features:
+
+Layered visualization of all masks
+
+Composite content overlay with state-aware coloring
+
+Hover tooltip showing per-cell data + circuit hints
+
+Click interactions to mutate runtime state:
+
+key → collect
+
+lever → toggle
+
+plate → toggle pressed
+
+door → manual toggle (debug convenience)
+
+Stats panel shows counts of:
+
+rooms, corridors
+
+monsters, chests, secrets
+
+doors, keys, levers, plates
+
+Circuit panel lists:
+
+all circuits
+
+triggers and targets
+
+live circuit debug output
 
 ============================================================
-PLANNED NEXT MILESTONE — MILESTONE 3
-============================================================
+CURRENT MILESTONE STATUS
 
-MILESTONE 3: STATEFUL / PHYSICAL PUZZLES
+Milestone 3 — Phase 2 (Stateful Puzzle Execution)
 
-GOAL
-Introduce puzzles that depend on persistent state, spatial reasoning, and multi-step
-interactions (not just possession checks), while remaining solvable by construction
-and supporting backtracking.
+Completed:
 
-CORE FEATURE SET
-- Pressure plates (momentary/toggle/latch)
-- Pushable blocks / movable objects (grid + collision)
-- Multi-door & multi-target circuits (AND/OR/THRESHOLD logic)
-- Hidden passages (revealable / permanent or temporary)
-- Environmental hazards (toggled or mitigated via circuits)
+Runtime state model
 
+Circuit evaluator
 
-============================================================
-MILESTONE 3 — PHASED IMPLEMENTATION PLAN
-============================================================
+Plate runtime support
 
-PHASE 1 (FOUNDATION / WIRING) — Mostly complete / in-progress
-- Reserve featureType slots for new puzzle features (7..10)
-- Add hazardType mask + debug layer
-- Extend preview UI to show new layers and inspect per-cell data
-- Ensure featureId/circuit concept is generalized enough for multi-target puzzles
+UI interaction harness
 
-PHASE 2 (MILSTONE 3) — NEXT UP (IMPLEMENTATION TARGET)
-This phase focuses on making puzzles *real*, not just painted onto masks.
+Door state overlay
 
-A) PUZZLE STATE MODEL (RUNTIME)
-- Introduce a dungeon “state” object independent from generation:
-  - doorState[doorId] = open/closed/locked
-  - circuitState[circuitId] = active/inactive (and/or partial counts)
-  - plateState[plateId] = pressed/not pressed
-  - blockState[blockId] = x,y (and any type flags)
-  - hazardState[hazardId or circuitId] = active/inactive
-  - revealState[hiddenPassageId] = revealed/not revealed
-- Define how state is initialized from metadata (deterministic).
+Circuit debug visualization
 
-B) CIRCUIT EVALUATOR
-- Implement a single “evaluateCircuits(state, meta)” pass that:
-  1) computes trigger satisfaction (plates pressed, levers toggled, keys consumed, etc.)
-  2) applies logic (ANY / ALL / THRESHOLD)
-  3) updates targets (doors open/close, hazards toggle, passages reveal)
-- Keep it data-driven from meta.circuits:
-  - triggers[] and targets[] are the source of truth
-  - featureId ties mask cells to circuit membership
+In progress / next:
 
-C) NEW GENERATOR PATTERNS (PUZZLE GRAMMAR, NOT RANDOM SPAM)
-Add deterministic “puzzle patterns” placed by construction:
-- Plate + Block → Door → Reward
-- Lever → Multiple Doors (gate + shortcut)
-- Plate(s) → Hazard Toggle (timed corridor / safe window)
-- Hidden Passage reveal behind optional trigger
-Rules:
-- Patterns are placed as a *set* with internal validity checks.
-- Placement must respect path solvability (main path never becomes impossible).
-- Side content can be optional/harder but still solvable.
+Pushable blocks
 
-D) VALIDATION / SOLVABILITY CHECKS (OFFLINE, GENERATION-TIME)
-- Add a lightweight solver/validator that checks:
-  - The main path remains traversable with required interactions.
-  - Each gated element has reachable triggers (and blocks if required).
-  - No “softlocks” (e.g., block trapped permanently, plate impossible to press).
-- Validator can be conservative (over-approximations acceptable) but must catch obvious
-  invalid layouts.
+Hazard activation visuals
 
-E) DEBUG VISUALIZATION UPGRADES (APP)
-- Add a “state overlay mode” (optional) showing:
-  - active circuits
-  - open/closed doors
-  - pressed plates
-  - block positions
-  - active hazards
-- Add tooltip lines for:
-  - current state values at (x,y) when relevant
-  - circuit evaluation results (active/inactive + reason)
+Hidden passage reveal visuals
 
-OUTPUT OF PHASE 2
-- You can generate a dungeon *and* simulate puzzle interactions via state changes.
-- Circuits become executable logic rather than just metadata.
-- The debug UI can prove (visually) that puzzles are wired correctly and solvable.
+Puzzle pattern generation (by grammar)
 
+Generation-time solvability validation
 
 ============================================================
 MENTAL MODEL SUMMARY
-============================================================
 
-- BSP decides where you can walk
-- Content generation decides why you care
-- Room graph defines progression and backtracking
-- featureId + circuits define logical wiring
-- Masks are for rendering + quick inspection
-- Metadata drives authoritative gameplay intent
-- Milestone 3 adds state, interactions, and simulation on top of the content layer
+BSP decides where you can walk
 
-This separation is intentional and foundational.
+Content decides why you care
+
+featureId + circuits define logical wiring
+
+Runtime state executes puzzle logic
+
+evaluateCircuits is the only place logic happens
+
+UI exists to prove puzzles are wired and solvable
+
+This document is intended to allow fast onboarding in a new chat or IDE session without rereading the codebase.
