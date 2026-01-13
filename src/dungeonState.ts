@@ -120,16 +120,13 @@ export function initDungeonRuntimeState(
     hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
   }
 
-  // Secrets / hidden
+  // Secrets
   for (const s of content.meta.secrets) {
     secrets[s.id] = { revealed: false };
   }
-  for (const h of content.meta.hidden) {
-    secrets[h.id] = { revealed: h.revealedInitial };
-  }
 
-  // Circuits runtime
-  for (const c of content.meta.circuits as CircuitDef[]) {
+  // Circuits (runtime debug state only)
+  for (const c of content.meta.circuits) {
     circuits[c.id] = {
       active: false,
       lastSatisfied: false,
@@ -149,7 +146,7 @@ export function initDungeonRuntimeState(
   };
 }
 
-// ----------------- Simple interactions (debug / prototype) -----------------
+// ----------------- Basic actions -----------------
 
 export function collectKey(
   state: DungeonRuntimeState,
@@ -278,14 +275,25 @@ function isWalkableForBlock(
   // walls
   if (dungeon.masks.solid[i] === 255) return false;
 
+  const ft = content.masks.featureType[i] | 0;
+  const fid = content.masks.featureId[i] | 0;
+
+  // Hidden passages (featureType 9):
+  // - until revealed, treat as blocked (wall-like)
+  // - once revealed, they behave like floor
+  if (ft === 9 && fid !== 0) {
+    const revealed = !!runtime.secrets?.[fid]?.revealed;
+    if (!revealed) return false;
+  }
+
   // doors: only passable if open
-  const ft = content.masks.featureType[i];
-  const fid = content.masks.featureId[i];
   if (ft === 4 && fid !== 0) {
     const door = runtime.doors[fid];
     const isOpen = !!(door?.isOpen || (door as any)?.forcedOpen);
     if (!isOpen) return false;
   }
+
+  // Hazards are consequence-only: never block movement for blocks.
 
   return true;
 }

@@ -1893,120 +1893,97 @@ export function generateDungeonContent(
 
   let fixtureDoorId = 0;
   let fixturePlateCircuitId = 0;
+  let fixtureHiddenId = 0;
+  let fixtureHazardId = 0;
+  let fixtureHazardLeverId = 0;
 
   if (options.includePuzzleFixture && rooms.length > 0) {
-    // (A) Place an “extra” door on a floor tile in the farthest room (kind=0 => not key/lever-locked)
+    // (A) Place an “extra” door ...
+    // (B) Place a pressure plate + adjacent push block ...
+
+    // (C) Place a hidden passage tile in the farthest room (featureType 9) and register it as a "secret".
+    // This is revealable via circuits (HIDDEN target kind).
     {
-      const doorRoomId = farthestRoomId;
-      const doorRoom = rooms[doorRoomId - 1] ?? rooms[0];
+      const hiddenRoomId = farthestRoomId || entranceRoomId;
+      const hiddenRoom = rooms[hiddenRoomId - 1] ?? rooms[0];
       const p = sampleRoomFloorPoint(
         dungeon,
-        doorRoom,
+        hiddenRoom,
         rng,
         Math.max(1, options.minClearanceToWall),
       );
       if (p) {
-        const idx = keyXY(W, p.x, p.y);
-        if (featureType[idx] === 0) {
-          fixtureDoorId = clamp255(nextId++);
-          featureType[idx] = 4; // door
-          featureId[idx] = fixtureDoorId;
-          featureParam[idx] = 0; // DoorKind “unused” => not locked by key/lever logic
+        const hi = keyXY(W, p.x, p.y);
+        if (featureType[hi] === 0) {
+          fixtureHiddenId = clamp255(nextId++);
+          featureType[hi] = 9; // hidden passage
+          featureId[hi] = fixtureHiddenId;
+          featureParam[hi] = 0;
 
-          doors.push({
-            id: fixtureDoorId,
+          secrets.push({
+            id: fixtureHiddenId,
             x: p.x,
             y: p.y,
-            roomA: doorRoomId,
-            roomB: doorRoomId,
-            kind: 0,
-            depth: depthForRoom(doorRoomId),
+            roomId: hiddenRoomId,
           });
         }
       }
     }
 
-    // (B) Place a pressure plate + adjacent push block in the entrance room
+    // (D) Place a single hazard tile and a lever to toggle it.
     {
-      const plateRoomId = entranceRoomId;
-      const plateRoom = rooms[plateRoomId - 1] ?? rooms[0];
+      const hzRoomId = entranceRoomId;
+      const hzRoom = rooms[hzRoomId - 1] ?? rooms[0];
 
-      const dirs = [
-        { dx: 1, dy: 0 },
-        { dx: -1, dy: 0 },
-        { dx: 0, dy: 1 },
-        { dx: 0, dy: -1 },
-      ];
+      // hazard tile
+      const hp = sampleRoomFloorPoint(
+        dungeon,
+        hzRoom,
+        rng,
+        Math.max(1, options.minClearanceToWall),
+      );
+      if (hp) {
+        const hi = keyXY(W, hp.x, hp.y);
+        if (featureType[hi] === 0) {
+          fixtureHazardId = clamp255(nextId++);
+          featureType[hi] = 10; // hazard
+          featureId[hi] = fixtureHazardId;
+          featureParam[hi] = 0;
+          hazardType[hi] = 1; // lava (debug-friendly)
 
-      for (let attempt = 0; attempt < 40; attempt++) {
-        const p = sampleRoomFloorPoint(
-          dungeon,
-          plateRoom,
-          rng,
-          Math.max(1, options.minClearanceToWall),
-        );
-        if (!p) break;
-
-        const pi = keyXY(W, p.x, p.y);
-        if (featureType[pi] !== 0) continue;
-
-        // shuffle dirs
-        for (let i = dirs.length - 1; i > 0; i--) {
-          const j = Math.floor(rng() * (i + 1));
-          [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+          hazards.push({
+            id: fixtureHazardId,
+            x: hp.x,
+            y: hp.y,
+            roomId: hzRoomId,
+            hazardType: 1,
+            activeInitial: false,
+          });
         }
+      }
 
-        let bp: Point | null = null;
-        for (const d of dirs) {
-          const bx = p.x + d.dx;
-          const by = p.y + d.dy;
-          if (bx < 0 || by < 0 || bx >= W || by >= H) continue;
-          const bi = keyXY(W, bx, by);
-          if (dungeon.masks.solid[bi] === 255) continue;
-          if (featureType[bi] !== 0) continue;
-          bp = { x: bx, y: by };
-          break;
+      // lever tile (try a different point so it doesn't collide)
+      const lp = sampleRoomFloorPoint(
+        dungeon,
+        hzRoom,
+        rng,
+        Math.max(1, options.minClearanceToWall),
+      );
+      if (lp) {
+        const li = keyXY(W, lp.x, lp.y);
+        if (featureType[li] === 0) {
+          fixtureHazardLeverId = clamp255(nextId++);
+          featureType[li] = 6; // lever
+          featureId[li] = fixtureHazardLeverId;
+          featureParam[li] = 0;
+
+          levers.push({
+            id: fixtureHazardLeverId,
+            x: lp.x,
+            y: lp.y,
+            roomId: hzRoomId,
+          });
         }
-        if (!bp) continue;
-
-        fixturePlateCircuitId = clamp255(nextId++);
-        const blockId = clamp255(nextId++);
-
-        // plate
-        featureType[pi] = 7;
-        featureId[pi] = fixturePlateCircuitId;
-        featureParam[pi] = encodePlateParam({
-          mode: "toggle",
-          activatedByPlayer: false,
-          activatedByBlock: true,
-          inverted: false,
-        });
-        plates.push({
-          id: fixturePlateCircuitId,
-          x: p.x,
-          y: p.y,
-          roomId: plateRoomId,
-          mode: "toggle",
-          activatedByPlayer: false,
-          activatedByBlock: true,
-          activatedByBlockOrPlayer: false,
-          inverted: false,
-        });
-
-        // block
-        const bi = keyXY(W, bp.x, bp.y);
-        featureType[bi] = 8;
-        featureId[bi] = blockId;
-        featureParam[bi] = 0; // weightClass (0..3)
-        blocks.push({
-          id: blockId,
-          x: bp.x,
-          y: bp.y,
-          roomId: plateRoomId,
-          weightClass: 0,
-        });
-
-        break; // done
       }
     }
   }
@@ -2076,6 +2053,33 @@ export function generateDungeonContent(
     (a, b) => a.id - b.id,
   );
 
+  // Milestone 3 fixture circuit: plate toggles the extra door.
+  if (fixturePlateCircuitId !== 0 && fixtureDoorId !== 0) {
+    const c = ensureCircuit(fixturePlateCircuitId);
+    c.logic = { type: "OR" };
+    c.behavior = { mode: "TOGGLE" };
+    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
+    c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
+  }
+
+  // Milestone 3 fixture circuit: plate reveals the hidden passage tile (featureType 9).
+  if (fixturePlateCircuitId !== 0 && fixtureHiddenId !== 0) {
+    const c = ensureCircuit(clamp255(fixtureHiddenId));
+    c.logic = { type: "OR" };
+    c.behavior = { mode: "PERSISTENT" };
+    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
+    c.targets = [{ kind: "HIDDEN", refId: fixtureHiddenId, effect: "REVEAL" }];
+  }
+
+  // Milestone 3 fixture circuit: lever toggles the hazard (consequence-only).
+  if (fixtureHazardLeverId !== 0 && fixtureHazardId !== 0) {
+    const c = ensureCircuit(clamp255(fixtureHazardLeverId));
+    c.logic = { type: "OR" };
+    c.behavior = { mode: "TOGGLE" };
+    c.triggers = [{ kind: "LEVER", refId: fixtureHazardLeverId }];
+    c.targets = [{ kind: "HAZARD", refId: fixtureHazardId, effect: "TOGGLE" }];
+  }
+
   // Textures + debug ImageData
   const featureTypeTex = maskToDataTextureR8(featureType, W, H, "featureType");
   const featureIdTex = maskToDataTextureR8(featureId, W, H, "featureId");
@@ -2115,6 +2119,31 @@ export function generateDungeonContent(
     }
 
     ascii = overlayAscii(ascii, W, H, overlay);
+  }
+
+  // -----------------------------
+  // Validation: hidden passage invariants (featureType 9)
+  // -----------------------------
+  // featureType 9 is "hidden passage" and MUST be wired to a secretId via featureId.
+  // If featureId is 0, it would be treated as normal floor in some places.
+  for (let i = 0; i < W * H; i++) {
+    if (featureType[i] === 9 && featureId[i] === 0) {
+      throw new Error(
+        `generateDungeonContent(): featureType 9 (hidden passage) missing featureId at tile index ${i}`,
+      );
+    }
+  }
+
+  const secretIds = new Set(secrets.map((s) => s.id));
+  for (let i = 0; i < W * H; i++) {
+    if (featureType[i] === 9) {
+      const sid = featureId[i];
+      if (!secretIds.has(sid)) {
+        throw new Error(
+          `generateDungeonContent(): hidden passage references secretId=${sid} but meta.secrets has no such id`,
+        );
+      }
+    }
   }
 
   return {

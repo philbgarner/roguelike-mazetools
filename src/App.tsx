@@ -140,6 +140,7 @@ function makeContentCompositeImageData(
   const solid = dungeon.masks.solid; // 255 wall, 0 floor
   const ft = content.masks.featureType; // 0..n
   const fid = content.masks.featureId;
+  const hzType = content.masks.hazardType;
 
   const img = new ImageData(W, H);
   const data = img.data;
@@ -242,6 +243,68 @@ function makeContentCompositeImageData(
               r = 205;
               g = 205;
               b = 205;
+            }
+          }
+        } else if (t === 9) {
+          // hidden passage (featureType 9)
+          // unrevealed: dark “masonry” (wall-ish), revealed: pale teal (floor-ish)
+          const secretId = fid[i] | 0;
+
+          // IMPORTANT: revealed-ness should reflect runtime even if showStateOverlay is off.
+          // showStateOverlay can still govern OTHER overlays, but not whether the tile exists.
+          const revealed = !!(runtime && runtime.secrets?.[secretId]?.revealed);
+
+          if (revealed) {
+            r = 150;
+            g = 210;
+            b = 210;
+          } else {
+            r = 55;
+            g = 55;
+            b = 60;
+          }
+        } else if (t === 10) {
+          // hazard (featureType 10) — consequence-only (walkable), but visually clear
+          const ht = hzType[i] | 0;
+
+          // Base by hazardType
+          if (ht === 1) {
+            // lava
+            r = 220;
+            g = 90;
+            b = 35;
+          } else if (ht === 2) {
+            // poison gas
+            r = 90;
+            g = 220;
+            b = 90;
+          } else if (ht === 3) {
+            // water
+            r = 80;
+            g = 140;
+            b = 230;
+          } else if (ht === 4) {
+            // spikes
+            r = 180;
+            g = 180;
+            b = 180;
+          } else {
+            // unknown hazard
+            r = 230;
+            g = 80;
+            b = 200;
+          }
+
+          // Overlay enabled/disabled state
+          if (runtime && showStateOverlay) {
+            const hazardId = fid[i] | 0;
+            const enabled = !!runtime.hazards?.[hazardId]?.enabled;
+
+            if (!enabled) {
+              // muted when disabled
+              r = Math.round(r * 0.55);
+              g = Math.round(g * 0.55);
+              b = Math.round(b * 0.55);
             }
           }
         } else {
