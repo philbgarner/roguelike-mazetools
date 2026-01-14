@@ -42,34 +42,93 @@ export type PatternResult =
 
 type PatternFn = () => PatternResult;
 
-export function runPatternsBestEffort(patterns: PatternFn[]): {
+export type PatternDiagnostics = {
+  name: string;
+  ok: boolean;
   didCarve: boolean;
+  reason?: string;
+  ms: number;
+};
+
+export type PatternEntry =
+  | PatternFn
+  | {
+      name: string;
+      run: PatternFn;
+    };
+
+/**
+ * Best-effort execution:
+ * - Patterns are allowed to fail without aborting generation.
+ * - We aggregate didCarve so the generator can decide whether to recompute
+ *   distanceToWall (Option A policy).
+ *
+ * Back-compat:
+ * - You can pass PatternFn[] (legacy) OR PatternEntry[] (named).
+ */
+export function runPatternsBestEffort(patterns: PatternEntry[]): {
+  didCarve: boolean;
+  diagnostics: PatternDiagnostics[];
 } {
   let didCarve = false;
+  const diagnostics: PatternDiagnostics[] = [];
 
   for (const p of patterns) {
-    const res = p();
+    const name =
+      typeof p === "function"
+        ? (p as any).name || "pattern"
+        : p.name || "pattern";
+    const run = typeof p === "function" ? (p as PatternFn) : p.run;
+
+    const t0 =
+      typeof performance !== "undefined" && performance.now
+        ? performance.now()
+        : Date.now();
+
+    const res = run();
+
+    const t1 =
+      typeof performance !== "undefined" && performance.now
+        ? performance.now()
+        : Date.now();
+
     if (!res.ok) {
-      console.warn(`[puzzlePatterns] skipped: ${res.reason}`);
+      console.warn(`[puzzlePatterns] ${name} skipped: ${res.reason}`);
+      diagnostics.push({
+        name,
+        ok: false,
+        didCarve: false,
+        reason: res.reason,
+        ms: Math.max(0, t1 - t0),
+      });
       continue;
     }
+
     didCarve ||= res.didCarve;
+    diagnostics.push({
+      name,
+      ok: true,
+      didCarve: res.didCarve,
+      ms: Math.max(0, t1 - t0),
+    });
   }
 
-  return { didCarve };
+  return { didCarve, diagnostics };
 }
 
 export function applyLeverRevealsHiddenPocketPattern(args: {
   rng: PatternRng;
-  dungeon: BspDungeonOutputs;
 
+  dungeon: BspDungeonOutputs;
   entranceRoomId: number;
   rooms: BspDungeonOutputs["meta"]["rooms"];
 
+  // Content masks to mutate
   featureType: Uint8Array;
   featureId: Uint8Array;
   featureParam: Uint8Array;
 
+  // Content meta to append to
   secrets: ContentOutputs["meta"]["secrets"];
   levers: ContentOutputs["meta"]["levers"];
 
@@ -94,14 +153,14 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     allocId,
   } = args;
 
-  const pocketSize = clampOddAtLeast3(args.options?.pocketSize ?? 3);
+  const pocketSize = clampOdd(Math.max(3, args.options?.pocketSize ?? 5));
   const minLeverToConnectorDist = Math.max(
-    0,
-    args.options?.minLeverToConnectorDist ?? 6,
+    3,
+    args.options?.minLeverToConnectorDist ?? 8,
   );
-  const minConnFromEntranceMan = Math.max(
-    0,
-    args.options?.minConnectorFromEntranceManhattan ?? 8,
+  const minConnectorFromEntranceManhattan = Math.max(
+    3,
+    args.options?.minConnectorFromEntranceManhattan ?? 10,
   );
   const maxCandidateSites = Math.max(
     20,
@@ -136,226 +195,222 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     ay: number;
     cx: number;
     cy: number;
-    dir: { dx: number; dy: number };
-    score: number;
+    // The pocket's center.
+    px: number;
+    py: number;
   }> = [];
 
-  let considered = 0;
+  // Collect candidates by scanning for walls adjacent to reachable floors.
+  // For each such wall tile, attempt to place a pocket beyond it.
+  // We'll limit to maxCandidateSites (best effort).
+  for (let y = 1; y < H - 1 && candidates.length < maxCandidateSites; y++) {
+    for (let x = 1; x < W - 1 && candidates.length < maxCandidateSites; x++) {
+      const ci = idxOf(W, x, y);
 
-  for (let y = 1; y < H - 1; y++) {
-    for (let x = 1; x < W - 1; x++) {
-      const ai = idxOf(W, x, y);
-      if (!reach0[ai]) continue;
-      if (solid[ai] === 255) continue;
-      if ((ft[ai] | 0) !== 0) continue; // don't stomp features
+      // Connector must be a wall right now (we will carve it)
+      if (solid[ci] !== 255) continue;
 
+      // Must be adjacent to at least one reachable floor (A)
+      let a: Point | null = null;
       for (const d of cardinalDirs()) {
-        const cx = x + d.dx;
-        const cy = y + d.dy;
-        if (!inBounds(W, H, cx, cy)) continue;
-
-        const ci = idxOf(W, cx, cy);
-
-        // must be a wall right now (we’ll carve it into floor)
-        if (solid[ci] !== 255) continue;
-
-        // avoid boundary
-        if (cx <= 0 || cy <= 0 || cx >= W - 1 || cy >= H - 1) continue;
-
-        // keep away from entrance
-        if (manhattan(start, { x: cx, y: cy }) < minConnFromEntranceMan)
-          continue;
-
-        const pocketCenter = {
-          x: cx + d.dx * ((pocketSize + 1) / 2),
-          y: cy + d.dy * ((pocketSize + 1) / 2),
-        };
-
-        if (!pocketFits(W, H, pocketCenter, pocketSize)) continue;
-
-        if (
-          !canCarvePocketWithoutAccidentalConnection(
-            dungeon,
-            ft,
-            reach0,
-            pocketCenter,
-            pocketSize,
-          )
-        ) {
-          continue;
-        }
-
-        // Score: prefer farther from entrance + more solid mass in pocket square
-        const score =
-          manhattan(start, { x: cx, y: cy }) +
-          pocketSolidnessScore(dungeon, pocketCenter, pocketSize);
-
-        candidates.push({ ax: x, ay: y, cx, cy, dir: d, score });
-
-        considered++;
-        if (considered >= maxCandidateSites) break;
+        const ax = x + d.dx;
+        const ay = y + d.dy;
+        const ai = idxOf(W, ax, ay);
+        if (!reach0[ai]) continue;
+        if (solid[ai] === 255) continue;
+        a = { x: ax, y: ay };
+        break;
       }
-      if (considered >= maxCandidateSites) break;
+      if (!a) continue;
+
+      // Require connector far enough from entrance start to avoid trivial early pockets.
+      if (manhattan({ x, y }, start) < minConnectorFromEntranceManhattan)
+        continue;
+
+      // Choose pocket center on the opposite side of the reachable side (roughly).
+      // We'll pick a direction that goes from A -> C -> pocket.
+      // Find the direction from A to C, then extend outward.
+      const dx = x - a.x;
+      const dy = y - a.y;
+      const px = x + dx * (Math.floor(pocketSize / 2) + 1);
+      const py = y + dy * (Math.floor(pocketSize / 2) + 1);
+
+      // Must be in bounds for full pocket rect
+      const half = Math.floor(pocketSize / 2);
+      if (
+        px - half < 1 ||
+        py - half < 1 ||
+        px + half >= W - 1 ||
+        py + half >= H - 1
+      )
+        continue;
+
+      // Pocket must currently be mostly solid (to keep it "secret" and avoid
+      // breaking up existing rooms/corridors).
+      const score = pocketSolidnessScore(dungeon, { x: px, y: py }, pocketSize);
+      if (score < 0.85) continue;
+
+      // Also, we don't want to carve into the same room as A.
+      // Ensure pocket center isn't in a room (regionId==0 suggests corridor/wall space).
+      const pCenterI = idxOf(W, px, py);
+      if ((regionId[pCenterI] | 0) !== 0) continue;
+
+      candidates.push({ ax: a.x, ay: a.y, cx: x, cy: y, px, py });
     }
-    if (considered >= maxCandidateSites) break;
   }
 
   if (!candidates.length) {
     return {
       ok: false,
       didCarve: false,
-      reason:
-        "No valid connector sites found for lever-hidden-pocket pattern (unable to carve isolated pocket).",
+      reason: "No candidate connectors found.",
     };
   }
 
-  candidates.sort((a, b) => b.score - a.score);
-  const chosen = candidates[0]!;
+  // Pick a random candidate.
+  const picked = candidates[rng.nextInt(0, candidates.length - 1)]!;
 
-  const pocketCenter = {
-    x: chosen.cx + chosen.dir.dx * ((pocketSize + 1) / 2),
-    y: chosen.cy + chosen.dir.dy * ((pocketSize + 1) / 2),
-  };
-
-  // Find lever spot BEFORE mutating anything.
-  const leverSpot = pickLeverSpot(
+  // Choose a lever placement spot in reachable space with good separation.
+  const leverSpot = chooseLeverSpot(
     rng,
     dungeon,
     ft,
-    reach0,
+    fid,
     start,
-    { x: chosen.cx, y: chosen.cy },
+    { x: picked.cx, y: picked.cy },
     minLeverToConnectorDist,
   );
   if (!leverSpot) {
-    return {
-      ok: false,
-      didCarve: false,
-      reason: "Unable to find lever placement spot.",
-    };
+    return { ok: false, didCarve: false, reason: "No lever spot found." };
   }
 
-  // Allocate ids now (we won't mutate unless validation passes).
+  // Allocate an id for the hidden passage / secret and the lever.
+  // IMPORTANT: This id becomes the secret id (featureId for hidden passage).
   const secretId = allocId();
-  const leverId = allocId();
-  const circuitId = allocId();
+  const leverId = secretId; // keep ids aligned for simpler circuit wiring
 
-  // --- Preview mutations on copies for validation ---
-  const solidPreview = dungeon.masks.solid.slice();
-  const ftPreview = ft.slice();
-  const fidPreview = fid.slice();
+  // --- Preview validation on copies before commit ---
+  // We'll clone masks and attempt carving and placement, then validate reachability:
+  // - pocket goal unreachable pre-reveal (hidden not revealed)
+  // - pocket goal reachable post-reveal (hidden revealed)
+  const solid2 = solid.slice();
+  const ft2 = ft.slice();
+  const fid2 = fid.slice();
+  const fparam2 = fparam.slice();
 
-  // Create a shallow dungeon copy with preview solid
-  const previewDungeon: BspDungeonOutputs = {
-    ...dungeon,
-    masks: { ...dungeon.masks, solid: solidPreview },
-  };
-
-  carveConnectorAndPocket(
-    previewDungeon,
-    ftPreview,
-    chosen.cx,
-    chosen.cy,
-    pocketCenter,
+  const didCarve = carvePocketAndConnector(
+    { width: W, height: H, masks: { solid: solid2 } } as any,
+    { x: picked.cx, y: picked.cy },
+    { x: picked.px, y: picked.py },
     pocketSize,
   );
 
-  // Place hidden connector fixture (preview)
-  const ci = idxOf(W, chosen.cx, chosen.cy);
-  ftPreview[ci] = 9;
-  fidPreview[ci] = secretId;
+  if (!didCarve) {
+    return { ok: false, didCarve: false, reason: "Carve failed (preview)." };
+  }
 
-  // Validate reachability on preview
-  const goal = pocketCenter;
-  const gi = idxOf(W, goal.x, goal.y);
+  // Place hidden passage fixture at connector (as FLOOR but blocked until revealed)
+  const cI = idxOf(W, picked.cx, picked.cy);
+  ft2[cI] = 9; // hidden passage
+  fid2[cI] = secretId;
+  fparam2[cI] = 0;
 
-  const pre = computeReachable(
-    previewDungeon,
-    ftPreview,
-    fidPreview,
+  // Place lever fixture (reachable)
+  const lI = idxOf(W, leverSpot.x, leverSpot.y);
+  ft2[lI] = 6;
+  fid2[lI] = leverId;
+  fparam2[lI] = 0;
+
+  // Validate reachability
+  const goal = findPocketGoal({ x: picked.px, y: picked.py }, pocketSize);
+  if (!goal) {
+    return { ok: false, didCarve: false, reason: "No pocket goal (preview)." };
+  }
+
+  const reachPre = computeReachable(
+    { width: W, height: H, masks: { solid: solid2 } } as any,
+    ft2,
+    fid2,
     start,
     new Set(),
   );
-  if (pre[gi]) {
+  const goalI = idxOf(W, goal.x, goal.y);
+  if (reachPre[goalI]) {
     return {
       ok: false,
       didCarve: false,
-      reason:
-        "Validation failed: pocket is reachable before reveal (accidental connection).",
+      reason: "Pocket goal already reachable pre-reveal (preview).",
     };
   }
 
-  const post = computeReachable(
-    previewDungeon,
-    ftPreview,
-    fidPreview,
+  const revealed = new Set<number>([secretId]);
+  const reachPost = computeReachable(
+    { width: W, height: H, masks: { solid: solid2 } } as any,
+    ft2,
+    fid2,
     start,
-    new Set([secretId]),
+    revealed,
   );
-  if (!post[gi]) {
+  if (!reachPost[goalI]) {
     return {
       ok: false,
       didCarve: false,
-      reason:
-        "Validation failed: pocket is NOT reachable after reveal (connector ineffective).",
+      reason: "Pocket goal not reachable post-reveal (preview).",
     };
   }
 
-  // --- Commit real mutations (now that validation passed) ---
-  const didCarve = carveConnectorAndPocket(
+  // --- Commit ---
+  // Apply carving to real dungeon solid
+  carvePocketAndConnector(
     dungeon,
-    ft,
-    chosen.cx,
-    chosen.cy,
-    pocketCenter,
+    { x: picked.cx, y: picked.cy },
+    { x: picked.px, y: picked.py },
     pocketSize,
   );
 
-  // Place hidden connector fixture (real)
-  const ciReal = idxOf(W, chosen.cx, chosen.cy);
-  ft[ciReal] = 9;
-  fid[ciReal] = secretId;
-  fparam[ciReal] = 0;
+  // Place hidden passage fixture
+  ft[cI] = 9;
+  fid[cI] = secretId;
+  fparam[cI] = 0;
 
-  // Register secret
-  const ridAtA = regionId[idxOf(W, chosen.ax, chosen.ay)] | 0;
-  const roomIdGuess = ridAtA !== 0 ? ridAtA : entranceRoomId;
+  // Place lever fixture
+  ft[lI] = 6;
+  fid[lI] = leverId;
+  fparam[lI] = 0;
+
+  // Add meta entries
   secrets.push({
     id: secretId,
-    x: chosen.cx,
-    y: chosen.cy,
-    roomId: roomIdGuess,
+    x: picked.cx,
+    y: picked.cy,
+    roomId: 0,
   });
-
-  // Place lever (real)
-  const li = idxOf(W, leverSpot.x, leverSpot.y);
-  ft[li] = 6;
-  fid[li] = leverId;
-  fparam[li] = 0;
-
-  const ridAtLever = regionId[li] | 0;
   levers.push({
     id: leverId,
     x: leverSpot.x,
     y: leverSpot.y,
-    roomId: ridAtLever !== 0 ? ridAtLever : entranceRoomId,
+    roomId: 0,
   });
 
-  // Emit circuit (real)
-  circuitsById.set(circuitId, {
-    id: circuitId,
+  // Circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
+  circuitsById.set(secretId, {
+    id: secretId,
     logic: { type: "OR" },
     behavior: { mode: "PERSISTENT" },
     triggers: [{ kind: "LEVER", refId: leverId }],
     targets: [{ kind: "HIDDEN", refId: secretId, effect: "REVEAL" }],
   });
 
-  return { ok: true, didCarve };
+  return { ok: true, didCarve: true };
 }
 
-// -----------------------------
-// helpers
-// -----------------------------
+// ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
+
+function clampOdd(n: number) {
+  return n % 2 === 0 ? n + 1 : n;
+}
 
 function idxOf(W: number, x: number, y: number) {
   return y * W + x;
@@ -363,6 +418,10 @@ function idxOf(W: number, x: number, y: number) {
 
 function inBounds(W: number, H: number, x: number, y: number) {
   return x >= 0 && y >= 0 && x < W && y < H;
+}
+
+function manhattan(a: Point, b: Point) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
 function cardinalDirs() {
@@ -374,33 +433,17 @@ function cardinalDirs() {
   ];
 }
 
-function clampOddAtLeast3(v: number) {
-  let n = v | 0;
-  if (n < 3) n = 3;
-  if (n % 2 === 0) n += 1;
-  return n;
-}
-
-function manhattan(a: Point, b: Point) {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-}
-
-function pocketFits(W: number, H: number, center: Point, size: number) {
-  const r = (size - 1) / 2;
-  return (
-    inBounds(W, H, center.x - r, center.y - r) &&
-    inBounds(W, H, center.x + r, center.y + r)
-  );
-}
-
 function findAnyFloorInRect(
   dungeon: BspDungeonOutputs,
-  rect: { x: number; y: number; w: number; h: number },
+  r: { x: number; y: number; w: number; h: number },
 ): Point | null {
   const W = dungeon.width;
+  const H = dungeon.height;
   const solid = dungeon.masks.solid;
-  for (let y = rect.y; y < rect.y + rect.h; y++) {
-    for (let x = rect.x; x < rect.x + rect.w; x++) {
+
+  for (let y = r.y; y < r.y + r.h; y++) {
+    for (let x = r.x; x < r.x + r.w; x++) {
+      if (!inBounds(W, H, x, y)) continue;
       const i = idxOf(W, x, y);
       if (solid[i] !== 255) return { x, y };
     }
@@ -408,12 +451,6 @@ function findAnyFloorInRect(
   return null;
 }
 
-/**
- * Generation-time reachability:
- * - walls block (solid==255)
- * - doors block by default (featureType==4)
- * - hidden blocks unless revealed (featureType==9 and id not in revealed set)
- */
 function computeReachable(
   dungeon: BspDungeonOutputs,
   featureType: Uint8Array,
@@ -470,113 +507,63 @@ function pocketSolidnessScore(
   const W = dungeon.width;
   const H = dungeon.height;
   const solid = dungeon.masks.solid;
-  const r = (size - 1) / 2;
 
-  let walls = 0;
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      const x = center.x + dx;
-      const y = center.y + dy;
+  const half = Math.floor(size / 2);
+  let total = 0;
+  let solidCount = 0;
+
+  for (let y = center.y - half; y <= center.y + half; y++) {
+    for (let x = center.x - half; x <= center.x + half; x++) {
       if (!inBounds(W, H, x, y)) continue;
+      total++;
       const i = idxOf(W, x, y);
-      if (solid[i] === 255) walls++;
+      if (solid[i] === 255) solidCount++;
     }
   }
-  return walls;
+
+  if (!total) return 0;
+  return solidCount / total;
 }
 
-function canCarvePocketWithoutAccidentalConnection(
+function carvePocketAndConnector(
   dungeon: BspDungeonOutputs,
-  featureType: Uint8Array,
-  reach0: Uint8Array,
-  pocketCenter: Point,
-  pocketSize: number,
-) {
-  const W = dungeon.width;
-  const H = dungeon.height;
-  const solid = dungeon.masks.solid;
-  const r = (pocketSize - 1) / 2;
-
-  // Pocket tiles must be currently unreachable & feature-free.
-  // Additionally, don’t allow adjacency to reachable tiles (conservative).
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      const x = pocketCenter.x + dx;
-      const y = pocketCenter.y + dy;
-      if (!inBounds(W, H, x, y)) return false;
-
-      const i = idxOf(W, x, y);
-      if ((featureType[i] | 0) !== 0) return false;
-      if (reach0[i]) return false;
-
-      // If already floor, ensure not adjacent to reachable floors
-      if (solid[i] !== 255) {
-        for (const d of cardinalDirs()) {
-          const ni = idxOf(W, x + d.dx, y + d.dy);
-          if (reach0[ni]) return false;
-        }
-      }
-    }
-  }
-
-  // Buffer ring: no reachable tiles within 1 of pocket boundary
-  for (let dy = -r - 1; dy <= r + 1; dy++) {
-    for (let dx = -r - 1; dx <= r + 1; dx++) {
-      const x = pocketCenter.x + dx;
-      const y = pocketCenter.y + dy;
-      if (!inBounds(W, H, x, y)) continue;
-      const i = idxOf(W, x, y);
-      if (reach0[i]) return false;
-    }
-  }
-
-  return true;
-}
-
-function carveConnectorAndPocket(
-  dungeon: BspDungeonOutputs,
-  featureType: Uint8Array,
-  cx: number,
-  cy: number,
+  connector: Point,
   pocketCenter: Point,
   pocketSize: number,
 ): boolean {
   const W = dungeon.width;
+  const H = dungeon.height;
   const solid = dungeon.masks.solid;
 
-  let didCarve = false;
+  const half = Math.floor(pocketSize / 2);
 
-  // connector becomes floor
-  const ci = idxOf(W, cx, cy);
-  if (solid[ci] === 255) {
-    solid[ci] = 0;
-    didCarve = true;
-  }
-
-  const r = (pocketSize - 1) / 2;
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      const x = pocketCenter.x + dx;
-      const y = pocketCenter.y + dy;
+  // Carve pocket area
+  for (let y = pocketCenter.y - half; y <= pocketCenter.y + half; y++) {
+    for (let x = pocketCenter.x - half; x <= pocketCenter.x + half; x++) {
+      if (!inBounds(W, H, x, y)) return false;
       const i = idxOf(W, x, y);
-
-      if ((featureType[i] | 0) !== 0) continue;
-
-      if (solid[i] === 255) {
-        solid[i] = 0;
-        didCarve = true;
-      }
+      solid[i] = 0;
     }
   }
 
-  return didCarve;
+  // Carve connector tile (was wall)
+  const ci = idxOf(W, connector.x, connector.y);
+  solid[ci] = 0;
+
+  return true;
 }
 
-function pickLeverSpot(
+function findPocketGoal(pocketCenter: Point, pocketSize: number): Point | null {
+  // Pick the center tile as goal if valid.
+  // (We keep it simple; can be improved later.)
+  return { x: pocketCenter.x, y: pocketCenter.y };
+}
+
+function chooseLeverSpot(
   rng: PatternRng,
   dungeon: BspDungeonOutputs,
   featureType: Uint8Array,
-  reach0: Uint8Array,
+  featureId: Uint8Array,
   start: Point,
   connector: Point,
   minDist: number,
@@ -585,8 +572,16 @@ function pickLeverSpot(
   const H = dungeon.height;
   const solid = dungeon.masks.solid;
 
-  const candidates: Array<{ x: number; y: number; score: number }> = [];
+  const reach0 = computeReachable(
+    dungeon,
+    featureType,
+    featureId,
+    start,
+    new Set(),
+  );
 
+  // Collect candidate reachable floor tiles far enough from connector and not occupied.
+  const candidates: Array<{ x: number; y: number; score: number }> = [];
   for (let y = 1; y < H - 1; y++) {
     for (let x = 1; x < W - 1; x++) {
       const i = idxOf(W, x, y);
@@ -608,4 +603,402 @@ function pickLeverSpot(
   const topN = Math.min(25, candidates.length);
   const pick = candidates[rng.nextInt(0, topN - 1)]!;
   return { x: pick.x, y: pick.y };
+}
+
+// ============================================================================
+// NEXT WORK (PLANNED) — Easy-win non-carving patterns
+// ============================================================================
+
+export type LeverOpensDoorPatternOptions = {
+  maxAttempts?: number;
+};
+
+export type PlateOpensDoorPatternOptions = {
+  maxAttempts?: number;
+  inverted?: boolean;
+};
+
+/**
+ * Find candidate corridor floor tiles that could serve as a “door location”:
+ * - solid floor
+ * - currently no feature
+ * - has >= 2 neighboring room ids (connects two rooms)
+ */
+function findDoorSiteCandidates(
+  dungeon: BspDungeonOutputs,
+  featureType: Uint8Array,
+): Array<{ x: number; y: number; roomA: number; roomB: number }> {
+  const W = dungeon.width;
+  const H = dungeon.height;
+  const solid = dungeon.masks.solid;
+  const regionId = dungeon.masks.regionId;
+
+  const out: Array<{ x: number; y: number; roomA: number; roomB: number }> = [];
+
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = idxOf(W, x, y);
+      if (solid[i] !== 0) continue;
+      if ((featureType[i] | 0) !== 0) continue;
+
+      const rooms = new Set<number>();
+      for (const d of cardinalDirs()) {
+        const ni = idxOf(W, x + d.dx, y + d.dy);
+        const rr = regionId[ni] | 0;
+        if (rr !== 0) rooms.add(rr);
+      }
+      if (rooms.size < 2) continue;
+
+      const [a, b] = Array.from(rooms).slice(0, 2);
+
+      // Prefer corridor tiles (regionId==0) by duplicating them (light bias).
+      out.push({ x, y, roomA: a, roomB: b });
+      if ((regionId[i] | 0) === 0) out.push({ x, y, roomA: a, roomB: b });
+    }
+  }
+
+  return out;
+}
+
+function sampleRoomFloorNoFeatures(
+  rng: PatternRng,
+  dungeon: BspDungeonOutputs,
+  room: BspDungeonOutputs["meta"]["rooms"][number],
+  featureType: Uint8Array,
+  tries = 80,
+): Point | null {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  for (let k = 0; k < tries; k++) {
+    const x = rng.nextInt(room.x + 1, room.x + room.w - 2);
+    const y = rng.nextInt(room.y + 1, room.y + room.h - 2);
+    if (!inBounds(W, H, x, y)) continue;
+
+    const i = idxOf(W, x, y);
+    if (dungeon.masks.solid[i] !== 0) continue;
+    if ((featureType[i] | 0) !== 0) continue;
+    return { x, y };
+  }
+
+  return null;
+}
+
+function sampleAdjacentFloorNoFeatures(
+  rng: PatternRng,
+  dungeon: BspDungeonOutputs,
+  p: Point,
+  featureType: Uint8Array,
+): Point | null {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  // Randomize direction order a bit
+  const dirs = cardinalDirs();
+  for (let i = dirs.length - 1; i > 0; i--) {
+    const j = rng.nextInt(0, i);
+    const tmp = dirs[i]!;
+    dirs[i] = dirs[j]!;
+    dirs[j] = tmp;
+  }
+
+  for (const d of dirs) {
+    const x = p.x + d.dx;
+    const y = p.y + d.dy;
+    if (!inBounds(W, H, x, y)) continue;
+    const ii = idxOf(W, x, y);
+    if (dungeon.masks.solid[ii] !== 0) continue;
+    if ((featureType[ii] | 0) !== 0) continue;
+    return { x, y };
+  }
+
+  return null;
+}
+
+/**
+ * Pattern: Lever opens door (non-carving)
+ * - Places a DOOR (featureType=4) onto an existing corridor floor tile that
+ *   appears to connect two rooms (inferred via neighboring region ids).
+ * - Places a LEVER (featureType=6) inside one of those rooms.
+ * - Wires circuit: LEVER -> DOOR(TOGGLE), TOGGLE behavior.
+ *
+ * Best-effort: if a suitable door site / lever spot cannot be found, it fails
+ * without aborting generation.
+ */
+export function applyLeverOpensDoorPattern(args: {
+  rng: PatternRng;
+  dungeon: BspDungeonOutputs;
+  rooms: BspDungeonOutputs["meta"]["rooms"];
+  entranceRoomId: number;
+
+  featureType: Uint8Array;
+  featureId: Uint8Array;
+  featureParam: Uint8Array;
+
+  doors: ContentOutputs["meta"]["doors"];
+  levers: ContentOutputs["meta"]["levers"];
+  circuitsById: Map<number, CircuitDef>;
+
+  allocId: () => number;
+  options?: LeverOpensDoorPatternOptions;
+}): PatternResult {
+  const {
+    rng,
+    dungeon,
+    rooms,
+    entranceRoomId,
+    featureType: ft,
+    featureId: fid,
+    featureParam: fparam,
+    doors,
+    levers,
+    circuitsById,
+    allocId,
+  } = args;
+
+  const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
+  const candidates = findDoorSiteCandidates(dungeon, ft);
+  if (!candidates.length) {
+    return { ok: false, didCarve: false, reason: "No valid door sites found." };
+  }
+
+  // Start point for optional sanity checks (reachable before lever is pulled).
+  const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
+  const start = entranceRoom ? findAnyFloorInRect(dungeon, entranceRoom) : null;
+  if (!start) {
+    return { ok: false, didCarve: false, reason: "No entrance start tile." };
+  }
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const site = candidates[rng.nextInt(0, candidates.length - 1)]!;
+    const doorId = allocId();
+
+    const di = idxOf(dungeon.width, site.x, site.y);
+    if ((ft[di] | 0) !== 0) continue;
+
+    // Place the door fixture
+    ft[di] = 4;
+    fid[di] = doorId;
+    fparam[di] = 2; // "kind" hint (debug/visual only)
+
+    doors.push({
+      id: doorId,
+      x: site.x,
+      y: site.y,
+      roomA: site.roomA,
+      roomB: site.roomB,
+      kind: 2,
+      depth: 0,
+    });
+
+    // Place lever inside roomA
+    const roomA = rooms[site.roomA - 1] ?? entranceRoom;
+    if (!roomA) {
+      // rollback door
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      continue;
+    }
+
+    const leverP = sampleRoomFloorNoFeatures(rng, dungeon, roomA, ft);
+    if (!leverP) {
+      // rollback door
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      continue;
+    }
+
+    const li = idxOf(dungeon.width, leverP.x, leverP.y);
+    ft[li] = 6;
+    fid[li] = doorId;
+    fparam[li] = 0;
+
+    levers.push({ id: doorId, x: leverP.x, y: leverP.y, roomId: site.roomA });
+
+    // Circuit: LEVER -> DOOR(TOGGLE), edge-based
+    circuitsById.set(doorId, {
+      id: doorId,
+      logic: { type: "OR" },
+      behavior: { mode: "TOGGLE" },
+      triggers: [{ kind: "LEVER", refId: doorId }],
+      targets: [{ kind: "DOOR", refId: doorId, effect: "TOGGLE" }],
+    });
+
+    // Optional sanity:
+    // - With doors treated closed in computeReachable(), the door tile blocks.
+    // - We do NOT require a strict reachability delta yet (easy-win pattern).
+    // This is here primarily to keep the pattern consistent with the validation mindset.
+    void computeReachable(dungeon, ft, fid, start, new Set());
+
+    return { ok: true, didCarve: false };
+  }
+
+  return {
+    ok: false,
+    didCarve: false,
+    reason: "Failed to place lever+door within attempt budget.",
+  };
+}
+
+/**
+ * Pattern: Plate opens door (non-carving)
+ * - Places a DOOR on a corridor floor connector.
+ * - Places a PLATE inside one room, and places a BLOCK adjacent to it.
+ * - Wires circuit: PLATE -> DOOR(OPEN) with MOMENTARY behavior.
+ *
+ * Note:
+ * - Plate.pressed is DERIVED from block occupancy at runtime.
+ * - Hazards do not block movement (by design).
+ */
+export function applyPlateOpensDoorPattern(args: {
+  rng: PatternRng;
+  dungeon: BspDungeonOutputs;
+  rooms: BspDungeonOutputs["meta"]["rooms"];
+
+  featureType: Uint8Array;
+  featureId: Uint8Array;
+  featureParam: Uint8Array;
+
+  doors: ContentOutputs["meta"]["doors"];
+  plates: ContentOutputs["meta"]["plates"];
+  blocks: ContentOutputs["meta"]["blocks"];
+  circuitsById: Map<number, CircuitDef>;
+
+  allocId: () => number;
+  options?: PlateOpensDoorPatternOptions;
+}): PatternResult {
+  const {
+    rng,
+    dungeon,
+    rooms,
+    featureType: ft,
+    featureId: fid,
+    featureParam: fparam,
+    doors,
+    plates,
+    blocks,
+    circuitsById,
+    allocId,
+  } = args;
+
+  const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 80);
+  const inverted = !!args.options?.inverted;
+
+  const candidates = findDoorSiteCandidates(dungeon, ft);
+  if (!candidates.length) {
+    return { ok: false, didCarve: false, reason: "No valid door sites found." };
+  }
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const site = candidates[rng.nextInt(0, candidates.length - 1)]!;
+    const circuitId = allocId();
+
+    const di = idxOf(dungeon.width, site.x, site.y);
+    if ((ft[di] | 0) !== 0) continue;
+
+    // Place door fixture
+    ft[di] = 4;
+    fid[di] = circuitId;
+    fparam[di] = 2;
+
+    doors.push({
+      id: circuitId,
+      x: site.x,
+      y: site.y,
+      roomA: site.roomA,
+      roomB: site.roomB,
+      kind: 2,
+      depth: 0,
+    });
+
+    // Place plate in roomA
+    const roomA = rooms[site.roomA - 1];
+    if (!roomA) {
+      // rollback door
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      continue;
+    }
+
+    const plateP = sampleRoomFloorNoFeatures(rng, dungeon, roomA, ft);
+    if (!plateP) {
+      // rollback door
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      continue;
+    }
+
+    const pi = idxOf(dungeon.width, plateP.x, plateP.y);
+    ft[pi] = 7;
+    fid[pi] = circuitId;
+    fparam[pi] = inverted ? 1 : 0;
+
+    plates.push({
+      id: circuitId,
+      x: plateP.x,
+      y: plateP.y,
+      roomId: site.roomA,
+      mode: "momentary",
+      activatedByPlayer: false,
+      activatedByBlock: true,
+      activatedByBlockOrPlayer: false,
+      inverted,
+    });
+
+    // Place a block adjacent to the plate
+    const blockP = sampleAdjacentFloorNoFeatures(rng, dungeon, plateP, ft);
+    if (!blockP) {
+      // rollback door + plate
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+
+      ft[pi] = 0;
+      fid[pi] = 0;
+      fparam[pi] = 0;
+      plates.pop();
+
+      continue;
+    }
+
+    const blockId = allocId();
+    const bi = idxOf(dungeon.width, blockP.x, blockP.y);
+    ft[bi] = 8;
+    fid[bi] = blockId;
+    fparam[bi] = 0;
+
+    blocks.push({
+      id: blockId,
+      x: blockP.x,
+      y: blockP.y,
+      roomId: site.roomA,
+      weightClass: 0,
+    });
+
+    // Circuit: PLATE -> DOOR(OPEN), momentary
+    circuitsById.set(circuitId, {
+      id: circuitId,
+      logic: { type: "OR" },
+      behavior: { mode: "MOMENTARY" },
+      triggers: [{ kind: "PLATE", refId: circuitId }],
+      targets: [{ kind: "DOOR", refId: circuitId, effect: "OPEN" }],
+    });
+
+    return { ok: true, didCarve: false };
+  }
+
+  return {
+    ok: false,
+    didCarve: false,
+    reason: "Failed to place plate+block+door within attempt budget.",
+  };
 }

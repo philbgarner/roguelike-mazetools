@@ -19,6 +19,7 @@ import * as THREE from "three";
 import {
   applyLeverRevealsHiddenPocketPattern,
   runPatternsBestEffort,
+  PatternResult,
 } from "./puzzlePatterns";
 
 // -----------------------------
@@ -2102,7 +2103,7 @@ export function generateDungeonContent(
     },
   };
 
-  const patterns: Array<() => import("./puzzlePatterns").PatternResult> = [];
+  const patterns: Array<() => PatternResult> = [];
 
   if (options.includeLeverHiddenPocket) {
     patterns.push(() =>

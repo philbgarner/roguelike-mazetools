@@ -13,6 +13,7 @@ import type {
   HazardType,
   CircuitDef,
 } from "./mazeGen";
+import { isTileWalkable } from "./walkability";
 
 export type DoorRuntimeState = {
   kind: DoorKind;
@@ -259,45 +260,6 @@ function hasBlockAt(
   return false;
 }
 
-function isWalkableForBlock(
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs,
-  runtime: DungeonRuntimeState,
-  x: number,
-  y: number,
-): boolean {
-  const W = dungeon.width;
-  const H = dungeon.height;
-  if (x < 0 || y < 0 || x >= W || y >= H) return false;
-
-  const i = idxOf(W, x, y);
-
-  // walls
-  if (dungeon.masks.solid[i] === 255) return false;
-
-  const ft = content.masks.featureType[i] | 0;
-  const fid = content.masks.featureId[i] | 0;
-
-  // Hidden passages (featureType 9):
-  // - until revealed, treat as blocked (wall-like)
-  // - once revealed, they behave like floor
-  if (ft === 9 && fid !== 0) {
-    const revealed = !!runtime.secrets?.[fid]?.revealed;
-    if (!revealed) return false;
-  }
-
-  // doors: only passable if open
-  if (ft === 4 && fid !== 0) {
-    const door = runtime.doors[fid];
-    const isOpen = !!(door?.isOpen || (door as any)?.forcedOpen);
-    if (!isOpen) return false;
-  }
-
-  // Hazards are consequence-only: never block movement for blocks.
-
-  return true;
-}
-
 /**
  * Attempt to push a specific block by (dx,dy).
  * - checks bounds/walls
@@ -326,7 +288,15 @@ export function tryPushBlock(
   const nx = b.x + dx;
   const ny = b.y + dy;
 
-  if (!isWalkableForBlock(dungeon, content, state, nx, ny)) {
+  const okWalk = isTileWalkable(dungeon, content, nx, ny, {
+    isDoorOpen: (doorId) => {
+      const door = state.doors?.[doorId];
+      return !!(door?.isOpen || (door as any)?.forcedOpen);
+    },
+    isSecretRevealed: (secretId) => !!state.secrets?.[secretId]?.revealed,
+  });
+
+  if (!okWalk) {
     return { ok: false, next: state, error: "Blocked" };
   }
 
