@@ -24,6 +24,7 @@ import {
   toggleLever,
 } from "./dungeonState";
 import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
+import { applyLeverRevealsHiddenPocketPattern } from "./puzzlePatterns";
 
 // -----------------------------
 // Types
@@ -985,7 +986,8 @@ export type ContentOptions = {
   // - 1 extra door (featureType=4, kind=0)
   // And add a circuit: PLATE toggles the door.
   includePuzzleFixture?: boolean;
-
+  includeLeverHiddenPocket?: boolean;
+  leverHiddenPocketSize?: number; // odd >= 3 (default 3)
   includeAsciiOverlay?: boolean;
 };
 
@@ -1038,6 +1040,7 @@ export type ContentOutputs = {
     farthestRoomId: number;
     roomDistance: Map<number, number>;
     mainPathRoomIds: number[];
+    rooms: Rect[];
 
     // Placement records
     monsters: Array<{
@@ -1522,6 +1525,8 @@ export function generateDungeonContent(
     // Milestone 3
     includePuzzleFixture: opts?.includePuzzleFixture ?? true,
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
+    includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
+    leverHiddenPocketSize: opts?.leverHiddenPocketSize ?? 3,
   };
 
   const seedUsed = hashSeedToUint32(options.seed);
@@ -2048,7 +2053,6 @@ export function generateDungeonContent(
     c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
     c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
   }
-
   const circuits = Array.from(circuitsById.values()).sort(
     (a, b) => a.id - b.id,
   );
@@ -2198,6 +2202,7 @@ export function generateDungeonContent(
       hidden,
       hazards,
       circuits,
+      rooms,
     },
   };
 }

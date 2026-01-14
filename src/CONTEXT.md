@@ -39,7 +39,7 @@ Place gameplay content on top of BSP geometry
 
 Encode progression, gating, and optional content
 
-Guarantee solvability by construction
+Guarantee solvability by construction (increasingly)
 
 Remain deterministic from seed/options
 
@@ -100,12 +100,15 @@ meta.bspDepth : number
 
 meta.seedUsed : number
 
+NOTE:
+Some puzzle patterns may CARVE additional geometry by mutating solid after BSP.
+If a pattern carves geometry, distanceToWall becomes stale unless recomputed.
+
 ============================================================
 CONTENT MASKS (GAMEPLAY LAYERS)
 
 Mask: featureType (Uint8)
 Encodes what exists at a tile.
-
 0 = none
 1 = monster spawn
 2 = loot chest
@@ -122,49 +125,19 @@ Mask: featureId (Uint8)
 Instance / circuit identifier (1..255).
 All tiles sharing a featureId belong to the same logical entity or circuit.
 
-Used for:
-
-Door ↔ key / lever relationships
-
-Lever / plate → multi-target circuits
-
-Hazard toggles
-
-Hidden passage reveal
-
-Future multi-step puzzles
-
 IMPORTANT INVARIANTS:
 
-featureType 9 (hidden passage) MUST have a non-zero featureId
+featureType 9 (hidden passage) MUST have non-zero featureId
 
-featureId for featureType 9 must correspond to meta.secrets[id]
-
-Push blocks use featureId only for identity; their true position is runtime-driven
+meta.secrets[] contains the authoritative entries for hidden passages / secrets
 
 Mask: featureParam (Uint8)
 Subtype or behavior flags.
 
-Examples:
-
-Door kind: 1 = locked, 2 = lever-controlled
-
-Plate flags: activatedByBlock, inverted, etc.
-
-Block weight class (future)
-
-Hazard behavior (future)
-
 Mask: danger (Uint8)
-
-Monster difficulty / danger value
-
 Mask: lootTier (Uint8)
 
-Chest tier scaling with room depth
-
 Mask: hazardType (Uint8)
-Hazard subtype:
 0 = none
 1 = lava
 2 = poison gas
@@ -220,28 +193,6 @@ triggers: { kind, refId }[],
 targets: { kind, refId, effect }[],
 }[]
 
-Milestone 3 fixture (debug / test harness):
-
-Generator can place:
-
-1 pressure plate
-
-1 push block adjacent to it
-
-1 door
-
-1 hidden passage tile (featureType 9)
-
-1 hazard tile + lever
-
-Circuits:
-
-PLATE → DOOR (toggle)
-
-PLATE → HIDDEN (reveal)
-
-LEVER → HAZARD (toggle)
-
 ============================================================
 RUNTIME STATE MODEL (MILESTONE 3)
 
@@ -273,13 +224,11 @@ derivePlatesFromBlocks()
 
 evaluateCircuits()
 
-DERIVED PLATES (IMPORTANT):
+DERIVED PLATES:
 
 Plate.pressed is computed from block occupancy
 
 Plates cannot be toggled directly
-
-This enforces physical puzzle honesty
 
 WALKABILITY RULES (CURRENT):
 
@@ -288,16 +237,10 @@ Walls: never walkable
 Doors: walkable only if open
 
 Hidden passages (featureType 9):
+unrevealed -> blocked
+revealed -> walkable
 
-unrevealed → blocked (wall-like)
-
-revealed → walkable (floor-like)
-
-Hazards:
-
-NEVER block movement
-
-Consequence-only (damage/effects later)
+Hazards: NEVER block movement (consequence-only later)
 
 ============================================================
 CIRCUIT EVALUATION (CORE LOGIC)
@@ -307,34 +250,19 @@ evaluateCircuits(currentState, meta.circuits) is a pure function.
 Evaluation steps:
 
 Determine trigger satisfaction:
-
-KEY → collected
-
-LEVER → toggled
-
-PLATE → pressed (derived)
-
+KEY -> collected
+LEVER -> toggled
+PLATE -> pressed (derived)
 (future) player-on-plate, combat clear, interaction
 
-Apply logic:
+Apply logic: OR / AND / THRESHOLD
 
-OR / AND / THRESHOLD
-
-Apply behavior:
-
-MOMENTARY
-
-PERSISTENT
-
-TOGGLE (edge-based)
+Apply behavior: MOMENTARY / PERSISTENT / TOGGLE (edge-based)
 
 Apply targets:
-
-DOOR → open / close / toggle
-
-HAZARD → enable / disable / toggle
-
-HIDDEN → reveal / hide / toggle
+DOOR -> open/close/toggle
+HAZARD -> enable/disable/toggle
+HIDDEN -> reveal/hide/toggle
 
 Outputs:
 
@@ -361,21 +289,83 @@ Hover tooltips show tile + feature + runtime state
 
 Interactions:
 
-key → collect
+key -> collect
 
-lever → toggle
+lever -> toggle
 
-block → select + WASD/arrow push
+block -> select + WASD/arrow push
 
-plate → read-only (derived)
+plate -> read-only (derived)
 
-door → optional manual toggle (debug only)
+door -> optional manual toggle (debug only)
 
 Panels:
 
 Stats panel: rooms, corridors, monsters, chests, secrets, doors, keys, levers, plates, blocks, hazards
 
 Circuit panel: triggers, targets, live evaluation state
+
+============================================================
+RECENT PROGRESS (NEW)
+
+Added a generalized “Puzzle Pattern” hook point
+
+New module: puzzlePatterns.ts
+
+Implemented first real pattern: Lever reveals hidden pocket connector (Variant A)
+
+Implemented Pattern: Lever -> Hidden(REVEAL) opens an optional pocket
+
+The pattern:
+
+Scans for a reachable floor tile adjacent to a wall that can be carved into a small isolated pocket
+
+Carves a connector tile + pocket area by mutating dungeon.masks.solid
+
+Places a hidden passage fixture (featureType 9) on the connector tile with a new secretId
+
+Places a lever fixture (featureType 6) in reachable space, far enough away from connector
+
+Emits a circuit (PERSISTENT): LEVER(leverId) -> HIDDEN(secretId, REVEAL)
+
+Validates by flood fill:
+
+pocket unreachable before reveal
+
+pocket reachable after reveal
+
+Updated pattern to avoid non-existent helpers
+
+No roomIdAtCell map is used.
+
+Room membership is inferred from dungeon.masks.regionId at the placement tile (corridors use entranceRoomId fallback).
+
+Generator wiring plan
+
+ContentOptions additions:
+
+includeLeverHiddenPocket?: boolean
+
+leverHiddenPocketSize?: number (odd >= 3)
+
+The pattern should be invoked during generateDungeonContent() once:
+
+entranceRoomId is known
+
+rooms[] exists
+
+featureType/featureId/featureParam masks exist
+
+circuitsById exists (pattern inserts its circuit there)
+
+secrets/levers placement arrays exist (pattern appends to them)
+
+NOTE ON CARVING:
+
+The pattern mutates dungeon.masks.solid (carving connector/pocket).
+
+This can stale distanceToWall. If downstream placements rely on distanceToWall,
+recompute distanceToWall after pattern placement or run patterns after any clearance-sensitive placements.
 
 ============================================================
 CURRENT MILESTONE STATUS
@@ -392,61 +382,97 @@ Pressure plates as derived sensors
 
 Pushable blocks with physical movement
 
-Hidden passages (featureType 9):
+Hidden passages (featureType 9) reveal driven by circuits
 
-blocked until revealed
+Hazards toggleable via circuits (consequence-only)
 
-reveal driven by circuits
+Debug harness supports state inspection and interactions
 
-correct visual + walkability behavior
+NEW: First generalized puzzle pattern (Lever -> Hidden reveal) with generation-time validation
 
-Hazards:
+In progress / next immediate step:
 
-consequence-only (never block movement)
+Wire the new pattern into generateDungeonContent() behind ContentOptions flags
 
-toggleable via circuits
+Ensure circuits are inserted via circuitsById (or merged into meta.circuits)
 
-visually reflect enabled/disabled state
+Ensure secrets/levers meta arrays are returned correctly
 
-Multi-fixture debug puzzles validating all of the above
+Add option defaults and UI toggles if desired
 
-NEXT WORK (RECOMMENDED ORDER):
+============================================================
+NEXT WORK (RECOMMENDED ORDER)
 
-Generalized puzzle pattern generation
+Immediate (finish this pattern integration)
 
-Multiple plates, levers, doors, hazards, hidden passages
+Wire includeLeverHiddenPocket into generateDungeonContent()
 
-Grammar-based placement
+Add ContentOptions fields + defaults
 
-Main-path vs optional-path constraints
+Import and invoke applyLeverRevealsHiddenPocketPattern()
 
-Generation-time solvability validation
+Ensure pattern writes to circuitsById and to secrets/levers arrays
 
-Ensure required progression is always possible
+Confirm runtime sees the new secret in initDungeonRuntimeState()
 
-Validate toggle order and reveal dependencies
+Confirm lever toggling reveals the pocket connector in the debug app
+
+Decide how to handle distanceToWall staleness
+
+Option A: recompute distanceToWall after all pattern carving
+
+Option B: run patterns after all placements that rely on distanceToWall
+
+Option C: pattern-only carving avoids areas that matter to other placements
+
+Near-term (expand pattern system)
+3) Add more simple patterns (no block pushing required)
+
+Lever opens door (PERSISTENT)
+
+Plate reveals hidden (PERSISTENT)
+
+Two triggers OR opens hidden
+
+Threshold-based puzzles with multiple plates (later)
+
+Add a lightweight pattern runner and failure strategy
+
+best-effort placement with warnings vs hard-fail
+
+per-pattern debug info (selected connector, lever position, goal tile)
+
+Mid-term (true solvability-by-construction)
+5) Generalized generation-time solvability validation
+
+Graph reachability checks with state transitions
+
+Validate required progression: keys/doors, reveals, toggles
+
+Eventually incorporate block pushes and plate derivation rules
 
 Unify walkability logic
 
-Extract a shared walkability function
+Extract a single shared function used by both runtime movement and generation-time flood fills
 
-Prepare for player movement integration
+Avoid drift between “simulation” and “validation”
 
-Expand block mechanics (optional)
-
-Multiple blocks
-
-Weight classes
-
-Threshold / AND puzzles
-
-Player movement & interaction (later milestone)
+Later milestone extensions
+7) Player movement integration (beyond Milestone 3)
 
 Player-on-plate derivation
 
+Interact triggers, combat-clear triggers
+
 Hazard consequences
 
-Combat-clear triggers
+Expand block mechanics
+
+multiple blocks
+
+weight classes
+
+AND/THRESHOLD puzzles based on multi-block arrangements
 
 ============================================================
 MENTAL MODEL SUMMARY
@@ -456,9 +482,9 @@ Content decides why you care
 featureId + circuits define logical wiring
 Runtime state executes puzzle logic
 Plates are sensors, not switches
-Hidden passages are tiles that come into existence
+Hidden passages are tiles that come into existence (from blocked -> revealed)
 Hazards are consequences, not walls
 evaluateCircuits is the only place logic happens
-The UI exists to prove puzzles are wired and solvable
+Puzzle patterns are content-level macros that place fixtures + circuits and validate reachability
 
 This document is intended to allow fast onboarding in a new chat or IDE session without rereading the codebase.
