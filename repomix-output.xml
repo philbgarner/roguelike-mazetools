@@ -61,6 +61,23 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
+<file path="public/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="src/main.tsx">
+// src/main.tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("app")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
+</file>
+
 <file path="src/puzzlePatterns.ts">
 // src/puzzlePatterns.ts
 //
@@ -100,6 +117,29 @@ export type LeverHiddenPocketPatternOptions = {
   maxCandidateSites?: number;
 };
 
+export type PatternResult =
+  | { ok: true; didCarve: boolean }
+  | { ok: false; didCarve: false; reason: string };
+
+type PatternFn = () => PatternResult;
+
+export function runPatternsBestEffort(patterns: PatternFn[]): {
+  didCarve: boolean;
+} {
+  let didCarve = false;
+
+  for (const p of patterns) {
+    const res = p();
+    if (!res.ok) {
+      console.warn(`[puzzlePatterns] skipped: ${res.reason}`);
+      continue;
+    }
+    didCarve ||= res.didCarve;
+  }
+
+  return { didCarve };
+}
+
 export function applyLeverRevealsHiddenPocketPattern(args: {
   rng: PatternRng;
   dungeon: BspDungeonOutputs;
@@ -120,7 +160,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
   allocId: () => number; // unique id allocator (1..255)
   options?: LeverHiddenPocketPatternOptions;
-}): { ok: true } | { ok: false; reason: string } {
+}): PatternResult {
   const {
     rng,
     dungeon,
@@ -157,10 +197,16 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
   // Determine a starting floodfill point: any floor in entrance room.
   const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
-  if (!entranceRoom) return { ok: false, reason: "No rooms available." };
+  if (!entranceRoom)
+    return { ok: false, didCarve: false, reason: "No rooms available." };
 
   const start = findAnyFloorInRect(dungeon, entranceRoom);
-  if (!start) return { ok: false, reason: "Entrance room has no floor tiles." };
+  if (!start)
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Entrance room has no floor tiles.",
+    };
 
   const reach0 = computeReachable(dungeon, ft, fid, start, new Set());
 
@@ -238,6 +284,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
   if (!candidates.length) {
     return {
       ok: false,
+      didCarve: false,
       reason:
         "No valid connector sites found for lever-hidden-pocket pattern (unable to carve isolated pocket).",
     };
@@ -246,40 +293,12 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
   candidates.sort((a, b) => b.score - a.score);
   const chosen = candidates[0]!;
 
-  // Carve connector + pocket into geometry (solid mask).
-  // NOTE: this makes distanceToWall stale, but your runtime logic will work.
   const pocketCenter = {
     x: chosen.cx + chosen.dir.dx * ((pocketSize + 1) / 2),
     y: chosen.cy + chosen.dir.dy * ((pocketSize + 1) / 2),
   };
-  carveConnectorAndPocket(
-    dungeon,
-    ft,
-    chosen.cx,
-    chosen.cy,
-    pocketCenter,
-    pocketSize,
-  );
 
-  // Place hidden connector fixture (featureType 9) on carved connector tile.
-  const secretId = allocId();
-  const ci = idxOf(W, chosen.cx, chosen.cy);
-  ft[ci] = 9; // hidden passage
-  fid[ci] = secretId;
-  fparam[ci] = 0;
-
-  // Register secret into meta.secrets so runtime initializes secrets[secretId].
-  const ridAtA = regionId[idxOf(W, chosen.ax, chosen.ay)] | 0;
-  const roomIdGuess = ridAtA !== 0 ? ridAtA : entranceRoomId;
-
-  secrets.push({
-    id: secretId,
-    x: chosen.cx,
-    y: chosen.cy,
-    roomId: roomIdGuess,
-  });
-
-  // Place lever somewhere reachable and not too close to connector.
+  // Find lever spot BEFORE mutating anything.
   const leverSpot = pickLeverSpot(
     rng,
     dungeon,
@@ -290,12 +309,108 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     minLeverToConnectorDist,
   );
   if (!leverSpot) {
-    return { ok: false, reason: "Unable to find lever placement spot." };
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Unable to find lever placement spot.",
+    };
   }
 
+  // Allocate ids now (we won't mutate unless validation passes).
+  const secretId = allocId();
   const leverId = allocId();
+  const circuitId = allocId();
+
+  // --- Preview mutations on copies for validation ---
+  const solidPreview = dungeon.masks.solid.slice();
+  const ftPreview = ft.slice();
+  const fidPreview = fid.slice();
+
+  // Create a shallow dungeon copy with preview solid
+  const previewDungeon: BspDungeonOutputs = {
+    ...dungeon,
+    masks: { ...dungeon.masks, solid: solidPreview },
+  };
+
+  carveConnectorAndPocket(
+    previewDungeon,
+    ftPreview,
+    chosen.cx,
+    chosen.cy,
+    pocketCenter,
+    pocketSize,
+  );
+
+  // Place hidden connector fixture (preview)
+  const ci = idxOf(W, chosen.cx, chosen.cy);
+  ftPreview[ci] = 9;
+  fidPreview[ci] = secretId;
+
+  // Validate reachability on preview
+  const goal = pocketCenter;
+  const gi = idxOf(W, goal.x, goal.y);
+
+  const pre = computeReachable(
+    previewDungeon,
+    ftPreview,
+    fidPreview,
+    start,
+    new Set(),
+  );
+  if (pre[gi]) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason:
+        "Validation failed: pocket is reachable before reveal (accidental connection).",
+    };
+  }
+
+  const post = computeReachable(
+    previewDungeon,
+    ftPreview,
+    fidPreview,
+    start,
+    new Set([secretId]),
+  );
+  if (!post[gi]) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason:
+        "Validation failed: pocket is NOT reachable after reveal (connector ineffective).",
+    };
+  }
+
+  // --- Commit real mutations (now that validation passed) ---
+  const didCarve = carveConnectorAndPocket(
+    dungeon,
+    ft,
+    chosen.cx,
+    chosen.cy,
+    pocketCenter,
+    pocketSize,
+  );
+
+  // Place hidden connector fixture (real)
+  const ciReal = idxOf(W, chosen.cx, chosen.cy);
+  ft[ciReal] = 9;
+  fid[ciReal] = secretId;
+  fparam[ciReal] = 0;
+
+  // Register secret
+  const ridAtA = regionId[idxOf(W, chosen.ax, chosen.ay)] | 0;
+  const roomIdGuess = ridAtA !== 0 ? ridAtA : entranceRoomId;
+  secrets.push({
+    id: secretId,
+    x: chosen.cx,
+    y: chosen.cy,
+    roomId: roomIdGuess,
+  });
+
+  // Place lever (real)
   const li = idxOf(W, leverSpot.x, leverSpot.y);
-  ft[li] = 6; // lever
+  ft[li] = 6;
   fid[li] = leverId;
   fparam[li] = 0;
 
@@ -307,41 +422,16 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     roomId: ridAtLever !== 0 ? ridAtLever : entranceRoomId,
   });
 
-  // Emit circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
-  const circuitId = allocId();
-  const circuit: CircuitDef = {
+  // Emit circuit (real)
+  circuitsById.set(circuitId, {
     id: circuitId,
     logic: { type: "OR" },
     behavior: { mode: "PERSISTENT" },
     triggers: [{ kind: "LEVER", refId: leverId }],
     targets: [{ kind: "HIDDEN", refId: secretId, effect: "REVEAL" }],
-  };
-  circuitsById.set(circuitId, circuit);
+  });
 
-  // Validate:
-  // pick goal tile = pocket center (should be unreachable pre, reachable post)
-  const goal = pocketCenter;
-  const gi = idxOf(W, goal.x, goal.y);
-
-  const pre = computeReachable(dungeon, ft, fid, start, new Set());
-  if (pre[gi]) {
-    return {
-      ok: false,
-      reason:
-        "Validation failed: pocket is reachable before reveal (accidental connection).",
-    };
-  }
-
-  const post = computeReachable(dungeon, ft, fid, start, new Set([secretId]));
-  if (!post[gi]) {
-    return {
-      ok: false,
-      reason:
-        "Validation failed: pocket is NOT reachable after reveal (connector ineffective).",
-    };
-  }
-
-  return { ok: true };
+  return { ok: true, didCarve };
 }
 
 // -----------------------------
@@ -531,12 +621,18 @@ function carveConnectorAndPocket(
   cy: number,
   pocketCenter: Point,
   pocketSize: number,
-) {
+): boolean {
   const W = dungeon.width;
   const solid = dungeon.masks.solid;
 
+  let didCarve = false;
+
   // connector becomes floor
-  solid[idxOf(W, cx, cy)] = 0;
+  const ci = idxOf(W, cx, cy);
+  if (solid[ci] === 255) {
+    solid[ci] = 0;
+    didCarve = true;
+  }
 
   const r = (pocketSize - 1) / 2;
   for (let dy = -r; dy <= r; dy++) {
@@ -544,10 +640,17 @@ function carveConnectorAndPocket(
       const x = pocketCenter.x + dx;
       const y = pocketCenter.y + dy;
       const i = idxOf(W, x, y);
+
       if ((featureType[i] | 0) !== 0) continue;
-      solid[i] = 0;
+
+      if (solid[i] === 255) {
+        solid[i] = 0;
+        didCarve = true;
+      }
     }
   }
+
+  return didCarve;
 }
 
 function pickLeverSpot(
@@ -587,23 +690,6 @@ function pickLeverSpot(
   const pick = candidates[rng.nextInt(0, topN - 1)]!;
   return { x: pick.x, y: pick.y };
 }
-</file>
-
-<file path="public/vite.svg">
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
-</file>
-
-<file path="src/main.tsx">
-// src/main.tsx
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-
-ReactDOM.createRoot(document.getElementById("app")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
 </file>
 
 <file path=".gitignore">
@@ -1844,6 +1930,1520 @@ export function ensurePlate(state: DungeonRuntimeState, id: number): void {
 }
 </file>
 
+<file path="src/App.tsx">
+// src/App.tsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  generateBspDungeon,
+  generateDungeonContent,
+  imageDataToPngDataUrl,
+} from "./mazeGen";
+import {
+  initDungeonRuntimeState,
+  collectKey,
+  toggleLever,
+  togglePlate,
+  resetRuntimeState,
+  derivePlatesFromBlocks,
+  tryPushBlock,
+  type DungeonRuntimeState,
+} from "./dungeonState";
+
+import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
+
+import "./styles.css";
+
+type Layer =
+  | "solid"
+  | "regionId"
+  | "distanceToWall"
+  | "content"
+  | "featureType"
+  | "featureId"
+  | "featureParam"
+  | "danger"
+  | "lootTier"
+  | "hazardType";
+
+function clampInt(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function downloadDataUrl(filename: string, dataUrl: string) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  a.click();
+}
+
+function drawToCanvas(
+  canvas: HTMLCanvasElement | null,
+  imageData: ImageData | null,
+) {
+  if (!canvas || !imageData) return;
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+function featureName(ft: number) {
+  switch (ft) {
+    case 1:
+      return "Monster Spawn";
+    case 2:
+      return "Chest";
+    case 3:
+      return "Secret Door";
+    case 4:
+      return "Door";
+    case 5:
+      return "Key";
+    case 6:
+      return "Lever";
+    case 7:
+      return "Pressure Plate";
+    case 8:
+      return "Push Block";
+    case 9:
+      return "Hidden Passage";
+    case 10:
+      return "Hazard";
+    default:
+      return "None";
+  }
+}
+
+function doorKindName(param: number) {
+  // Matches Milestone 2 plan:
+  // 1 = locked door, 2 = lever-controlled door
+  switch (param) {
+    case 1:
+      return "Locked";
+    case 2:
+      return "Lever";
+    default:
+      return "Unknown";
+  }
+}
+
+/**
+ * Shared door-state derivation used by:
+ * - content composite rendering (door color overlay)
+ * - tooltips
+ *
+ * IMPORTANT: door "locked" is derived from runtime key/lever state.
+ */
+function readDoorState(
+  runtime: DungeonRuntimeState,
+  doorId: number,
+): { isOpen: boolean; isLocked: boolean; kind: number } {
+  const door = runtime.doors?.[doorId];
+  if (!door) return { isOpen: false, isLocked: false, kind: 0 };
+
+  // Your DoorKind is numeric: 1 locked, 2 lever.
+  const kind = (door.kind as any) | 0;
+
+  // Derive gated state by matching “circuit id” (doorId) convention.
+  const hasKey = !!runtime.keys?.[doorId]?.collected;
+  const leverOn = !!runtime.levers?.[doorId]?.toggled;
+
+  const isLocked = kind === 1 ? !hasKey : kind === 2 ? !leverOn : false;
+
+  const isOpen = !!(door.isOpen || (door as any).forcedOpen);
+
+  return { kind, isOpen, isLocked };
+}
+
+function makeContentCompositeImageData(
+  dungeon: ReturnType<typeof generateBspDungeon>,
+  content: ReturnType<typeof generateDungeonContent>,
+  runtime: DungeonRuntimeState | null,
+  showStateOverlay: boolean,
+  selectedBlockId: number | null,
+): ImageData {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  const solid = dungeon.masks.solid; // 255 wall, 0 floor
+  const ft = content.masks.featureType; // 0..n
+  const fid = content.masks.featureId;
+  const hzType = content.masks.hazardType;
+
+  const img = new ImageData(W, H);
+  const data = img.data;
+
+  // Runtime blocks overlay (blocks move; masks do not)
+  const blockOcc = new Uint8Array(W * H);
+  const selectedOcc = new Uint8Array(W * H);
+  if (runtime) {
+    for (const [idStr, b] of Object.entries(runtime.blocks ?? {})) {
+      const id = Number(idStr);
+      const bi = idxOf(W, b.x, b.y);
+      if (bi >= 0 && bi < blockOcc.length) blockOcc[bi] = 1;
+      if (selectedBlockId != null && id === selectedBlockId) {
+        if (bi >= 0 && bi < selectedOcc.length) selectedOcc[bi] = 1;
+      }
+    }
+  }
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = idxOf(W, x, y);
+      const o = i * 4;
+
+      const isWall = solid[i] === 255;
+
+      // Base: walls dark, floors light
+      let r = isWall ? 25 : 235;
+      let g = isWall ? 25 : 235;
+      let b = isWall ? 25 : 235;
+      const a = 255;
+
+      // Overlay by feature type
+      const t = ft[i] | 0;
+      if (t !== 0) {
+        // Slightly darken base first so overlay pops
+        r = Math.max(0, r - 40);
+        g = Math.max(0, g - 40);
+        b = Math.max(0, b - 40);
+
+        if (t === 1) {
+          // monster
+          r = 220;
+          g = 60;
+          b = 60;
+        } else if (t === 2) {
+          // chest
+          r = 70;
+          g = 200;
+          b = 90;
+        } else if (t === 3 || t === 4) {
+          // secret door OR door
+          // Default (no runtime overlay): brown
+          r = 150;
+          g = 105;
+          b = 60;
+
+          // Milestone 3 overlay for doors only (featureType == 4)
+          if (t === 4 && showStateOverlay && runtime) {
+            const doorId = fid[i] | 0;
+            const { isOpen, isLocked } = readDoorState(runtime, doorId);
+
+            if (isOpen) {
+              // OPEN door: lighter tan
+              r = 205;
+              g = 170;
+              b = 120;
+            } else if (isLocked) {
+              // CLOSED + LOCKED: darker brown
+              r = 105;
+              g = 70;
+              b = 40;
+            } else {
+              // CLOSED but not locked
+              r = 145;
+              g = 95;
+              b = 55;
+            }
+          }
+
+          // Optional: make secret doors distinct when overlay is enabled
+          if (t === 3 && showStateOverlay) {
+            r = 135;
+            g = 90;
+            b = 50;
+          }
+        } else if (t === 7) {
+          // pressure plate (milestone 3)
+          // neutral stone-grey
+          r = 150;
+          g = 150;
+          b = 150;
+          // stone-grey; brighten when pressed (derived)
+          r = 150;
+          g = 150;
+          b = 150;
+          if (runtime && showStateOverlay) {
+            const plateId = fid[i] | 0;
+            const pressed = !!runtime.plates?.[plateId]?.pressed;
+            if (pressed) {
+              r = 205;
+              g = 205;
+              b = 205;
+            }
+          }
+        } else if (t === 9) {
+          // hidden passage (featureType 9)
+          // unrevealed: dark “masonry” (wall-ish), revealed: pale teal (floor-ish)
+          const secretId = fid[i] | 0;
+
+          // IMPORTANT: revealed-ness should reflect runtime even if showStateOverlay is off.
+          // showStateOverlay can still govern OTHER overlays, but not whether the tile exists.
+          const revealed = !!(runtime && runtime.secrets?.[secretId]?.revealed);
+
+          if (revealed) {
+            r = 150;
+            g = 210;
+            b = 210;
+          } else {
+            r = 55;
+            g = 55;
+            b = 60;
+          }
+        } else if (t === 10) {
+          // hazard (featureType 10) — consequence-only (walkable), but visually clear
+          const ht = hzType[i] | 0;
+
+          // Base by hazardType
+          if (ht === 1) {
+            // lava
+            r = 220;
+            g = 90;
+            b = 35;
+          } else if (ht === 2) {
+            // poison gas
+            r = 90;
+            g = 220;
+            b = 90;
+          } else if (ht === 3) {
+            // water
+            r = 80;
+            g = 140;
+            b = 230;
+          } else if (ht === 4) {
+            // spikes
+            r = 180;
+            g = 180;
+            b = 180;
+          } else {
+            // unknown hazard
+            r = 230;
+            g = 80;
+            b = 200;
+          }
+
+          // Overlay enabled/disabled state
+          if (runtime && showStateOverlay) {
+            const hazardId = fid[i] | 0;
+            const enabled = !!runtime.hazards?.[hazardId]?.enabled;
+
+            if (!enabled) {
+              // muted when disabled
+              r = Math.round(r * 0.55);
+              g = Math.round(g * 0.55);
+              b = Math.round(b * 0.55);
+            }
+          }
+        } else {
+          // key / lever / unknown future
+          r = 230;
+          g = 200;
+          b = 70;
+        }
+
+        // Draw blocks on top (they move)
+        if (runtime && blockOcc[i]) {
+          // warm “wood” tone
+          r = 140;
+          g = 105;
+          b = 60;
+          if (selectedOcc[i]) {
+            // highlight selected
+            r = 210;
+            g = 170;
+            b = 90;
+          }
+        }
+
+        // Keep walls visible if a feature is on a wall (secret doors are walls)
+        if (isWall) {
+          const br = 25,
+            bg = 25,
+            bb = 25;
+          r = Math.round(br * 0.4 + r * 0.6);
+          g = Math.round(bg * 0.4 + g * 0.6);
+          b = Math.round(bb * 0.4 + b * 0.6);
+        }
+      }
+
+      data[o + 0] = r;
+      data[o + 1] = g;
+      data[o + 2] = b;
+      data[o + 3] = a;
+    }
+  }
+
+  return img;
+}
+
+const App: React.FC = () => {
+  // --- Inputs ---
+  const [width, setWidth] = useState(96);
+  const [height, setHeight] = useState(64);
+  const [seed, setSeed] = useState("seed-1234");
+
+  // --- Content / Puzzle options ---
+  const [includeLeverHiddenPocket, setIncludeLeverHiddenPocket] =
+    useState(false);
+  const [leverHiddenPocketSize, setLeverHiddenPocketSize] = useState(5); // odd >= 3
+
+  const [maxDepth, setMaxDepth] = useState(9);
+  const [minLeafSize, setMinLeafSize] = useState(16);
+  const [maxLeafSize, setMaxLeafSize] = useState(26);
+  const [splitPadding, setSplitPadding] = useState(1);
+
+  const [roomPadding, setRoomPadding] = useState(2);
+  const [minRoomSize, setMinRoomSize] = useState(6);
+  const [maxRoomSize, setMaxRoomSize] = useState(18);
+  const [roomFillLeafChance, setRoomFillLeafChance] = useState(0.08);
+
+  const [corridorWidth, setCorridorWidth] = useState(1);
+  const [keepOuterWalls, setKeepOuterWalls] = useState(true);
+
+  const [layer, setLayer] = useState<Layer>("content");
+  const [scale, setScale] = useState(6);
+
+  // --- Output ---
+  const [ascii, setAscii] = useState<string>("");
+
+  const [content, setContent] = useState<ReturnType<
+    typeof generateDungeonContent
+  > | null>(null);
+  const [runtime, setRuntime] = useState<DungeonRuntimeState | null>(null);
+  const [circuitDebug, setCircuitDebug] = useState<CircuitEvalResult["debug"]>(
+    {},
+  );
+  const [showStateOverlay, setShowStateOverlay] = useState(true);
+
+  const [imageDataByLayer, setImageDataByLayer] = useState<{
+    solid: ImageData | null;
+    regionId: ImageData | null;
+    distanceToWall: ImageData | null;
+
+    content: ImageData | null;
+
+    featureType: ImageData | null;
+    featureId: ImageData | null;
+    featureParam: ImageData | null;
+    danger: ImageData | null;
+    lootTier: ImageData | null;
+
+    hazardType: ImageData | null;
+  }>({
+    solid: null,
+    regionId: null,
+    distanceToWall: null,
+
+    content: null,
+
+    featureType: null,
+    featureId: null,
+    featureParam: null,
+    danger: null,
+    lootTier: null,
+
+    hazardType: null,
+  });
+
+  const [meta, setMeta] = useState<{
+    seedUsed: number;
+    rooms: number;
+    corridors: number;
+    bspDepth: number;
+
+    entranceRoomId: number;
+    farthestRoomId: number;
+    mainPathRooms: number;
+
+    monsters: number;
+    chests: number;
+    secrets: number;
+
+    doors: number;
+    keys: number;
+    levers: number;
+    plates: number;
+    blocks: number;
+  } | null>(null);
+
+  // Keep latest generator outputs around for tooltip lookups
+  const dungeonRef = useRef<ReturnType<typeof generateBspDungeon> | null>(null);
+  const contentRef = useRef<ReturnType<typeof generateDungeonContent> | null>(
+    null,
+  );
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasPanelRef = useRef<HTMLDivElement | null>(null);
+
+  // Hover tooltip state
+  const hoverTimerRef = useRef<number | null>(null);
+  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
+  const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
+  const [tooltip, setTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    screenX: number;
+    screenY: number;
+    lines: string[];
+    featureType: number;
+    featureId: number;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    screenX: 0,
+    screenY: 0,
+    lines: [],
+    featureType: 0,
+    featureId: 0,
+  });
+
+  const opts = useMemo(
+    () => ({
+      width,
+      height,
+      seed,
+      maxDepth,
+      minLeafSize,
+      maxLeafSize,
+      splitPadding,
+      roomPadding,
+      minRoomSize,
+      maxRoomSize,
+      roomFillLeafChance,
+      corridorWidth,
+      keepOuterWalls,
+    }),
+    [
+      width,
+      height,
+      seed,
+      maxDepth,
+      minLeafSize,
+      maxLeafSize,
+      splitPadding,
+      roomPadding,
+      minRoomSize,
+      maxRoomSize,
+      roomFillLeafChance,
+      corridorWidth,
+      keepOuterWalls,
+    ],
+  );
+
+  const applyRuntime = React.useCallback((next: DungeonRuntimeState) => {
+    const content = contentRef.current;
+    if (!content) {
+      setRuntime(next);
+      return;
+    }
+    // DERIVED: plates come from block occupancy
+    const derived = derivePlatesFromBlocks(next, content);
+    const res = evaluateCircuits(derived, content.meta.circuits);
+    setRuntime(res.next);
+    setCircuitDebug(res.debug);
+  }, []);
+
+  const regenerateRuntimeFromContent = React.useCallback(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const initialRuntime = initDungeonRuntimeState(content);
+    const derived = derivePlatesFromBlocks(initialRuntime, content);
+    const evalOut = evaluateCircuits(derived, content.meta.circuits);
+
+    setRuntime(evalOut.next);
+    setCircuitDebug(evalOut.debug);
+  }, []);
+
+  const generate = React.useCallback(() => {
+    const out = generateBspDungeon(opts);
+    const content = generateDungeonContent(out, {
+      includeLeverHiddenPocket,
+      leverHiddenPocketSize,
+      leverDoorCount: 1,
+    });
+
+    const initialRuntime = initDungeonRuntimeState(content);
+    const derived = derivePlatesFromBlocks(initialRuntime, content);
+    const evalOut = evaluateCircuits(derived, content.meta.circuits);
+
+    setRuntime(evalOut.next);
+    setCircuitDebug(evalOut.debug);
+    setSelectedBlockId(null);
+
+    const composite = makeContentCompositeImageData(
+      out,
+      content,
+      evalOut.next,
+      showStateOverlay,
+      null,
+    );
+
+    dungeonRef.current = out;
+    contentRef.current = content;
+
+    setContent(content);
+    setAscii(content.debug.ascii);
+
+    setImageDataByLayer({
+      solid: out.debug.imageData.solid,
+      regionId: out.debug.imageData.regionId,
+      distanceToWall: out.debug.imageData.distanceToWall,
+
+      content: composite,
+
+      featureType: content.debug.imageData.featureType,
+      featureId: content.debug.imageData.featureId,
+      featureParam: content.debug.imageData.featureParam,
+      danger: content.debug.imageData.danger,
+      lootTier: content.debug.imageData.lootTier,
+
+      hazardType: content.debug.imageData.hazardType,
+    });
+
+    setMeta({
+      seedUsed: out.meta.seedUsed,
+      rooms: out.meta.rooms.length,
+      corridors: out.meta.corridors.length,
+      bspDepth: out.meta.bspDepth,
+
+      entranceRoomId: content.meta.entranceRoomId,
+      farthestRoomId: content.meta.farthestRoomId,
+      mainPathRooms: content.meta.mainPathRoomIds.length,
+
+      monsters: content.meta.monsters.length,
+      chests: content.meta.chests.length,
+      secrets: content.meta.secrets.length,
+
+      doors: content.meta.doors.length,
+      keys: content.meta.keys.length,
+      levers: content.meta.levers.length,
+      plates: content.meta.plates.length,
+      blocks: content.meta.blocks.length,
+    });
+  }, [opts, showStateOverlay, includeLeverHiddenPocket, leverHiddenPocketSize]);
+
+  // initial generation
+  useEffect(() => {
+    generate();
+  }, [generate]);
+
+  // recompute composite when runtime overlay changes
+  useEffect(() => {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return;
+
+    const composite = makeContentCompositeImageData(
+      dungeon,
+      content,
+      runtime,
+      showStateOverlay,
+      selectedBlockId,
+    );
+
+    setImageDataByLayer((prev) => ({
+      ...prev,
+      content: composite,
+    }));
+  }, [runtime, showStateOverlay, selectedBlockId]);
+
+  // Keyboard push: select a block (click), then WASD/Arrows to push
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (selectedBlockId == null) return;
+      const dungeon = dungeonRef.current;
+      const content = contentRef.current;
+      const r = runtime;
+      if (!dungeon || !content || !r) return;
+
+      let dx = 0;
+      let dy = 0;
+      switch (e.key) {
+        case "ArrowUp":
+        case "w":
+        case "W":
+          dy = -1;
+          break;
+        case "ArrowDown":
+        case "s":
+        case "S":
+          dy = 1;
+          break;
+        case "ArrowLeft":
+        case "a":
+        case "A":
+          dx = -1;
+          break;
+        case "ArrowRight":
+        case "d":
+        case "D":
+          dx = 1;
+          break;
+        case "Escape":
+          setSelectedBlockId(null);
+          return;
+      }
+
+      if (dx !== 0 || dy !== 0) {
+        e.preventDefault();
+        const res = tryPushBlock(r, dungeon, content, selectedBlockId, dx, dy);
+        if (res.ok) applyRuntime(res.next);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown, { passive: false } as any);
+    return () => window.removeEventListener("keydown", onKeyDown as any);
+  }, [runtime, selectedBlockId, applyRuntime]);
+
+  // redraw canvas whenever layer changes or new images arrive
+  useEffect(() => {
+    const img = imageDataByLayer[layer];
+    drawToCanvas(canvasRef.current, img);
+  }, [layer, imageDataByLayer]);
+
+  const currentImageData = imageDataByLayer[layer];
+
+  // Set displayed size via inline px (reliable across browsers)
+  const canvasStyle: React.CSSProperties = {
+    width: currentImageData ? currentImageData.width * scale : 0,
+    height: currentImageData ? currentImageData.height * scale : 0,
+  };
+
+  function clearHoverTimer() {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }
+
+  function hideTooltip() {
+    clearHoverTimer();
+    lastHoverCellRef.current = null;
+    setTooltip((t) => ({ ...t, visible: false }));
+  }
+
+  function buildTooltipLines(x: number, y: number): string[] {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return [];
+
+    const W = dungeon.width;
+    const H = dungeon.height;
+    if (x < 0 || y < 0 || x >= W || y >= H) return [];
+
+    const i = idxOf(W, x, y);
+
+    const solid = dungeon.masks.solid[i];
+    const regionId = dungeon.masks.regionId[i];
+    const dist = dungeon.masks.distanceToWall[i];
+
+    let ft = content.masks.featureType[i];
+    let fid = content.masks.featureId[i];
+    const fparam = content.masks.featureParam[i];
+    // If a runtime block is at this cell, treat it as the active feature for tooltip purposes
+    if (runtime?.blocks) {
+      for (const [idStr, b] of Object.entries(runtime.blocks)) {
+        const id = Number(idStr);
+        if (b.x === x && b.y === y) {
+          ft = 8;
+          fid = id;
+          break;
+        }
+      }
+    }
+
+    const dng = content.masks.danger[i];
+    const tier = content.masks.lootTier[i];
+    const hz = content.masks.hazardType[i];
+
+    const lines: string[] = [];
+    lines.push(`Cell: (${x}, ${y})`);
+    lines.push(`Terrain: ${solid === 255 ? "Wall" : "Floor"}`);
+    lines.push(`regionId: ${regionId}`);
+    lines.push(`distanceToWall: ${dist}`);
+
+    lines.push(`featureType: ${ft} (${featureName(ft)})`);
+    lines.push(`featureId: ${fid}`);
+
+    if (ft === 4) {
+      lines.push(`featureParam: ${fparam} (Door: ${doorKindName(fparam)})`);
+    } else if (fparam !== 0) {
+      lines.push(`featureParam: ${fparam}`);
+    }
+
+    if (ft === 4 && runtime && showStateOverlay && fid !== 0) {
+      const { isOpen, isLocked } = readDoorState(runtime, fid);
+      lines.push(
+        `Door state: ${isOpen ? "OPEN" : "CLOSED"}${isLocked ? " (LOCKED)" : ""}`,
+      );
+    }
+
+    if (ft === 1) lines.push(`danger: ${dng}`);
+    if (ft === 2) lines.push(`lootTier: ${tier}`);
+    if (ft === 10) lines.push(`hazardType: ${hz}`);
+
+    // Plate details (Milestone 3)
+    if (ft === 7 && fid !== 0) {
+      const plate = content.meta.plates.find((p) => p.id === fid);
+      if (plate) {
+        lines.push(`Plate mode: ${plate.mode}`);
+        lines.push(
+          `Plate triggers: player=${plate.activatedByPlayer ? "Y" : "N"}, block=${plate.activatedByBlock ? "Y" : "N"}`,
+        );
+        if (plate.inverted) lines.push(`Plate: inverted`);
+        if (runtime && showStateOverlay) {
+          lines.push(
+            `Plate pressed (derived): ${runtime.plates?.[fid]?.pressed ? "YES" : "NO"}`,
+          );
+        }
+      } else {
+        lines.push(`Plate: id ${fid}`);
+      }
+    }
+
+    if (ft === 8 && fid !== 0) {
+      const b = runtime?.blocks?.[fid];
+      if (b) {
+        lines.push(`Block: id ${fid}`);
+        lines.push(`Block pos: (${b.x}, ${b.y})`);
+        lines.push(`Block weightClass: ${b.weightClass ?? 0}`);
+        lines.push("Click: select block");
+        lines.push("WASD / Arrows: push selected");
+        lines.push("Esc: clear selection");
+      } else {
+        lines.push(`Block: id ${fid}`);
+      }
+    }
+
+    // relationship hints
+    if (ft === 5 && fid !== 0) lines.push(`Hint: key unlocks circuit ${fid}`);
+    if (ft === 6 && fid !== 0)
+      lines.push(`Hint: lever controls circuit ${fid}`);
+    if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
+    if (ft === 7 && fid !== 0) lines.push(`Circuit: plate id ${fid}`);
+
+    // interaction hint
+    if (ft === 5) lines.push("Click: collect key");
+    if (ft === 6) lines.push("Click: toggle lever");
+    if (ft === 7) lines.push("Click: toggle plate (debug)");
+    if (ft === 4) lines.push("Click: toggle door (debug)");
+
+    return lines;
+  }
+
+  function getCellFromMouseEvent(e: React.MouseEvent): {
+    x: number;
+    y: number;
+    screenX: number;
+    screenY: number;
+  } | null {
+    const img = currentImageData;
+    if (!img) return null;
+
+    const panel = canvasPanelRef.current;
+    if (!panel) return null;
+
+    const rect = panel.getBoundingClientRect();
+
+    // Mouse coords relative to the *displayed* canvas area inside the panel
+    const localX = e.clientX - rect.left - 12; // panel padding is 12px (matches CSS)
+    const localY = e.clientY - rect.top - 12;
+
+    if (localX < 0 || localY < 0) return null;
+
+    const x = Math.floor(localX / scale);
+    const y = Math.floor(localY / scale);
+
+    if (x < 0 || y < 0 || x >= img.width || y >= img.height) return null;
+
+    return { x, y, screenX: e.clientX, screenY: e.clientY };
+  }
+
+  function onCanvasMouseMove(e: React.MouseEvent) {
+    const cell = getCellFromMouseEvent(e);
+    if (!cell) {
+      hideTooltip();
+      return;
+    }
+
+    setTooltip((t) => ({
+      ...t,
+      x: cell.x,
+      y: cell.y,
+      screenX: cell.screenX,
+      screenY: cell.screenY,
+    }));
+
+    const last = lastHoverCellRef.current;
+    if (last && last.x === cell.x && last.y === cell.y) return;
+
+    lastHoverCellRef.current = { x: cell.x, y: cell.y };
+    clearHoverTimer();
+    setTooltip((t) => ({ ...t, visible: false }));
+
+    hoverTimerRef.current = window.setTimeout(() => {
+      const dungeon = dungeonRef.current;
+      const content = contentRef.current;
+      if (!dungeon || !content) return;
+
+      const i = idxOf(dungeon.width, cell.x, cell.y);
+      const ft = content.masks.featureType[i] | 0;
+      const fid = content.masks.featureId[i] | 0;
+
+      const lines = buildTooltipLines(cell.x, cell.y);
+
+      setTooltip((t) => ({
+        ...t,
+        visible: true,
+        x: cell.x,
+        y: cell.y,
+        screenX: cell.screenX,
+        screenY: cell.screenY,
+        lines,
+        featureType: ft,
+        featureId: fid,
+      }));
+    }, 350);
+  }
+
+  function onCanvasMouseLeave() {
+    hideTooltip();
+  }
+
+  function onCanvasClick(e: React.MouseEvent) {
+    const dungeon = dungeonRef.current;
+    const content = contentRef.current;
+    if (!dungeon || !content) return;
+    if (!runtime) return;
+
+    const cell = getCellFromMouseEvent(e);
+    if (!cell) return;
+
+    const i = idxOf(dungeon.width, cell.x, cell.y);
+    const ft = content.masks.featureType[i] | 0;
+    const fid = content.masks.featureId[i] | 0;
+
+    // If you clicked a runtime block, select it (blocks move; masks don't)
+    if (runtime?.blocks) {
+      for (const [idStr, b] of Object.entries(runtime.blocks)) {
+        const id = Number(idStr);
+        if (b.x === cell.x && b.y === cell.y) {
+          setSelectedBlockId(id);
+          return;
+        }
+      }
+    }
+
+    if (fid === 0) return;
+
+    // Click interactions are purely debug/runtime-driving for Milestone 3 overlay testing.
+    if (ft === 5) {
+      // Key
+      const next = collectKey(runtime, fid);
+      applyRuntime(next);
+      return;
+    }
+
+    if (ft === 6) {
+      // Lever
+      const next = toggleLever(runtime, fid);
+      applyRuntime(next);
+      return;
+    }
+
+    // if (ft === 7) {
+    //   // Pressure plate (debug): toggle pressed state
+    //   const next = togglePlate(runtime, fid);
+    //   applyRuntime(next);
+    //   return;
+    // }
+    // Plates are derived now; no click toggling.
+
+    if (ft === 4) {
+      // Door (debug convenience): toggle door state directly.
+      // If you have a dedicated dungeonState helper later, swap it in here.
+      const next = structuredClone(runtime) as DungeonRuntimeState;
+      const door = next.doors?.[fid];
+      if (door) {
+        (door as any).isOpen = !(door as any).isOpen;
+        // clearing forcedOpen is usually sensible when manually toggling
+        if ("forcedOpen" in (door as any)) (door as any).forcedOpen = false;
+        applyRuntime(next);
+      }
+      return;
+    }
+  }
+
+  const imgForDownload = imageDataByLayer[layer];
+
+  // Lightweight circuit debug rendering
+  const circuitDebugKeys = useMemo(() => {
+    try {
+      return Object.keys(circuitDebug ?? {});
+    } catch {
+      return [];
+    }
+  }, [circuitDebug]);
+
+  return (
+    <div className="maze-app">
+      {/* Left: Controls */}
+      <div className="maze-controls">
+        <div className="maze-header-row">
+          <h2 className="maze-title">Maze / Dungeon Preview</h2>
+        </div>
+
+        <div className="maze-controls-row">
+          <button className="maze-btn" onClick={generate}>
+            Generate
+          </button>
+
+          <button
+            className="maze-btn"
+            onClick={regenerateRuntimeFromContent}
+            disabled={!content}
+            title="Reset runtime state from current generated content"
+          >
+            Reset Runtime
+          </button>
+
+          <button
+            className="maze-btn"
+            onClick={() => {
+              const img = imgForDownload;
+              if (!img) return;
+              const dataUrl = imageDataToPngDataUrl(img);
+              downloadDataUrl(`dungeon-${layer}.png`, dataUrl);
+            }}
+            disabled={!imgForDownload}
+            title="Download current layer as PNG"
+          >
+            Download PNG
+          </button>
+        </div>
+
+        <div className="maze-grid">
+          <label className="maze-field">
+            <span>Width</span>
+            <input
+              type="number"
+              value={width}
+              min={16}
+              max={512}
+              onChange={(e) =>
+                setWidth(clampInt(Number(e.target.value || 0), 16, 512))
+              }
+            />
+          </label>
+
+          <label className="maze-field">
+            <span>Height</span>
+            <input
+              type="number"
+              value={height}
+              min={16}
+              max={512}
+              onChange={(e) =>
+                setHeight(clampInt(Number(e.target.value || 0), 16, 512))
+              }
+            />
+          </label>
+
+          <label className="maze-field maze-field--seed">
+            <span>Seed</span>
+            <div className="maze-seed-row">
+              <input value={seed} onChange={(e) => setSeed(e.target.value)} />
+              <button
+                onClick={() =>
+                  setSeed(`seed-${Math.random().toString(16).slice(2)}`)
+                }
+                title="Randomize seed string"
+              >
+                🎲
+              </button>
+            </div>
+          </label>
+        </div>
+
+        <details>
+          <summary className="maze-summary">BSP</summary>
+
+          <div className="maze-grid">
+            <label className="maze-field">
+              <span>Max Depth</span>
+              <input
+                type="number"
+                value={maxDepth}
+                min={1}
+                max={20}
+                onChange={(e) =>
+                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 40))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Min Leaf Size</span>
+              <input
+                type="number"
+                value={minLeafSize}
+                min={4}
+                max={128}
+                onChange={(e) =>
+                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Max Leaf Size</span>
+              <input
+                type="number"
+                value={maxLeafSize}
+                min={4}
+                max={256}
+                onChange={(e) =>
+                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Split Padding</span>
+              <input
+                type="number"
+                value={splitPadding}
+                min={0}
+                max={8}
+                onChange={(e) =>
+                  setSplitPadding(clampInt(Number(e.target.value || 0), 0, 32))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Room Padding</span>
+              <input
+                type="number"
+                value={roomPadding}
+                min={0}
+                max={8}
+                onChange={(e) =>
+                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 32))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Min Room Size</span>
+              <input
+                type="number"
+                value={minRoomSize}
+                min={2}
+                max={128}
+                onChange={(e) =>
+                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Max Room Size</span>
+              <input
+                type="number"
+                value={maxRoomSize}
+                min={2}
+                max={256}
+                onChange={(e) =>
+                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Room Fill Chance</span>
+              <input
+                type="number"
+                step={0.01}
+                value={roomFillLeafChance}
+                min={0}
+                max={1}
+                onChange={(e) =>
+                  setRoomFillLeafChance(
+                    Math.max(0, Math.min(1, Number(e.target.value || 0))),
+                  )
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Corridor Width</span>
+              <input
+                type="number"
+                value={corridorWidth}
+                min={1}
+                max={8}
+                onChange={(e) =>
+                  setCorridorWidth(clampInt(Number(e.target.value || 0), 1, 32))
+                }
+              />
+            </label>
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={keepOuterWalls}
+                onChange={(e) => setKeepOuterWalls(e.target.checked)}
+              />
+              <span>Keep outer walls</span>
+            </label>
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={showStateOverlay}
+                onChange={(e) => setShowStateOverlay(e.target.checked)}
+              />
+              <span>Show state overlay</span>
+            </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary className="maze-summary">Content / Puzzles</summary>
+
+          <div className="maze-grid">
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={includeLeverHiddenPocket}
+                onChange={(e) => setIncludeLeverHiddenPocket(e.target.checked)}
+              />
+              <span>Include Lever → Hidden Pocket</span>
+            </label>
+
+            <label className="maze-field">
+              <span>Pocket size (odd ≥ 3)</span>
+              <input
+                type="number"
+                min={3}
+                max={21}
+                step={2}
+                value={leverHiddenPocketSize}
+                disabled={!includeLeverHiddenPocket}
+                onChange={(e) =>
+                  setLeverHiddenPocketSize(
+                    clampInt(Number(e.target.value || 0), 3, 51),
+                  )
+                }
+              />
+            </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary className="maze-summary">Stats</summary>
+          <div className="maze-stats">
+            {meta ? (
+              <div className="maze-stats-grid">
+                <div>
+                  <b>Seed used</b>: {meta.seedUsed}
+                </div>
+                <div>
+                  <b>BSP depth</b>: {meta.bspDepth}
+                </div>
+                <div>
+                  <b>Rooms</b>: {meta.rooms}
+                </div>
+                <div>
+                  <b>Corridors</b>: {meta.corridors}
+                </div>
+
+                <div style={{ height: 8 }} />
+
+                <div>
+                  <b>Entrance room</b>: {meta.entranceRoomId}
+                </div>
+                <div>
+                  <b>Farthest room</b>: {meta.farthestRoomId}
+                </div>
+                <div>
+                  <b>Main path rooms</b>: {meta.mainPathRooms}
+                </div>
+                <div>
+                  <b>Monsters</b>: {meta.monsters}
+                </div>
+                <div>
+                  <b>Chests</b>: {meta.chests}
+                </div>
+                <div>
+                  <b>Secrets</b>: {meta.secrets}
+                </div>
+
+                <div style={{ height: 8 }} />
+
+                <div>
+                  <b>Doors</b>: {meta.doors}
+                </div>
+                <div>
+                  <b>Keys</b>: {meta.keys}
+                </div>
+                <div>
+                  <b>Levers</b>: {meta.levers}
+                </div>
+                <div>
+                  <b>Plates</b>: {meta.plates}
+                </div>
+              </div>
+            ) : (
+              <div>Generating…</div>
+            )}
+          </div>
+        </details>
+
+        <details>
+          <summary className="maze-summary">ASCII preview</summary>
+          <pre className="maze-ascii-pre">{ascii}</pre>
+        </details>
+
+        {content && (
+          <div className="panel">
+            <div className="panelTitle">Circuits</div>
+
+            {content.meta.circuits.length === 0 ? (
+              <div className="muted">No circuits.</div>
+            ) : (
+              <div className="circuitsList">
+                {content.meta.circuits.map((c) => (
+                  <div key={c.id} className="circuitCard">
+                    <div className="circuitHeader">
+                      <span className="mono">#{c.id}</span>{" "}
+                      <span className="muted">
+                        {c.logic.type}
+                        {c.logic.type === "THRESHOLD"
+                          ? `(${c.logic.threshold})`
+                          : ""}
+                        {" · "}
+                        {c.behavior.mode}
+                      </span>
+                    </div>
+
+                    <div className="circuitRow">
+                      <div className="circuitLabel">Triggers</div>
+                      <div className="circuitItems mono">
+                        {c.triggers.map((t, i) => (
+                          <span key={i}>
+                            {t.kind}:{t.refId}
+                            {i < c.triggers.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="circuitRow">
+                      <div className="circuitLabel">Targets</div>
+                      <div className="circuitItems mono">
+                        {c.targets.map((t, i) => (
+                          <span key={i}>
+                            {t.kind}:{t.refId}→{t.effect}
+                            {i < c.targets.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ height: 12 }} />
+
+            <details>
+              <summary className="maze-summary">Circuit Debug</summary>
+              {circuitDebugKeys.length === 0 ? (
+                <div className="muted">No debug entries.</div>
+              ) : (
+                <div
+                  className="mono"
+                  style={{ fontSize: 12, lineHeight: 1.35 }}
+                >
+                  {circuitDebugKeys.slice(0, 60).map((k) => (
+                    <div key={k}>
+                      {k}: {JSON.stringify((circuitDebug as any)[k])}
+                    </div>
+                  ))}
+                  {circuitDebugKeys.length > 60 ? (
+                    <div className="muted">
+                      (showing first 60 of {circuitDebugKeys.length})
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </details>
+          </div>
+        )}
+      </div>
+
+      {/* Right: Preview */}
+      <div className="maze-preview">
+        <div className="maze-preview-toolbar">
+          <div className="maze-tabs">
+            <button
+              onClick={() => setLayer("content")}
+              className={`maze-tab ${layer === "content" ? "maze-tab--active" : ""}`}
+            >
+              content
+            </button>
+
+            <button
+              onClick={() => setLayer("solid")}
+              className={`maze-tab ${layer === "solid" ? "maze-tab--active" : ""}`}
+            >
+              solid
+            </button>
+
+            <button
+              onClick={() => setLayer("regionId")}
+              className={`maze-tab ${layer === "regionId" ? "maze-tab--active" : ""}`}
+            >
+              regionId
+            </button>
+
+            <button
+              onClick={() => setLayer("distanceToWall")}
+              className={`maze-tab ${layer === "distanceToWall" ? "maze-tab--active" : ""}`}
+            >
+              distanceToWall
+            </button>
+
+            <button
+              onClick={() => setLayer("featureType")}
+              className={`maze-tab ${layer === "featureType" ? "maze-tab--active" : ""}`}
+            >
+              featureType
+            </button>
+
+            <button
+              onClick={() => setLayer("featureParam")}
+              className={`maze-tab ${layer === "featureParam" ? "maze-tab--active" : ""}`}
+            >
+              featureParam
+            </button>
+
+            <button
+              onClick={() => setLayer("danger")}
+              className={`maze-tab ${layer === "danger" ? "maze-tab--active" : ""}`}
+            >
+              danger
+            </button>
+
+            <button
+              onClick={() => setLayer("lootTier")}
+              className={`maze-tab ${layer === "lootTier" ? "maze-tab--active" : ""}`}
+            >
+              lootTier
+            </button>
+
+            <button
+              onClick={() => setLayer("featureId")}
+              className={`maze-tab ${layer === "featureId" ? "maze-tab--active" : ""}`}
+            >
+              featureId
+            </button>
+
+            <button
+              onClick={() => setLayer("hazardType")}
+              className={`maze-tab ${layer === "hazardType" ? "maze-tab--active" : ""}`}
+            >
+              hazardType
+            </button>
+          </div>
+
+          <label className="maze-scale">
+            <span>Scale</span>
+            <input
+              type="range"
+              min={1}
+              max={16}
+              value={scale}
+              onChange={(e) =>
+                setScale(clampInt(Number(e.target.value || 0), 1, 32))
+              }
+            />
+            <span className="maze-scale-value">{scale}×</span>
+          </label>
+        </div>
+
+        <div
+          ref={canvasPanelRef}
+          className="maze-canvas-panel"
+          onMouseMove={onCanvasMouseMove}
+          onMouseLeave={onCanvasMouseLeave}
+          onClick={onCanvasClick}
+          title="Hover for tooltip. Click keys/levers/doors to update runtime."
+        >
+          <canvas ref={canvasRef} className="maze-canvas" style={canvasStyle} />
+
+          {tooltip.visible && (
+            <div
+              className="maze-tooltip"
+              style={{
+                left: tooltip.screenX + 14,
+                top: tooltip.screenY + 14,
+              }}
+            >
+              {tooltip.lines.map((ln, i) => (
+                <div key={i} className="maze-tooltip-line">
+                  {ln}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="maze-legend">
+          <div>
+            <b>Layer</b>: {layer}
+          </div>
+          <div>
+            <b>Legend</b>:{" "}
+            {layer === "content"
+              ? "Walls/floors base + overlay: red=monsters, green=chests, brown=doors, yellow=keys/levers/other"
+              : layer === "solid"
+                ? "white=wall, black=floor"
+                : layer === "regionId"
+                  ? "grayscale room id (0=not room)"
+                  : layer === "distanceToWall"
+                    ? "grayscale Manhattan distance (0=wall)"
+                    : layer === "featureType"
+                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever, 7=pressurePlate, 8=pushBlock, 9=hiddenPassage, 10=hazard"
+                      : layer === "featureParam"
+                        ? "door kind / feature subtype (e.g. 1=locked door, 2=lever door)"
+                        : layer === "danger"
+                          ? "monster danger/level (0..255)"
+                          : layer === "lootTier"
+                            ? "chest tier (1..N)"
+                            : layer === "hazardType"
+                              ? "hazard kind (0=none, 1=lava, 2=poison gas, 3=water, 4=spikes)"
+                              : "feature instance/circuit id (1..255)"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
+</file>
+
 <file path="src/CONTEXT.md">
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
@@ -1851,67 +3451,49 @@ This project is an experimental procedural dungeon generator built in TypeScript
 
 It is designed to evolve toward a JRPG / metroidvania-style dungeon system with backtracking, secrets, puzzles, monsters, and loot.
 
-The system is intentionally layered so that geometry, gameplay intent, and puzzle logic are cleanly separated. This separation is foundational and already enforced in code.
+The system is intentionally layered so that geometry, gameplay intent, and puzzle logic are cleanly separated. This separation is foundational and enforced in code.
 
 ============================================================
 HIGH-LEVEL ARCHITECTURE
 
 The system has three conceptual layers:
 
-Structural Dungeon Generation (BSP)
+1) Structural Dungeon Generation (BSP)
 Entry: generateBspDungeon() in mazeGen.ts
 
 Responsibilities:
-
-BSP partitioning of the grid
-
-Room carving
-
-Corridor carving
-
-Wall preservation (optional outer wall retention)
-
-Distance-to-wall calculation
-
-Region (room) identification
+- BSP partitioning of the grid
+- Room carving
+- Corridor carving
+- Wall preservation (optional outer wall retention)
+- Distance-to-wall calculation
+- Region (room) identification
 
 This layer is pure geometry and has no gameplay knowledge.
 
-Content Generation (Milestones 1–2 + Milestone 3 wiring)
+2) Content Generation (Milestones 1–2 + Milestone 3 wiring)
 Entry: generateDungeonContent() in mazeGen.ts
 
 Responsibilities:
+- Place gameplay content on top of BSP geometry
+- Encode progression, gating, and optional content
+- Guarantee solvability by construction (increasingly)
+- Remain deterministic from seed/options
 
-Place gameplay content on top of BSP geometry
+This layer expresses gameplay intent but does not execute puzzle logic.
 
-Encode progression, gating, and optional content
-
-Guarantee solvability by construction
-
-Remain deterministic from seed/options
-
-This layer expresses gameplay intent but does not execute logic.
-
-Runtime / Puzzle Logic (Milestone 3)
+3) Runtime / Puzzle Logic (Milestone 3)
 Core files:
-
-dungeonState.ts
-
-evaluateCircuits.ts
-
-App.tsx (debug / preview harness)
+- dungeonState.ts
+- evaluateCircuits.ts
+- App.tsx (debug / preview harness)
 
 Responsibilities:
-
-Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets, circuits)
-
-Derive sensor state (plates) from world occupancy (blocks now, player later)
-
-Evaluate circuits based on runtime state
-
-Apply effects (open doors, toggle hazards, reveal passages)
-
-Drive interactive puzzle simulation
+- Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets, circuits)
+- Derive sensor state (plates) from world occupancy (blocks now, player later)
+- Evaluate circuits based on runtime state
+- Apply effects (open doors, toggle hazards, reveal passages)
+- Drive interactive puzzle simulation (debug harness first, player later)
 
 ============================================================
 STRUCTURAL MASKS (BSP OUTPUT)
@@ -1920,39 +3502,37 @@ All masks are Uint8Array with size width * height, indexed as:
 index = y * width + x
 
 Mask: solid
-
-255 = wall
-
-0 = floor
+- 255 = wall
+- 0 = floor
 
 Mask: regionId
-
-0 = not a room
-
-1..255 = room id
+- 0 = not a room
+- 1..255 = room id
 
 Mask: distanceToWall
-
-Manhattan distance to nearest wall
-
-0 means wall tile
+- Manhattan distance to nearest wall
+- 0 means wall tile
 
 Structural metadata:
+- meta.rooms : Rect[]
+- meta.corridors : { a, b }[]
+- meta.bspDepth : number
+- meta.seedUsed : number
 
-meta.rooms : Rect[]
+IMPORTANT POLICY (DECIDED):
+Some puzzle patterns may carve additional geometry by mutating dungeon.masks.solid.
+When this happens, distanceToWall becomes stale.
 
-meta.corridors : { a, b }[]
-
-meta.bspDepth : number
-
-meta.seedUsed : number
+Chosen solution (Option A):
+- distanceToWall is recomputed after all puzzle patterns that carve geometry.
+- Content placement that relies on distanceToWall must occur before patterns,
+  or after recomputation.
 
 ============================================================
 CONTENT MASKS (GAMEPLAY LAYERS)
 
 Mask: featureType (Uint8)
 Encodes what exists at a tile.
-
 0 = none
 1 = monster spawn
 2 = loot chest
@@ -1969,49 +3549,17 @@ Mask: featureId (Uint8)
 Instance / circuit identifier (1..255).
 All tiles sharing a featureId belong to the same logical entity or circuit.
 
-Used for:
-
-Door ↔ key / lever relationships
-
-Lever / plate → multi-target circuits
-
-Hazard toggles
-
-Hidden passage reveal
-
-Future multi-step puzzles
-
 IMPORTANT INVARIANTS:
-
-featureType 9 (hidden passage) MUST have a non-zero featureId
-
-featureId for featureType 9 must correspond to meta.secrets[id]
-
-Push blocks use featureId only for identity; their true position is runtime-driven
+- featureType 9 (hidden passage) MUST have non-zero featureId
+- meta.secrets[] contains the authoritative entries for hidden passages / secrets
 
 Mask: featureParam (Uint8)
 Subtype or behavior flags.
 
-Examples:
-
-Door kind: 1 = locked, 2 = lever-controlled
-
-Plate flags: activatedByBlock, inverted, etc.
-
-Block weight class (future)
-
-Hazard behavior (future)
-
 Mask: danger (Uint8)
-
-Monster difficulty / danger value
-
 Mask: lootTier (Uint8)
 
-Chest tier scaling with room depth
-
 Mask: hazardType (Uint8)
-Hazard subtype:
 0 = none
 1 = lava
 2 = poison gas
@@ -2025,69 +3573,32 @@ Metadata is the authoritative source of gameplay intent.
 Masks are for rendering and inspection only.
 
 Key fields:
-
-meta.seedUsed : number
-
-meta.roomGraph : Map<roomId, Set<roomId>>
-
-meta.roomDistance : Map<roomId, distance>
-
-meta.entranceRoomId : number
-
-meta.farthestRoomId : number
-
-meta.mainPathRoomIds : number[]
-
-meta.monsters : { id, x, y, roomId, danger }[]
-
-meta.chests : { id, x, y, roomId, tier }[]
-
-meta.secrets : { id, x, y, roomId }[]
-
-meta.doors : { id, x, y, roomA, roomB, kind, depth }[]
-
-meta.keys : { id, x, y, roomId }[]
-
-meta.levers : { id, x, y, roomId }[]
+- meta.seedUsed : number
+- meta.roomGraph : Map<roomId, Set<roomId>>
+- meta.roomDistance : Map<roomId, distance>
+- meta.entranceRoomId : number
+- meta.farthestRoomId : number
+- meta.mainPathRoomIds : number[]
+- meta.monsters : { id, x, y, roomId, danger }[]
+- meta.chests : { id, x, y, roomId, tier }[]
+- meta.secrets : { id, x, y, roomId }[]
+- meta.doors : { id, x, y, roomA, roomB, kind, depth }[]
+- meta.keys : { id, x, y, roomId }[]
+- meta.levers : { id, x, y, roomId }[]
 
 Milestone 3 additions:
-
-meta.plates : { id, x, y, roomId, activatedByBlock, inverted }[]
-
-meta.blocks : { id, x, y, roomId, weightClass }[]
-
-meta.hazards : { id, x, y, roomId, hazardType, activeInitial }[]
+- meta.plates : { id, x, y, roomId, activatedByBlock, inverted }[]
+- meta.blocks : { id, x, y, roomId, weightClass }[]
+- meta.hazards : { id, x, y, roomId, hazardType, activeInitial }[]
 
 Circuits:
 meta.circuits : {
-id: number,
-logic: { type: "OR" | "AND" | "THRESHOLD", threshold?: number },
-behavior: { mode: "TOGGLE" | "MOMENTARY" | "PERSISTENT" },
-triggers: { kind, refId }[],
-targets: { kind, refId, effect }[],
+  id: number,
+  logic: { type: "OR" | "AND" | "THRESHOLD", threshold?: number },
+  behavior: { mode: "TOGGLE" | "MOMENTARY" | "PERSISTENT" },
+  triggers: { kind, refId }[],
+  targets: { kind, refId, effect }[],
 }[]
-
-Milestone 3 fixture (debug / test harness):
-
-Generator can place:
-
-1 pressure plate
-
-1 push block adjacent to it
-
-1 door
-
-1 hidden passage tile (featureType 9)
-
-1 hazard tile + lever
-
-Circuits:
-
-PLATE → DOOR (toggle)
-
-PLATE → HIDDEN (reveal)
-
-LEVER → HAZARD (toggle)
 
 ============================================================
 RUNTIME STATE MODEL (MILESTONE 3)
@@ -2095,56 +3606,32 @@ RUNTIME STATE MODEL (MILESTONE 3)
 DungeonRuntimeState is mutable and independent from generation.
 
 Current runtime buckets:
-
-doors[id] : { kind, isOpen, forcedOpen? }
-
-keys[id] : { collected }
-
-levers[id] : { toggled }
-
-plates[id] : { pressed } (DERIVED)
-
-blocks[id] : { x, y, weightClass } (AUTHORITATIVE)
-
-hazards[id] : { hazardType, enabled }
-
-secrets[id] : { revealed }
-
-circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
+- doors[id]   : { kind, isOpen, forcedOpen? }
+- keys[id]    : { collected }
+- levers[id]  : { toggled }
+- plates[id]  : { pressed } (DERIVED)
+- blocks[id]  : { x, y, weightClass } (AUTHORITATIVE)
+- hazards[id] : { hazardType, enabled }
+- secrets[id] : { revealed }
+- circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
 
 Initialization flow:
+- initDungeonRuntimeState(contentMeta)
+- derivePlatesFromBlocks()
+- evaluateCircuits()
 
-initDungeonRuntimeState(contentMeta)
-
-derivePlatesFromBlocks()
-
-evaluateCircuits()
-
-DERIVED PLATES (IMPORTANT):
-
-Plate.pressed is computed from block occupancy
-
-Plates cannot be toggled directly
-
-This enforces physical puzzle honesty
+DERIVED PLATES:
+- Plate.pressed is computed from block occupancy
+- Plates cannot be toggled directly
+- Legacy plate click-toggling has been removed
 
 WALKABILITY RULES (CURRENT):
-
-Walls: never walkable
-
-Doors: walkable only if open
-
-Hidden passages (featureType 9):
-
-unrevealed → blocked (wall-like)
-
-revealed → walkable (floor-like)
-
-Hazards:
-
-NEVER block movement
-
-Consequence-only (damage/effects later)
+- Walls: never walkable
+- Doors: walkable only if open
+- Hidden passages (featureType 9):
+  - unrevealed -> blocked
+  - revealed   -> walkable
+- Hazards: never block movement (consequence-only later)
 
 ============================================================
 CIRCUIT EVALUATION (CORE LOGIC)
@@ -2152,42 +3639,21 @@ CIRCUIT EVALUATION (CORE LOGIC)
 evaluateCircuits(currentState, meta.circuits) is a pure function.
 
 Evaluation steps:
-
-Determine trigger satisfaction:
-
-KEY → collected
-
-LEVER → toggled
-
-PLATE → pressed (derived)
-
-(future) player-on-plate, combat clear, interaction
-
-Apply logic:
-
-OR / AND / THRESHOLD
-
-Apply behavior:
-
-MOMENTARY
-
-PERSISTENT
-
-TOGGLE (edge-based)
-
-Apply targets:
-
-DOOR → open / close / toggle
-
-HAZARD → enable / disable / toggle
-
-HIDDEN → reveal / hide / toggle
+1) Determine trigger satisfaction:
+   - KEY   -> collected
+   - LEVER -> toggled
+   - PLATE -> pressed (derived)
+   - (future) player-on-plate, combat clear, interaction triggers
+2) Apply logic: OR / AND / THRESHOLD
+3) Apply behavior: MOMENTARY / PERSISTENT / TOGGLE (edge-based)
+4) Apply targets:
+   - DOOR   -> open/close/toggle
+   - HAZARD -> enable/disable/toggle
+   - HIDDEN -> reveal/hide/toggle
 
 Outputs:
-
-next DungeonRuntimeState
-
-per-circuit debug info for UI inspection
+- next DungeonRuntimeState
+- per-circuit debug info for UI inspection
 
 ============================================================
 DEBUG / PREVIEW UI (App.tsx)
@@ -2195,118 +3661,134 @@ DEBUG / PREVIEW UI (App.tsx)
 The React app is a first-class debug harness.
 
 Features:
-
-Layered visualization of all masks
-
-Composite content overlay with runtime-aware coloring
-
-Hidden passage reveal is visible regardless of overlay toggle
-
-Hazard enabled/disabled state is clearly visible
-
-Hover tooltips show tile + feature + runtime state
+- Layered visualization of all masks
+- Composite content overlay with runtime-aware coloring
+- Hidden passage reveal is visible regardless of overlay toggle
+- Hazard enabled/disabled state is clearly visible
+- Hover tooltips show tile + feature + runtime state
 
 Interactions:
+- key   -> collect
+- lever -> toggle
+- block -> select + WASD/arrow push
+- plate -> read-only (derived)
+- door  -> optional manual toggle (debug only)
 
-key → collect
+============================================================
+PUZZLE PATTERNS (MILESTONE 3 CONTENT MACROS)
 
-lever → toggle
+Puzzle patterns are generation-time content macros.
 
-block → select + WASD/arrow push
+Module:
+- puzzlePatterns.ts
 
-plate → read-only (derived)
+Patterns:
+- Place fixtures (levers / plates / doors / hidden passages / hazards / blocks)
+- Emit circuits wiring triggers to targets
+- Optionally carve geometry (mutating solid)
+- Validate local solvability via flood-fill (best-effort)
 
-door → optional manual toggle (debug only)
+Implemented Pattern:
+1) Lever reveals hidden pocket connector (Variant A)
+   - Carves a small isolated pocket
+   - Connector tile is FLOOR but blocked by featureType=9 hidden passage
+   - Places a lever in reachable space
+   - Emits circuit:
+       LEVER(leverId) -> HIDDEN(secretId, REVEAL)
+   - Validates:
+       pocket unreachable before reveal
+       pocket reachable after reveal
 
-Panels:
+Room membership:
+- Inferred from dungeon.masks.regionId at placement tile
+- Corridors may fall back to entranceRoomId
 
-Stats panel: rooms, corridors, monsters, chests, secrets, doors, keys, levers, plates, blocks, hazards
+============================================================
+GENERATOR WIRING
 
-Circuit panel: triggers, targets, live evaluation state
+ContentOptions:
+- includeLeverHiddenPocket?: boolean
+- leverHiddenPocketSize?: number (odd >= 3)
+
+generateDungeonContent(dungeon, opts?):
+- Invokes puzzle patterns after:
+  - entranceRoomId is known
+  - rooms[] exist
+  - feature masks exist
+  - circuitsById exists
+  - secrets / levers arrays exist
+- Recomputes distanceToWall after pattern carving (Option A)
+
+App.tsx:
+- Exposes Content / Puzzle options
+- Passes options into generateDungeonContent()
+- Allows end-to-end interactive validation
 
 ============================================================
 CURRENT MILESTONE STATUS
 
 Milestone 3 — Stateful Puzzle Execution
 
+Status: FUNCTIONALLY COMPLETE
+
 Completed:
+- Runtime state model
+- Circuit evaluator (OR / AND / THRESHOLD + behavior modes)
+- Pressure plates as derived sensors
+- Pushable blocks with physical movement
+- Hidden passages revealed by circuits
+- Hazards toggleable via circuits
+- Debug harness for full state inspection
+- Puzzle pattern system
+- First validated puzzle pattern
+- End-to-end wiring via generator + UI
+- distanceToWall policy decided (Option A)
+- Legacy plate toggling removed
 
-Runtime state model
+============================================================
+NEXT WORK (PLANNED)
 
-Circuit evaluator
+Immediate (quality & structure):
+1) Add a lightweight pattern runner:
+   - Try patterns in sequence
+   - Best-effort (never fail generation)
+   - Centralized warning/logging
+   - Optional per-pattern debug info
 
-Pressure plates as derived sensors
+Near-term (easy-win patterns):
+2) Lever opens door (PERSISTENT)
+3) Plate opens door (MOMENTARY)
+4) OR logic puzzle (two levers OR opens hidden)
+5) Simple THRESHOLD puzzle (multiple plates)
 
-Pushable blocks with physical movement
+Mid-term (Milestone 4: solvability-by-construction):
+6) Generalized generation-time solvability validation:
+   - Graph reachability with state transitions
+   - Required progression checks
+   - Later: integrate block pushing rules
 
-Hidden passages (featureType 9):
+7) Unify walkability logic:
+   - Single shared walkability function
+   - Used by runtime movement and generation-time flood fill
 
-blocked until revealed
-
-reveal driven by circuits
-
-correct visual + walkability behavior
-
-Hazards:
-
-consequence-only (never block movement)
-
-toggleable via circuits
-
-visually reflect enabled/disabled state
-
-Multi-fixture debug puzzles validating all of the above
-
-NEXT WORK (RECOMMENDED ORDER):
-
-Generalized puzzle pattern generation
-
-Multiple plates, levers, doors, hazards, hidden passages
-
-Grammar-based placement
-
-Main-path vs optional-path constraints
-
-Generation-time solvability validation
-
-Ensure required progression is always possible
-
-Validate toggle order and reveal dependencies
-
-Unify walkability logic
-
-Extract a shared walkability function
-
-Prepare for player movement integration
-
-Expand block mechanics (optional)
-
-Multiple blocks
-
-Weight classes
-
-Threshold / AND puzzles
-
-Player movement & interaction (later milestone)
-
-Player-on-plate derivation
-
-Hazard consequences
-
-Combat-clear triggers
+Later:
+8) Player movement integration
+9) Player-on-plate derivation
+10) Hazard consequences
+11) Expanded block mechanics (multi-block, weight classes)
 
 ============================================================
 MENTAL MODEL SUMMARY
 
-BSP decides where you can walk
-Content decides why you care
-featureId + circuits define logical wiring
-Runtime state executes puzzle logic
-Plates are sensors, not switches
-Hidden passages are tiles that come into existence
-Hazards are consequences, not walls
-evaluateCircuits is the only place logic happens
-The UI exists to prove puzzles are wired and solvable
+BSP decides where you can walk  
+Content decides why you care  
+featureId + circuits define logical wiring  
+Runtime state executes puzzle logic  
+Plates are sensors, not switches  
+Hidden passages are tiles that come into existence  
+Hazards are consequences, not walls  
+evaluateCircuits is the only place logic happens  
+Puzzle patterns are content-level macros with validation
 
 This document is intended to allow fast onboarding in a new chat or IDE session without rereading the codebase.
 </file>
@@ -2330,15 +3812,10 @@ This document is intended to allow fast onboarding in a new chat or IDE session 
 // - distanceToWall: Manhattan distance to nearest wall (0 at walls), capped to 255
 
 import * as THREE from "three";
-import type { DungeonRuntimeState } from "./dungeonState";
 import {
-  collectKey,
-  initDungeonRuntimeState,
-  resetRuntimeState,
-  toggleLever,
-} from "./dungeonState";
-import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
-import { applyLeverRevealsHiddenPocketPattern } from "./puzzlePatterns";
+  applyLeverRevealsHiddenPocketPattern,
+  runPatternsBestEffort,
+} from "./puzzlePatterns";
 
 // -----------------------------
 // Types
@@ -2920,6 +4397,46 @@ function computeDistanceToWall(
     out[i] = d === INF ? 255 : d > 255 ? 255 : d;
   }
   return out;
+}
+
+// -----------------------------
+// Distance-to-wall recompute (Option A)
+// -----------------------------
+
+/**
+ * Recompute dungeon.masks.distanceToWall after any mutation to dungeon.masks.solid.
+ *
+ * Option A policy:
+ * - Some puzzle patterns may carve geometry by mutating dungeon.masks.solid.
+ * - When that happens, distanceToWall becomes stale and must be recomputed.
+ *
+ * This function updates:
+ * - dungeon.masks.distanceToWall
+ * - dungeon.textures.distanceToWall
+ * - dungeon.debug.imageData.distanceToWall
+ */
+export function recomputeDungeonDistanceToWall(dungeon: BspDungeonOutputs) {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  const nextDist = computeDistanceToWall(dungeon.masks.solid, W, H);
+
+  // Update mask
+  dungeon.masks.distanceToWall = nextDist;
+
+  // Update texture + debug image
+  dungeon.textures.distanceToWall = maskToDataTextureR8(
+    nextDist,
+    W,
+    H,
+    "bsp_dungeon_distance_to_wall",
+  );
+
+  dungeon.debug.imageData.distanceToWall = maskToImageDataGrayscale(
+    nextDist,
+    W,
+    H,
+  );
 }
 
 // -----------------------------
@@ -4367,6 +5884,48 @@ export function generateDungeonContent(
     c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
     c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
   }
+
+  // ------------------------------------
+  // Milestone 3: Optional puzzle patterns
+  // ------------------------------------
+
+  // Adapt our RNG to the PatternRng interface expected by puzzlePatterns.ts
+  const patternRng = {
+    nextFloat: () => rng(),
+    nextInt: (lo: number, hiInclusive: number) => {
+      const span = hiInclusive - lo + 1;
+      return lo + Math.floor(rng() * Math.max(1, span));
+    },
+  };
+
+  const patterns: Array<() => import("./puzzlePatterns").PatternResult> = [];
+
+  if (options.includeLeverHiddenPocket) {
+    patterns.push(() =>
+      applyLeverRevealsHiddenPocketPattern({
+        rng: patternRng,
+        dungeon,
+        entranceRoomId,
+        rooms,
+        featureType,
+        featureId,
+        featureParam,
+        secrets,
+        levers,
+        circuitsById,
+        allocId: () => clamp255(nextId++),
+        options: { pocketSize: options.leverHiddenPocketSize },
+      }),
+    );
+  }
+
+  const { didCarve } = runPatternsBestEffort(patterns);
+
+  // Option A: if any patterns carved geometry, distanceToWall is now stale.
+  if (didCarve) {
+    recomputeDungeonDistanceToWall(dungeon);
+  }
+
   const circuits = Array.from(circuitsById.values()).sort(
     (a, b) => a.id - b.id,
   );
@@ -4520,1479 +6079,6 @@ export function generateDungeonContent(
     },
   };
 }
-</file>
-
-<file path="src/App.tsx">
-// src/App.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  generateBspDungeon,
-  generateDungeonContent,
-  imageDataToPngDataUrl,
-} from "./mazeGen";
-import {
-  initDungeonRuntimeState,
-  collectKey,
-  toggleLever,
-  togglePlate,
-  resetRuntimeState,
-  derivePlatesFromBlocks,
-  tryPushBlock,
-  type DungeonRuntimeState,
-} from "./dungeonState";
-
-import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
-
-import "./styles.css";
-
-type Layer =
-  | "solid"
-  | "regionId"
-  | "distanceToWall"
-  | "content"
-  | "featureType"
-  | "featureId"
-  | "featureParam"
-  | "danger"
-  | "lootTier"
-  | "hazardType";
-
-function clampInt(v: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function downloadDataUrl(filename: string, dataUrl: string) {
-  const a = document.createElement("a");
-  a.href = dataUrl;
-  a.download = filename;
-  a.click();
-}
-
-function drawToCanvas(
-  canvas: HTMLCanvasElement | null,
-  imageData: ImageData | null,
-) {
-  if (!canvas || !imageData) return;
-  canvas.width = imageData.width;
-  canvas.height = imageData.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.putImageData(imageData, 0, 0);
-}
-
-function idxOf(W: number, x: number, y: number) {
-  return y * W + x;
-}
-
-function featureName(ft: number) {
-  switch (ft) {
-    case 1:
-      return "Monster Spawn";
-    case 2:
-      return "Chest";
-    case 3:
-      return "Secret Door";
-    case 4:
-      return "Door";
-    case 5:
-      return "Key";
-    case 6:
-      return "Lever";
-    case 7:
-      return "Pressure Plate";
-    case 8:
-      return "Push Block";
-    case 9:
-      return "Hidden Passage";
-    case 10:
-      return "Hazard";
-    default:
-      return "None";
-  }
-}
-
-function doorKindName(param: number) {
-  // Matches Milestone 2 plan:
-  // 1 = locked door, 2 = lever-controlled door
-  switch (param) {
-    case 1:
-      return "Locked";
-    case 2:
-      return "Lever";
-    default:
-      return "Unknown";
-  }
-}
-
-/**
- * Shared door-state derivation used by:
- * - content composite rendering (door color overlay)
- * - tooltips
- *
- * IMPORTANT: door "locked" is derived from runtime key/lever state.
- */
-function readDoorState(
-  runtime: DungeonRuntimeState,
-  doorId: number,
-): { isOpen: boolean; isLocked: boolean; kind: number } {
-  const door = runtime.doors?.[doorId];
-  if (!door) return { isOpen: false, isLocked: false, kind: 0 };
-
-  // Your DoorKind is numeric: 1 locked, 2 lever.
-  const kind = (door.kind as any) | 0;
-
-  // Derive gated state by matching “circuit id” (doorId) convention.
-  const hasKey = !!runtime.keys?.[doorId]?.collected;
-  const leverOn = !!runtime.levers?.[doorId]?.toggled;
-
-  const isLocked = kind === 1 ? !hasKey : kind === 2 ? !leverOn : false;
-
-  const isOpen = !!(door.isOpen || (door as any).forcedOpen);
-
-  return { kind, isOpen, isLocked };
-}
-
-function makeContentCompositeImageData(
-  dungeon: ReturnType<typeof generateBspDungeon>,
-  content: ReturnType<typeof generateDungeonContent>,
-  runtime: DungeonRuntimeState | null,
-  showStateOverlay: boolean,
-  selectedBlockId: number | null,
-): ImageData {
-  const W = dungeon.width;
-  const H = dungeon.height;
-
-  const solid = dungeon.masks.solid; // 255 wall, 0 floor
-  const ft = content.masks.featureType; // 0..n
-  const fid = content.masks.featureId;
-  const hzType = content.masks.hazardType;
-
-  const img = new ImageData(W, H);
-  const data = img.data;
-
-  // Runtime blocks overlay (blocks move; masks do not)
-  const blockOcc = new Uint8Array(W * H);
-  const selectedOcc = new Uint8Array(W * H);
-  if (runtime) {
-    for (const [idStr, b] of Object.entries(runtime.blocks ?? {})) {
-      const id = Number(idStr);
-      const bi = idxOf(W, b.x, b.y);
-      if (bi >= 0 && bi < blockOcc.length) blockOcc[bi] = 1;
-      if (selectedBlockId != null && id === selectedBlockId) {
-        if (bi >= 0 && bi < selectedOcc.length) selectedOcc[bi] = 1;
-      }
-    }
-  }
-
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = idxOf(W, x, y);
-      const o = i * 4;
-
-      const isWall = solid[i] === 255;
-
-      // Base: walls dark, floors light
-      let r = isWall ? 25 : 235;
-      let g = isWall ? 25 : 235;
-      let b = isWall ? 25 : 235;
-      const a = 255;
-
-      // Overlay by feature type
-      const t = ft[i] | 0;
-      if (t !== 0) {
-        // Slightly darken base first so overlay pops
-        r = Math.max(0, r - 40);
-        g = Math.max(0, g - 40);
-        b = Math.max(0, b - 40);
-
-        if (t === 1) {
-          // monster
-          r = 220;
-          g = 60;
-          b = 60;
-        } else if (t === 2) {
-          // chest
-          r = 70;
-          g = 200;
-          b = 90;
-        } else if (t === 3 || t === 4) {
-          // secret door OR door
-          // Default (no runtime overlay): brown
-          r = 150;
-          g = 105;
-          b = 60;
-
-          // Milestone 3 overlay for doors only (featureType == 4)
-          if (t === 4 && showStateOverlay && runtime) {
-            const doorId = fid[i] | 0;
-            const { isOpen, isLocked } = readDoorState(runtime, doorId);
-
-            if (isOpen) {
-              // OPEN door: lighter tan
-              r = 205;
-              g = 170;
-              b = 120;
-            } else if (isLocked) {
-              // CLOSED + LOCKED: darker brown
-              r = 105;
-              g = 70;
-              b = 40;
-            } else {
-              // CLOSED but not locked
-              r = 145;
-              g = 95;
-              b = 55;
-            }
-          }
-
-          // Optional: make secret doors distinct when overlay is enabled
-          if (t === 3 && showStateOverlay) {
-            r = 135;
-            g = 90;
-            b = 50;
-          }
-        } else if (t === 7) {
-          // pressure plate (milestone 3)
-          // neutral stone-grey
-          r = 150;
-          g = 150;
-          b = 150;
-          // stone-grey; brighten when pressed (derived)
-          r = 150;
-          g = 150;
-          b = 150;
-          if (runtime && showStateOverlay) {
-            const plateId = fid[i] | 0;
-            const pressed = !!runtime.plates?.[plateId]?.pressed;
-            if (pressed) {
-              r = 205;
-              g = 205;
-              b = 205;
-            }
-          }
-        } else if (t === 9) {
-          // hidden passage (featureType 9)
-          // unrevealed: dark “masonry” (wall-ish), revealed: pale teal (floor-ish)
-          const secretId = fid[i] | 0;
-
-          // IMPORTANT: revealed-ness should reflect runtime even if showStateOverlay is off.
-          // showStateOverlay can still govern OTHER overlays, but not whether the tile exists.
-          const revealed = !!(runtime && runtime.secrets?.[secretId]?.revealed);
-
-          if (revealed) {
-            r = 150;
-            g = 210;
-            b = 210;
-          } else {
-            r = 55;
-            g = 55;
-            b = 60;
-          }
-        } else if (t === 10) {
-          // hazard (featureType 10) — consequence-only (walkable), but visually clear
-          const ht = hzType[i] | 0;
-
-          // Base by hazardType
-          if (ht === 1) {
-            // lava
-            r = 220;
-            g = 90;
-            b = 35;
-          } else if (ht === 2) {
-            // poison gas
-            r = 90;
-            g = 220;
-            b = 90;
-          } else if (ht === 3) {
-            // water
-            r = 80;
-            g = 140;
-            b = 230;
-          } else if (ht === 4) {
-            // spikes
-            r = 180;
-            g = 180;
-            b = 180;
-          } else {
-            // unknown hazard
-            r = 230;
-            g = 80;
-            b = 200;
-          }
-
-          // Overlay enabled/disabled state
-          if (runtime && showStateOverlay) {
-            const hazardId = fid[i] | 0;
-            const enabled = !!runtime.hazards?.[hazardId]?.enabled;
-
-            if (!enabled) {
-              // muted when disabled
-              r = Math.round(r * 0.55);
-              g = Math.round(g * 0.55);
-              b = Math.round(b * 0.55);
-            }
-          }
-        } else {
-          // key / lever / unknown future
-          r = 230;
-          g = 200;
-          b = 70;
-        }
-
-        // Draw blocks on top (they move)
-        if (runtime && blockOcc[i]) {
-          // warm “wood” tone
-          r = 140;
-          g = 105;
-          b = 60;
-          if (selectedOcc[i]) {
-            // highlight selected
-            r = 210;
-            g = 170;
-            b = 90;
-          }
-        }
-
-        // Keep walls visible if a feature is on a wall (secret doors are walls)
-        if (isWall) {
-          const br = 25,
-            bg = 25,
-            bb = 25;
-          r = Math.round(br * 0.4 + r * 0.6);
-          g = Math.round(bg * 0.4 + g * 0.6);
-          b = Math.round(bb * 0.4 + b * 0.6);
-        }
-      }
-
-      data[o + 0] = r;
-      data[o + 1] = g;
-      data[o + 2] = b;
-      data[o + 3] = a;
-    }
-  }
-
-  return img;
-}
-
-const App: React.FC = () => {
-  // --- Inputs ---
-  const [width, setWidth] = useState(96);
-  const [height, setHeight] = useState(64);
-  const [seed, setSeed] = useState("seed-1234");
-
-  const [maxDepth, setMaxDepth] = useState(9);
-  const [minLeafSize, setMinLeafSize] = useState(16);
-  const [maxLeafSize, setMaxLeafSize] = useState(26);
-  const [splitPadding, setSplitPadding] = useState(1);
-
-  const [roomPadding, setRoomPadding] = useState(2);
-  const [minRoomSize, setMinRoomSize] = useState(6);
-  const [maxRoomSize, setMaxRoomSize] = useState(18);
-  const [roomFillLeafChance, setRoomFillLeafChance] = useState(0.08);
-
-  const [corridorWidth, setCorridorWidth] = useState(1);
-  const [keepOuterWalls, setKeepOuterWalls] = useState(true);
-
-  const [layer, setLayer] = useState<Layer>("content");
-  const [scale, setScale] = useState(6);
-
-  // --- Output ---
-  const [ascii, setAscii] = useState<string>("");
-
-  const [content, setContent] = useState<ReturnType<
-    typeof generateDungeonContent
-  > | null>(null);
-  const [runtime, setRuntime] = useState<DungeonRuntimeState | null>(null);
-  const [circuitDebug, setCircuitDebug] = useState<CircuitEvalResult["debug"]>(
-    {},
-  );
-  const [showStateOverlay, setShowStateOverlay] = useState(true);
-
-  const [imageDataByLayer, setImageDataByLayer] = useState<{
-    solid: ImageData | null;
-    regionId: ImageData | null;
-    distanceToWall: ImageData | null;
-
-    content: ImageData | null;
-
-    featureType: ImageData | null;
-    featureId: ImageData | null;
-    featureParam: ImageData | null;
-    danger: ImageData | null;
-    lootTier: ImageData | null;
-
-    hazardType: ImageData | null;
-  }>({
-    solid: null,
-    regionId: null,
-    distanceToWall: null,
-
-    content: null,
-
-    featureType: null,
-    featureId: null,
-    featureParam: null,
-    danger: null,
-    lootTier: null,
-
-    hazardType: null,
-  });
-
-  const [meta, setMeta] = useState<{
-    seedUsed: number;
-    rooms: number;
-    corridors: number;
-    bspDepth: number;
-
-    entranceRoomId: number;
-    farthestRoomId: number;
-    mainPathRooms: number;
-
-    monsters: number;
-    chests: number;
-    secrets: number;
-
-    doors: number;
-    keys: number;
-    levers: number;
-    plates: number;
-    blocks: number;
-  } | null>(null);
-
-  // Keep latest generator outputs around for tooltip lookups
-  const dungeonRef = useRef<ReturnType<typeof generateBspDungeon> | null>(null);
-  const contentRef = useRef<ReturnType<typeof generateDungeonContent> | null>(
-    null,
-  );
-
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const canvasPanelRef = useRef<HTMLDivElement | null>(null);
-
-  // Hover tooltip state
-  const hoverTimerRef = useRef<number | null>(null);
-  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
-  const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
-  const [tooltip, setTooltip] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    screenX: number;
-    screenY: number;
-    lines: string[];
-    featureType: number;
-    featureId: number;
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    screenX: 0,
-    screenY: 0,
-    lines: [],
-    featureType: 0,
-    featureId: 0,
-  });
-
-  const opts = useMemo(
-    () => ({
-      width,
-      height,
-      seed,
-      maxDepth,
-      minLeafSize,
-      maxLeafSize,
-      splitPadding,
-      roomPadding,
-      minRoomSize,
-      maxRoomSize,
-      roomFillLeafChance,
-      corridorWidth,
-      keepOuterWalls,
-    }),
-    [
-      width,
-      height,
-      seed,
-      maxDepth,
-      minLeafSize,
-      maxLeafSize,
-      splitPadding,
-      roomPadding,
-      minRoomSize,
-      maxRoomSize,
-      roomFillLeafChance,
-      corridorWidth,
-      keepOuterWalls,
-    ],
-  );
-
-  const applyRuntime = React.useCallback((next: DungeonRuntimeState) => {
-    const content = contentRef.current;
-    if (!content) {
-      setRuntime(next);
-      return;
-    }
-    // DERIVED: plates come from block occupancy
-    const derived = derivePlatesFromBlocks(next, content);
-    const res = evaluateCircuits(derived, content.meta.circuits);
-    setRuntime(res.next);
-    setCircuitDebug(res.debug);
-  }, []);
-
-  const regenerateRuntimeFromContent = React.useCallback(() => {
-    const content = contentRef.current;
-    if (!content) return;
-    const initialRuntime = initDungeonRuntimeState(content);
-    const derived = derivePlatesFromBlocks(initialRuntime, content);
-    const evalOut = evaluateCircuits(derived, content.meta.circuits);
-
-    setRuntime(evalOut.next);
-    setCircuitDebug(evalOut.debug);
-  }, []);
-
-  const generate = React.useCallback(() => {
-    const out = generateBspDungeon(opts);
-    const content = generateDungeonContent(out);
-
-    const initialRuntime = initDungeonRuntimeState(content);
-    const derived = derivePlatesFromBlocks(initialRuntime, content);
-    const evalOut = evaluateCircuits(derived, content.meta.circuits);
-
-    setRuntime(evalOut.next);
-    setCircuitDebug(evalOut.debug);
-    setSelectedBlockId(null);
-
-    const composite = makeContentCompositeImageData(
-      out,
-      content,
-      evalOut.next,
-      showStateOverlay,
-      null,
-    );
-
-    dungeonRef.current = out;
-    contentRef.current = content;
-
-    setContent(content);
-    setAscii(content.debug.ascii);
-
-    setImageDataByLayer({
-      solid: out.debug.imageData.solid,
-      regionId: out.debug.imageData.regionId,
-      distanceToWall: out.debug.imageData.distanceToWall,
-
-      content: composite,
-
-      featureType: content.debug.imageData.featureType,
-      featureId: content.debug.imageData.featureId,
-      featureParam: content.debug.imageData.featureParam,
-      danger: content.debug.imageData.danger,
-      lootTier: content.debug.imageData.lootTier,
-
-      hazardType: content.debug.imageData.hazardType,
-    });
-
-    setMeta({
-      seedUsed: out.meta.seedUsed,
-      rooms: out.meta.rooms.length,
-      corridors: out.meta.corridors.length,
-      bspDepth: out.meta.bspDepth,
-
-      entranceRoomId: content.meta.entranceRoomId,
-      farthestRoomId: content.meta.farthestRoomId,
-      mainPathRooms: content.meta.mainPathRoomIds.length,
-
-      monsters: content.meta.monsters.length,
-      chests: content.meta.chests.length,
-      secrets: content.meta.secrets.length,
-
-      doors: content.meta.doors.length,
-      keys: content.meta.keys.length,
-      levers: content.meta.levers.length,
-      plates: content.meta.plates.length,
-      blocks: content.meta.blocks.length,
-    });
-  }, [opts, showStateOverlay]);
-
-  // initial generation
-  useEffect(() => {
-    generate();
-  }, [generate]);
-
-  // recompute composite when runtime overlay changes
-  useEffect(() => {
-    const dungeon = dungeonRef.current;
-    const content = contentRef.current;
-    if (!dungeon || !content) return;
-
-    const composite = makeContentCompositeImageData(
-      dungeon,
-      content,
-      runtime,
-      showStateOverlay,
-      selectedBlockId,
-    );
-
-    setImageDataByLayer((prev) => ({
-      ...prev,
-      content: composite,
-    }));
-  }, [runtime, showStateOverlay, selectedBlockId]);
-
-  // Keyboard push: select a block (click), then WASD/Arrows to push
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (selectedBlockId == null) return;
-      const dungeon = dungeonRef.current;
-      const content = contentRef.current;
-      const r = runtime;
-      if (!dungeon || !content || !r) return;
-
-      let dx = 0;
-      let dy = 0;
-      switch (e.key) {
-        case "ArrowUp":
-        case "w":
-        case "W":
-          dy = -1;
-          break;
-        case "ArrowDown":
-        case "s":
-        case "S":
-          dy = 1;
-          break;
-        case "ArrowLeft":
-        case "a":
-        case "A":
-          dx = -1;
-          break;
-        case "ArrowRight":
-        case "d":
-        case "D":
-          dx = 1;
-          break;
-        case "Escape":
-          setSelectedBlockId(null);
-          return;
-      }
-
-      if (dx !== 0 || dy !== 0) {
-        e.preventDefault();
-        const res = tryPushBlock(r, dungeon, content, selectedBlockId, dx, dy);
-        if (res.ok) applyRuntime(res.next);
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown, { passive: false } as any);
-    return () => window.removeEventListener("keydown", onKeyDown as any);
-  }, [runtime, selectedBlockId, applyRuntime]);
-
-  // redraw canvas whenever layer changes or new images arrive
-  useEffect(() => {
-    const img = imageDataByLayer[layer];
-    drawToCanvas(canvasRef.current, img);
-  }, [layer, imageDataByLayer]);
-
-  const currentImageData = imageDataByLayer[layer];
-
-  // Set displayed size via inline px (reliable across browsers)
-  const canvasStyle: React.CSSProperties = {
-    width: currentImageData ? currentImageData.width * scale : 0,
-    height: currentImageData ? currentImageData.height * scale : 0,
-  };
-
-  function clearHoverTimer() {
-    if (hoverTimerRef.current != null) {
-      window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-  }
-
-  function hideTooltip() {
-    clearHoverTimer();
-    lastHoverCellRef.current = null;
-    setTooltip((t) => ({ ...t, visible: false }));
-  }
-
-  function buildTooltipLines(x: number, y: number): string[] {
-    const dungeon = dungeonRef.current;
-    const content = contentRef.current;
-    if (!dungeon || !content) return [];
-
-    const W = dungeon.width;
-    const H = dungeon.height;
-    if (x < 0 || y < 0 || x >= W || y >= H) return [];
-
-    const i = idxOf(W, x, y);
-
-    const solid = dungeon.masks.solid[i];
-    const regionId = dungeon.masks.regionId[i];
-    const dist = dungeon.masks.distanceToWall[i];
-
-    let ft = content.masks.featureType[i];
-    let fid = content.masks.featureId[i];
-    const fparam = content.masks.featureParam[i];
-    // If a runtime block is at this cell, treat it as the active feature for tooltip purposes
-    if (runtime?.blocks) {
-      for (const [idStr, b] of Object.entries(runtime.blocks)) {
-        const id = Number(idStr);
-        if (b.x === x && b.y === y) {
-          ft = 8;
-          fid = id;
-          break;
-        }
-      }
-    }
-
-    const dng = content.masks.danger[i];
-    const tier = content.masks.lootTier[i];
-    const hz = content.masks.hazardType[i];
-
-    const lines: string[] = [];
-    lines.push(`Cell: (${x}, ${y})`);
-    lines.push(`Terrain: ${solid === 255 ? "Wall" : "Floor"}`);
-    lines.push(`regionId: ${regionId}`);
-    lines.push(`distanceToWall: ${dist}`);
-
-    lines.push(`featureType: ${ft} (${featureName(ft)})`);
-    lines.push(`featureId: ${fid}`);
-
-    if (ft === 4) {
-      lines.push(`featureParam: ${fparam} (Door: ${doorKindName(fparam)})`);
-    } else if (fparam !== 0) {
-      lines.push(`featureParam: ${fparam}`);
-    }
-
-    if (ft === 4 && runtime && showStateOverlay && fid !== 0) {
-      const { isOpen, isLocked } = readDoorState(runtime, fid);
-      lines.push(
-        `Door state: ${isOpen ? "OPEN" : "CLOSED"}${isLocked ? " (LOCKED)" : ""}`,
-      );
-    }
-
-    if (ft === 1) lines.push(`danger: ${dng}`);
-    if (ft === 2) lines.push(`lootTier: ${tier}`);
-    if (ft === 10) lines.push(`hazardType: ${hz}`);
-
-    // Plate details (Milestone 3)
-    if (ft === 7 && fid !== 0) {
-      const plate = content.meta.plates.find((p) => p.id === fid);
-      if (plate) {
-        lines.push(`Plate mode: ${plate.mode}`);
-        lines.push(
-          `Plate triggers: player=${plate.activatedByPlayer ? "Y" : "N"}, block=${plate.activatedByBlock ? "Y" : "N"}`,
-        );
-        if (plate.inverted) lines.push(`Plate: inverted`);
-        if (runtime && showStateOverlay) {
-          lines.push(
-            `Plate pressed (derived): ${runtime.plates?.[fid]?.pressed ? "YES" : "NO"}`,
-          );
-        }
-      } else {
-        lines.push(`Plate: id ${fid}`);
-      }
-    }
-
-    if (ft === 8 && fid !== 0) {
-      const b = runtime?.blocks?.[fid];
-      if (b) {
-        lines.push(`Block: id ${fid}`);
-        lines.push(`Block pos: (${b.x}, ${b.y})`);
-        lines.push(`Block weightClass: ${b.weightClass ?? 0}`);
-        lines.push("Click: select block");
-        lines.push("WASD / Arrows: push selected");
-        lines.push("Esc: clear selection");
-      } else {
-        lines.push(`Block: id ${fid}`);
-      }
-    }
-
-    // relationship hints
-    if (ft === 5 && fid !== 0) lines.push(`Hint: key unlocks circuit ${fid}`);
-    if (ft === 6 && fid !== 0)
-      lines.push(`Hint: lever controls circuit ${fid}`);
-    if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
-    if (ft === 7 && fid !== 0) lines.push(`Circuit: plate id ${fid}`);
-
-    // interaction hint
-    if (ft === 5) lines.push("Click: collect key");
-    if (ft === 6) lines.push("Click: toggle lever");
-    if (ft === 7) lines.push("Click: toggle plate (debug)");
-    if (ft === 4) lines.push("Click: toggle door (debug)");
-
-    return lines;
-  }
-
-  function getCellFromMouseEvent(e: React.MouseEvent): {
-    x: number;
-    y: number;
-    screenX: number;
-    screenY: number;
-  } | null {
-    const img = currentImageData;
-    if (!img) return null;
-
-    const panel = canvasPanelRef.current;
-    if (!panel) return null;
-
-    const rect = panel.getBoundingClientRect();
-
-    // Mouse coords relative to the *displayed* canvas area inside the panel
-    const localX = e.clientX - rect.left - 12; // panel padding is 12px (matches CSS)
-    const localY = e.clientY - rect.top - 12;
-
-    if (localX < 0 || localY < 0) return null;
-
-    const x = Math.floor(localX / scale);
-    const y = Math.floor(localY / scale);
-
-    if (x < 0 || y < 0 || x >= img.width || y >= img.height) return null;
-
-    return { x, y, screenX: e.clientX, screenY: e.clientY };
-  }
-
-  function onCanvasMouseMove(e: React.MouseEvent) {
-    const cell = getCellFromMouseEvent(e);
-    if (!cell) {
-      hideTooltip();
-      return;
-    }
-
-    setTooltip((t) => ({
-      ...t,
-      x: cell.x,
-      y: cell.y,
-      screenX: cell.screenX,
-      screenY: cell.screenY,
-    }));
-
-    const last = lastHoverCellRef.current;
-    if (last && last.x === cell.x && last.y === cell.y) return;
-
-    lastHoverCellRef.current = { x: cell.x, y: cell.y };
-    clearHoverTimer();
-    setTooltip((t) => ({ ...t, visible: false }));
-
-    hoverTimerRef.current = window.setTimeout(() => {
-      const dungeon = dungeonRef.current;
-      const content = contentRef.current;
-      if (!dungeon || !content) return;
-
-      const i = idxOf(dungeon.width, cell.x, cell.y);
-      const ft = content.masks.featureType[i] | 0;
-      const fid = content.masks.featureId[i] | 0;
-
-      const lines = buildTooltipLines(cell.x, cell.y);
-
-      setTooltip((t) => ({
-        ...t,
-        visible: true,
-        x: cell.x,
-        y: cell.y,
-        screenX: cell.screenX,
-        screenY: cell.screenY,
-        lines,
-        featureType: ft,
-        featureId: fid,
-      }));
-    }, 350);
-  }
-
-  function onCanvasMouseLeave() {
-    hideTooltip();
-  }
-
-  function onCanvasClick(e: React.MouseEvent) {
-    const dungeon = dungeonRef.current;
-    const content = contentRef.current;
-    if (!dungeon || !content) return;
-    if (!runtime) return;
-
-    const cell = getCellFromMouseEvent(e);
-    if (!cell) return;
-
-    const i = idxOf(dungeon.width, cell.x, cell.y);
-    const ft = content.masks.featureType[i] | 0;
-    const fid = content.masks.featureId[i] | 0;
-
-    // If you clicked a runtime block, select it (blocks move; masks don't)
-    if (runtime?.blocks) {
-      for (const [idStr, b] of Object.entries(runtime.blocks)) {
-        const id = Number(idStr);
-        if (b.x === cell.x && b.y === cell.y) {
-          setSelectedBlockId(id);
-          return;
-        }
-      }
-    }
-
-    if (fid === 0) return;
-
-    // Click interactions are purely debug/runtime-driving for Milestone 3 overlay testing.
-    if (ft === 5) {
-      // Key
-      const next = collectKey(runtime, fid);
-      applyRuntime(next);
-      return;
-    }
-
-    if (ft === 6) {
-      // Lever
-      const next = toggleLever(runtime, fid);
-      applyRuntime(next);
-      return;
-    }
-
-    if (ft === 7) {
-      // Pressure plate (debug): toggle pressed state
-      const next = togglePlate(runtime, fid);
-      applyRuntime(next);
-      return;
-    }
-    // Plates are derived now; no click toggling.
-
-    if (ft === 4) {
-      // Door (debug convenience): toggle door state directly.
-      // If you have a dedicated dungeonState helper later, swap it in here.
-      const next = structuredClone(runtime) as DungeonRuntimeState;
-      const door = next.doors?.[fid];
-      if (door) {
-        (door as any).isOpen = !(door as any).isOpen;
-        // clearing forcedOpen is usually sensible when manually toggling
-        if ("forcedOpen" in (door as any)) (door as any).forcedOpen = false;
-        applyRuntime(next);
-      }
-      return;
-    }
-  }
-
-  const imgForDownload = imageDataByLayer[layer];
-
-  // Lightweight circuit debug rendering
-  const circuitDebugKeys = useMemo(() => {
-    try {
-      return Object.keys(circuitDebug ?? {});
-    } catch {
-      return [];
-    }
-  }, [circuitDebug]);
-
-  return (
-    <div className="maze-app">
-      {/* Left: Controls */}
-      <div className="maze-controls">
-        <div className="maze-header-row">
-          <h2 className="maze-title">Maze / Dungeon Preview</h2>
-        </div>
-
-        <div className="maze-controls-row">
-          <button className="maze-btn" onClick={generate}>
-            Generate
-          </button>
-
-          <button
-            className="maze-btn"
-            onClick={regenerateRuntimeFromContent}
-            disabled={!content}
-            title="Reset runtime state from current generated content"
-          >
-            Reset Runtime
-          </button>
-
-          <button
-            className="maze-btn"
-            onClick={() => {
-              const img = imgForDownload;
-              if (!img) return;
-              const dataUrl = imageDataToPngDataUrl(img);
-              downloadDataUrl(`dungeon-${layer}.png`, dataUrl);
-            }}
-            disabled={!imgForDownload}
-            title="Download current layer as PNG"
-          >
-            Download PNG
-          </button>
-        </div>
-
-        <div className="maze-grid">
-          <label className="maze-field">
-            <span>Width</span>
-            <input
-              type="number"
-              value={width}
-              min={16}
-              max={512}
-              onChange={(e) =>
-                setWidth(clampInt(Number(e.target.value || 0), 16, 512))
-              }
-            />
-          </label>
-
-          <label className="maze-field">
-            <span>Height</span>
-            <input
-              type="number"
-              value={height}
-              min={16}
-              max={512}
-              onChange={(e) =>
-                setHeight(clampInt(Number(e.target.value || 0), 16, 512))
-              }
-            />
-          </label>
-
-          <label className="maze-field maze-field--seed">
-            <span>Seed</span>
-            <div className="maze-seed-row">
-              <input value={seed} onChange={(e) => setSeed(e.target.value)} />
-              <button
-                onClick={() =>
-                  setSeed(`seed-${Math.random().toString(16).slice(2)}`)
-                }
-                title="Randomize seed string"
-              >
-                🎲
-              </button>
-            </div>
-          </label>
-        </div>
-
-        <details open>
-          <summary className="maze-summary">BSP</summary>
-
-          <div className="maze-grid">
-            <label className="maze-field">
-              <span>Max Depth</span>
-              <input
-                type="number"
-                value={maxDepth}
-                min={1}
-                max={20}
-                onChange={(e) =>
-                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 40))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Min Leaf Size</span>
-              <input
-                type="number"
-                value={minLeafSize}
-                min={4}
-                max={128}
-                onChange={(e) =>
-                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Max Leaf Size</span>
-              <input
-                type="number"
-                value={maxLeafSize}
-                min={4}
-                max={256}
-                onChange={(e) =>
-                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Split Padding</span>
-              <input
-                type="number"
-                value={splitPadding}
-                min={0}
-                max={8}
-                onChange={(e) =>
-                  setSplitPadding(clampInt(Number(e.target.value || 0), 0, 32))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Room Padding</span>
-              <input
-                type="number"
-                value={roomPadding}
-                min={0}
-                max={8}
-                onChange={(e) =>
-                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 32))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Min Room Size</span>
-              <input
-                type="number"
-                value={minRoomSize}
-                min={2}
-                max={128}
-                onChange={(e) =>
-                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Max Room Size</span>
-              <input
-                type="number"
-                value={maxRoomSize}
-                min={2}
-                max={256}
-                onChange={(e) =>
-                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Room Fill Chance</span>
-              <input
-                type="number"
-                step={0.01}
-                value={roomFillLeafChance}
-                min={0}
-                max={1}
-                onChange={(e) =>
-                  setRoomFillLeafChance(
-                    Math.max(0, Math.min(1, Number(e.target.value || 0))),
-                  )
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Corridor Width</span>
-              <input
-                type="number"
-                value={corridorWidth}
-                min={1}
-                max={8}
-                onChange={(e) =>
-                  setCorridorWidth(clampInt(Number(e.target.value || 0), 1, 32))
-                }
-              />
-            </label>
-
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
-                checked={keepOuterWalls}
-                onChange={(e) => setKeepOuterWalls(e.target.checked)}
-              />
-              <span>Keep outer walls</span>
-            </label>
-
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
-                checked={showStateOverlay}
-                onChange={(e) => setShowStateOverlay(e.target.checked)}
-              />
-              <span>Show state overlay</span>
-            </label>
-          </div>
-        </details>
-
-        <details open>
-          <summary className="maze-summary">Stats</summary>
-          <div className="maze-stats">
-            {meta ? (
-              <div className="maze-stats-grid">
-                <div>
-                  <b>Seed used</b>: {meta.seedUsed}
-                </div>
-                <div>
-                  <b>BSP depth</b>: {meta.bspDepth}
-                </div>
-                <div>
-                  <b>Rooms</b>: {meta.rooms}
-                </div>
-                <div>
-                  <b>Corridors</b>: {meta.corridors}
-                </div>
-
-                <div style={{ height: 8 }} />
-
-                <div>
-                  <b>Entrance room</b>: {meta.entranceRoomId}
-                </div>
-                <div>
-                  <b>Farthest room</b>: {meta.farthestRoomId}
-                </div>
-                <div>
-                  <b>Main path rooms</b>: {meta.mainPathRooms}
-                </div>
-                <div>
-                  <b>Monsters</b>: {meta.monsters}
-                </div>
-                <div>
-                  <b>Chests</b>: {meta.chests}
-                </div>
-                <div>
-                  <b>Secrets</b>: {meta.secrets}
-                </div>
-
-                <div style={{ height: 8 }} />
-
-                <div>
-                  <b>Doors</b>: {meta.doors}
-                </div>
-                <div>
-                  <b>Keys</b>: {meta.keys}
-                </div>
-                <div>
-                  <b>Levers</b>: {meta.levers}
-                </div>
-                <div>
-                  <b>Plates</b>: {meta.plates}
-                </div>
-              </div>
-            ) : (
-              <div>Generating…</div>
-            )}
-          </div>
-        </details>
-
-        <details>
-          <summary className="maze-summary">ASCII preview</summary>
-          <pre className="maze-ascii-pre">{ascii}</pre>
-        </details>
-
-        {content && (
-          <div className="panel">
-            <div className="panelTitle">Circuits</div>
-
-            {content.meta.circuits.length === 0 ? (
-              <div className="muted">No circuits.</div>
-            ) : (
-              <div className="circuitsList">
-                {content.meta.circuits.map((c) => (
-                  <div key={c.id} className="circuitCard">
-                    <div className="circuitHeader">
-                      <span className="mono">#{c.id}</span>{" "}
-                      <span className="muted">
-                        {c.logic.type}
-                        {c.logic.type === "THRESHOLD"
-                          ? `(${c.logic.threshold})`
-                          : ""}
-                        {" · "}
-                        {c.behavior.mode}
-                      </span>
-                    </div>
-
-                    <div className="circuitRow">
-                      <div className="circuitLabel">Triggers</div>
-                      <div className="circuitItems mono">
-                        {c.triggers.map((t, i) => (
-                          <span key={i}>
-                            {t.kind}:{t.refId}
-                            {i < c.triggers.length - 1 ? ", " : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="circuitRow">
-                      <div className="circuitLabel">Targets</div>
-                      <div className="circuitItems mono">
-                        {c.targets.map((t, i) => (
-                          <span key={i}>
-                            {t.kind}:{t.refId}→{t.effect}
-                            {i < c.targets.length - 1 ? ", " : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ height: 12 }} />
-
-            <details>
-              <summary className="maze-summary">Circuit Debug</summary>
-              {circuitDebugKeys.length === 0 ? (
-                <div className="muted">No debug entries.</div>
-              ) : (
-                <div
-                  className="mono"
-                  style={{ fontSize: 12, lineHeight: 1.35 }}
-                >
-                  {circuitDebugKeys.slice(0, 60).map((k) => (
-                    <div key={k}>
-                      {k}: {JSON.stringify((circuitDebug as any)[k])}
-                    </div>
-                  ))}
-                  {circuitDebugKeys.length > 60 ? (
-                    <div className="muted">
-                      (showing first 60 of {circuitDebugKeys.length})
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </details>
-          </div>
-        )}
-      </div>
-
-      {/* Right: Preview */}
-      <div className="maze-preview">
-        <div className="maze-preview-toolbar">
-          <div className="maze-tabs">
-            <button
-              onClick={() => setLayer("content")}
-              className={`maze-tab ${layer === "content" ? "maze-tab--active" : ""}`}
-            >
-              content
-            </button>
-
-            <button
-              onClick={() => setLayer("solid")}
-              className={`maze-tab ${layer === "solid" ? "maze-tab--active" : ""}`}
-            >
-              solid
-            </button>
-
-            <button
-              onClick={() => setLayer("regionId")}
-              className={`maze-tab ${layer === "regionId" ? "maze-tab--active" : ""}`}
-            >
-              regionId
-            </button>
-
-            <button
-              onClick={() => setLayer("distanceToWall")}
-              className={`maze-tab ${layer === "distanceToWall" ? "maze-tab--active" : ""}`}
-            >
-              distanceToWall
-            </button>
-
-            <button
-              onClick={() => setLayer("featureType")}
-              className={`maze-tab ${layer === "featureType" ? "maze-tab--active" : ""}`}
-            >
-              featureType
-            </button>
-
-            <button
-              onClick={() => setLayer("featureParam")}
-              className={`maze-tab ${layer === "featureParam" ? "maze-tab--active" : ""}`}
-            >
-              featureParam
-            </button>
-
-            <button
-              onClick={() => setLayer("danger")}
-              className={`maze-tab ${layer === "danger" ? "maze-tab--active" : ""}`}
-            >
-              danger
-            </button>
-
-            <button
-              onClick={() => setLayer("lootTier")}
-              className={`maze-tab ${layer === "lootTier" ? "maze-tab--active" : ""}`}
-            >
-              lootTier
-            </button>
-
-            <button
-              onClick={() => setLayer("featureId")}
-              className={`maze-tab ${layer === "featureId" ? "maze-tab--active" : ""}`}
-            >
-              featureId
-            </button>
-
-            <button
-              onClick={() => setLayer("hazardType")}
-              className={`maze-tab ${layer === "hazardType" ? "maze-tab--active" : ""}`}
-            >
-              hazardType
-            </button>
-          </div>
-
-          <label className="maze-scale">
-            <span>Scale</span>
-            <input
-              type="range"
-              min={1}
-              max={16}
-              value={scale}
-              onChange={(e) =>
-                setScale(clampInt(Number(e.target.value || 0), 1, 32))
-              }
-            />
-            <span className="maze-scale-value">{scale}×</span>
-          </label>
-        </div>
-
-        <div
-          ref={canvasPanelRef}
-          className="maze-canvas-panel"
-          onMouseMove={onCanvasMouseMove}
-          onMouseLeave={onCanvasMouseLeave}
-          onClick={onCanvasClick}
-          title="Hover for tooltip. Click keys/levers/doors to update runtime."
-        >
-          <canvas ref={canvasRef} className="maze-canvas" style={canvasStyle} />
-
-          {tooltip.visible && (
-            <div
-              className="maze-tooltip"
-              style={{
-                left: tooltip.screenX + 14,
-                top: tooltip.screenY + 14,
-              }}
-            >
-              {tooltip.lines.map((ln, i) => (
-                <div key={i} className="maze-tooltip-line">
-                  {ln}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="maze-legend">
-          <div>
-            <b>Layer</b>: {layer}
-          </div>
-          <div>
-            <b>Legend</b>:{" "}
-            {layer === "content"
-              ? "Walls/floors base + overlay: red=monsters, green=chests, brown=doors, yellow=keys/levers/other"
-              : layer === "solid"
-                ? "white=wall, black=floor"
-                : layer === "regionId"
-                  ? "grayscale room id (0=not room)"
-                  : layer === "distanceToWall"
-                    ? "grayscale Manhattan distance (0=wall)"
-                    : layer === "featureType"
-                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever, 7=pressurePlate, 8=pushBlock, 9=hiddenPassage, 10=hazard"
-                      : layer === "featureParam"
-                        ? "door kind / feature subtype (e.g. 1=locked door, 2=lever door)"
-                        : layer === "danger"
-                          ? "monster danger/level (0..255)"
-                          : layer === "lootTier"
-                            ? "chest tier (1..N)"
-                            : layer === "hazardType"
-                              ? "hazard kind (0=none, 1=lava, 2=poison gas, 3=water, 4=spikes)"
-                              : "feature instance/circuit id (1..255)"}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default App;
 </file>
 
 </files>

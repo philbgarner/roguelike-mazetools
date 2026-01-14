@@ -16,15 +16,10 @@
 // - distanceToWall: Manhattan distance to nearest wall (0 at walls), capped to 255
 
 import * as THREE from "three";
-import type { DungeonRuntimeState } from "./dungeonState";
 import {
-  collectKey,
-  initDungeonRuntimeState,
-  resetRuntimeState,
-  toggleLever,
-} from "./dungeonState";
-import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
-import { applyLeverRevealsHiddenPocketPattern } from "./puzzlePatterns";
+  applyLeverRevealsHiddenPocketPattern,
+  runPatternsBestEffort,
+} from "./puzzlePatterns";
 
 // -----------------------------
 // Types
@@ -606,6 +601,46 @@ function computeDistanceToWall(
     out[i] = d === INF ? 255 : d > 255 ? 255 : d;
   }
   return out;
+}
+
+// -----------------------------
+// Distance-to-wall recompute (Option A)
+// -----------------------------
+
+/**
+ * Recompute dungeon.masks.distanceToWall after any mutation to dungeon.masks.solid.
+ *
+ * Option A policy:
+ * - Some puzzle patterns may carve geometry by mutating dungeon.masks.solid.
+ * - When that happens, distanceToWall becomes stale and must be recomputed.
+ *
+ * This function updates:
+ * - dungeon.masks.distanceToWall
+ * - dungeon.textures.distanceToWall
+ * - dungeon.debug.imageData.distanceToWall
+ */
+export function recomputeDungeonDistanceToWall(dungeon: BspDungeonOutputs) {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  const nextDist = computeDistanceToWall(dungeon.masks.solid, W, H);
+
+  // Update mask
+  dungeon.masks.distanceToWall = nextDist;
+
+  // Update texture + debug image
+  dungeon.textures.distanceToWall = maskToDataTextureR8(
+    nextDist,
+    W,
+    H,
+    "bsp_dungeon_distance_to_wall",
+  );
+
+  dungeon.debug.imageData.distanceToWall = maskToImageDataGrayscale(
+    nextDist,
+    W,
+    H,
+  );
 }
 
 // -----------------------------
@@ -2053,6 +2088,48 @@ export function generateDungeonContent(
     c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
     c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
   }
+
+  // ------------------------------------
+  // Milestone 3: Optional puzzle patterns
+  // ------------------------------------
+
+  // Adapt our RNG to the PatternRng interface expected by puzzlePatterns.ts
+  const patternRng = {
+    nextFloat: () => rng(),
+    nextInt: (lo: number, hiInclusive: number) => {
+      const span = hiInclusive - lo + 1;
+      return lo + Math.floor(rng() * Math.max(1, span));
+    },
+  };
+
+  const patterns: Array<() => import("./puzzlePatterns").PatternResult> = [];
+
+  if (options.includeLeverHiddenPocket) {
+    patterns.push(() =>
+      applyLeverRevealsHiddenPocketPattern({
+        rng: patternRng,
+        dungeon,
+        entranceRoomId,
+        rooms,
+        featureType,
+        featureId,
+        featureParam,
+        secrets,
+        levers,
+        circuitsById,
+        allocId: () => clamp255(nextId++),
+        options: { pocketSize: options.leverHiddenPocketSize },
+      }),
+    );
+  }
+
+  const { didCarve } = runPatternsBestEffort(patterns);
+
+  // Option A: if any patterns carved geometry, distanceToWall is now stale.
+  if (didCarve) {
+    recomputeDungeonDistanceToWall(dungeon);
+  }
+
   const circuits = Array.from(circuitsById.values()).sort(
     (a, b) => a.id - b.id,
   );

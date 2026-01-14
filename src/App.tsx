@@ -355,6 +355,11 @@ const App: React.FC = () => {
   const [height, setHeight] = useState(64);
   const [seed, setSeed] = useState("seed-1234");
 
+  // --- Content / Puzzle options ---
+  const [includeLeverHiddenPocket, setIncludeLeverHiddenPocket] =
+    useState(false);
+  const [leverHiddenPocketSize, setLeverHiddenPocketSize] = useState(5); // odd >= 3
+
   const [maxDepth, setMaxDepth] = useState(9);
   const [minLeafSize, setMinLeafSize] = useState(16);
   const [maxLeafSize, setMaxLeafSize] = useState(26);
@@ -526,7 +531,11 @@ const App: React.FC = () => {
 
   const generate = React.useCallback(() => {
     const out = generateBspDungeon(opts);
-    const content = generateDungeonContent(out);
+    const content = generateDungeonContent(out, {
+      includeLeverHiddenPocket,
+      leverHiddenPocketSize,
+      leverDoorCount: 1,
+    });
 
     const initialRuntime = initDungeonRuntimeState(content);
     const derived = derivePlatesFromBlocks(initialRuntime, content);
@@ -586,7 +595,7 @@ const App: React.FC = () => {
       plates: content.meta.plates.length,
       blocks: content.meta.blocks.length,
     });
-  }, [opts, showStateOverlay]);
+  }, [opts, showStateOverlay, includeLeverHiddenPocket, leverHiddenPocketSize]);
 
   // initial generation
   useEffect(() => {
@@ -917,12 +926,12 @@ const App: React.FC = () => {
       return;
     }
 
-    if (ft === 7) {
-      // Pressure plate (debug): toggle pressed state
-      const next = togglePlate(runtime, fid);
-      applyRuntime(next);
-      return;
-    }
+    // if (ft === 7) {
+    //   // Pressure plate (debug): toggle pressed state
+    //   const next = togglePlate(runtime, fid);
+    //   applyRuntime(next);
+    //   return;
+    // }
     // Plates are derived now; no click toggling.
 
     if (ft === 4) {
@@ -1031,7 +1040,7 @@ const App: React.FC = () => {
           </label>
         </div>
 
-        <details open>
+        <details>
           <summary className="maze-summary">BSP</summary>
 
           <div className="maze-grid">
@@ -1171,6 +1180,38 @@ const App: React.FC = () => {
                 onChange={(e) => setShowStateOverlay(e.target.checked)}
               />
               <span>Show state overlay</span>
+            </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary className="maze-summary">Content / Puzzles</summary>
+
+          <div className="maze-grid">
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={includeLeverHiddenPocket}
+                onChange={(e) => setIncludeLeverHiddenPocket(e.target.checked)}
+              />
+              <span>Include Lever → Hidden Pocket</span>
+            </label>
+
+            <label className="maze-field">
+              <span>Pocket size (odd ≥ 3)</span>
+              <input
+                type="number"
+                min={3}
+                max={21}
+                step={2}
+                value={leverHiddenPocketSize}
+                disabled={!includeLeverHiddenPocket}
+                onChange={(e) =>
+                  setLeverHiddenPocketSize(
+                    clampInt(Number(e.target.value || 0), 3, 51),
+                  )
+                }
+              />
             </label>
           </div>
         </details>

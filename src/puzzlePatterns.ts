@@ -36,6 +36,29 @@ export type LeverHiddenPocketPatternOptions = {
   maxCandidateSites?: number;
 };
 
+export type PatternResult =
+  | { ok: true; didCarve: boolean }
+  | { ok: false; didCarve: false; reason: string };
+
+type PatternFn = () => PatternResult;
+
+export function runPatternsBestEffort(patterns: PatternFn[]): {
+  didCarve: boolean;
+} {
+  let didCarve = false;
+
+  for (const p of patterns) {
+    const res = p();
+    if (!res.ok) {
+      console.warn(`[puzzlePatterns] skipped: ${res.reason}`);
+      continue;
+    }
+    didCarve ||= res.didCarve;
+  }
+
+  return { didCarve };
+}
+
 export function applyLeverRevealsHiddenPocketPattern(args: {
   rng: PatternRng;
   dungeon: BspDungeonOutputs;
@@ -56,7 +79,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
   allocId: () => number; // unique id allocator (1..255)
   options?: LeverHiddenPocketPatternOptions;
-}): { ok: true } | { ok: false; reason: string } {
+}): PatternResult {
   const {
     rng,
     dungeon,
@@ -93,10 +116,16 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
   // Determine a starting floodfill point: any floor in entrance room.
   const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
-  if (!entranceRoom) return { ok: false, reason: "No rooms available." };
+  if (!entranceRoom)
+    return { ok: false, didCarve: false, reason: "No rooms available." };
 
   const start = findAnyFloorInRect(dungeon, entranceRoom);
-  if (!start) return { ok: false, reason: "Entrance room has no floor tiles." };
+  if (!start)
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Entrance room has no floor tiles.",
+    };
 
   const reach0 = computeReachable(dungeon, ft, fid, start, new Set());
 
@@ -174,6 +203,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
   if (!candidates.length) {
     return {
       ok: false,
+      didCarve: false,
       reason:
         "No valid connector sites found for lever-hidden-pocket pattern (unable to carve isolated pocket).",
     };
@@ -182,40 +212,12 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
   candidates.sort((a, b) => b.score - a.score);
   const chosen = candidates[0]!;
 
-  // Carve connector + pocket into geometry (solid mask).
-  // NOTE: this makes distanceToWall stale, but your runtime logic will work.
   const pocketCenter = {
     x: chosen.cx + chosen.dir.dx * ((pocketSize + 1) / 2),
     y: chosen.cy + chosen.dir.dy * ((pocketSize + 1) / 2),
   };
-  carveConnectorAndPocket(
-    dungeon,
-    ft,
-    chosen.cx,
-    chosen.cy,
-    pocketCenter,
-    pocketSize,
-  );
 
-  // Place hidden connector fixture (featureType 9) on carved connector tile.
-  const secretId = allocId();
-  const ci = idxOf(W, chosen.cx, chosen.cy);
-  ft[ci] = 9; // hidden passage
-  fid[ci] = secretId;
-  fparam[ci] = 0;
-
-  // Register secret into meta.secrets so runtime initializes secrets[secretId].
-  const ridAtA = regionId[idxOf(W, chosen.ax, chosen.ay)] | 0;
-  const roomIdGuess = ridAtA !== 0 ? ridAtA : entranceRoomId;
-
-  secrets.push({
-    id: secretId,
-    x: chosen.cx,
-    y: chosen.cy,
-    roomId: roomIdGuess,
-  });
-
-  // Place lever somewhere reachable and not too close to connector.
+  // Find lever spot BEFORE mutating anything.
   const leverSpot = pickLeverSpot(
     rng,
     dungeon,
@@ -226,12 +228,108 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     minLeverToConnectorDist,
   );
   if (!leverSpot) {
-    return { ok: false, reason: "Unable to find lever placement spot." };
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Unable to find lever placement spot.",
+    };
   }
 
+  // Allocate ids now (we won't mutate unless validation passes).
+  const secretId = allocId();
   const leverId = allocId();
+  const circuitId = allocId();
+
+  // --- Preview mutations on copies for validation ---
+  const solidPreview = dungeon.masks.solid.slice();
+  const ftPreview = ft.slice();
+  const fidPreview = fid.slice();
+
+  // Create a shallow dungeon copy with preview solid
+  const previewDungeon: BspDungeonOutputs = {
+    ...dungeon,
+    masks: { ...dungeon.masks, solid: solidPreview },
+  };
+
+  carveConnectorAndPocket(
+    previewDungeon,
+    ftPreview,
+    chosen.cx,
+    chosen.cy,
+    pocketCenter,
+    pocketSize,
+  );
+
+  // Place hidden connector fixture (preview)
+  const ci = idxOf(W, chosen.cx, chosen.cy);
+  ftPreview[ci] = 9;
+  fidPreview[ci] = secretId;
+
+  // Validate reachability on preview
+  const goal = pocketCenter;
+  const gi = idxOf(W, goal.x, goal.y);
+
+  const pre = computeReachable(
+    previewDungeon,
+    ftPreview,
+    fidPreview,
+    start,
+    new Set(),
+  );
+  if (pre[gi]) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason:
+        "Validation failed: pocket is reachable before reveal (accidental connection).",
+    };
+  }
+
+  const post = computeReachable(
+    previewDungeon,
+    ftPreview,
+    fidPreview,
+    start,
+    new Set([secretId]),
+  );
+  if (!post[gi]) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason:
+        "Validation failed: pocket is NOT reachable after reveal (connector ineffective).",
+    };
+  }
+
+  // --- Commit real mutations (now that validation passed) ---
+  const didCarve = carveConnectorAndPocket(
+    dungeon,
+    ft,
+    chosen.cx,
+    chosen.cy,
+    pocketCenter,
+    pocketSize,
+  );
+
+  // Place hidden connector fixture (real)
+  const ciReal = idxOf(W, chosen.cx, chosen.cy);
+  ft[ciReal] = 9;
+  fid[ciReal] = secretId;
+  fparam[ciReal] = 0;
+
+  // Register secret
+  const ridAtA = regionId[idxOf(W, chosen.ax, chosen.ay)] | 0;
+  const roomIdGuess = ridAtA !== 0 ? ridAtA : entranceRoomId;
+  secrets.push({
+    id: secretId,
+    x: chosen.cx,
+    y: chosen.cy,
+    roomId: roomIdGuess,
+  });
+
+  // Place lever (real)
   const li = idxOf(W, leverSpot.x, leverSpot.y);
-  ft[li] = 6; // lever
+  ft[li] = 6;
   fid[li] = leverId;
   fparam[li] = 0;
 
@@ -243,41 +341,16 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     roomId: ridAtLever !== 0 ? ridAtLever : entranceRoomId,
   });
 
-  // Emit circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
-  const circuitId = allocId();
-  const circuit: CircuitDef = {
+  // Emit circuit (real)
+  circuitsById.set(circuitId, {
     id: circuitId,
     logic: { type: "OR" },
     behavior: { mode: "PERSISTENT" },
     triggers: [{ kind: "LEVER", refId: leverId }],
     targets: [{ kind: "HIDDEN", refId: secretId, effect: "REVEAL" }],
-  };
-  circuitsById.set(circuitId, circuit);
+  });
 
-  // Validate:
-  // pick goal tile = pocket center (should be unreachable pre, reachable post)
-  const goal = pocketCenter;
-  const gi = idxOf(W, goal.x, goal.y);
-
-  const pre = computeReachable(dungeon, ft, fid, start, new Set());
-  if (pre[gi]) {
-    return {
-      ok: false,
-      reason:
-        "Validation failed: pocket is reachable before reveal (accidental connection).",
-    };
-  }
-
-  const post = computeReachable(dungeon, ft, fid, start, new Set([secretId]));
-  if (!post[gi]) {
-    return {
-      ok: false,
-      reason:
-        "Validation failed: pocket is NOT reachable after reveal (connector ineffective).",
-    };
-  }
-
-  return { ok: true };
+  return { ok: true, didCarve };
 }
 
 // -----------------------------
@@ -467,12 +540,18 @@ function carveConnectorAndPocket(
   cy: number,
   pocketCenter: Point,
   pocketSize: number,
-) {
+): boolean {
   const W = dungeon.width;
   const solid = dungeon.masks.solid;
 
+  let didCarve = false;
+
   // connector becomes floor
-  solid[idxOf(W, cx, cy)] = 0;
+  const ci = idxOf(W, cx, cy);
+  if (solid[ci] === 255) {
+    solid[ci] = 0;
+    didCarve = true;
+  }
 
   const r = (pocketSize - 1) / 2;
   for (let dy = -r; dy <= r; dy++) {
@@ -480,10 +559,17 @@ function carveConnectorAndPocket(
       const x = pocketCenter.x + dx;
       const y = pocketCenter.y + dy;
       const i = idxOf(W, x, y);
+
       if ((featureType[i] | 0) !== 0) continue;
-      solid[i] = 0;
+
+      if (solid[i] === 255) {
+        solid[i] = 0;
+        didCarve = true;
+      }
     }
   }
+
+  return didCarve;
 }
 
 function pickLeverSpot(
