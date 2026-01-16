@@ -528,6 +528,492 @@ export function evaluateCircuits(
 }
 </file>
 
+<file path="src/styles.css">
+/* src/styles.css */
+
+:root {
+    --bg: #0b0f17;
+    --panel: #0f1624;
+    --panel2: #121b2b;
+    --border: rgba(255, 255, 255, 0.1);
+    --border2: rgba(255, 255, 255, 0.14);
+    --text: rgba(255, 255, 255, 0.92);
+    --muted: rgba(255, 255, 255, 0.62);
+    --muted2: rgba(255, 255, 255, 0.48);
+
+    --accent: #7dd3fc; /* light cyan */
+    --accent2: #a78bfa; /* violet */
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad: #fb7185;
+
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --radius: 14px;
+    --radius2: 18px;
+
+    --mono:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+    --sans:
+        ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
+        Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background:
+        radial-gradient(
+            1200px 700px at 25% 0%,
+            rgba(125, 211, 252, 0.1),
+            transparent 55%
+        ),
+        radial-gradient(
+            1000px 600px at 90% 20%,
+            rgba(167, 139, 250, 0.09),
+            transparent 55%
+        ),
+        var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+}
+
+button,
+input {
+    font-family: inherit;
+}
+
+.maze-app {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 14px;
+    padding: 14px;
+    min-height: 100vh;
+}
+
+/* ---------- Left: Controls ---------- */
+
+.maze-controls {
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.05),
+        rgba(255, 255, 255, 0.02)
+    );
+    border: 1px solid var(--border);
+    border-radius: var(--radius2);
+    box-shadow: var(--shadow);
+    padding: 14px;
+    overflow: auto;
+}
+
+.maze-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.maze-title {
+    margin: 0;
+    font-size: 16px;
+    letter-spacing: 0.2px;
+}
+
+.maze-controls-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.maze-btn {
+    appearance: none;
+    border: 1px solid var(--border2);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    padding: 9px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    transition:
+        transform 120ms ease,
+        background 120ms ease,
+        border-color 120ms ease;
+}
+
+.maze-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
+}
+
+.maze-btn:active {
+    transform: translateY(0px);
+}
+
+.maze-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.maze-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.maze-field {
+    display: grid;
+    gap: 6px;
+}
+
+.maze-field span {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.maze-field input[type="number"],
+.maze-field input[type="text"],
+.maze-field input:not([type]) {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--text);
+    outline: none;
+}
+
+.maze-field input:focus {
+    border-color: rgba(125, 211, 252, 0.35);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.12);
+}
+
+.maze-field--seed {
+    grid-column: 1 / -1;
+}
+
+.maze-seed-row {
+    display: grid;
+    grid-template-columns: 1fr 38px;
+    gap: 8px;
+    align-items: center;
+}
+
+.maze-seed-row button {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        transform 120ms ease;
+}
+
+.maze-seed-row button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+}
+
+.maze-checkbox {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.maze-checkbox span {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.maze-summary {
+    cursor: pointer;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font-weight: 700;
+    margin-bottom: 10px;
+    user-select: none;
+}
+
+details {
+    margin-bottom: 10px;
+}
+
+details[open] > .maze-summary {
+    border-color: rgba(125, 211, 252, 0.22);
+}
+
+/* ---------- Stats / ASCII ---------- */
+
+.maze-stats {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(0, 0, 0, 0.15);
+    padding: 10px;
+}
+
+.maze-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 10px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.maze-stats-grid b {
+    color: var(--text);
+}
+
+.maze-ascii-pre {
+    margin: 0;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-height: 300px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.25;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* ---------- Generic panel + circuits ---------- */
+
+.panel {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius2);
+    background: rgba(0, 0, 0, 0.16);
+    padding: 10px;
+}
+
+.panelTitle {
+    font-weight: 800;
+    font-size: 13px;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.mono {
+    font-family: var(--mono);
+}
+
+.circuitsList {
+    display: grid;
+    gap: 10px;
+}
+
+.circuitCard {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 10px;
+}
+
+.circuitHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.circuitRow {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 8px;
+    padding: 6px 0;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.circuitRow:first-of-type {
+    border-top: none;
+}
+
+.circuitLabel {
+    color: var(--muted2);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.circuitItems {
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+/* ---------- Right: Preview ---------- */
+
+.maze-preview {
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.04),
+        rgba(255, 255, 255, 0.02)
+    );
+    border: 1px solid var(--border);
+    border-radius: var(--radius2);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+}
+
+.maze-preview-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.maze-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.maze-tab {
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.8);
+    padding: 7px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 12px;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        transform 120ms ease;
+}
+
+.maze-tab:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+.maze-tab--active {
+    border-color: rgba(125, 211, 252, 0.4);
+    background: rgba(125, 211, 252, 0.13);
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.maze-scale {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    user-select: none;
+}
+
+.maze-scale input[type="range"] {
+    width: 150px;
+}
+
+.maze-scale-value {
+    min-width: 34px;
+    text-align: right;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 700;
+}
+
+/* Canvas panel: IMPORTANT: padding must match your JS (-12px) math */
+.maze-canvas-panel {
+    position: relative;
+    padding: 12px; /* MUST remain 12px unless you change getCellFromMouseEvent */
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.maze-canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    display: block;
+}
+
+/* Tooltip uses screen coords, so we keep it fixed to viewport */
+.maze-tooltip {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    min-width: 220px;
+    max-width: 340px;
+    padding: 10px 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(10, 14, 22, 0.92);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(8px);
+}
+
+.maze-tooltip-line {
+    font-size: 12px;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.86);
+    font-family: var(--mono);
+}
+
+/* Legend */
+.maze-legend {
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.12);
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.maze-legend b {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 1100px) {
+    .maze-app {
+        grid-template-columns: 1fr;
+    }
+    .maze-controls {
+        order: 2;
+    }
+    .maze-preview {
+        order: 1;
+        min-height: 60vh;
+    }
+}
+</file>
+
 <file path="src/puzzlePatterns.ts">
 // src/puzzlePatterns.ts
 //
@@ -1290,7 +1776,11 @@ export function applyLeverOpensDoorPattern(args: {
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
   const candidates = findDoorSiteCandidates(dungeon, ft);
   if (!candidates.length) {
-    return { ok: false, didCarve: false, reason: "No valid door sites found." };
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Lever pattern: No valid door sites found.",
+    };
   }
 
   // Start point for optional sanity checks (reachable before lever is pulled).
@@ -1421,7 +1911,11 @@ export function applyPlateOpensDoorPattern(args: {
 
   const candidates = findDoorSiteCandidates(dungeon, ft);
   if (!candidates.length) {
-    return { ok: false, didCarve: false, reason: "No valid door sites found." };
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Plate Pattern: No valid door sites found.",
+    };
   }
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1532,492 +2026,6 @@ export function applyPlateOpensDoorPattern(args: {
     didCarve: false,
     reason: "Failed to place plate+block+door within attempt budget.",
   };
-}
-</file>
-
-<file path="src/styles.css">
-/* src/styles.css */
-
-:root {
-    --bg: #0b0f17;
-    --panel: #0f1624;
-    --panel2: #121b2b;
-    --border: rgba(255, 255, 255, 0.1);
-    --border2: rgba(255, 255, 255, 0.14);
-    --text: rgba(255, 255, 255, 0.92);
-    --muted: rgba(255, 255, 255, 0.62);
-    --muted2: rgba(255, 255, 255, 0.48);
-
-    --accent: #7dd3fc; /* light cyan */
-    --accent2: #a78bfa; /* violet */
-    --good: #34d399;
-    --warn: #fbbf24;
-    --bad: #fb7185;
-
-    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    --radius: 14px;
-    --radius2: 18px;
-
-    --mono:
-        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-        "Liberation Mono", "Courier New", monospace;
-    --sans:
-        ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
-        Arial, "Apple Color Emoji", "Segoe UI Emoji";
-}
-
-* {
-    box-sizing: border-box;
-}
-
-html,
-body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    background:
-        radial-gradient(
-            1200px 700px at 25% 0%,
-            rgba(125, 211, 252, 0.1),
-            transparent 55%
-        ),
-        radial-gradient(
-            1000px 600px at 90% 20%,
-            rgba(167, 139, 250, 0.09),
-            transparent 55%
-        ),
-        var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-}
-
-button,
-input {
-    font-family: inherit;
-}
-
-.maze-app {
-    display: grid;
-    grid-template-columns: 420px 1fr;
-    gap: 14px;
-    padding: 14px;
-    min-height: 100vh;
-}
-
-/* ---------- Left: Controls ---------- */
-
-.maze-controls {
-    background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.05),
-        rgba(255, 255, 255, 0.02)
-    );
-    border: 1px solid var(--border);
-    border-radius: var(--radius2);
-    box-shadow: var(--shadow);
-    padding: 14px;
-    overflow: auto;
-}
-
-.maze-header-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-}
-
-.maze-title {
-    margin: 0;
-    font-size: 16px;
-    letter-spacing: 0.2px;
-}
-
-.maze-controls-row {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 12px;
-}
-
-.maze-btn {
-    appearance: none;
-    border: 1px solid var(--border2);
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text);
-    padding: 9px 10px;
-    border-radius: 12px;
-    cursor: pointer;
-    font-weight: 600;
-    transition:
-        transform 120ms ease,
-        background 120ms ease,
-        border-color 120ms ease;
-}
-
-.maze-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.18);
-    transform: translateY(-1px);
-}
-
-.maze-btn:active {
-    transform: translateY(0px);
-}
-
-.maze-btn:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.maze-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-bottom: 10px;
-}
-
-.maze-field {
-    display: grid;
-    gap: 6px;
-}
-
-.maze-field span {
-    font-size: 12px;
-    color: var(--muted);
-}
-
-.maze-field input[type="number"],
-.maze-field input[type="text"],
-.maze-field input:not([type]) {
-    width: 100%;
-    padding: 9px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.18);
-    color: var(--text);
-    outline: none;
-}
-
-.maze-field input:focus {
-    border-color: rgba(125, 211, 252, 0.35);
-    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.12);
-}
-
-.maze-field--seed {
-    grid-column: 1 / -1;
-}
-
-.maze-seed-row {
-    display: grid;
-    grid-template-columns: 1fr 38px;
-    gap: 8px;
-    align-items: center;
-}
-
-.maze-seed-row button {
-    width: 38px;
-    height: 38px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text);
-    cursor: pointer;
-    transition:
-        background 120ms ease,
-        transform 120ms ease;
-}
-
-.maze-seed-row button:hover {
-    background: rgba(255, 255, 255, 0.1);
-    transform: translateY(-1px);
-}
-
-.maze-checkbox {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.04);
-}
-
-.maze-checkbox span {
-    color: var(--muted);
-    font-size: 13px;
-}
-
-.maze-summary {
-    cursor: pointer;
-    padding: 8px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--text);
-    font-weight: 700;
-    margin-bottom: 10px;
-    user-select: none;
-}
-
-details {
-    margin-bottom: 10px;
-}
-
-details[open] > .maze-summary {
-    border-color: rgba(125, 211, 252, 0.22);
-}
-
-/* ---------- Stats / ASCII ---------- */
-
-.maze-stats {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: rgba(0, 0, 0, 0.15);
-    padding: 10px;
-}
-
-.maze-stats-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px 10px;
-    font-size: 13px;
-    color: var(--muted);
-}
-
-.maze-stats-grid b {
-    color: var(--text);
-}
-
-.maze-ascii-pre {
-    margin: 0;
-    padding: 10px;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    max-height: 300px;
-    overflow: auto;
-    font-family: var(--mono);
-    font-size: 11px;
-    line-height: 1.25;
-    color: rgba(255, 255, 255, 0.75);
-}
-
-/* ---------- Generic panel + circuits ---------- */
-
-.panel {
-    margin-top: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius2);
-    background: rgba(0, 0, 0, 0.16);
-    padding: 10px;
-}
-
-.panelTitle {
-    font-weight: 800;
-    font-size: 13px;
-    margin-bottom: 8px;
-    color: var(--text);
-}
-
-.muted {
-    color: var(--muted);
-}
-
-.mono {
-    font-family: var(--mono);
-}
-
-.circuitsList {
-    display: grid;
-    gap: 10px;
-}
-
-.circuitCard {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: rgba(255, 255, 255, 0.04);
-    padding: 10px;
-}
-
-.circuitHeader {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 8px;
-}
-
-.circuitRow {
-    display: grid;
-    grid-template-columns: 90px 1fr;
-    gap: 8px;
-    padding: 6px 0;
-    border-top: 1px dashed rgba(255, 255, 255, 0.1);
-}
-
-.circuitRow:first-of-type {
-    border-top: none;
-}
-
-.circuitLabel {
-    color: var(--muted2);
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.circuitItems {
-    color: rgba(255, 255, 255, 0.78);
-    font-size: 12px;
-    overflow-wrap: anywhere;
-}
-
-/* ---------- Right: Preview ---------- */
-
-.maze-preview {
-    background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.04),
-        rgba(255, 255, 255, 0.02)
-    );
-    border: 1px solid var(--border);
-    border-radius: var(--radius2);
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-}
-
-.maze-preview-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.12);
-}
-
-.maze-tabs {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.maze-tab {
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.8);
-    padding: 7px 10px;
-    border-radius: 999px;
-    cursor: pointer;
-    font-weight: 700;
-    font-size: 12px;
-    transition:
-        background 120ms ease,
-        border-color 120ms ease,
-        transform 120ms ease;
-}
-
-.maze-tab:hover {
-    background: rgba(255, 255, 255, 0.08);
-    transform: translateY(-1px);
-}
-
-.maze-tab--active {
-    border-color: rgba(125, 211, 252, 0.4);
-    background: rgba(125, 211, 252, 0.13);
-    color: rgba(255, 255, 255, 0.95);
-}
-
-.maze-scale {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-    font-size: 12px;
-    user-select: none;
-}
-
-.maze-scale input[type="range"] {
-    width: 150px;
-}
-
-.maze-scale-value {
-    min-width: 34px;
-    text-align: right;
-    color: rgba(255, 255, 255, 0.8);
-    font-weight: 700;
-}
-
-/* Canvas panel: IMPORTANT: padding must match your JS (-12px) math */
-.maze-canvas-panel {
-    position: relative;
-    padding: 12px; /* MUST remain 12px unless you change getCellFromMouseEvent */
-    overflow: auto;
-    background: rgba(0, 0, 0, 0.18);
-}
-
-.maze-canvas {
-    image-rendering: pixelated;
-    image-rendering: crisp-edges;
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    display: block;
-}
-
-/* Tooltip uses screen coords, so we keep it fixed to viewport */
-.maze-tooltip {
-    position: fixed;
-    z-index: 9999;
-    pointer-events: none;
-    min-width: 220px;
-    max-width: 340px;
-    padding: 10px 10px;
-    border-radius: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    background: rgba(10, 14, 22, 0.92);
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(8px);
-}
-
-.maze-tooltip-line {
-    font-size: 12px;
-    line-height: 1.35;
-    color: rgba(255, 255, 255, 0.86);
-    font-family: var(--mono);
-}
-
-/* Legend */
-.maze-legend {
-    display: grid;
-    gap: 6px;
-    padding: 10px 12px;
-    border-top: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.12);
-    color: var(--muted);
-    font-size: 12px;
-}
-
-.maze-legend b {
-    color: rgba(255, 255, 255, 0.85);
-}
-
-/* ---------- Responsive ---------- */
-
-@media (max-width: 1100px) {
-    .maze-app {
-        grid-template-columns: 1fr;
-    }
-    .maze-controls {
-        order: 2;
-    }
-    .maze-preview {
-        order: 1;
-        min-height: 60vh;
-    }
 }
 </file>
 
@@ -2372,7 +2380,6 @@ import {
   initDungeonRuntimeState,
   collectKey,
   toggleLever,
-  togglePlate,
   resetRuntimeState,
   derivePlatesFromBlocks,
   tryPushBlock,
@@ -2723,6 +2730,14 @@ const App: React.FC = () => {
     useState(false);
   const [leverHiddenPocketSize, setLeverHiddenPocketSize] = useState(5); // odd >= 3
 
+  const [includeLeverOpensDoor, setIncludeLeverOpensDoor] = useState(false);
+  const [leverOpensDoorCount, setLeverOpensDoorCount] = useState(2);
+
+  const [includePlateOpensDoor, setIncludePlateOpensDoor] = useState(false);
+  const [plateOpensDoorCount, setPlateOpensDoorCount] = useState(2);
+
+  const [patternMaxAttempts, setPatternMaxAttempts] = useState(60);
+
   const [maxDepth, setMaxDepth] = useState(9);
   const [minLeafSize, setMinLeafSize] = useState(16);
   const [maxLeafSize, setMaxLeafSize] = useState(26);
@@ -2800,6 +2815,13 @@ const App: React.FC = () => {
     levers: number;
     plates: number;
     blocks: number;
+
+    // Pattern diagnostics summary
+    patternsRun: number;
+    patternsOk: number;
+    patternsFail: number;
+    patternsCarved: number;
+    patternsMsTotal: number;
   } | null>(null);
 
   // Keep latest generator outputs around for tooltip lookups
@@ -2898,7 +2920,29 @@ const App: React.FC = () => {
       includeLeverHiddenPocket,
       leverHiddenPocketSize,
       leverDoorCount: 1,
+      includeLeverOpensDoor,
+      leverOpensDoorCount,
+
+      includePlateOpensDoor,
+      plateOpensDoorCount,
+
+      patternMaxAttempts,
     });
+
+    // Pattern diagnostics summary
+    const diags = content.meta.patternDiagnostics ?? [];
+    let patternsRun = diags.length;
+    let patternsOk = 0;
+    let patternsFail = 0;
+    let patternsCarved = 0;
+    let patternsMsTotal = 0;
+    for (const d of diags) {
+      if (d.ok) patternsOk++;
+      else patternsFail++;
+      if (d.didCarve) patternsCarved++;
+      if (typeof d.ms === "number" && Number.isFinite(d.ms))
+        patternsMsTotal += d.ms;
+    }
 
     const initialRuntime = initDungeonRuntimeState(content);
     const derived = derivePlatesFromBlocks(initialRuntime, content);
@@ -2957,8 +3001,24 @@ const App: React.FC = () => {
       levers: content.meta.levers.length,
       plates: content.meta.plates.length,
       blocks: content.meta.blocks.length,
+
+      patternsRun,
+      patternsOk,
+      patternsFail,
+      patternsCarved,
+      patternsMsTotal: Math.round(patternsMsTotal),
     });
-  }, [opts, showStateOverlay, includeLeverHiddenPocket, leverHiddenPocketSize]);
+  }, [
+    opts,
+    showStateOverlay,
+    includeLeverHiddenPocket,
+    leverHiddenPocketSize,
+    includeLeverOpensDoor,
+    leverOpensDoorCount,
+    includePlateOpensDoor,
+    plateOpensDoorCount,
+    patternMaxAttempts,
+  ]);
 
   // initial generation
   useEffect(() => {
@@ -3289,14 +3349,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // if (ft === 7) {
-    //   // Pressure plate (debug): toggle pressed state
-    //   const next = togglePlate(runtime, fid);
-    //   applyRuntime(next);
-    //   return;
-    // }
-    // Plates are derived now; no click toggling.
-
     if (ft === 4) {
       // Door (debug convenience): toggle door state directly.
       // If you have a dedicated dungeonState helper later, swap it in here.
@@ -3560,6 +3612,73 @@ const App: React.FC = () => {
               <span>Include Lever → Hidden Pocket</span>
             </label>
 
+            <div style={{ height: 8 }} />
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={includeLeverOpensDoor}
+                onChange={(e) => setIncludeLeverOpensDoor(e.target.checked)}
+              />
+              <span>Include Lever → Door (TOGGLE)</span>
+            </label>
+
+            <label className="maze-field">
+              <span>Lever→Door count (N)</span>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={leverOpensDoorCount}
+                disabled={!includeLeverOpensDoor}
+                onChange={(e) =>
+                  setLeverOpensDoorCount(
+                    clampInt(Number(e.target.value || 0), 0, 999),
+                  )
+                }
+              />
+            </label>
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={includePlateOpensDoor}
+                onChange={(e) => setIncludePlateOpensDoor(e.target.checked)}
+              />
+              <span>Include Plate(+Block) → Door (MOMENTARY)</span>
+            </label>
+
+            <label className="maze-field">
+              <span>Plate→Door count (N)</span>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={plateOpensDoorCount}
+                disabled={!includePlateOpensDoor}
+                onChange={(e) =>
+                  setPlateOpensDoorCount(
+                    clampInt(Number(e.target.value || 0), 0, 999),
+                  )
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Pattern maxAttempts</span>
+              <input
+                type="number"
+                min={5}
+                max={500}
+                value={patternMaxAttempts}
+                onChange={(e) =>
+                  setPatternMaxAttempts(
+                    clampInt(Number(e.target.value || 0), 5, 5000),
+                  )
+                }
+              />
+            </label>
+
             <label className="maze-field">
               <span>Pocket size (odd ≥ 3)</span>
               <input
@@ -3621,6 +3740,19 @@ const App: React.FC = () => {
                 <div style={{ height: 8 }} />
 
                 <div>
+                  <b>Patterns</b>: {meta.patternsOk}/{meta.patternsRun} OK
+                  {meta.patternsFail ? ` · ${meta.patternsFail} fail` : ""}
+                </div>
+                <div>
+                  <b>Carved</b>: {meta.patternsCarved}
+                  {meta.patternsMsTotal
+                    ? ` · ${meta.patternsMsTotal}ms total`
+                    : ""}
+                </div>
+
+                <div style={{ height: 8 }} />
+
+                <div>
                   <b>Doors</b>: {meta.doors}
                 </div>
                 <div>
@@ -3646,6 +3778,31 @@ const App: React.FC = () => {
 
         {content && (
           <div className="panel">
+            <div className="panelTitle">Pattern Diagnostics</div>
+
+            {content.meta.patternDiagnostics?.length ? (
+              <div className="mono" style={{ fontSize: 12, lineHeight: 1.35 }}>
+                {content.meta.patternDiagnostics.slice(0, 60).map((d, i) => (
+                  <div key={i}>
+                    {d.name}: {d.ok ? "OK" : "FAIL"}
+                    {d.didCarve ? " (carved)" : ""}
+                    {typeof d.ms === "number" ? ` · ${d.ms}ms` : ""}
+                    {d.reason ? ` · ${d.reason}` : ""}
+                  </div>
+                ))}
+                {content.meta.patternDiagnostics.length > 60 ? (
+                  <div className="muted">
+                    (showing first 60 of{" "}
+                    {content.meta.patternDiagnostics.length})
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="muted">No pattern diagnostics.</div>
+            )}
+
+            <div style={{ height: 12 }} />
+
             <div className="panelTitle">Circuits</div>
 
             {content.meta.circuits.length === 0 ? (
@@ -3929,7 +4086,7 @@ dungeonState.ts
 
 evaluateCircuits.ts
 
-walkability.ts (shared rules)
+walkability.ts
 
 App.tsx (debug / preview harness)
 
@@ -3980,6 +4137,7 @@ meta.bspDepth : number
 meta.seedUsed : number
 
 IMPORTANT POLICY (DECIDED — OPTION A):
+
 Some puzzle patterns may carve additional geometry by mutating dungeon.masks.solid.
 When this happens, distanceToWall becomes stale.
 
@@ -3995,22 +4153,34 @@ This policy is fully implemented in generator wiring.
 CONTENT MASKS (GAMEPLAY LAYERS)
 
 Mask: featureType (Uint8)
-Encodes what exists at a tile.
+
 0 = none
+
 1 = monster spawn
+
 2 = loot chest
+
 3 = secret door (legacy)
+
 4 = door
+
 5 = key
+
 6 = lever
+
 7 = pressure plate (Milestone 3)
+
 8 = push block (Milestone 3)
+
 9 = hidden passage (Milestone 3)
+
 10 = hazard (Milestone 3)
 
 Mask: featureId (Uint8)
-Instance / circuit identifier (1..255).
-All tiles sharing a featureId belong to the same logical entity or circuit.
+
+Instance / circuit identifier (1..255)
+
+All tiles sharing a featureId belong to the same logical entity or circuit
 
 IMPORTANT INVARIANTS:
 
@@ -4019,16 +4189,22 @@ featureType 9 (hidden passage) MUST have non-zero featureId
 meta.secrets[] is the authoritative source for hidden passages
 
 Mask: featureParam (Uint8)
-Subtype or behavior flags (pattern-specific / debug-specific).
+
+Subtype or behavior flags (pattern-specific / debug-specific)
 
 Mask: danger (Uint8)
 Mask: lootTier (Uint8)
 
 Mask: hazardType (Uint8)
+
 0 = none
+
 1 = lava
+
 2 = poison gas
+
 3 = water
+
 4 = spikes
 
 ============================================================
@@ -4039,46 +4215,61 @@ Masks are for rendering and inspection only.
 
 Key fields:
 
-meta.seedUsed : number
+meta.seedUsed
 
-meta.roomGraph : Map<roomId, Set<roomId>>
+meta.roomGraph
 
-meta.roomDistance : Map<roomId, distance>
+meta.roomDistance
 
-meta.entranceRoomId : number
+meta.entranceRoomId
 
-meta.farthestRoomId : number
+meta.farthestRoomId
 
-meta.mainPathRoomIds : number[]
+meta.mainPathRoomIds
 
-meta.monsters : { id, x, y, roomId, danger }[]
+meta.monsters[]
 
-meta.chests : { id, x, y, roomId, tier }[]
+meta.chests[]
 
-meta.secrets : { id, x, y, roomId }[]
+meta.secrets[]
 
-meta.doors : { id, x, y, roomA, roomB, kind, depth }[]
+meta.doors[]
 
-meta.keys : { id, x, y, roomId }[]
+meta.keys[]
 
-meta.levers : { id, x, y, roomId }[]
+meta.levers[]
 
 Milestone 3 additions:
 
-meta.plates : { id, x, y, roomId, activatedByBlock, inverted, ... }[]
+meta.plates[]
 
-meta.blocks : { id, x, y, roomId, weightClass }[]
+meta.blocks[]
 
-meta.hazards : { id, x, y, roomId, hazardType, activeInitial }[]
+meta.hazards[]
 
 Circuits:
-meta.circuits : {
-id: number,
-logic: { type: "OR" | "AND" | "THRESHOLD", threshold?: number },
-behavior: { mode: "TOGGLE" | "MOMENTARY" | "PERSISTENT" },
-triggers: { kind, refId }[],
-targets: { kind, refId, effect }[],
-}[]
+meta.circuits[] = {
+id,
+logic: OR | AND | THRESHOLD,
+behavior: MOMENTARY | TOGGLE | PERSISTENT,
+triggers[],
+targets[],
+}
+
+NEW (Milestone 3 tooling):
+
+meta.patternDiagnostics[]
+Per-pattern execution diagnostics returned by the pattern runner:
+
+name
+
+ok
+
+didCarve
+
+reason (on failure)
+
+ms (execution time)
 
 ============================================================
 RUNTIME STATE MODEL (MILESTONE 3)
@@ -4087,21 +4278,21 @@ DungeonRuntimeState is mutable and independent from generation.
 
 Runtime buckets:
 
-doors[id] : { kind, isOpen, forcedOpen? }
+doors[id]
 
-keys[id] : { collected }
+keys[id]
 
-levers[id] : { toggled }
+levers[id]
 
-plates[id] : { pressed } (DERIVED)
+plates[id] (DERIVED)
 
-blocks[id] : { x, y, weightClass } (AUTHORITATIVE)
+blocks[id] (AUTHORITATIVE)
 
-hazards[id] : { hazardType, enabled }
+hazards[id]
 
-secrets[id] : { revealed }
+secrets[id]
 
-circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
+circuits[id]
 
 Initialization flow:
 
@@ -4119,13 +4310,14 @@ Plates cannot be toggled directly
 
 Legacy plate click-toggling has been removed
 
-WALKABILITY RULES (CENTRALIZED):
+============================================================
+WALKABILITY RULES (CENTRALIZED)
 
-Walkability is now centralized in src/walkability.ts and shared by:
+Walkability is centralized in src/walkability.ts and shared by:
 
-runtime pushing / movement checks (dungeonState.ts)
+runtime pushing / movement checks
 
-generation-time reachability validation in patterns (where applicable)
+generation-time reachability validation in puzzle patterns
 
 Rules:
 
@@ -4133,46 +4325,34 @@ Walls: never walkable
 
 Doors: walkable only if open
 
-Hidden passages (featureType 9):
+Hidden passages:
 
-unrevealed -> blocked
+unrevealed → blocked
 
-revealed -> walkable
+revealed → walkable
 
-Hazards: do not block movement (consequence-only later)
+Hazards: do not block movement (consequence-only)
 
 ============================================================
 CIRCUIT EVALUATION (CORE LOGIC)
 
 evaluateCircuits(currentState, meta.circuits) is a pure function.
 
-Evaluation steps:
+Steps:
 
-Determine trigger satisfaction:
+Determine trigger satisfaction (KEY, LEVER, PLATE)
 
-KEY -> collected
+Apply logic (OR / AND / THRESHOLD)
 
-LEVER -> toggled
+Apply behavior (MOMENTARY / PERSISTENT / TOGGLE)
 
-PLATE -> pressed (derived)
-
-Apply logic: OR / AND / THRESHOLD
-
-Apply behavior: MOMENTARY / PERSISTENT / TOGGLE (edge-based)
-
-Apply targets:
-
-DOOR -> open/close/toggle
-
-HAZARD -> enable/disable/toggle
-
-HIDDEN -> reveal/hide/toggle
+Apply targets (DOOR, HAZARD, HIDDEN)
 
 Outputs:
 
 next DungeonRuntimeState
 
-per-circuit debug info for UI inspection
+per-circuit debug info (used by UI)
 
 ============================================================
 PUZZLE PATTERNS (MILESTONE 3 CONTENT MACROS)
@@ -4180,18 +4360,17 @@ PUZZLE PATTERNS (MILESTONE 3 CONTENT MACROS)
 Puzzle patterns are generation-time content macros.
 
 Module:
-
 puzzlePatterns.ts
 
 Key properties:
 
 Patterns are best-effort: failure never aborts generation
 
-Patterns may mutate geometry by carving dungeon.masks.solid
+Patterns may mutate geometry
 
-Each pattern returns a PatternResult { ok, didCarve }
+Geometry mutations are explicitly reported (didCarve)
 
-Geometry mutations are reported explicitly via didCarve
+Patterns validate on preview copies before committing
 
 Pattern runner:
 
@@ -4201,75 +4380,69 @@ Executes patterns sequentially
 
 Logs failures
 
-Aggregates didCarve across all patterns
+Aggregates didCarve
 
-NEW: returns per-pattern diagnostics (name, ok, didCarve, reason, ms)
+Returns per-pattern diagnostics:
+{ name, ok, didCarve, reason, ms }
 
-Implemented pattern (carving + validated):
+Implemented patterns:
 
-Lever reveals hidden pocket (Variant A)
+Carving:
 
-Carves a small isolated pocket
+Lever reveals hidden pocket (validated + wired)
 
-Connector tile is FLOOR but blocked by featureType=9 hidden passage
+Carves isolated pocket
 
-Places a lever in reachable space
+Connector tile is FLOOR but blocked by hidden passage
 
-Emits circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
+Lever placed in reachable space
 
-Performs preview validation on copies before committing:
+Circuit: LEVER → HIDDEN(REVEAL), PERSISTENT
 
-Pocket unreachable before reveal
+Non-carving (easy wins, now wired):
 
-Pocket reachable after reveal
+Lever opens door (TOGGLE)
 
-Commits carving only if validation passes
+Places a door on an existing corridor
 
-Implemented patterns (non-carving, not yet wired into generator UI/options):
+Places a lever in a reachable room
 
-Lever opens door (easy win)
+Circuit: LEVER → DOOR(TOGGLE)
 
-Places a door (featureType=4) on an existing corridor connector tile
+Plate opens door (MOMENTARY)
 
-Places a lever in a nearby room
+Places a door on an existing corridor
 
-Circuit: LEVER -> DOOR(TOGGLE), TOGGLE
+Places a plate + adjacent push-block
 
-Plate opens door (easy win)
+Circuit: PLATE → DOOR(OPEN)
 
-Places a door on an existing corridor connector tile
+Pattern execution model:
 
-Places a plate in a room plus an adjacent push-block
+Patterns can be executed N times (best-effort)
 
-Circuit: PLATE -> DOOR(OPEN), MOMENTARY
+Each pattern has an internal attempt budget (patternMaxAttempts)
 
-Plate pressed state is derived from block occupancy at runtime
+All results are captured in diagnostics
 
 ============================================================
 GENERATOR WIRING (CURRENT STATE)
 
-generateDungeonContent(dungeon, options):
+generateDungeonContent():
 
 Structural dungeon already generated
 
-Content metadata arrays initialized
+Content metadata initialized
 
 Puzzle patterns collected based on options
 
-runPatternsBestEffort() executes patterns
+Patterns executed via runPatternsBestEffort()
 
-If any pattern reports didCarve:
+If any pattern carved geometry:
 
-recomputeDungeonDistanceToWall(dungeon) is called (Option A)
+distanceToWall is recomputed (Option A)
 
-Current wiring status:
-
-Lever hidden pocket (Variant A) is wired and executed via generator options.
-
-Pattern runner diagnostics exist, but are not yet plumbed into meta for UI display.
-
-Non-carving patterns (lever opens door / plate opens door) exist in puzzlePatterns.ts
-but are not yet added to the generator’s pattern list or exposed via options.
+patternDiagnostics stored in meta.patternDiagnostics
 
 ============================================================
 DEBUG / PREVIEW UI (App.tsx)
@@ -4282,85 +4455,103 @@ Layered visualization of all masks
 
 Composite content overlay with runtime-aware coloring
 
-Hidden passage reveal visible regardless of overlay toggle
+Hidden passage reveal always reflects runtime
 
-Hazard enabled/disabled state clearly visible
+Hazard enabled/disabled state visible
 
-Hover tooltips show tile + feature + runtime state
+Hover tooltips with tile + runtime info
 
 Interactions:
 
-key -> collect
+Key → collect
 
-lever -> toggle
+Lever → toggle
 
-block -> select + WASD / arrow push
+Block → select + push (WASD / arrows)
 
-plate -> read-only (derived)
+Plates → read-only (derived)
 
-door -> optional manual toggle (debug-only)
+Door → manual toggle (debug-only)
+
+NEW UI FEATURES:
+
+Pattern enable toggles
+
+Pattern count (N times) controls
+
+Pattern maxAttempts control
+
+Pattern diagnostics panel
+
+Stats summary of:
+
+patterns run
+
+patterns ok / failed
+
+patterns that carved geometry
+
+total pattern execution time (ms)
 
 ============================================================
 CURRENT MILESTONE STATUS
 
 Milestone 3 — Stateful Puzzle Execution
-
 Status: COMPLETE & STABILIZED
 
-Recently completed / verified in code:
-
-Pattern runner best-effort execution + didCarve aggregation
+Recently completed:
 
 Option A distance-to-wall recomputation fully wired
 
-Safe preview validation before geometry mutation (hidden pocket pattern)
+Pattern runner diagnostics end-to-end (generator → meta → UI)
 
-Removal of legacy plate toggling (plates are derived sensors only)
+N-times execution model for non-carving patterns
 
-Centralized walkability rules in walkability.ts and used by runtime pushing
+Easy-win patterns fully wired and configurable
 
-Added pattern runner diagnostics return structure (name/ok/reason/ms)
+Diagnostics summary in Stats panel
 
-Implemented two easy non-carving patterns in puzzlePatterns.ts
-(lever opens door, plate opens door) — pending wiring
+Plates fully derived (no legacy toggling)
+
+Walkability centralized and used consistently
+
+MILESTONE 3 — PUZZLES (CURRENT STATUS)
+=====================================
+ 
+PATTERN RUNNER (NEW)
+- Puzzle patterns live in src/puzzlePatterns.ts and are executed in generateDungeonContent().
+- Patterns are run best-effort via runPatternsBestEffort(), which returns per-pattern diagnostics
+  (ok/didCarve/reason/ms). The UI surfaces these diagnostics to make failures obvious.
+
+OPTIONAL PATTERNS IMPLEMENTED
+- Lever → Hidden Pocket (existing): lever reveals a hidden connector that opens access to a carved pocket.
+- Lever → Door (TOGGLE): places a new door on a corridor and wires a lever circuit to toggle it.
+- Plate(+Block) → Door (MOMENTARY): places a plate and push-block plus a door; stepping/placing the block
+  momentarily opens the door.
+
+DISTANCE-TO-WALL STALENESS POLICY (OPTION A)
+- Some patterns carve geometry by mutating dungeon.masks.solid.
+- When any pattern reports didCarve=true, dungeon.masks.distanceToWall is recomputed via
+  recomputeDungeonDistanceToWall(dungeon) to keep clearance logic correct.
+
+DOOR-SITE BUDGETING (IMPORTANT)
+- Milestone 2 “gate doors” (locked/lever) and Milestone 3 door-placing patterns both consume corridor door sites.
+- We count available corridor door sites and reserve enough for enabled patterns (N counts).
+- Milestone 2 desiredLocked/desiredLever are clamped so optional patterns don’t fail due to lack of door sites.
+
 
 ============================================================
 NEXT WORK (PLANNED)
 
-Immediate (quality & structure) — PARTIALLY DONE / NEXT STEPS
+Near-term (content breadth):
 
-Per-pattern debug diagnostics
-DONE in puzzlePatterns.ts (runner returns diagnostics)
-LEFT:
+OR-logic puzzles (multiple levers OR opens hidden/door)
 
-Store diagnostics into content meta (meta.patternDiagnostics)
+THRESHOLD puzzles (multiple plates required)
 
-Display diagnostics in App.tsx (panel / console / inspector)
+Multi-target circuits (one trigger affecting several targets)
 
-Centralize walkability rules into a shared helper
-DONE (src/walkability.ts)
-LEFT:
-
-Ensure any generation-time flood-fill / validation helpers also route through it
-(some validation code still uses local reachability rules; align as needed)
-
-Add simple non-carving patterns (lever opens door, plate opens door)
-DONE in puzzlePatterns.ts
-LEFT:
-
-Add generator options to enable them
-
-Add them to the generator’s pattern list in mazeGen.ts
-
-Add UI toggles / controls in App.tsx if desired
-
-Near-term (content breadth)
-
-OR-logic puzzle (two levers OR opens hidden)
-
-Simple THRESHOLD puzzle (multiple plates)
-
-Mid-term (Milestone 4 — solvability by construction)
+Milestone 4 — Solvability by Construction:
 
 Generation-time state-space reachability checks
 
@@ -4368,28 +4559,40 @@ Required-progression verification
 
 Block-aware flood-fill (push mechanics)
 
-Later
+“Can the player get stuck?” analysis
+
+Later:
 
 Player movement integration
 
 Player-on-plate derivation
 
-Hazard consequences
+Hazard consequences (damage, status)
 
-Expanded block mechanics (multi-block, weight classes)
+Expanded block mechanics (multiple blocks, weight classes)
+
+More pattern families (loops, detours, optional rewards)
 
 ============================================================
 MENTAL MODEL SUMMARY
 
 BSP decides where you can walk
+
 Content decides why you care
+
 featureId + circuits define logical wiring
+
 Runtime state executes puzzle logic
+
 Plates are sensors, not switches
+
 Hidden passages are tiles that come into existence
+
 Hazards are consequences, not walls
+
 evaluateCircuits is the only place logic happens
-Puzzle patterns are content-level macros with validation
+
+Puzzle patterns are validated content macros
 
 This document is intended to allow fast onboarding in a new chat or IDE session without rereading the codebase.
 </file>
@@ -4415,8 +4618,11 @@ This document is intended to allow fast onboarding in a new chat or IDE session 
 import * as THREE from "three";
 import {
   applyLeverRevealsHiddenPocketPattern,
+  applyLeverOpensDoorPattern,
+  applyPlateOpensDoorPattern,
   runPatternsBestEffort,
   PatternResult,
+  PatternDiagnostics,
 } from "./puzzlePatterns";
 
 // -----------------------------
@@ -4540,7 +4746,6 @@ function makeRng(seedU32: number): RNG {
 // -----------------------------
 // Grid helpers
 // -----------------------------
-
 function idx(x: number, y: number, w: number) {
   return y * w + x;
 }
@@ -5422,6 +5627,16 @@ export type ContentOptions = {
   includeLeverHiddenPocket?: boolean;
   leverHiddenPocketSize?: number; // odd >= 3 (default 3)
   includeAsciiOverlay?: boolean;
+
+  // non-carving patterns
+  includeLeverOpensDoor?: boolean;
+  leverOpensDoorCount?: number; // “N times”
+
+  includePlateOpensDoor?: boolean;
+  plateOpensDoorCount?: number; // “N times”
+
+  // Optional: budget for each pattern’s internal search (passed to pattern options)
+  patternMaxAttempts?: number; // default 60
 };
 
 export type ContentOutputs = {
@@ -5551,6 +5766,8 @@ export type ContentOutputs = {
     }>;
 
     circuits: CircuitDef[];
+
+    patternDiagnostics: PatternDiagnostics[];
   };
 };
 
@@ -5960,6 +6177,13 @@ export function generateDungeonContent(
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
     includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
     leverHiddenPocketSize: opts?.leverHiddenPocketSize ?? 3,
+
+    includeLeverOpensDoor: opts?.includeLeverOpensDoor ?? false,
+    leverOpensDoorCount: opts?.leverOpensDoorCount ?? 1,
+    includePlateOpensDoor: opts?.includePlateOpensDoor ?? false,
+    plateOpensDoorCount: opts?.plateOpensDoorCount ?? 1,
+
+    patternMaxAttempts: opts?.patternMaxAttempts ?? 60,
   };
 
   const seedUsed = hashSeedToUint32(options.seed);
@@ -6162,17 +6386,67 @@ export function generateDungeonContent(
   // Milestone 2: Doors + Keys + Levers (circuits)
   // -----------------------------
 
+  // ------------------------------------------------------------
+  // Door-site budgeting for optional patterns
+  // ------------------------------------------------------------
+  // Some optional patterns (Lever→Door, Plate→Door) place *new doors* on
+  // corridor tiles that separate two rooms (a “door site”).
+  //
+  // Milestone 2 gate doors also consume these corridor door sites. If we place
+  // too many gates, patterns can fail simply because there are no remaining
+  // viable corridor door sites.
+  //
+  // Policy:
+  // - Count available corridor door sites after room/chest/monster/secret placement.
+  // - Reserve enough sites for enabled patterns (counts).
+  // - Clamp Milestone 2 desiredLocked/desiredLever so we don’t exceed the budget.
+  function countCorridorDoorSites(
+    dungeon: BspDungeonOutputs,
+    featureType: Uint8Array,
+  ): number {
+    const W = dungeon.width;
+    const H = dungeon.height;
+    const solid = dungeon.masks.solid;
+    const regionId = dungeon.masks.regionId;
+
+    let n = 0;
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = keyXY(W, x, y);
+
+        // Must be walkable corridor floor and unoccupied
+        if (solid[i] !== 0) continue;
+        if (featureType[i] !== 0) continue;
+
+        // A “door site” is a corridor tile adjacent to >=2 distinct rooms
+        const roomIds = new Set<number>();
+        const nbs = [
+          keyXY(W, x + 1, y),
+          keyXY(W, x - 1, y),
+          keyXY(W, x, y + 1),
+          keyXY(W, x, y - 1),
+        ];
+        for (const ni of nbs) {
+          const rid = regionId[ni] | 0;
+          if (rid !== 0) roomIds.add(rid);
+        }
+        if (roomIds.size >= 2) n++;
+      }
+    }
+    return n;
+  }
+
   const gateMinDepth = options.gateMinDepth;
 
   // mainPathRoomIds MUST already be computed above this point.
   const mainPathLen = mainPathRoomIds.length;
 
-  const desiredLocked =
+  let desiredLocked =
     opts?.lockedDoorCount !== undefined
       ? opts.lockedDoorCount
       : Math.max(1, Math.floor(mainPathLen / 5));
 
-  const desiredLever =
+  let desiredLever =
     opts?.leverDoorCount !== undefined
       ? opts.leverDoorCount
       : Math.max(0, Math.floor(mainPathLen / 7));
@@ -6193,6 +6467,29 @@ export function generateDungeonContent(
     const j = Math.floor(rng() * (i + 1));
     [eligibleEdges[i], eligibleEdges[j]] = [eligibleEdges[j], eligibleEdges[i]];
   }
+
+  // Budget Milestone 2 gates so optional patterns still have corridor door sites.
+  const reservedForPatterns =
+    (options.includeLeverOpensDoor ? options.leverOpensDoorCount | 0 : 0) +
+    (options.includePlateOpensDoor ? options.plateOpensDoorCount | 0 : 0);
+
+  if (reservedForPatterns > 0) {
+    const totalDoorSites = countCorridorDoorSites(dungeon, featureType);
+    const maxGatesByEdges = eligibleEdges.length;
+    const maxGatesBySites = Math.max(0, totalDoorSites - reservedForPatterns);
+    const maxGateDoors = Math.min(maxGatesByEdges, maxGatesBySites);
+
+    // Clamp requested gate counts to the budget (prefer keeping locked doors over lever doors).
+    if (desiredLocked > maxGateDoors) {
+      desiredLocked = maxGateDoors;
+      desiredLever = 0;
+    } else {
+      desiredLever = Math.min(desiredLever, maxGateDoors - desiredLocked);
+    }
+  }
+
+  const desiredLockedClamped = Math.max(0, desiredLocked | 0);
+  const desiredLeverClamped = Math.max(0, desiredLever | 0);
 
   function pickKeyOrLeverRoom(maxDepthAllowed: number): number | null {
     // Prefer side rooms, but any reachable room <= depth works (backtracking allowed)
@@ -6292,14 +6589,14 @@ export function generateDungeonContent(
   // Place locked doors
   let placedLocked = 0;
   for (const e of eligibleEdges) {
-    if (placedLocked >= desiredLocked) break;
+    if (placedLocked >= desiredLockedClamped) break;
     if (placeDoorOnEdge(e, 1)) placedLocked++;
   }
 
-  // Place lever doors (avoid reusing same edges by skipping first chunk)
+  // Place lever doors
   let placedLever = 0;
   for (let i = placedLocked; i < eligibleEdges.length; i++) {
-    if (placedLever >= desiredLever) break;
+    if (placedLever >= desiredLeverClamped) break;
     if (placeDoorOnEdge(eligibleEdges[i], 2)) placedLever++;
   }
 
@@ -6521,7 +6818,52 @@ export function generateDungeonContent(
     );
   }
 
-  const { didCarve } = runPatternsBestEffort(patterns);
+  // NEW: “N times to max” for the easy non-carving patterns.
+  if (options.includeLeverOpensDoor) {
+    const n = Math.max(0, options.leverOpensDoorCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push(() =>
+        applyLeverOpensDoorPattern({
+          rng: patternRng,
+          dungeon,
+          rooms,
+          entranceRoomId,
+          featureType,
+          featureId,
+          featureParam,
+          doors,
+          levers,
+          circuitsById,
+          allocId: () => clamp255(nextId++),
+          options: { maxAttempts: options.patternMaxAttempts },
+        }),
+      );
+    }
+  }
+
+  if (options.includePlateOpensDoor) {
+    const n = Math.max(0, options.plateOpensDoorCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push(() =>
+        applyPlateOpensDoorPattern({
+          rng: patternRng,
+          dungeon,
+          rooms,
+          featureType,
+          featureId,
+          featureParam,
+          doors,
+          plates,
+          blocks,
+          circuitsById,
+          allocId: () => clamp255(nextId++),
+          options: { maxAttempts: options.patternMaxAttempts },
+        }),
+      );
+    }
+  }
+
+  const { didCarve, diagnostics } = runPatternsBestEffort(patterns);
 
   // Option A: if any patterns carved geometry, distanceToWall is now stale.
   if (didCarve) {
@@ -6531,15 +6873,6 @@ export function generateDungeonContent(
   const circuits = Array.from(circuitsById.values()).sort(
     (a, b) => a.id - b.id,
   );
-
-  // Milestone 3 fixture circuit: plate toggles the extra door.
-  if (fixturePlateCircuitId !== 0 && fixtureDoorId !== 0) {
-    const c = ensureCircuit(fixturePlateCircuitId);
-    c.logic = { type: "OR" };
-    c.behavior = { mode: "TOGGLE" };
-    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
-    c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
-  }
 
   // Milestone 3 fixture circuit: plate reveals the hidden passage tile (featureType 9).
   if (fixturePlateCircuitId !== 0 && fixtureHiddenId !== 0) {
@@ -6678,6 +7011,7 @@ export function generateDungeonContent(
       hazards,
       circuits,
       rooms,
+      patternDiagnostics: diagnostics,
     },
   };
 }
