@@ -52,7 +52,7 @@ dungeonState.ts
 
 evaluateCircuits.ts
 
-walkability.ts (shared rules)
+walkability.ts
 
 App.tsx (debug / preview harness)
 
@@ -103,6 +103,7 @@ meta.bspDepth : number
 meta.seedUsed : number
 
 IMPORTANT POLICY (DECIDED — OPTION A):
+
 Some puzzle patterns may carve additional geometry by mutating dungeon.masks.solid.
 When this happens, distanceToWall becomes stale.
 
@@ -118,22 +119,34 @@ This policy is fully implemented in generator wiring.
 CONTENT MASKS (GAMEPLAY LAYERS)
 
 Mask: featureType (Uint8)
-Encodes what exists at a tile.
+
 0 = none
+
 1 = monster spawn
+
 2 = loot chest
+
 3 = secret door (legacy)
+
 4 = door
+
 5 = key
+
 6 = lever
+
 7 = pressure plate (Milestone 3)
+
 8 = push block (Milestone 3)
+
 9 = hidden passage (Milestone 3)
+
 10 = hazard (Milestone 3)
 
 Mask: featureId (Uint8)
-Instance / circuit identifier (1..255).
-All tiles sharing a featureId belong to the same logical entity or circuit.
+
+Instance / circuit identifier (1..255)
+
+All tiles sharing a featureId belong to the same logical entity or circuit
 
 IMPORTANT INVARIANTS:
 
@@ -142,16 +155,22 @@ featureType 9 (hidden passage) MUST have non-zero featureId
 meta.secrets[] is the authoritative source for hidden passages
 
 Mask: featureParam (Uint8)
-Subtype or behavior flags (pattern-specific / debug-specific).
+
+Subtype or behavior flags (pattern-specific / debug-specific)
 
 Mask: danger (Uint8)
 Mask: lootTier (Uint8)
 
 Mask: hazardType (Uint8)
+
 0 = none
+
 1 = lava
+
 2 = poison gas
+
 3 = water
+
 4 = spikes
 
 ============================================================
@@ -162,46 +181,61 @@ Masks are for rendering and inspection only.
 
 Key fields:
 
-meta.seedUsed : number
+meta.seedUsed
 
-meta.roomGraph : Map<roomId, Set<roomId>>
+meta.roomGraph
 
-meta.roomDistance : Map<roomId, distance>
+meta.roomDistance
 
-meta.entranceRoomId : number
+meta.entranceRoomId
 
-meta.farthestRoomId : number
+meta.farthestRoomId
 
-meta.mainPathRoomIds : number[]
+meta.mainPathRoomIds
 
-meta.monsters : { id, x, y, roomId, danger }[]
+meta.monsters[]
 
-meta.chests : { id, x, y, roomId, tier }[]
+meta.chests[]
 
-meta.secrets : { id, x, y, roomId }[]
+meta.secrets[]
 
-meta.doors : { id, x, y, roomA, roomB, kind, depth }[]
+meta.doors[]
 
-meta.keys : { id, x, y, roomId }[]
+meta.keys[]
 
-meta.levers : { id, x, y, roomId }[]
+meta.levers[]
 
 Milestone 3 additions:
 
-meta.plates : { id, x, y, roomId, activatedByBlock, inverted, ... }[]
+meta.plates[]
 
-meta.blocks : { id, x, y, roomId, weightClass }[]
+meta.blocks[]
 
-meta.hazards : { id, x, y, roomId, hazardType, activeInitial }[]
+meta.hazards[]
 
 Circuits:
-meta.circuits : {
-id: number,
-logic: { type: "OR" | "AND" | "THRESHOLD", threshold?: number },
-behavior: { mode: "TOGGLE" | "MOMENTARY" | "PERSISTENT" },
-triggers: { kind, refId }[],
-targets: { kind, refId, effect }[],
-}[]
+meta.circuits[] = {
+id,
+logic: OR | AND | THRESHOLD,
+behavior: MOMENTARY | TOGGLE | PERSISTENT,
+triggers[],
+targets[],
+}
+
+NEW (Milestone 3 tooling):
+
+meta.patternDiagnostics[]
+Per-pattern execution diagnostics returned by the pattern runner:
+
+name
+
+ok
+
+didCarve
+
+reason (on failure)
+
+ms (execution time)
 
 ============================================================
 RUNTIME STATE MODEL (MILESTONE 3)
@@ -210,21 +244,21 @@ DungeonRuntimeState is mutable and independent from generation.
 
 Runtime buckets:
 
-doors[id] : { kind, isOpen, forcedOpen? }
+doors[id]
 
-keys[id] : { collected }
+keys[id]
 
-levers[id] : { toggled }
+levers[id]
 
-plates[id] : { pressed } (DERIVED)
+plates[id] (DERIVED)
 
-blocks[id] : { x, y, weightClass } (AUTHORITATIVE)
+blocks[id] (AUTHORITATIVE)
 
-hazards[id] : { hazardType, enabled }
+hazards[id]
 
-secrets[id] : { revealed }
+secrets[id]
 
-circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
+circuits[id]
 
 Initialization flow:
 
@@ -242,13 +276,14 @@ Plates cannot be toggled directly
 
 Legacy plate click-toggling has been removed
 
-WALKABILITY RULES (CENTRALIZED):
+============================================================
+WALKABILITY RULES (CENTRALIZED)
 
-Walkability is now centralized in src/walkability.ts and shared by:
+Walkability is centralized in src/walkability.ts and shared by:
 
-runtime pushing / movement checks (dungeonState.ts)
+runtime pushing / movement checks
 
-generation-time reachability validation in patterns (where applicable)
+generation-time reachability validation in puzzle patterns
 
 Rules:
 
@@ -256,46 +291,34 @@ Walls: never walkable
 
 Doors: walkable only if open
 
-Hidden passages (featureType 9):
+Hidden passages:
 
-unrevealed -> blocked
+unrevealed → blocked
 
-revealed -> walkable
+revealed → walkable
 
-Hazards: do not block movement (consequence-only later)
+Hazards: do not block movement (consequence-only)
 
 ============================================================
 CIRCUIT EVALUATION (CORE LOGIC)
 
 evaluateCircuits(currentState, meta.circuits) is a pure function.
 
-Evaluation steps:
+Steps:
 
-Determine trigger satisfaction:
+Determine trigger satisfaction (KEY, LEVER, PLATE)
 
-KEY -> collected
+Apply logic (OR / AND / THRESHOLD)
 
-LEVER -> toggled
+Apply behavior (MOMENTARY / PERSISTENT / TOGGLE)
 
-PLATE -> pressed (derived)
-
-Apply logic: OR / AND / THRESHOLD
-
-Apply behavior: MOMENTARY / PERSISTENT / TOGGLE (edge-based)
-
-Apply targets:
-
-DOOR -> open/close/toggle
-
-HAZARD -> enable/disable/toggle
-
-HIDDEN -> reveal/hide/toggle
+Apply targets (DOOR, HAZARD, HIDDEN)
 
 Outputs:
 
 next DungeonRuntimeState
 
-per-circuit debug info for UI inspection
+per-circuit debug info (used by UI)
 
 ============================================================
 PUZZLE PATTERNS (MILESTONE 3 CONTENT MACROS)
@@ -303,18 +326,17 @@ PUZZLE PATTERNS (MILESTONE 3 CONTENT MACROS)
 Puzzle patterns are generation-time content macros.
 
 Module:
-
 puzzlePatterns.ts
 
 Key properties:
 
 Patterns are best-effort: failure never aborts generation
 
-Patterns may mutate geometry by carving dungeon.masks.solid
+Patterns may mutate geometry
 
-Each pattern returns a PatternResult { ok, didCarve }
+Geometry mutations are explicitly reported (didCarve)
 
-Geometry mutations are reported explicitly via didCarve
+Patterns validate on preview copies before committing
 
 Pattern runner:
 
@@ -324,75 +346,69 @@ Executes patterns sequentially
 
 Logs failures
 
-Aggregates didCarve across all patterns
+Aggregates didCarve
 
-NEW: returns per-pattern diagnostics (name, ok, didCarve, reason, ms)
+Returns per-pattern diagnostics:
+{ name, ok, didCarve, reason, ms }
 
-Implemented pattern (carving + validated):
+Implemented patterns:
 
-Lever reveals hidden pocket (Variant A)
+Carving:
 
-Carves a small isolated pocket
+Lever reveals hidden pocket (validated + wired)
 
-Connector tile is FLOOR but blocked by featureType=9 hidden passage
+Carves isolated pocket
 
-Places a lever in reachable space
+Connector tile is FLOOR but blocked by hidden passage
 
-Emits circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
+Lever placed in reachable space
 
-Performs preview validation on copies before committing:
+Circuit: LEVER → HIDDEN(REVEAL), PERSISTENT
 
-Pocket unreachable before reveal
+Non-carving (easy wins, now wired):
 
-Pocket reachable after reveal
+Lever opens door (TOGGLE)
 
-Commits carving only if validation passes
+Places a door on an existing corridor
 
-Implemented patterns (non-carving, not yet wired into generator UI/options):
+Places a lever in a reachable room
 
-Lever opens door (easy win)
+Circuit: LEVER → DOOR(TOGGLE)
 
-Places a door (featureType=4) on an existing corridor connector tile
+Plate opens door (MOMENTARY)
 
-Places a lever in a nearby room
+Places a door on an existing corridor
 
-Circuit: LEVER -> DOOR(TOGGLE), TOGGLE
+Places a plate + adjacent push-block
 
-Plate opens door (easy win)
+Circuit: PLATE → DOOR(OPEN)
 
-Places a door on an existing corridor connector tile
+Pattern execution model:
 
-Places a plate in a room plus an adjacent push-block
+Patterns can be executed N times (best-effort)
 
-Circuit: PLATE -> DOOR(OPEN), MOMENTARY
+Each pattern has an internal attempt budget (patternMaxAttempts)
 
-Plate pressed state is derived from block occupancy at runtime
+All results are captured in diagnostics
 
 ============================================================
 GENERATOR WIRING (CURRENT STATE)
 
-generateDungeonContent(dungeon, options):
+generateDungeonContent():
 
 Structural dungeon already generated
 
-Content metadata arrays initialized
+Content metadata initialized
 
 Puzzle patterns collected based on options
 
-runPatternsBestEffort() executes patterns
+Patterns executed via runPatternsBestEffort()
 
-If any pattern reports didCarve:
+If any pattern carved geometry:
 
-recomputeDungeonDistanceToWall(dungeon) is called (Option A)
+distanceToWall is recomputed (Option A)
 
-Current wiring status:
-
-Lever hidden pocket (Variant A) is wired and executed via generator options.
-
-Pattern runner diagnostics exist, but are not yet plumbed into meta for UI display.
-
-Non-carving patterns (lever opens door / plate opens door) exist in puzzlePatterns.ts
-but are not yet added to the generator’s pattern list or exposed via options.
+patternDiagnostics stored in meta.patternDiagnostics
 
 ============================================================
 DEBUG / PREVIEW UI (App.tsx)
@@ -405,85 +421,78 @@ Layered visualization of all masks
 
 Composite content overlay with runtime-aware coloring
 
-Hidden passage reveal visible regardless of overlay toggle
+Hidden passage reveal always reflects runtime
 
-Hazard enabled/disabled state clearly visible
+Hazard enabled/disabled state visible
 
-Hover tooltips show tile + feature + runtime state
+Hover tooltips with tile + runtime info
 
 Interactions:
 
-key -> collect
+Key → collect
 
-lever -> toggle
+Lever → toggle
 
-block -> select + WASD / arrow push
+Block → select + push (WASD / arrows)
 
-plate -> read-only (derived)
+Plates → read-only (derived)
 
-door -> optional manual toggle (debug-only)
+Door → manual toggle (debug-only)
+
+NEW UI FEATURES:
+
+Pattern enable toggles
+
+Pattern count (N times) controls
+
+Pattern maxAttempts control
+
+Pattern diagnostics panel
+
+Stats summary of:
+
+patterns run
+
+patterns ok / failed
+
+patterns that carved geometry
+
+total pattern execution time (ms)
 
 ============================================================
 CURRENT MILESTONE STATUS
 
 Milestone 3 — Stateful Puzzle Execution
-
 Status: COMPLETE & STABILIZED
 
-Recently completed / verified in code:
-
-Pattern runner best-effort execution + didCarve aggregation
+Recently completed:
 
 Option A distance-to-wall recomputation fully wired
 
-Safe preview validation before geometry mutation (hidden pocket pattern)
+Pattern runner diagnostics end-to-end (generator → meta → UI)
 
-Removal of legacy plate toggling (plates are derived sensors only)
+N-times execution model for non-carving patterns
 
-Centralized walkability rules in walkability.ts and used by runtime pushing
+Easy-win patterns fully wired and configurable
 
-Added pattern runner diagnostics return structure (name/ok/reason/ms)
+Diagnostics summary in Stats panel
 
-Implemented two easy non-carving patterns in puzzlePatterns.ts
-(lever opens door, plate opens door) — pending wiring
+Plates fully derived (no legacy toggling)
+
+Walkability centralized and used consistently
 
 ============================================================
 NEXT WORK (PLANNED)
 
-Immediate (quality & structure) — PARTIALLY DONE / NEXT STEPS
+Near-term (content breadth):
 
-Per-pattern debug diagnostics
-DONE in puzzlePatterns.ts (runner returns diagnostics)
-LEFT:
+OR-logic puzzles (multiple levers OR opens hidden/door)
 
-Store diagnostics into content meta (meta.patternDiagnostics)
+THRESHOLD puzzles (multiple plates required)
 
-Display diagnostics in App.tsx (panel / console / inspector)
+Multi-target circuits (one trigger affecting several targets)
 
-Centralize walkability rules into a shared helper
-DONE (src/walkability.ts)
-LEFT:
-
-Ensure any generation-time flood-fill / validation helpers also route through it
-(some validation code still uses local reachability rules; align as needed)
-
-Add simple non-carving patterns (lever opens door, plate opens door)
-DONE in puzzlePatterns.ts
-LEFT:
-
-Add generator options to enable them
-
-Add them to the generator’s pattern list in mazeGen.ts
-
-Add UI toggles / controls in App.tsx if desired
-
-Near-term (content breadth)
-
-OR-logic puzzle (two levers OR opens hidden)
-
-Simple THRESHOLD puzzle (multiple plates)
-
-Mid-term (Milestone 4 — solvability by construction)
+Milestone 4 — Solvability by Construction:
 
 Generation-time state-space reachability checks
 
@@ -491,27 +500,39 @@ Required-progression verification
 
 Block-aware flood-fill (push mechanics)
 
-Later
+“Can the player get stuck?” analysis
+
+Later:
 
 Player movement integration
 
 Player-on-plate derivation
 
-Hazard consequences
+Hazard consequences (damage, status)
 
-Expanded block mechanics (multi-block, weight classes)
+Expanded block mechanics (multiple blocks, weight classes)
+
+More pattern families (loops, detours, optional rewards)
 
 ============================================================
 MENTAL MODEL SUMMARY
 
 BSP decides where you can walk
+
 Content decides why you care
+
 featureId + circuits define logical wiring
+
 Runtime state executes puzzle logic
+
 Plates are sensors, not switches
+
 Hidden passages are tiles that come into existence
+
 Hazards are consequences, not walls
+
 evaluateCircuits is the only place logic happens
-Puzzle patterns are content-level macros with validation
+
+Puzzle patterns are validated content macros
 
 This document is intended to allow fast onboarding in a new chat or IDE session without rereading the codebase.

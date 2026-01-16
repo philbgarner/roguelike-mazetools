@@ -759,7 +759,11 @@ export function applyLeverOpensDoorPattern(args: {
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
   const candidates = findDoorSiteCandidates(dungeon, ft);
   if (!candidates.length) {
-    return { ok: false, didCarve: false, reason: "No valid door sites found." };
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Lever pattern: No valid door sites found.",
+    };
   }
 
   // Start point for optional sanity checks (reachable before lever is pulled).
@@ -890,7 +894,11 @@ export function applyPlateOpensDoorPattern(args: {
 
   const candidates = findDoorSiteCandidates(dungeon, ft);
   if (!candidates.length) {
-    return { ok: false, didCarve: false, reason: "No valid door sites found." };
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Plate Pattern: No valid door sites found.",
+    };
   }
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {

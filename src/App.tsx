@@ -9,7 +9,6 @@ import {
   initDungeonRuntimeState,
   collectKey,
   toggleLever,
-  togglePlate,
   resetRuntimeState,
   derivePlatesFromBlocks,
   tryPushBlock,
@@ -360,6 +359,14 @@ const App: React.FC = () => {
     useState(false);
   const [leverHiddenPocketSize, setLeverHiddenPocketSize] = useState(5); // odd >= 3
 
+  const [includeLeverOpensDoor, setIncludeLeverOpensDoor] = useState(false);
+  const [leverOpensDoorCount, setLeverOpensDoorCount] = useState(2);
+
+  const [includePlateOpensDoor, setIncludePlateOpensDoor] = useState(false);
+  const [plateOpensDoorCount, setPlateOpensDoorCount] = useState(2);
+
+  const [patternMaxAttempts, setPatternMaxAttempts] = useState(60);
+
   const [maxDepth, setMaxDepth] = useState(9);
   const [minLeafSize, setMinLeafSize] = useState(16);
   const [maxLeafSize, setMaxLeafSize] = useState(26);
@@ -437,6 +444,13 @@ const App: React.FC = () => {
     levers: number;
     plates: number;
     blocks: number;
+
+    // Pattern diagnostics summary
+    patternsRun: number;
+    patternsOk: number;
+    patternsFail: number;
+    patternsCarved: number;
+    patternsMsTotal: number;
   } | null>(null);
 
   // Keep latest generator outputs around for tooltip lookups
@@ -535,7 +549,29 @@ const App: React.FC = () => {
       includeLeverHiddenPocket,
       leverHiddenPocketSize,
       leverDoorCount: 1,
+      includeLeverOpensDoor,
+      leverOpensDoorCount,
+
+      includePlateOpensDoor,
+      plateOpensDoorCount,
+
+      patternMaxAttempts,
     });
+
+    // Pattern diagnostics summary
+    const diags = content.meta.patternDiagnostics ?? [];
+    let patternsRun = diags.length;
+    let patternsOk = 0;
+    let patternsFail = 0;
+    let patternsCarved = 0;
+    let patternsMsTotal = 0;
+    for (const d of diags) {
+      if (d.ok) patternsOk++;
+      else patternsFail++;
+      if (d.didCarve) patternsCarved++;
+      if (typeof d.ms === "number" && Number.isFinite(d.ms))
+        patternsMsTotal += d.ms;
+    }
 
     const initialRuntime = initDungeonRuntimeState(content);
     const derived = derivePlatesFromBlocks(initialRuntime, content);
@@ -594,8 +630,24 @@ const App: React.FC = () => {
       levers: content.meta.levers.length,
       plates: content.meta.plates.length,
       blocks: content.meta.blocks.length,
+
+      patternsRun,
+      patternsOk,
+      patternsFail,
+      patternsCarved,
+      patternsMsTotal: Math.round(patternsMsTotal),
     });
-  }, [opts, showStateOverlay, includeLeverHiddenPocket, leverHiddenPocketSize]);
+  }, [
+    opts,
+    showStateOverlay,
+    includeLeverHiddenPocket,
+    leverHiddenPocketSize,
+    includeLeverOpensDoor,
+    leverOpensDoorCount,
+    includePlateOpensDoor,
+    plateOpensDoorCount,
+    patternMaxAttempts,
+  ]);
 
   // initial generation
   useEffect(() => {
@@ -926,14 +978,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // if (ft === 7) {
-    //   // Pressure plate (debug): toggle pressed state
-    //   const next = togglePlate(runtime, fid);
-    //   applyRuntime(next);
-    //   return;
-    // }
-    // Plates are derived now; no click toggling.
-
     if (ft === 4) {
       // Door (debug convenience): toggle door state directly.
       // If you have a dedicated dungeonState helper later, swap it in here.
@@ -1197,6 +1241,73 @@ const App: React.FC = () => {
               <span>Include Lever → Hidden Pocket</span>
             </label>
 
+            <div style={{ height: 8 }} />
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={includeLeverOpensDoor}
+                onChange={(e) => setIncludeLeverOpensDoor(e.target.checked)}
+              />
+              <span>Include Lever → Door (TOGGLE)</span>
+            </label>
+
+            <label className="maze-field">
+              <span>Lever→Door count (N)</span>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={leverOpensDoorCount}
+                disabled={!includeLeverOpensDoor}
+                onChange={(e) =>
+                  setLeverOpensDoorCount(
+                    clampInt(Number(e.target.value || 0), 0, 999),
+                  )
+                }
+              />
+            </label>
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={includePlateOpensDoor}
+                onChange={(e) => setIncludePlateOpensDoor(e.target.checked)}
+              />
+              <span>Include Plate(+Block) → Door (MOMENTARY)</span>
+            </label>
+
+            <label className="maze-field">
+              <span>Plate→Door count (N)</span>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={plateOpensDoorCount}
+                disabled={!includePlateOpensDoor}
+                onChange={(e) =>
+                  setPlateOpensDoorCount(
+                    clampInt(Number(e.target.value || 0), 0, 999),
+                  )
+                }
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Pattern maxAttempts</span>
+              <input
+                type="number"
+                min={5}
+                max={500}
+                value={patternMaxAttempts}
+                onChange={(e) =>
+                  setPatternMaxAttempts(
+                    clampInt(Number(e.target.value || 0), 5, 5000),
+                  )
+                }
+              />
+            </label>
+
             <label className="maze-field">
               <span>Pocket size (odd ≥ 3)</span>
               <input
@@ -1258,6 +1369,19 @@ const App: React.FC = () => {
                 <div style={{ height: 8 }} />
 
                 <div>
+                  <b>Patterns</b>: {meta.patternsOk}/{meta.patternsRun} OK
+                  {meta.patternsFail ? ` · ${meta.patternsFail} fail` : ""}
+                </div>
+                <div>
+                  <b>Carved</b>: {meta.patternsCarved}
+                  {meta.patternsMsTotal
+                    ? ` · ${meta.patternsMsTotal}ms total`
+                    : ""}
+                </div>
+
+                <div style={{ height: 8 }} />
+
+                <div>
                   <b>Doors</b>: {meta.doors}
                 </div>
                 <div>
@@ -1283,6 +1407,31 @@ const App: React.FC = () => {
 
         {content && (
           <div className="panel">
+            <div className="panelTitle">Pattern Diagnostics</div>
+
+            {content.meta.patternDiagnostics?.length ? (
+              <div className="mono" style={{ fontSize: 12, lineHeight: 1.35 }}>
+                {content.meta.patternDiagnostics.slice(0, 60).map((d, i) => (
+                  <div key={i}>
+                    {d.name}: {d.ok ? "OK" : "FAIL"}
+                    {d.didCarve ? " (carved)" : ""}
+                    {typeof d.ms === "number" ? ` · ${d.ms}ms` : ""}
+                    {d.reason ? ` · ${d.reason}` : ""}
+                  </div>
+                ))}
+                {content.meta.patternDiagnostics.length > 60 ? (
+                  <div className="muted">
+                    (showing first 60 of{" "}
+                    {content.meta.patternDiagnostics.length})
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="muted">No pattern diagnostics.</div>
+            )}
+
+            <div style={{ height: 12 }} />
+
             <div className="panelTitle">Circuits</div>
 
             {content.meta.circuits.length === 0 ? (

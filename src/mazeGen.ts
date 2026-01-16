@@ -18,8 +18,11 @@
 import * as THREE from "three";
 import {
   applyLeverRevealsHiddenPocketPattern,
+  applyLeverOpensDoorPattern,
+  applyPlateOpensDoorPattern,
   runPatternsBestEffort,
   PatternResult,
+  PatternDiagnostics,
 } from "./puzzlePatterns";
 
 // -----------------------------
@@ -1025,6 +1028,16 @@ export type ContentOptions = {
   includeLeverHiddenPocket?: boolean;
   leverHiddenPocketSize?: number; // odd >= 3 (default 3)
   includeAsciiOverlay?: boolean;
+
+  // non-carving patterns
+  includeLeverOpensDoor?: boolean;
+  leverOpensDoorCount?: number; // “N times”
+
+  includePlateOpensDoor?: boolean;
+  plateOpensDoorCount?: number; // “N times”
+
+  // Optional: budget for each pattern’s internal search (passed to pattern options)
+  patternMaxAttempts?: number; // default 60
 };
 
 export type ContentOutputs = {
@@ -1154,6 +1167,8 @@ export type ContentOutputs = {
     }>;
 
     circuits: CircuitDef[];
+
+    patternDiagnostics: PatternDiagnostics[];
   };
 };
 
@@ -1563,6 +1578,13 @@ export function generateDungeonContent(
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
     includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
     leverHiddenPocketSize: opts?.leverHiddenPocketSize ?? 3,
+
+    includeLeverOpensDoor: opts?.includeLeverOpensDoor ?? false,
+    leverOpensDoorCount: opts?.leverOpensDoorCount ?? 1,
+    includePlateOpensDoor: opts?.includePlateOpensDoor ?? false,
+    plateOpensDoorCount: opts?.plateOpensDoorCount ?? 1,
+
+    patternMaxAttempts: opts?.patternMaxAttempts ?? 60,
   };
 
   const seedUsed = hashSeedToUint32(options.seed);
@@ -2124,7 +2146,52 @@ export function generateDungeonContent(
     );
   }
 
-  const { didCarve } = runPatternsBestEffort(patterns);
+  // NEW: “N times to max” for the easy non-carving patterns.
+  if (options.includeLeverOpensDoor) {
+    const n = Math.max(0, options.leverOpensDoorCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push(() =>
+        applyLeverOpensDoorPattern({
+          rng: patternRng,
+          dungeon,
+          rooms,
+          entranceRoomId,
+          featureType,
+          featureId,
+          featureParam,
+          doors,
+          levers,
+          circuitsById,
+          allocId: () => clamp255(nextId++),
+          options: { maxAttempts: options.patternMaxAttempts },
+        }),
+      );
+    }
+  }
+
+  if (options.includePlateOpensDoor) {
+    const n = Math.max(0, options.plateOpensDoorCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push(() =>
+        applyPlateOpensDoorPattern({
+          rng: patternRng,
+          dungeon,
+          rooms,
+          featureType,
+          featureId,
+          featureParam,
+          doors,
+          plates,
+          blocks,
+          circuitsById,
+          allocId: () => clamp255(nextId++),
+          options: { maxAttempts: options.patternMaxAttempts },
+        }),
+      );
+    }
+  }
+
+  const { didCarve, diagnostics } = runPatternsBestEffort(patterns);
 
   // Option A: if any patterns carved geometry, distanceToWall is now stale.
   if (didCarve) {
@@ -2281,6 +2348,7 @@ export function generateDungeonContent(
       hazards,
       circuits,
       rooms,
+      patternDiagnostics: diagnostics,
     },
   };
 }
