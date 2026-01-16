@@ -618,43 +618,197 @@ export type PlateOpensDoorPatternOptions = {
   inverted?: boolean;
 };
 
-/**
- * Find candidate corridor floor tiles that could serve as a “door location”:
- * - solid floor
- * - currently no feature
- * - has >= 2 neighboring room ids (connects two rooms)
- */
-function findDoorSiteCandidates(
+export function findNearestRoomId(
+  regionId: Uint8Array,
+  W: number,
+  H: number,
+  p: Point,
+  maxRadius: number,
+): number {
+  const cx = p.x | 0;
+  const cy = p.y | 0;
+
+  if (inBounds(W, H, cx, cy)) {
+    const v = regionId[idxOf(W, cx, cy)] | 0;
+    if (v !== 0) return v;
+  }
+
+  for (let r = 1; r <= maxRadius; r++) {
+    const x0 = cx - r;
+    const x1 = cx + r;
+    const y0 = cy - r;
+    const y1 = cy + r;
+
+    // top + bottom edges
+    for (let x = x0; x <= x1; x++) {
+      for (const y of [y0, y1]) {
+        if (!inBounds(W, H, x, y)) continue;
+        const v = regionId[idxOf(W, x, y)] | 0;
+        if (v !== 0) return v;
+      }
+    }
+    // left + right edges (excluding corners already checked)
+    for (let y = y0 + 1; y <= y1 - 1; y++) {
+      for (const x of [x0, x1]) {
+        if (!inBounds(W, H, x, y)) continue;
+        const v = regionId[idxOf(W, x, y)] | 0;
+        if (v !== 0) return v;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function pathPointsL(p0: Point, p1: Point, p2: Point): Point[] {
+  const pts: Point[] = [];
+
+  // p0 -> p1
+  if (p0.x === p1.x) {
+    const sy = p0.y <= p1.y ? 1 : -1;
+    for (let y = p0.y; y !== p1.y + sy; y += sy) pts.push({ x: p0.x, y });
+  } else {
+    const sx = p0.x <= p1.x ? 1 : -1;
+    for (let x = p0.x; x !== p1.x + sx; x += sx) pts.push({ x, y: p0.y });
+  }
+
+  // p1 -> p2
+  if (p1.x === p2.x) {
+    const sy = p1.y <= p2.y ? 1 : -1;
+    for (let y = p1.y; y !== p2.y + sy; y += sy) pts.push({ x: p2.x, y });
+  } else {
+    const sx = p1.x <= p2.x ? 1 : -1;
+    for (let x = p1.x; x !== p2.x + sx; x += sx) pts.push({ x, y: p2.y });
+  }
+
+  return pts;
+}
+
+function pickDoorTileOnCorridorPath(
   dungeon: BspDungeonOutputs,
   featureType: Uint8Array,
+  a: Point,
+  b: Point,
+  opts: {
+    minDistToWall: number;
+    preferCorridor: boolean;
+    trimEnds: number; // NEW: skip this many points on both ends
+  },
+): Point | null {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  const solid = dungeon.masks.solid;
+  const regionId = dungeon.masks.regionId;
+  const distWall = dungeon.masks.distanceToWall;
+
+  const corner1: Point = { x: a.x, y: b.y };
+  const corner2: Point = { x: b.x, y: a.y };
+
+  const candidates = [pathPointsL(a, corner1, b), pathPointsL(a, corner2, b)];
+
+  function isGood(p: Point) {
+    if (!inBounds(W, H, p.x, p.y)) return false;
+    const i = idxOf(W, p.x, p.y);
+    if (solid[i] !== 0) return false;
+    if ((featureType[i] | 0) !== 0) return false;
+    if ((distWall[i] | 0) < opts.minDistToWall) return false;
+    return true;
+  }
+
+  // Prefer corridor tiles (regionId == 0), then fall back to any good floor tile.
+  if (opts.preferCorridor) {
+    for (const pts of candidates) {
+      for (const p of pts) {
+        if (!isGood(p)) continue;
+        const i = idxOf(W, p.x, p.y);
+        if ((regionId[i] | 0) === 0) return p;
+      }
+    }
+  }
+
+  const trim = Math.max(0, opts.trimEnds | 0);
+
+  function iterTrimmed(pts: Point[]): Point[] {
+    if (pts.length <= trim * 2) return []; // corridor too short after trimming
+    return pts.slice(trim, pts.length - trim);
+  }
+
+  // Prefer corridor tiles (regionId == 0), then fall back to any good floor tile.
+  if (opts.preferCorridor) {
+    for (const raw of candidates) {
+      const pts = iterTrimmed(raw);
+      for (const p of pts) {
+        if (!isGood(p)) continue;
+        const i = idxOf(W, p.x, p.y);
+        if ((regionId[i] | 0) === 0) return p;
+      }
+    }
+  }
+
+  for (const raw of candidates) {
+    const pts = iterTrimmed(raw);
+    for (const p of pts) {
+      if (!isGood(p)) continue;
+      return p;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find candidate corridor floor tiles suitable for placing a door, based on
+ * actual BSP corridor connections rather than "adjacent to 2 rooms" inference.
+ *
+ * We iterate dungeon.meta.corridors, infer the two rooms connected by the corridor
+ * (via nearest roomId near each endpoint), then pick a door tile along the L-shaped
+ * corridor path that is:
+ * - in bounds
+ * - solid floor
+ * - unoccupied (featureType == 0)
+ * - preferably a corridor tile (regionId == 0)
+ * - optionally not hugging walls (distanceToWall >= 1, if available)
+ */
+function findDoorSiteCandidatesFromCorridors(
+  dungeon: BspDungeonOutputs,
+  featureType: Uint8Array,
+  opts?: {
+    maxRadius?: number;
+    minDistToWall?: number; // default 1
+    preferCorridor?: boolean; // default true
+  },
 ): Array<{ x: number; y: number; roomA: number; roomB: number }> {
   const W = dungeon.width;
   const H = dungeon.height;
+
   const solid = dungeon.masks.solid;
   const regionId = dungeon.masks.regionId;
+  const distWall = dungeon.masks.distanceToWall; // present in your BSP outputs
+
+  const maxRadius = Math.max(1, opts?.maxRadius ?? 10);
+  const minDistToWall = Math.max(0, opts?.minDistToWall ?? 1);
+  const preferCorridor = opts?.preferCorridor ?? true;
 
   const out: Array<{ x: number; y: number; roomA: number; roomB: number }> = [];
 
-  for (let y = 1; y < H - 1; y++) {
-    for (let x = 1; x < W - 1; x++) {
-      const i = idxOf(W, x, y);
-      if (solid[i] !== 0) continue;
-      if ((featureType[i] | 0) !== 0) continue;
+  for (const c of dungeon.meta.corridors) {
+    const roomA = findNearestRoomId(regionId, W, H, c.a, maxRadius);
+    const roomB = findNearestRoomId(regionId, W, H, c.b, maxRadius);
+    if (roomA === 0 || roomB === 0) continue;
+    if (roomA === roomB) continue;
 
-      const rooms = new Set<number>();
-      for (const d of cardinalDirs()) {
-        const ni = idxOf(W, x + d.dx, y + d.dy);
-        const rr = regionId[ni] | 0;
-        if (rr !== 0) rooms.add(rr);
-      }
-      if (rooms.size < 2) continue;
+    const tile = pickDoorTileOnCorridorPath(dungeon, featureType, c.a, c.b, {
+      minDistToWall,
+      preferCorridor,
+      trimEnds: 2,
+    });
 
-      const [a, b] = Array.from(rooms).slice(0, 2);
+    if (!tile) continue;
 
-      // Prefer corridor tiles (regionId==0) by duplicating them (light bias).
-      out.push({ x, y, roomA: a, roomB: b });
-      if ((regionId[i] | 0) === 0) out.push({ x, y, roomA: a, roomB: b });
-    }
+    // Light bias: duplicate candidates (makes selection a bit more robust)
+    out.push({ x: tile.x, y: tile.y, roomA, roomB });
+    out.push({ x: tile.x, y: tile.y, roomA, roomB });
   }
 
   return out;
@@ -757,7 +911,11 @@ export function applyLeverOpensDoorPattern(args: {
   } = args;
 
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
-  const candidates = findDoorSiteCandidates(dungeon, ft);
+  const candidates = findDoorSiteCandidatesFromCorridors(dungeon, ft, {
+    minDistToWall: 1,
+    preferCorridor: true,
+  });
+
   if (!candidates.length) {
     return {
       ok: false,
@@ -892,7 +1050,11 @@ export function applyPlateOpensDoorPattern(args: {
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 80);
   const inverted = !!args.options?.inverted;
 
-  const candidates = findDoorSiteCandidates(dungeon, ft);
+  const candidates = findDoorSiteCandidatesFromCorridors(dungeon, ft, {
+    minDistToWall: 1,
+    preferCorridor: true,
+  });
+
   if (!candidates.length) {
     return {
       ok: false,

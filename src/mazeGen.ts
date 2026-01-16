@@ -2270,10 +2270,6 @@ export function generateDungeonContent(
     recomputeDungeonDistanceToWall(dungeon);
   }
 
-  const circuits = Array.from(circuitsById.values()).sort(
-    (a, b) => a.id - b.id,
-  );
-
   // Milestone 3 fixture circuit: plate reveals the hidden passage tile (featureType 9).
   if (fixturePlateCircuitId !== 0 && fixtureHiddenId !== 0) {
     const c = ensureCircuit(clamp255(fixtureHiddenId));
@@ -2291,6 +2287,10 @@ export function generateDungeonContent(
     c.triggers = [{ kind: "LEVER", refId: fixtureHazardLeverId }];
     c.targets = [{ kind: "HAZARD", refId: fixtureHazardId, effect: "TOGGLE" }];
   }
+
+  const circuits = Array.from(circuitsById.values()).sort(
+    (a, b) => a.id - b.id,
+  );
 
   // Textures + debug ImageData
   const featureTypeTex = maskToDataTextureR8(featureType, W, H, "featureType");
