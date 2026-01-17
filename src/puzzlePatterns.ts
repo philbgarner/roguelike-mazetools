@@ -29,6 +29,20 @@ import {
 
 type Point = { x: number; y: number };
 
+export type ReachabilityStats = {
+  start: Point;
+  connector: Point;
+  pocketCenter: Point;
+  goal: Point;
+  reachablePre: boolean;
+  reachablePost: boolean;
+  /**
+   * Shortest-path length (in tiles) from start -> goal after reveal.
+   * Null means unreachable.
+   */
+  shortestPathPost: number | null;
+};
+
 export type PatternRng = {
   nextFloat(): number;
   nextInt(lo: number, hiInclusive: number): number;
@@ -42,8 +56,19 @@ export type LeverHiddenPocketPatternOptions = {
 };
 
 export type PatternResult =
-  | { ok: true; didCarve: boolean; stats?: DoorSiteStatsBundle }
-  | { ok: false; didCarve: false; reason: string; stats?: DoorSiteStatsBundle };
+  | {
+      ok: true;
+      didCarve: boolean;
+      stats?: DoorSiteStatsBundle;
+      reachability?: ReachabilityStats;
+    }
+  | {
+      ok: false;
+      didCarve: false;
+      reason: string;
+      stats?: DoorSiteStatsBundle;
+      reachability?: ReachabilityStats;
+    };
 
 type PatternFn = () => PatternResult;
 
@@ -54,6 +79,7 @@ export type PatternDiagnostics = {
   reason?: string;
   ms: number;
   stats?: DoorSiteStatsBundle;
+  reachability?: ReachabilityStats;
 };
 
 export type PatternEntry =
@@ -107,6 +133,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
         reason: res.reason,
         ms: Math.max(0, t1 - t0),
         stats: res.stats,
+        reachability: res.reachability,
       });
       continue;
     }
@@ -118,6 +145,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
       didCarve: res.didCarve,
       ms: Math.max(0, t1 - t0),
       stats: res.stats,
+      reachability: res.reachability,
     });
   }
 
@@ -335,6 +363,8 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     return { ok: false, didCarve: false, reason: "No pocket goal (preview)." };
   }
 
+  const goalI = idxOf(W, goal.x, goal.y);
+
   const reachPre = computeReachable(
     { width: W, height: H, masks: { solid: solid2 } } as any,
     ft2,
@@ -342,16 +372,9 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     start,
     new Set(),
   );
-  const goalI = idxOf(W, goal.x, goal.y);
-  if (reachPre[goalI]) {
-    return {
-      ok: false,
-      didCarve: false,
-      reason: "Pocket goal already reachable pre-reveal (preview).",
-    };
-  }
 
   const revealed = new Set<number>([secretId]);
+
   const reachPost = computeReachable(
     { width: W, height: H, masks: { solid: solid2 } } as any,
     ft2,
@@ -359,15 +382,44 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     start,
     revealed,
   );
-  if (!reachPost[goalI]) {
+
+  const reachability: ReachabilityStats = {
+    start,
+    connector: { x: picked.cx, y: picked.cy },
+    pocketCenter: { x: picked.px, y: picked.py },
+    goal,
+    reachablePre: !!reachPre[goalI],
+    reachablePost: !!reachPost[goalI],
+    shortestPathPost: reachPost[goalI]
+      ? computeShortestPathDistance(
+          { width: W, height: H, masks: { solid: solid2 } } as any,
+          ft2,
+          fid2,
+          start,
+          revealed,
+          goal,
+        )
+      : null,
+  };
+
+  if (reachability.reachablePre) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Pocket goal already reachable pre-reveal (preview).",
+      reachability,
+    };
+  }
+
+  if (!reachability.reachablePost) {
     return {
       ok: false,
       didCarve: false,
       reason: "Pocket goal not reachable post-reveal (preview).",
+      reachability,
     };
   }
 
-  // --- Commit ---
   // Apply carving to real dungeon solid
   carvePocketAndConnector(
     dungeon,
@@ -409,12 +461,79 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     targets: [{ kind: "HIDDEN", refId: secretId, effect: "REVEAL" }],
   });
 
-  return { ok: true, didCarve: true };
+  return { ok: true, didCarve: true, reachability };
 }
 
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
+
+function computeShortestPathDistance(
+  dungeon: BspDungeonOutputs,
+  featureType: Uint8Array,
+  featureId: Uint8Array,
+  start: Point,
+  hiddenRevealedIds: Set<number>,
+  goal: Point,
+): number | null {
+  const W = dungeon.width;
+  const H = dungeon.height;
+  const solid = dungeon.masks.solid;
+
+  const si = idxOf(W, start.x, start.y);
+  const gi = idxOf(W, goal.x, goal.y);
+  if (solid[si] === 255) return null;
+  if (solid[gi] === 255) return null;
+
+  const dist = new Int32Array(W * H);
+  dist.fill(-1);
+
+  // Queue using typed arrays for deterministic iteration.
+  const qx = new Int16Array(W * H);
+  const qy = new Int16Array(W * H);
+  let qh = 0;
+  let qt = 0;
+
+  dist[si] = 0;
+  qx[qt] = start.x;
+  qy[qt] = start.y;
+  qt++;
+
+  while (qh < qt) {
+    const x = qx[qh];
+    const y = qy[qh];
+    qh++;
+
+    const i = idxOf(W, x, y);
+    const base = dist[i];
+    if (i === gi) return base;
+
+    for (const d of cardinalDirs()) {
+      const nx = x + d.dx;
+      const ny = y + d.dy;
+      if (!inBounds(W, H, nx, ny)) continue;
+      const ni = idxOf(W, nx, ny);
+      if (dist[ni] !== -1) continue;
+      if (solid[ni] === 255) continue;
+
+      const t = featureType[ni] | 0;
+      const id = featureId[ni] | 0;
+
+      // doors: treat closed for validation
+      if (t === 4 && id !== 0) continue;
+
+      // hidden: blocks until revealed
+      if (t === 9 && id !== 0 && !hiddenRevealedIds.has(id)) continue;
+
+      dist[ni] = base + 1;
+      qx[qt] = nx;
+      qy[qt] = ny;
+      qt++;
+    }
+  }
+
+  return null;
+}
 
 function clampOdd(n: number) {
   return n % 2 === 0 ? n + 1 : n;

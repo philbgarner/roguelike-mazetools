@@ -11,7 +11,20 @@ export type PatternDiag = {
   ms?: number;
   stats?: {
     doorSites?: Record<string, number>;
+    reachability?: ReachabilityStats;
   };
+};
+
+export type Point = { x: number; y: number };
+
+export type ReachabilityStats = {
+  start: Point;
+  connector: Point;
+  pocketCenter: Point;
+  goal: Point;
+  reachablePre: boolean;
+  reachablePost: boolean;
+  shortestPathPost: number | null;
 };
 
 export type BatchRunInput = {
@@ -35,6 +48,12 @@ export type BatchPatternSummary = {
   reasons: Record<string, number>;
   topReasons: Array<[string, number]>;
   doorSitesAvg?: Record<string, number>;
+  // Optional: reachability diagnostics (present when any run reported it)
+  reachabilityPreReachable?: number;
+  reachabilityPreReachableRate?: number; // 0..1
+  reachabilityPostUnreachable?: number;
+  reachabilityPostUnreachableRate?: number; // 0..1
+  shortestPathPostAvg?: number;
 };
 
 export type BatchSummary = {
@@ -70,6 +89,11 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       reasons: Record<string, number>;
       doorSitesSum: Record<string, number>;
       doorSitesCount: number;
+      reachabilityCount: number;
+      reachabilityPreReachable: number;
+      reachabilityPostUnreachable: number;
+      shortestPathPostSum: number;
+      shortestPathPostCount: number;
     }
   >();
 
@@ -129,6 +153,18 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
           next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
         }
       }
+      const rs = d.stats?.reachability;
+      if (rs) {
+        next.reachabilityCount += 1;
+        if (rs.reachablePre) next.reachabilityPreReachable += 1;
+        if (!rs.reachablePost) next.reachabilityPostUnreachable += 1;
+
+        const sp = rs.shortestPathPost;
+        if (typeof sp === "number" && Number.isFinite(sp) && sp >= 0) {
+          next.shortestPathPostSum += sp;
+          next.shortestPathPostCount += 1;
+        }
+      }
 
       byPattern.set(name, next);
     }
@@ -153,7 +189,18 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         }
       }
 
-      return {
+      const hasReach = acc.reachabilityCount > 0;
+      const reachabilityPreReachableRate = hasReach
+        ? acc.reachabilityPreReachable / acc.reachabilityCount
+        : 0;
+      const reachabilityPostUnreachableRate = hasReach
+        ? acc.reachabilityPostUnreachable / acc.reachabilityCount
+        : 0;
+      const shortestPathPostAvg = acc.shortestPathPostCount
+        ? acc.shortestPathPostSum / acc.shortestPathPostCount
+        : 0;
+
+      const out: BatchPatternSummary = {
         name,
         runs: acc.runs,
         ok: acc.ok,
@@ -167,6 +214,20 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         topReasons,
         doorSitesAvg,
       };
+
+      if (hasReach) {
+        out.reachabilityPreReachable = acc.reachabilityPreReachable;
+        out.reachabilityPreReachableRate = round2(reachabilityPreReachableRate);
+        out.reachabilityPostUnreachable = acc.reachabilityPostUnreachable;
+        out.reachabilityPostUnreachableRate = round2(
+          reachabilityPostUnreachableRate,
+        );
+        if (acc.shortestPathPostCount > 0) {
+          out.shortestPathPostAvg = round2(shortestPathPostAvg);
+        }
+      }
+
+      return out;
     });
 
   return {
