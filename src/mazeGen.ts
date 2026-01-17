@@ -24,6 +24,7 @@ import {
   PatternResult,
   PatternDiagnostics,
 } from "./puzzlePatterns";
+import { findDoorSiteCandidatesFromCorridors } from "./doorSites";
 
 // -----------------------------
 // Types
@@ -1805,35 +1806,23 @@ export function generateDungeonContent(
     featureType: Uint8Array,
   ): number {
     const W = dungeon.width;
-    const H = dungeon.height;
-    const solid = dungeon.masks.solid;
-    const regionId = dungeon.masks.regionId;
+    const candidates = findDoorSiteCandidatesFromCorridors(
+      dungeon,
+      featureType,
+      {
+        maxRadius: 10,
+        minDistToWall: 1,
+        preferCorridor: true,
+        trimEnds: 2,
+        duplicateBias: 1,
+      },
+    );
 
-    let n = 0;
-    for (let y = 1; y < H - 1; y++) {
-      for (let x = 1; x < W - 1; x++) {
-        const i = keyXY(W, x, y);
-
-        // Must be walkable corridor floor and unoccupied
-        if (solid[i] !== 0) continue;
-        if (featureType[i] !== 0) continue;
-
-        // A “door site” is a corridor tile adjacent to >=2 distinct rooms
-        const roomIds = new Set<number>();
-        const nbs = [
-          keyXY(W, x + 1, y),
-          keyXY(W, x - 1, y),
-          keyXY(W, x, y + 1),
-          keyXY(W, x, y - 1),
-        ];
-        for (const ni of nbs) {
-          const rid = regionId[ni] | 0;
-          if (rid !== 0) roomIds.add(rid);
-        }
-        if (roomIds.size >= 2) n++;
-      }
+    const seen = new Set<number>();
+    for (const c of candidates) {
+      seen.add(keyXY(W, c.x, c.y));
     }
-    return n;
+    return seen.size;
   }
 
   const gateMinDepth = options.gateMinDepth;
