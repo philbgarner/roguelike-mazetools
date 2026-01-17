@@ -1,3 +1,4 @@
+============================================================
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
 This project is an experimental procedural dungeon generator built in TypeScript with a small React preview/debug app.
@@ -17,15 +18,10 @@ Entry: generateBspDungeon() in mazeGen.ts
 Responsibilities:
 
 BSP partitioning of the grid
-
 Room carving
-
 Corridor carving
-
 Wall preservation (optional outer wall retention)
-
 Distance-to-wall calculation
-
 Region (room) identification
 
 This layer is pure geometry and has no gameplay knowledge.
@@ -36,11 +32,8 @@ Entry: generateDungeonContent() in mazeGen.ts
 Responsibilities:
 
 Place gameplay content on top of BSP geometry
-
 Encode progression, gating, and optional content
-
 Guarantee solvability by construction (incrementally)
-
 Remain deterministic from seed/options
 
 This layer expresses gameplay intent but does not execute puzzle logic.
@@ -50,23 +43,16 @@ RUNTIME / PUZZLE LOGIC (Milestone 3)
 Core files:
 
 dungeonState.ts
-
 evaluateCircuits.ts
-
 walkability.ts (shared rules)
-
 App.tsx (debug / preview harness)
 
 Responsibilities:
 
 Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets, circuits)
-
 Derive sensor state (plates) from world occupancy (blocks now, player later)
-
 Evaluate circuits based on runtime state
-
 Apply effects (open doors, toggle hazards, reveal passages)
-
 Drive interactive puzzle simulation (debug harness first, player later)
 
 ============================================================
@@ -76,31 +62,22 @@ All masks are Uint8Array with size width * height, indexed as:
 index = y * width + x
 
 Mask: solid
-
 255 = wall
-
 0 = floor
 
 Mask: regionId
-
 0 = not a room (corridors, carved pockets, etc.)
-
 1..255 = room id
 
 Mask: distanceToWall
-
 Manhattan distance to nearest wall
-
 0 means wall tile
 
 Structural metadata:
 
 meta.rooms : Rect[]
-
 meta.corridors : { a, b, bends? }[]
-
 meta.bspDepth : number
-
 meta.seedUsed : number
 
 IMPORTANT POLICY (DECIDED — OPTION A)
@@ -170,37 +147,25 @@ Masks are for rendering and inspection only.
 Key fields:
 
 meta.seedUsed
-
 meta.roomGraph
-
 meta.roomDistance
-
 meta.entranceRoomId
-
 meta.farthestRoomId
-
 meta.mainPathRoomIds
 
 Placement records:
 
 meta.monsters
-
 meta.chests
-
 meta.secrets
-
 meta.doors
-
 meta.keys
-
 meta.levers
 
 Milestone 3 additions:
 
 meta.plates
-
 meta.blocks
-
 meta.hazards
 
 Circuits:
@@ -221,17 +186,11 @@ DungeonRuntimeState is mutable and independent from generation.
 Runtime buckets:
 
 doors[id] : { kind, isOpen, forcedOpen? }
-
 keys[id] : { collected }
-
 levers[id] : { toggled }
-
 plates[id] : { pressed } (DERIVED)
-
 blocks[id] : { x, y, weightClass }
-
 hazards[id] : { hazardType, enabled }
-
 secrets[id] : { revealed }
 
 circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
@@ -239,17 +198,15 @@ circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
 Initialization flow:
 
 initDungeonRuntimeState()
-
 derivePlatesFromBlocks()
-
 evaluateCircuits()
 
+============================================================
 WALKABILITY RULES (CENTRALIZED)
 
 Implemented in src/walkability.ts and reused by:
 
 runtime movement / pushing
-
 generation-time validation in patterns
 
 Rules:
@@ -259,9 +216,7 @@ Walls: never walkable
 Doors: walkable only if open
 
 Hidden passages:
-
 unrevealed → blocked
-
 revealed → walkable
 
 Hazards: do not block movement (consequence-only, for now)
@@ -274,11 +229,8 @@ evaluateCircuits(state, meta.circuits) is pure.
 Flow:
 
 Determine trigger satisfaction (KEY / LEVER / PLATE)
-
 Apply logic (OR / AND / THRESHOLD)
-
 Apply behavior (MOMENTARY / TOGGLE / PERSISTENT)
-
 Apply targets (DOOR / HAZARD / HIDDEN)
 
 ============================================================
@@ -292,32 +244,19 @@ Shared helpers: doorSites.ts
 Key properties:
 
 Patterns are best-effort; failure never aborts generation
-
 Patterns may mutate geometry (explicitly reported)
 
-Each pattern returns PatternResult { ok, didCarve }
+Each pattern returns PatternResult { ok, didCarve, stats? }
 
 runPatternsBestEffort() aggregates diagnostics
 
 Implemented patterns:
 
 Lever reveals hidden pocket (carving + validated)
-
 Lever opens door (non-carving)
-
 Plate opens door (non-carving)
 
 IMPORTANT FIX (COMPLETED)
-
-ROOT CAUSE (FORMER):
-
-Non-carving door patterns (Lever→Door, Plate→Door) attempted to find door sites by
-scanning for a single tile adjacent to two different rooms (via neighboring regionIds).
-
-With current geometry (rooms labeled, corridors regionId==0), this condition was often
-never met, even though corridors clearly connected rooms.
-
-FIX (IMPLEMENTED):
 
 Door sites are defined per corridor, not per tile
 
@@ -333,81 +272,136 @@ First and last N tiles of each corridor path are trimmed to avoid room threshold
 
 Shared logic lives in src/doorSites.ts and is reused everywhere
 
-This aligns:
+============================================================
+NEW: DOOR-SITE DIAGNOSTICS (IMPLEMENTED)
 
-pattern logic
+Door-site selection is now instrumented with detailed statistics.
 
-gate budgeting
+New API in src/doorSites.ts:
 
-player expectations of corridor chokepoints
+findDoorSiteCandidatesAndStatsFromCorridors()
+
+Collected stats include:
+
+Total corridors evaluated
+Corridors with valid room pairs
+Corridors rejected (no rooms / same room)
+Points considered along corridor paths
+Points rejected by wall / occupancy / distance-to-wall filters
+Corridors with any valid candidate
+Corridors yielding a final tile
+Unique tiles produced
+Prefer-corridor hit counts
+
+These stats are:
+
+Attached to pattern diagnostics (Lever→Door, Plate→Door)
+Aggregated per pattern in batch runs
+Used to distinguish structural scarcity from over-filtering/trimming
 
 ============================================================
-GENERATOR WIRING (CURRENT STATE)
+NEW: BATCH VALIDATION HARNESS (IMPLEMENTED)
 
-generateDungeonContent():
+Goal: verify pattern success rates across many seeds and quantify failure modes.
 
-Structural dungeon generated
+Implemented:
 
-Content metadata initialized
+App.tsx includes a “Batch Runner” panel in the debug UI
 
-Milestone 2 gates placed using corridor-based door-site budgeting
+Runs N generations across sequential seeds (seedPrefix + index)
 
-Puzzle patterns collected and executed
+Collects per-run structural counts (rooms/corridors) and meta.patternDiagnostics
 
-If any pattern carved geometry:
+Aggregates results into a readable summary table in-app
 
-recomputeDungeonDistanceToWall() (Option A)
+Supports Copy JSON / exporting aggregated summaries
 
-Pattern diagnostics stored in meta.patternDiagnostics
+New utility module: src/batchStats.ts
 
-meta.circuits built after all ensureCircuit() calls
+Framework-agnostic aggregator (no React)
+
+Outputs:
+
+Per-pattern summaries (runs, success rate, carved rate, avg ms)
+Top failure reasons
+Average door-site statistics per pattern
+Overall averages (roomsAvg, corridorsAvg)
+
+This establishes a quantitative baseline for tuning patterns.
 
 ============================================================
 CURRENT MILESTONE STATUS
 
 Milestone 3 — Stateful Puzzle Execution
 
-Status: FUNCTIONALLY COMPLETE AND LOGICALLY CONSISTENT
+Status: FUNCTIONALLY COMPLETE AND DIAGNOSTICALLY INSTRUMENTED
 
 Geometry mutation ordering bugs fixed
 
 Corridor-based door-site definition implemented and unified
 
-Pattern diagnostics now reflect real structural constraints
+Door-site selection is fully instrumented and measurable
+
+Pattern diagnostics reflect real structural and filtering constraints
 
 Runtime circuits, triggers, and targets behave deterministically
+
+Batch validation harness quantifies reliability across seeds
+
+Initial batch results show dominant failure modes are logical (reachability),
+not structural scarcity.
 
 ============================================================
 NEXT WORK (PLANNED)
 
-Immediate (polish & validation):
+Immediate (diagnostic depth & tuning):
 
-Verify pattern success rates across many seeds (batch runs)
+Augment hidden-pocket pattern failures with reachability stats:
 
-Tune corridor trimming strategy (fixed N vs dynamic “skip until regionId==0”)
+Record start / connector / goal coordinates
+Record whether goal is reachable pre-reveal
+Optionally record shortest-path length (scalar only)
 
-Improve pattern diagnostics with candidate counts (pre/post filtering)
+Attach reachability stats to PatternResult diagnostics
+Aggregate reachability failure rates in batch summaries
+
+This answers:
+“Are hidden pockets failing because they are not actually isolated?”
+
+Pattern tuning (best-effort, non-aborting):
+
+When pocket goal is reachable pre-reveal:
+
+Try alternate connector tiles before failing
+Bias pocket depth farther from connector
+Reject pockets too close to existing corridors
+Optionally downgrade to non-carving / cosmetic secret variant
+
+Door-site tuning (now measurable):
+
+Use door-site stats to tune trimming strategy:
+
+Compare fixed trimEnds vs dynamic trimming
+(dynamic: skip until regionId==0, then small buffer)
+
+Use batch runner to A/B success rates and candidate collapse
 
 Short-term (gameplay depth):
 
-Add reachability validation for non-carving patterns (optional)
+Add optional reachability validation for non-carving patterns
+(best-effort, never abort)
 
-Introduce additional non-carving patterns:
+Add additional non-carving patterns:
 
-hazard gates
-
-multi-trigger doors
-
-timed / resettable circuits
+Hazard gates
+Multi-trigger doors
+Timed / resettable circuits
 
 Medium-term (player integration):
 
 Integrate player movement into runtime state
-
 Allow player-triggered plates (in addition to blocks)
-
 Add runtime hazard consequences (damage, status effects)
-
 Expand circuit logic (thresholds, multi-target behaviors)
 
 ============================================================
@@ -423,4 +417,6 @@ Runtime executes logic
 
 Geometry mutation is explicit and repaired
 
-All systems are deterministic, inspectable, and debuggable
+Diagnostics quantify reliability and guide tuning
+
+Batch harness turns design intuition into measurable data

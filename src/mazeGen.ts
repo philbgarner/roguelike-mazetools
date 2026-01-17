@@ -24,7 +24,10 @@ import {
   PatternResult,
   PatternDiagnostics,
 } from "./puzzlePatterns";
-import { findDoorSiteCandidatesFromCorridors } from "./doorSites";
+import {
+  findDoorSiteCandidatesFromCorridors,
+  findDoorSiteCandidatesAndStatsFromCorridors,
+} from "./doorSites";
 
 // -----------------------------
 // Types
@@ -1806,7 +1809,7 @@ export function generateDungeonContent(
     featureType: Uint8Array,
   ): number {
     const W = dungeon.width;
-    const candidates = findDoorSiteCandidatesFromCorridors(
+    const { candidates } = findDoorSiteCandidatesAndStatsFromCorridors(
       dungeon,
       featureType,
       {
@@ -1817,7 +1820,6 @@ export function generateDungeonContent(
         duplicateBias: 1,
       },
     );
-
     const seen = new Set<number>();
     for (const c of candidates) {
       seen.add(keyXY(W, c.x, c.y));

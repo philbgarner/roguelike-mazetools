@@ -44,6 +44,7 @@ public/
   vite.svg
 src/
   App.tsx
+  batchStats.ts
   CONTEXT.md
   doorSites.ts
   dungeonState.ts
@@ -62,6 +63,164 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="src/batchStats.ts">
+// src/batchStats.ts
+//
+// Batch runner aggregation helpers.
+// This file is intentionally framework-agnostic (no React) so it can be reused
+// by UI panels, scripts, or future CLI harnesses.
+
+export type PatternDiag = {
+  name: string;
+  ok: boolean;
+  didCarve: boolean;
+  reason?: string;
+  ms?: number;
+};
+
+export type BatchRunInput = {
+  seed: string;
+  seedUsed: number;
+  rooms: number;
+  corridors: number;
+  patternDiagnostics: PatternDiag[];
+};
+
+export type BatchPatternSummary = {
+  name: string;
+  runs: number;
+  ok: number;
+  fail: number;
+  okRate: number; // 0..1
+  carved: number;
+  carvedRate: number; // 0..1
+  msTotal: number;
+  msAvg: number;
+  reasons: Record<string, number>;
+  topReasons: Array<[string, number]>;
+};
+
+export type BatchSummary = {
+  runs: number;
+  roomsAvg: number;
+  corridorsAvg: number;
+  patterns: BatchPatternSummary[];
+};
+
+function safeNum(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
+  const totalRuns = runs.length;
+
+  let roomsSum = 0;
+  let corridorsSum = 0;
+
+  const byPattern = new Map<
+    string,
+    {
+      runs: number;
+      ok: number;
+      fail: number;
+      carved: number;
+      msTotal: number;
+      reasons: Record<string, number>;
+    }
+  >();
+
+  for (const r of runs) {
+    roomsSum += safeNum(r.rooms);
+    corridorsSum += safeNum(r.corridors);
+
+    for (const d of r.patternDiagnostics ?? []) {
+      const name = String(d.name ?? "unknown");
+      const acc =
+        byPattern.get(name) ??
+        ({
+          runs: 0,
+          ok: 0,
+          fail: 0,
+          carved: 0,
+          msTotal: 0,
+          reasons: {},
+        } as const);
+
+      // Clone-on-write only when new
+      let next = acc as any;
+      if (!byPattern.has(name)) {
+        next = {
+          runs: 0,
+          ok: 0,
+          fail: 0,
+          carved: 0,
+          msTotal: 0,
+          reasons: {},
+        };
+      }
+
+      next.runs += 1;
+      if (d.ok) next.ok += 1;
+      else next.fail += 1;
+
+      if (d.didCarve) next.carved += 1;
+
+      const ms = safeNum(d.ms);
+      if (ms > 0) next.msTotal += ms;
+
+      if (!d.ok) {
+        const reason = String(d.reason ?? "unknown");
+        next.reasons[reason] = (next.reasons[reason] ?? 0) + 1;
+      }
+
+      byPattern.set(name, next);
+    }
+  }
+
+  const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, acc]) => {
+      const okRate = acc.runs ? acc.ok / acc.runs : 0;
+      const carvedRate = acc.runs ? acc.carved / acc.runs : 0;
+      const msAvg = acc.runs ? acc.msTotal / acc.runs : 0;
+
+      const topReasons = Object.entries(acc.reasons)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+      return {
+        name,
+        runs: acc.runs,
+        ok: acc.ok,
+        fail: acc.fail,
+        okRate: round2(okRate),
+        carved: acc.carved,
+        carvedRate: round2(carvedRate),
+        msTotal: Math.round(acc.msTotal),
+        msAvg: round2(msAvg),
+        reasons: acc.reasons,
+        topReasons,
+      };
+    });
+
+  return {
+    runs: totalRuns,
+    roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
+    corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
+    patterns,
+  };
+}
+</file>
+
+<file path="public/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
 
 <file path="src/doorSites.ts">
 // src/doorSites.ts
@@ -250,10 +409,6 @@ export function findDoorSiteCandidatesFromCorridors(
 
   return out;
 }
-</file>
-
-<file path="public/vite.svg">
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
 </file>
 
 <file path="src/main.tsx">
@@ -2611,6 +2766,12 @@ import {
 
 import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
+import {
+  aggregateBatchRuns,
+  type BatchRunInput,
+  type BatchSummary,
+} from "./batchStats";
+
 import "./styles.css";
 
 type Layer =
@@ -2988,6 +3149,16 @@ const App: React.FC = () => {
     {},
   );
   const [showStateOverlay, setShowStateOverlay] = useState(true);
+
+  // --- Batch runner ---
+  const [batchRuns, setBatchRuns] = useState(300);
+  const [batchSeedPrefix, setBatchSeedPrefix] = useState("batch-seed");
+  const [batchStartIndex, setBatchStartIndex] = useState(0);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
+  const [batchSummary, setBatchSummary] = useState<BatchSummary | null>(null);
+  const [batchJson, setBatchJson] = useState<string>("");
+  const [batchError, setBatchError] = useState<string>("");
 
   const [imageDataByLayer, setImageDataByLayer] = useState<{
     solid: ImageData | null;
@@ -3598,6 +3769,90 @@ const App: React.FC = () => {
     }
   }, [circuitDebug]);
 
+  const runBatch = React.useCallback(async () => {
+    if (batchRunning) return;
+
+    const total = Math.max(0, Math.min(20000, batchRuns | 0));
+    if (!Number.isFinite(total) || total <= 0) {
+      setBatchError("Batch runs must be > 0");
+      return;
+    }
+
+    setBatchError("");
+    setBatchRunning(true);
+    setBatchProgress({ done: 0, total });
+    setBatchSummary(null);
+    setBatchJson("");
+
+    const runs: BatchRunInput[] = [];
+
+    // Yield so the UI paints the running state before we start heavy work.
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+    const updateEvery = Math.max(1, Math.floor(total / 50)); // ~50 updates max
+
+    try {
+      for (let i = 0; i < total; i++) {
+        const seedStr = `${batchSeedPrefix}-${batchStartIndex + i}`;
+        const out = generateBspDungeon({ ...opts, seed: seedStr });
+        const content = generateDungeonContent(out, {
+          includeLeverHiddenPocket,
+          leverHiddenPocketSize,
+          leverDoorCount: 1,
+          includeLeverOpensDoor,
+          leverOpensDoorCount,
+          includePlateOpensDoor,
+          plateOpensDoorCount,
+          patternMaxAttempts,
+        });
+
+        runs.push({
+          seed: seedStr,
+          seedUsed: out.meta.seedUsed,
+          rooms: out.meta.rooms.length,
+          corridors: out.meta.corridors.length,
+          patternDiagnostics: content.meta.patternDiagnostics ?? [],
+        });
+
+        if (i % updateEvery === 0 || i === total - 1) {
+          setBatchProgress({ done: i + 1, total });
+          // Yield occasionally to keep the UI responsive.
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        }
+      }
+
+      const summary = aggregateBatchRuns(runs);
+      setBatchSummary(summary);
+      setBatchJson(JSON.stringify(summary, null, 2));
+    } catch (err: any) {
+      setBatchError(err?.message ? String(err.message) : String(err));
+    } finally {
+      setBatchRunning(false);
+    }
+  }, [
+    batchRunning,
+    batchRuns,
+    batchSeedPrefix,
+    batchStartIndex,
+    opts,
+    includeLeverHiddenPocket,
+    leverHiddenPocketSize,
+    includeLeverOpensDoor,
+    leverOpensDoorCount,
+    includePlateOpensDoor,
+    plateOpensDoorCount,
+    patternMaxAttempts,
+  ]);
+
+  const copyBatchJson = React.useCallback(async () => {
+    try {
+      if (!batchJson) return;
+      await navigator.clipboard.writeText(batchJson);
+    } catch {
+      // ignore
+    }
+  }, [batchJson]);
+
   return (
     <div className="maze-app">
       {/* Left: Controls */}
@@ -3918,6 +4173,117 @@ const App: React.FC = () => {
                 }
               />
             </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary className="maze-summary">Batch Runner</summary>
+
+          <div className="maze-grid">
+            <label className="maze-field">
+              <span>Runs (N)</span>
+              <input
+                type="number"
+                min={1}
+                max={20000}
+                value={batchRuns}
+                disabled={batchRunning}
+                onChange={(e) =>
+                  setBatchRuns(clampInt(Number(e.target.value || 0), 1, 20000))
+                }
+              />
+            </label>
+
+            <label className="maze-field maze-field--seed">
+              <span>Seed prefix</span>
+              <input
+                value={batchSeedPrefix}
+                disabled={batchRunning}
+                onChange={(e) => setBatchSeedPrefix(e.target.value)}
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Start index</span>
+              <input
+                type="number"
+                value={batchStartIndex}
+                disabled={batchRunning}
+                onChange={(e) =>
+                  setBatchStartIndex(Number(e.target.value || 0))
+                }
+              />
+            </label>
+
+            <div className="maze-controls-row" style={{ gridColumn: "1 / -1" }}>
+              <button
+                className="maze-btn"
+                onClick={runBatch}
+                disabled={batchRunning}
+              >
+                {batchRunning
+                  ? `Running… (${batchProgress.done}/${batchProgress.total})`
+                  : "Run batch"}
+              </button>
+
+              {batchJson && (
+                <button className="maze-btn" onClick={copyBatchJson}>
+                  Copy JSON
+                </button>
+              )}
+            </div>
+
+            {batchError && (
+              <div style={{ gridColumn: "1 / -1", color: "#b00020" }}>
+                <b>Batch error</b>: {batchError}
+              </div>
+            )}
+
+            {batchSummary && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div style={{ marginTop: 8 }}>
+                  <b>Runs</b>: {batchSummary.runs} | <b>Rooms avg</b>:{" "}
+                  {batchSummary.roomsAvg.toFixed(1)} | <b>Corridors avg</b>:{" "}
+                  {batchSummary.corridorsAvg.toFixed(1)}
+                </div>
+
+                <div style={{ marginTop: 8 }}>
+                  <b>Pattern success</b>
+                </div>
+
+                <div className="maze-stats" style={{ marginTop: 6 }}>
+                  <div className="maze-stats-grid">
+                    {batchSummary.patterns.map((p) => (
+                      <div key={p.name} style={{ gridColumn: "1 / -1" }}>
+                        <b>{p.name}</b>: {p.ok}/{p.runs} OK (
+                        {Math.round(p.okRate * 100)}%)
+                        {p.fail > 0 && p.topReasons.length > 0 && (
+                          <span>
+                            {" "}
+                            — top fails:{" "}
+                            {p.topReasons
+                              .slice(0, 3)
+                              .map(([r, c]) => `${r} (${c})`)
+                              .join(", ")}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {batchJson && (
+                  <div style={{ marginTop: 10 }}>
+                    <textarea
+                      readOnly
+                      value={batchJson}
+                      rows={10}
+                      style={{ width: "100%", fontFamily: "monospace" }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </details>
 
@@ -4255,6 +4621,7 @@ export default App;
 </file>
 
 <file path="src/CONTEXT.md">
+============================================================
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
 This project is an experimental procedural dungeon generator built in TypeScript with a small React preview/debug app.
@@ -4273,46 +4640,58 @@ Entry: generateBspDungeon() in mazeGen.ts
 
 Responsibilities:
 
-- BSP partitioning of the grid
-- Room carving
-- Corridor carving
-- Wall preservation (optional outer wall retention)
-- Distance-to-wall calculation
-- Region (room) identification
+BSP partitioning of the grid
+
+Room carving
+
+Corridor carving
+
+Wall preservation (optional outer wall retention)
+
+Distance-to-wall calculation
+
+Region (room) identification
 
 This layer is pure geometry and has no gameplay knowledge.
-
-------------------------------------------------------------
 
 CONTENT GENERATION (Milestones 1–2 + Milestone 3 wiring)
 Entry: generateDungeonContent() in mazeGen.ts
 
 Responsibilities:
 
-- Place gameplay content on top of BSP geometry
-- Encode progression, gating, and optional content
-- Guarantee solvability by construction (incrementally)
-- Remain deterministic from seed/options
+Place gameplay content on top of BSP geometry
+
+Encode progression, gating, and optional content
+
+Guarantee solvability by construction (incrementally)
+
+Remain deterministic from seed/options
 
 This layer expresses gameplay intent but does not execute puzzle logic.
 
-------------------------------------------------------------
-
 RUNTIME / PUZZLE LOGIC (Milestone 3)
+
 Core files:
 
-- dungeonState.ts
-- evaluateCircuits.ts
-- walkability.ts (shared rules)
-- App.tsx (debug / preview harness)
+dungeonState.ts
+
+evaluateCircuits.ts
+
+walkability.ts (shared rules)
+
+App.tsx (debug / preview harness)
 
 Responsibilities:
 
-- Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets, circuits)
-- Derive sensor state (plates) from world occupancy (blocks now, player later)
-- Evaluate circuits based on runtime state
-- Apply effects (open doors, toggle hazards, reveal passages)
-- Drive interactive puzzle simulation (debug harness first, player later)
+Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets, circuits)
+
+Derive sensor state (plates) from world occupancy (blocks now, player later)
+
+Evaluate circuits based on runtime state
+
+Apply effects (open doors, toggle hazards, reveal passages)
+
+Drive interactive puzzle simulation (debug harness first, player later)
 
 ============================================================
 STRUCTURAL MASKS (BSP OUTPUT)
@@ -4321,25 +4700,33 @@ All masks are Uint8Array with size width * height, indexed as:
 index = y * width + x
 
 Mask: solid
-- 255 = wall
-- 0   = floor
+
+255 = wall
+
+0 = floor
 
 Mask: regionId
-- 0       = not a room (corridors, carved pockets, etc.)
-- 1..255  = room id
+
+0 = not a room (corridors, carved pockets, etc.)
+
+1..255 = room id
 
 Mask: distanceToWall
-- Manhattan distance to nearest wall
-- 0 means wall tile
+
+Manhattan distance to nearest wall
+
+0 means wall tile
 
 Structural metadata:
 
-- meta.rooms : Rect[]
-- meta.corridors : { a, b, bends? }[]
-- meta.bspDepth : number
-- meta.seedUsed : number
+meta.rooms : Rect[]
 
-------------------------------------------------------------
+meta.corridors : { a, b, bends? }[]
+
+meta.bspDepth : number
+
+meta.seedUsed : number
+
 IMPORTANT POLICY (DECIDED — OPTION A)
 
 Some puzzle patterns may carve additional geometry by mutating dungeon.masks.solid.
@@ -4347,9 +4734,10 @@ When this happens, distanceToWall becomes stale.
 
 Chosen solution (Option A):
 
-- distanceToWall is recomputed after all puzzle patterns that may carve geometry
-- Content placement that relies on distanceToWall must occur before patterns,
-  or after recomputation
+distanceToWall is recomputed after all puzzle patterns that may carve geometry
+
+Content placement that relies on distanceToWall must occur before patterns,
+or after recomputation
 
 This policy is fully implemented in generator wiring.
 
@@ -4359,29 +4747,33 @@ CONTENT MASKS (GAMEPLAY LAYERS)
 Mask: featureType (Uint8)
 Encodes what exists at a tile.
 
-0  = none
-1  = monster spawn
-2  = loot chest
-3  = secret door (legacy wall-based)
-4  = door
-5  = key
-6  = lever
-7  = pressure plate        (Milestone 3)
-8  = push block            (Milestone 3)
-9  = hidden passage        (Milestone 3)
-10 = hazard                (Milestone 3)
+0 = none
+1 = monster spawn
+2 = loot chest
+3 = secret door (legacy wall-based)
+4 = door
+5 = key
+6 = lever
+7 = pressure plate (Milestone 3)
+8 = push block (Milestone 3)
+9 = hidden passage (Milestone 3)
+10 = hazard (Milestone 3)
 
 Mask: featureId (Uint8)
-- Instance / circuit identifier (1..255)
-- All tiles sharing a featureId belong to the same logical entity or circuit
+
+Instance / circuit identifier (1..255)
+
+All tiles sharing a featureId belong to the same logical entity or circuit
 
 IMPORTANT INVARIANTS:
 
-- featureType 9 (hidden passage) MUST have non-zero featureId
-- meta.secrets[] is the authoritative source for hidden passages
+featureType 9 (hidden passage) MUST have non-zero featureId
+
+meta.secrets[] is the authoritative source for hidden passages
 
 Mask: featureParam (Uint8)
-- Subtype or behavior flags (pattern-specific / debug-specific)
+
+Subtype or behavior flags (pattern-specific / debug-specific)
 
 Mask: danger (Uint8)
 Mask: lootTier (Uint8)
@@ -4401,35 +4793,48 @@ Masks are for rendering and inspection only.
 
 Key fields:
 
-- meta.seedUsed
-- meta.roomGraph
-- meta.roomDistance
-- meta.entranceRoomId
-- meta.farthestRoomId
-- meta.mainPathRoomIds
+meta.seedUsed
+
+meta.roomGraph
+
+meta.roomDistance
+
+meta.entranceRoomId
+
+meta.farthestRoomId
+
+meta.mainPathRoomIds
 
 Placement records:
 
-- meta.monsters
-- meta.chests
-- meta.secrets
-- meta.doors
-- meta.keys
-- meta.levers
+meta.monsters
+
+meta.chests
+
+meta.secrets
+
+meta.doors
+
+meta.keys
+
+meta.levers
 
 Milestone 3 additions:
 
-- meta.plates
-- meta.blocks
-- meta.hazards
+meta.plates
+
+meta.blocks
+
+meta.hazards
 
 Circuits:
+
 meta.circuits : {
-  id,
-  logic,
-  behavior,
-  triggers,
-  targets
+id,
+logic,
+behavior,
+triggers,
+targets
 }[]
 
 ============================================================
@@ -4439,37 +4844,51 @@ DungeonRuntimeState is mutable and independent from generation.
 
 Runtime buckets:
 
-- doors[id]   : { kind, isOpen, forcedOpen? }
-- keys[id]    : { collected }
-- levers[id]  : { toggled }
-- plates[id]  : { pressed }   (DERIVED)
-- blocks[id]  : { x, y, weightClass }
-- hazards[id] : { hazardType, enabled }
-- secrets[id] : { revealed }
-- circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
+doors[id] : { kind, isOpen, forcedOpen? }
+
+keys[id] : { collected }
+
+levers[id] : { toggled }
+
+plates[id] : { pressed } (DERIVED)
+
+blocks[id] : { x, y, weightClass }
+
+hazards[id] : { hazardType, enabled }
+
+secrets[id] : { revealed }
+
+circuits[id]: { active, lastSatisfied, lastSatisfiedCount }
 
 Initialization flow:
 
-- initDungeonRuntimeState()
-- derivePlatesFromBlocks()
-- evaluateCircuits()
+initDungeonRuntimeState()
 
-------------------------------------------------------------
+derivePlatesFromBlocks()
+
+evaluateCircuits()
+
 WALKABILITY RULES (CENTRALIZED)
 
 Implemented in src/walkability.ts and reused by:
 
-- runtime movement / pushing
-- generation-time validation in patterns
+runtime movement / pushing
+
+generation-time validation in patterns
 
 Rules:
 
-- Walls: never walkable
-- Doors: walkable only if open
-- Hidden passages:
-  - unrevealed → blocked
-  - revealed   → walkable
-- Hazards: do not block movement (consequence-only, for now)
+Walls: never walkable
+
+Doors: walkable only if open
+
+Hidden passages:
+
+unrevealed → blocked
+
+revealed → walkable
+
+Hazards: do not block movement (consequence-only, for now)
 
 ============================================================
 CIRCUIT EVALUATION
@@ -4478,10 +4897,13 @@ evaluateCircuits(state, meta.circuits) is pure.
 
 Flow:
 
-- Determine trigger satisfaction (KEY / LEVER / PLATE)
-- Apply logic (OR / AND / THRESHOLD)
-- Apply behavior (MOMENTARY / TOGGLE / PERSISTENT)
-- Apply targets (DOOR / HAZARD / HIDDEN)
+Determine trigger satisfaction (KEY / LEVER / PLATE)
+
+Apply logic (OR / AND / THRESHOLD)
+
+Apply behavior (MOMENTARY / TOGGLE / PERSISTENT)
+
+Apply targets (DOOR / HAZARD / HIDDEN)
 
 ============================================================
 PUZZLE PATTERNS (MILESTONE 3)
@@ -4489,64 +4911,90 @@ PUZZLE PATTERNS (MILESTONE 3)
 Puzzle patterns are generation-time content macros.
 
 Module: puzzlePatterns.ts
+Shared helpers: doorSites.ts
 
 Key properties:
 
-- Patterns are best-effort; failure never aborts generation
-- Patterns may mutate geometry (explicitly reported)
-- Each pattern returns PatternResult { ok, didCarve }
-- runPatternsBestEffort() aggregates diagnostics
+Patterns are best-effort; failure never aborts generation
+
+Patterns may mutate geometry (explicitly reported)
+
+Each pattern returns PatternResult { ok, didCarve }
+
+runPatternsBestEffort() aggregates diagnostics
 
 Implemented patterns:
 
-- Lever reveals hidden pocket (carving + validated)
-- Lever opens door (non-carving)
-- Plate opens door (non-carving)
+Lever reveals hidden pocket (carving + validated)
 
-------------------------------------------------------------
-IMPORTANT FIX (THIS SESSION)
+Lever opens door (non-carving)
 
-ROOT CAUSE IDENTIFIED:
-Non-carving door patterns (Lever→Door, Plate→Door) attempted to find
-door sites by scanning for a *single tile adjacent to two different rooms*
-(via neighboring regionIds).
+Plate opens door (non-carving)
 
-With current geometry (rooms labeled, corridors regionId==0),
-this condition is often never met — even though corridors clearly connect rooms.
+IMPORTANT FIX (COMPLETED)
 
-SYMPTOM:
-Pattern diagnostics reported:
-“Lever pattern: No valid door sites found.”
-even with many corridors available.
+Door sites are defined per corridor, not per tile
 
-FIX DIRECTION (APPROVED):
+All door placement (patterns + budgeting) iterates dungeon.meta.corridors
 
-- Door sites are now defined **per corridor**, not per tile.
-- Patterns iterate dungeon.meta.corridors.
-- Each corridor is mapped to (roomA, roomB) using nearest-room lookup.
-- A door tile is chosen *along the corridor path*, not inferred from local adjacency.
-- Door placement prefers corridor tiles (regionId==0), but can fall back to floor.
-- First and last N tiles of each corridor path are ignored to avoid placing doors
-  inside rooms or immediately at room thresholds.
+Each corridor is mapped to (roomA, roomB) via nearest-room lookup
 
-This aligns:
-- pattern logic
-- gate budgeting
-- player expectations of “corridor chokepoints”
+A door tile is selected along the corridor path
+
+Placement prefers corridor tiles (regionId==0) but may fall back to floor
+
+First and last N tiles of each corridor path are trimmed to avoid room thresholds
+
+Shared logic lives in src/doorSites.ts and is reused everywhere
 
 ============================================================
 GENERATOR WIRING (CURRENT STATE)
 
 generateDungeonContent():
 
-- Structural dungeon already generated
-- Content metadata initialized
-- Milestone 2 gates placed with door-site budgeting
-- Puzzle patterns collected and executed
-- If any pattern carved geometry:
-  - recomputeDungeonDistanceToWall() (Option A)
-- Pattern diagnostics stored in meta.patternDiagnostics
-- meta.circuits built *after* all ensureCircuit() calls
+Structural dungeon generated
+
+Content metadata initialized
+
+Milestone 2 gates placed using corridor-based door-site budgeting
+
+Puzzle patterns collected and executed
+
+If any pattern carved geometry:
+
+recomputeDungeonDistanceToWall() (Option A)
+
+Pattern diagnostics stored in meta.patternDiagnostics
+
+meta.circuits built after all ensureCircuit() calls
+
+============================================================
+NEW: BATCH VALIDATION HARNESS (IMPLEMENTED)
+
+Goal: verify pattern success rates across many seeds and quantify failure modes.
+
+Implemented:
+
+App.tsx now includes a “Batch Runner” panel in the debug UI.
+
+Runs N generations across sequential seeds (seedPrefix + index)
+
+Collects per-run structural counts (rooms/corridors) and meta.patternDiagnostics
+
+Aggregates results into a readable summary table in-app
+
+Supports Copy JSON / exporting the aggregated summary for quick iteration
+
+New utility module: src/batchStats.ts
+
+Framework-agnostic aggregator (no React)
+
+Inputs: list of batch runs, each containing rooms/corridors + pattern diagnostics
+
+Outputs: per-pattern summaries (success rate, carved rate, avg ms, top failure reasons)
+and overall averages (roomsAvg, corridorsAvg)
+
+This establishes a baseline for tuning trimming strategy and improving diagnostics.
 
 ============================================================
 CURRENT MILESTONE STATUS
@@ -4555,43 +5003,83 @@ Milestone 3 — Stateful Puzzle Execution
 
 Status: FUNCTIONALLY COMPLETE AND LOGICALLY CONSISTENT
 
-- Two previously identified ordering bugs are fixed
-- Door-site definition bug identified and corrected
-- Pattern diagnostics now meaningfully reflect real placement constraints
+Geometry mutation ordering bugs fixed
+
+Corridor-based door-site definition implemented and unified
+
+Pattern diagnostics reflect real structural constraints
+
+Runtime circuits, triggers, and targets behave deterministically
+
+Batch validation harness exists to quantify success rates across seeds
 
 ============================================================
 NEXT WORK (PLANNED)
 
-Immediate (stabilization):
+Immediate (polish & validation):
 
-- Apply corridor-based door-site logic to:
-  - Lever opens door pattern
-  - Plate opens door pattern
-  - Door-site budgeting counter
-- Tune corridor trimming value (first/last N tiles) if needed
-- Verify pattern success rate across multiple seeds
+Use the Batch Runner to establish baseline health
 
-Short-term:
+Run 200–1000 seeds
 
-- Add dynamic trimming (“skip until regionId==0”) as an alternative to fixed N
-- Add optional reachability validation for non-carving patterns
-- Improve pattern diagnostics with candidate counts (pre/post filtering)
+Capture JSON summary snapshots for comparison
 
-Medium-term:
+Track per-pattern success rate + dominant failure reasons
 
-- Introduce additional non-carving patterns (hazard gates, timed doors)
-- Add player-triggered plates to runtime movement
-- Expand circuit logic (thresholds, multi-targets)
+Improve diagnostics with corridor/door-site candidate counts (next concrete feature)
+
+Add door-site stats output to doorSites.ts (corridors eligible, corridors yielding a tile, candidate counts)
+
+Thread these stats into pattern diagnostics (especially Lever→Door and Plate→Door)
+
+Extend batch aggregation to summarize these stats per pattern (so failures can be attributed)
+
+This answers: “Are patterns failing because we have no eligible corridors, or because trimming/filtering removes all candidates?”
+
+Tune corridor trimming strategy using A/B measurement
+
+Current: fixed trimEnds = N
+
+Add alternative: dynamic trimming (“skip until regionId==0”, then optional small buffer)
+
+Use Batch Runner to compare success rates + door-site stats between strategies
+
+Short-term (gameplay depth):
+
+Add optional reachability validation for non-carving patterns (best-effort, never abort)
+
+Add additional non-carving patterns:
+
+hazard gates
+
+multi-trigger doors
+
+timed / resettable circuits
+
+Medium-term (player integration):
+
+Integrate player movement into runtime state
+
+Allow player-triggered plates (in addition to blocks)
+
+Add runtime hazard consequences (damage, status effects)
+
+Expand circuit logic (thresholds, multi-target behaviors)
 
 ============================================================
 MENTAL MODEL SUMMARY
 
-- BSP creates space
-- Content generation expresses intent
-- Patterns add structured puzzles
-- Runtime executes logic
-- Geometry mutation is explicit and repaired
-- All systems are deterministic, inspectable, and debuggable
+BSP creates space
+
+Content generation expresses intent
+
+Patterns add structured puzzles
+
+Runtime executes logic
+
+Geometry mutation is explicit and repaired
+
+Batch harness quantifies reliability and guides tuning
 </file>
 
 <file path="src/mazeGen.ts">

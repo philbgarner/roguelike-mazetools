@@ -21,7 +21,11 @@
 // runtime.secrets[secretId].revealed.
 
 import type { BspDungeonOutputs, ContentOutputs, CircuitDef } from "./mazeGen";
-import { findDoorSiteCandidatesFromCorridors } from "./doorSites";
+import {
+  findDoorSiteCandidatesFromCorridors,
+  findDoorSiteCandidatesAndStatsFromCorridors,
+  type DoorSiteStatsBundle,
+} from "./doorSites";
 
 type Point = { x: number; y: number };
 
@@ -38,8 +42,8 @@ export type LeverHiddenPocketPatternOptions = {
 };
 
 export type PatternResult =
-  | { ok: true; didCarve: boolean }
-  | { ok: false; didCarve: false; reason: string };
+  | { ok: true; didCarve: boolean; stats?: DoorSiteStatsBundle }
+  | { ok: false; didCarve: false; reason: string; stats?: DoorSiteStatsBundle };
 
 type PatternFn = () => PatternResult;
 
@@ -49,6 +53,7 @@ export type PatternDiagnostics = {
   didCarve: boolean;
   reason?: string;
   ms: number;
+  stats?: DoorSiteStatsBundle;
 };
 
 export type PatternEntry =
@@ -101,6 +106,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
         didCarve: false,
         reason: res.reason,
         ms: Math.max(0, t1 - t0),
+        stats: res.stats,
       });
       continue;
     }
@@ -111,6 +117,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
       ok: true,
       didCarve: res.didCarve,
       ms: Math.max(0, t1 - t0),
+      stats: res.stats,
     });
   }
 
@@ -782,16 +789,21 @@ export function applyLeverOpensDoorPattern(args: {
   } = args;
 
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
-  const candidates = findDoorSiteCandidatesFromCorridors(dungeon, ft, {
-    minDistToWall: 1,
-    preferCorridor: true,
-  });
+  const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
+    dungeon,
+    ft,
+    {
+      minDistToWall: 1,
+      preferCorridor: true,
+    },
+  );
 
   if (!candidates.length) {
     return {
       ok: false,
       didCarve: false,
       reason: "Lever pattern: No valid door sites found.",
+      stats: { doorSites: stats },
     };
   }
 
@@ -921,16 +933,21 @@ export function applyPlateOpensDoorPattern(args: {
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 80);
   const inverted = !!args.options?.inverted;
 
-  const candidates = findDoorSiteCandidatesFromCorridors(dungeon, ft, {
-    minDistToWall: 1,
-    preferCorridor: true,
-  });
+  const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
+    dungeon,
+    ft,
+    {
+      minDistToWall: 1,
+      preferCorridor: true,
+    },
+  );
 
   if (!candidates.length) {
     return {
       ok: false,
       didCarve: false,
       reason: "Plate Pattern: No valid door sites found.",
+      stats: { doorSites: stats },
     };
   }
 

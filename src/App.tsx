@@ -17,6 +17,12 @@ import {
 
 import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
+import {
+  aggregateBatchRuns,
+  type BatchRunInput,
+  type BatchSummary,
+} from "./batchStats";
+
 import "./styles.css";
 
 type Layer =
@@ -394,6 +400,16 @@ const App: React.FC = () => {
     {},
   );
   const [showStateOverlay, setShowStateOverlay] = useState(true);
+
+  // --- Batch runner ---
+  const [batchRuns, setBatchRuns] = useState(300);
+  const [batchSeedPrefix, setBatchSeedPrefix] = useState("batch-seed");
+  const [batchStartIndex, setBatchStartIndex] = useState(0);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
+  const [batchSummary, setBatchSummary] = useState<BatchSummary | null>(null);
+  const [batchJson, setBatchJson] = useState<string>("");
+  const [batchError, setBatchError] = useState<string>("");
 
   const [imageDataByLayer, setImageDataByLayer] = useState<{
     solid: ImageData | null;
@@ -1004,6 +1020,90 @@ const App: React.FC = () => {
     }
   }, [circuitDebug]);
 
+  const runBatch = React.useCallback(async () => {
+    if (batchRunning) return;
+
+    const total = Math.max(0, Math.min(20000, batchRuns | 0));
+    if (!Number.isFinite(total) || total <= 0) {
+      setBatchError("Batch runs must be > 0");
+      return;
+    }
+
+    setBatchError("");
+    setBatchRunning(true);
+    setBatchProgress({ done: 0, total });
+    setBatchSummary(null);
+    setBatchJson("");
+
+    const runs: BatchRunInput[] = [];
+
+    // Yield so the UI paints the running state before we start heavy work.
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+    const updateEvery = Math.max(1, Math.floor(total / 50)); // ~50 updates max
+
+    try {
+      for (let i = 0; i < total; i++) {
+        const seedStr = `${batchSeedPrefix}-${batchStartIndex + i}`;
+        const out = generateBspDungeon({ ...opts, seed: seedStr });
+        const content = generateDungeonContent(out, {
+          includeLeverHiddenPocket,
+          leverHiddenPocketSize,
+          leverDoorCount: 1,
+          includeLeverOpensDoor,
+          leverOpensDoorCount,
+          includePlateOpensDoor,
+          plateOpensDoorCount,
+          patternMaxAttempts,
+        });
+
+        runs.push({
+          seed: seedStr,
+          seedUsed: out.meta.seedUsed,
+          rooms: out.meta.rooms.length,
+          corridors: out.meta.corridors.length,
+          patternDiagnostics: content.meta.patternDiagnostics ?? [],
+        });
+
+        if (i % updateEvery === 0 || i === total - 1) {
+          setBatchProgress({ done: i + 1, total });
+          // Yield occasionally to keep the UI responsive.
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        }
+      }
+
+      const summary = aggregateBatchRuns(runs);
+      setBatchSummary(summary);
+      setBatchJson(JSON.stringify(summary, null, 2));
+    } catch (err: any) {
+      setBatchError(err?.message ? String(err.message) : String(err));
+    } finally {
+      setBatchRunning(false);
+    }
+  }, [
+    batchRunning,
+    batchRuns,
+    batchSeedPrefix,
+    batchStartIndex,
+    opts,
+    includeLeverHiddenPocket,
+    leverHiddenPocketSize,
+    includeLeverOpensDoor,
+    leverOpensDoorCount,
+    includePlateOpensDoor,
+    plateOpensDoorCount,
+    patternMaxAttempts,
+  ]);
+
+  const copyBatchJson = React.useCallback(async () => {
+    try {
+      if (!batchJson) return;
+      await navigator.clipboard.writeText(batchJson);
+    } catch {
+      // ignore
+    }
+  }, [batchJson]);
+
   return (
     <div className="maze-app">
       {/* Left: Controls */}
@@ -1324,6 +1424,140 @@ const App: React.FC = () => {
                 }
               />
             </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary className="maze-summary">Batch Runner</summary>
+
+          <div className="maze-grid">
+            <label className="maze-field">
+              <span>Runs (N)</span>
+              <input
+                type="number"
+                min={1}
+                max={20000}
+                value={batchRuns}
+                disabled={batchRunning}
+                onChange={(e) =>
+                  setBatchRuns(clampInt(Number(e.target.value || 0), 1, 20000))
+                }
+              />
+            </label>
+
+            <label className="maze-field maze-field--seed">
+              <span>Seed prefix</span>
+              <input
+                value={batchSeedPrefix}
+                disabled={batchRunning}
+                onChange={(e) => setBatchSeedPrefix(e.target.value)}
+              />
+            </label>
+
+            <label className="maze-field">
+              <span>Start index</span>
+              <input
+                type="number"
+                value={batchStartIndex}
+                disabled={batchRunning}
+                onChange={(e) =>
+                  setBatchStartIndex(Number(e.target.value || 0))
+                }
+              />
+            </label>
+
+            <div className="maze-controls-row" style={{ gridColumn: "1 / -1" }}>
+              <button
+                className="maze-btn"
+                onClick={runBatch}
+                disabled={batchRunning}
+              >
+                {batchRunning
+                  ? `Running… (${batchProgress.done}/${batchProgress.total})`
+                  : "Run batch"}
+              </button>
+
+              {batchJson && (
+                <button className="maze-btn" onClick={copyBatchJson}>
+                  Copy JSON
+                </button>
+              )}
+            </div>
+
+            {batchError && (
+              <div style={{ gridColumn: "1 / -1", color: "#b00020" }}>
+                <b>Batch error</b>: {batchError}
+              </div>
+            )}
+
+            {batchSummary && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div style={{ marginTop: 8 }}>
+                  <b>Runs</b>: {batchSummary.runs} | <b>Rooms avg</b>:{" "}
+                  {batchSummary.roomsAvg.toFixed(1)} | <b>Corridors avg</b>:{" "}
+                  {batchSummary.corridorsAvg.toFixed(1)}
+                </div>
+
+                <div style={{ marginTop: 8 }}>
+                  <b>Pattern success</b>
+                </div>
+
+                <div className="maze-stats" style={{ marginTop: 6 }}>
+                  <div className="maze-stats-grid">
+                    {batchSummary.patterns.map((p) => (
+                      <div key={p.name} style={{ gridColumn: "1 / -1" }}>
+                        <b>{p.name}</b>: {p.ok}/{p.runs} OK (
+                        {Math.round(p.okRate * 100)}%)
+                        {p.fail > 0 && p.topReasons.length > 0 && (
+                          <span>
+                            {" "}
+                            — top fails:{" "}
+                            {p.topReasons
+                              .slice(0, 3)
+                              .map(([r, c]) => `${r} (${c})`)
+                              .join(", ")}
+                          </span>
+                        )}
+                        {(p as any).doorSitesAvg && (
+                          <div
+                            style={{
+                              marginTop: 2,
+                              fontFamily: "monospace",
+                              fontSize: 12,
+                            }}
+                          >
+                            doorSitesAvg: tilesUnique=
+                            {(p as any).doorSitesAvg.tilesUnique ?? "?"},{" "}
+                            corridorsTotal=
+                            {(p as any).doorSitesAvg.corridorsTotal ?? "?"},{" "}
+                            validPairs=
+                            {(p as any).doorSitesAvg
+                              .corridorsWithValidRoomPair ?? "?"}
+                            , anyCandidate=
+                            {(p as any).doorSitesAvg
+                              .corridorsWithAnyCandidate ?? "?"}
+                            , yielded=
+                            {(p as any).doorSitesAvg.corridorsYieldedTile ??
+                              "?"}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {batchJson && (
+                  <div style={{ marginTop: 10 }}>
+                    <textarea
+                      readOnly
+                      value={batchJson}
+                      rows={10}
+                      style={{ width: "100%", fontFamily: "monospace" }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </details>
 
