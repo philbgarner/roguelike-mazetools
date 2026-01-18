@@ -3,16 +3,18 @@
 // Batch runner aggregation helpers.
 // This file is intentionally framework-agnostic (no React) so it can be reused
 // by UI panels, scripts, or future CLI harnesses.
+//
+
+import type { DoorSiteStatsBundle } from "./doorSites";
+
 export type PatternDiag = {
   name: string;
   ok: boolean;
   didCarve: boolean;
   reason?: string;
   ms?: number;
-  stats?: {
-    doorSites?: Record<string, number>;
-    reachability?: ReachabilityStats;
-  };
+  stats?: DoorSiteStatsBundle;
+  reachability?: ReachabilityStats;
 };
 
 export type Point = { x: number; y: number };
@@ -78,6 +80,24 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
   let roomsSum = 0;
   let corridorsSum = 0;
 
+  function makeAcc() {
+    return {
+      runs: 0,
+      ok: 0,
+      fail: 0,
+      carved: 0,
+      msTotal: 0,
+      reasons: {} as Record<string, number>,
+      doorSitesSum: {} as Record<string, number>,
+      doorSitesCount: 0,
+      reachabilityCount: 0,
+      reachabilityPreReachable: 0,
+      reachabilityPostUnreachable: 0,
+      shortestPathPostSum: 0,
+      shortestPathPostCount: 0,
+    };
+  }
+
   const byPattern = new Map<
     string,
     {
@@ -103,32 +123,10 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
 
     for (const d of r.patternDiagnostics ?? []) {
       const name = String(d.name ?? "unknown");
-      const acc =
-        byPattern.get(name) ??
-        ({
-          runs: 0,
-          ok: 0,
-          fail: 0,
-          carved: 0,
-          msTotal: 0,
-          reasons: {},
-          doorSitesSum: {},
-          doorSitesCount: 0,
-        } as const);
-
-      // Clone-on-write only when new
-      let next = acc as any;
-      if (!byPattern.has(name)) {
-        next = {
-          runs: 0,
-          ok: 0,
-          fail: 0,
-          carved: 0,
-          msTotal: 0,
-          reasons: {},
-          doorSitesSum: {},
-          doorSitesCount: 0,
-        };
+      let next = byPattern.get(name);
+      if (!next) {
+        next = makeAcc();
+        byPattern.set(name, next);
       }
 
       next.runs += 1;
@@ -153,7 +151,7 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
           next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
         }
       }
-      const rs = d.stats?.reachability;
+      const rs = d.reachability;
       if (rs) {
         next.reachabilityCount += 1;
         if (rs.reachablePre) next.reachabilityPreReachable += 1;
