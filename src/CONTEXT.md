@@ -4,7 +4,8 @@ PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
 CONTEXT VERSION: 2026-01-17
 LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
-CURRENT FOCUS: **Planning Milestone 4 — Puzzle Composition & Progression Grammar**
+CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
+CURRENT PHASE: **Phase 1 — Circuit Chaining (in progress)**
 
 SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
@@ -36,7 +37,7 @@ The system is intentionally layered so that:
 
 are cleanly separated.
 
-This separation is foundational, enforced in code, and now **proven viable**
+This separation is foundational, enforced in code, and **proven viable**
 through diagnostics and batch validation.
 
 ============================================================
@@ -46,7 +47,7 @@ The system has three conceptual layers:
 
 ---
 
-## STRUCTURAL DUNGEON GENERATION (BSP)
+STRUCTURAL DUNGEON GENERATION (BSP)
 
 Entry: `generateBspDungeon()` in `mazeGen.ts`
 
@@ -70,7 +71,7 @@ This layer is **pure geometry** and contains no gameplay knowledge.
 
 ---
 
-## CONTENT GENERATION (Milestones 1–3)
+CONTENT GENERATION (Milestones 1–3)
 
 Entry: `generateDungeonContent()` in `mazeGen.ts`
 
@@ -86,7 +87,7 @@ This layer **does not execute puzzle logic**.
 
 ---
 
-## RUNTIME / PUZZLE LOGIC (Milestone 3)
+RUNTIME / PUZZLE LOGIC (Milestone 3+)
 
 Core files:
 
@@ -108,7 +109,7 @@ IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
 
 ---
 
-## STRUCTURAL MASKS (BSP OUTPUT)
+STRUCTURAL MASKS (BSP OUTPUT)
 
 All masks are `Uint8Array` of size `width * height`:
 
@@ -140,7 +141,7 @@ Structural metadata:
 
 ---
 
-## GEOMETRY MUTATION POLICY (OPTION A — DECIDED)
+GEOMETRY MUTATION POLICY (OPTION A — DECIDED)
 
 Some puzzle patterns may carve additional geometry by mutating
 `dungeon.masks.solid`. When this happens, `distanceToWall` becomes stale.
@@ -160,7 +161,7 @@ This policy is implemented, verified, and stable.
 
 ---
 
-## CONTENT MASKS (GAMEPLAY LAYERS)
+CONTENT MASKS (GAMEPLAY LAYERS)
 
 featureType values:
 
@@ -188,7 +189,7 @@ INVARIANTS:
 
 ---
 
-## CONTENT METADATA (AUTHORITATIVE)
+CONTENT METADATA (AUTHORITATIVE)
 
 Key fields:
 
@@ -207,31 +208,21 @@ Placement records:
 * doors
 * keys
 * levers
-
-Milestone 3 additions:
-
 * plates
 * blocks
 * hazards
-* hidden
 
 Circuits:
 
-meta.circuits : {
-id,
-logic,
-behavior,
-triggers,
-targets
-}[]
+* meta.circuits : CircuitDef[]
 
 Pattern diagnostics:
 
-meta.patternDiagnostics : PatternDiagnostics[]
+* meta.patternDiagnostics : PatternDiagnostics[]
 
 ---
 
-## PUZZLE PATTERNS (MILESTONE 3)
+PUZZLE PATTERNS (MILESTONE 3)
 
 Puzzle patterns are **generation-time content macros**.
 
@@ -266,7 +257,7 @@ Implemented patterns:
 
 ---
 
-## REACHABILITY DIAGNOSTICS
+REACHABILITY DIAGNOSTICS
 
 Hidden-pocket pattern computes:
 
@@ -282,7 +273,7 @@ Diagnostics distinguish:
 
 ---
 
-## BATCH VALIDATION HARNESS
+BATCH VALIDATION HARNESS
 
 Implemented and verified.
 
@@ -296,77 +287,117 @@ Capabilities:
 * JSON export
 
 ============================================================
-CURRENT MILESTONE STATUS
+MILESTONE STATUS
 
-Milestone 3 — **COMPLETE, STABLE, AND MEASURABLE**
+---
+
+Milestone 3 — COMPLETE, STABLE, AND MEASURABLE
 
 * Runtime puzzle execution works end-to-end
 * Geometry mutation is safe and repaired
 * Pattern reliability is quantifiable
 * No silent failures remain
 
-============================================================
-PLANNED / OPEN DESIGN SPACE
-
 ---
 
-## Milestone 4 — Puzzle Composition & Progression Grammar
+Milestone 4 — Puzzle Composition & Progression Grammar
 
 Milestone 4 shifts focus from *mechanical correctness* to
 **player-facing meaning, escalation, and composition**.
 
-This milestone primarily **composes existing systems** rather than
-introducing many new mechanics.
+This milestone primarily **composes existing systems**
+rather than introducing new mechanics.
 
-Core goals:
-
-1. Multi-step / chained puzzles
-
-   * Circuits depending on other circuits
-   * Explicit puzzle phases
-
-2. Difficulty ramping
-
-   * Enforce minimum complexity
-   * Use reachability metrics to reject trivial layouts
-   * Increase puzzle depth with dungeon progression
-
-3. Player-centric semantics
-
-   * Consequence before cause
-   * Visual/spatial telegraphing
-
-4. Dungeon-scale composition
-
-   * Puzzle roles (main-path gate, optional reward, shortcut)
-   * Puzzle budgeting
-
-Recommended Milestone 4 entry point:
-
-**Circuit Chaining v1**
-
-* Allow circuits to depend on other circuits
-  OR
-* Allow circuits to enable/disable other triggers
-
-This enables:
-
-* Multi-step puzzles
-* Escalation without new entities
-* Full diagnostic and batch validation
+============================================================
+MILESTONE 4 — PHASE BREAKDOWN
 
 ---
 
-## KNOWN CONSTRAINTS
+Phase 1 — Circuit Chaining (FOUNDATIONAL)
+
+STATUS: **CORE IMPLEMENTATION COMPLETE**
+
+Completed this session:
+
+* Added `SIGNAL` as a first-class circuit trigger kind
+* Extended trigger schema with:
+
+  * `signal?: { name?: "ACTIVE" | "SATISFIED" | "SATISFIED_RISE" }`
+* Updated `evaluateCircuits.ts` to:
+
+  * Topologically sort circuits by SIGNAL dependencies
+  * Support same-tick chained evaluation
+  * Remain deterministic and best-effort (cycle-safe)
+* Corrected runtime target application to respect:
+
+  * DoorKind / HazardType initialization contracts
+* Preserved full backward compatibility with Milestone 3 circuits
+
+Result:
+
+* Multi-step puzzles are now expressible **without new entities**
+* Circuit graphs form a compositional language
+* Runtime remains deterministic, debuggable, and measurable
+
+---
+
+Phase 1 — Remaining (IMMEDIATE NEXT STEP)
+
+* Add **chaining-aware diagnostics** to circuit evaluation:
+
+  * SIGNAL dependency count per circuit
+  * Topological depth (longest prerequisite chain)
+  * Cycle participation flags
+  * Evaluation order index
+* Expose these diagnostics through:
+
+  * Debug UI
+  * Batch harness summaries
+
+This step has **no gameplay impact** and maximizes design leverage.
+
+---
+
+Phase 2 — Puzzle Roles & Difficulty Ramping (PLANNED)
+
+Goals:
+
+* Assign semantic roles to composed puzzles:
+
+  * MAIN_PATH_GATE
+  * OPTIONAL_REWARD
+  * SHORTCUT
+  * FORESHADOW
+* Use diagnostics to enforce:
+
+  * Minimum puzzle depth after progression thresholds
+  * Rejection of trivial main-path gates
+  * Controlled escalation over dungeon length
+
+---
+
+Phase 3 — Composition Patterns (PLANNED)
+
+* Introduce multi-circuit pattern macros:
+
+  * Lever → Gate → Plate → Reward
+  * Consequence-before-cause setups
+* Pattern selection informed by:
+
+  * Room distance
+  * Main-path vs optional classification
+  * Puzzle budget constraints
+
+============================================================
+KNOWN CONSTRAINTS
 
 * Generation must remain deterministic
 * Patterns must never abort generation
 * Runtime logic must not mutate geometry
 * Diagnostics must remain authoritative
 
----
-
-## NON-GOALS (FUTURE MILESTONES)
+============================================================
+NON-GOALS (FUTURE MILESTONES)
 
 * Combat-triggered puzzles
 * Time-pressure mechanics
@@ -379,10 +410,11 @@ MENTAL MODEL SUMMARY
 * BSP creates space
 * Content generation expresses intent
 * Patterns add structured puzzles
-* Runtime executes logic
-* Geometry mutation is explicit and repaired
+* Circuits encode logic
+* Signals compose logic
+* Runtime executes state
 * Diagnostics quantify reliability
-* Batch harness turns design intuition into data
-* Milestone 4 composes these systems into intentional progression
+* Batch harness converts intuition into data
+* Milestone 4 turns correctness into progression grammar
 
 ---

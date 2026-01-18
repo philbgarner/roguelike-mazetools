@@ -961,9 +961,22 @@ export type CircuitTriggerKind =
   | "KEY"
   | "PLATE"
   | "COMBAT_CLEAR"
-  | "INTERACT";
+  | "INTERACT"
+  | "SIGNAL";
+
+export type CircuitSignalName = "ACTIVE" | "SATISFIED" | "SATISFIED_RISE";
 
 export type CircuitTargetKind = "DOOR" | "HAZARD" | "HIDDEN";
+
+export type CircuitSignalRef = {
+  /**
+   * Which upstream circuit output to read.
+   * - ACTIVE: upstream circuit's evaluated active state (post-behavior)
+   * - SATISFIED: upstream circuit's raw satisfiable (pre-behavior) result
+   * - SATISFIED_RISE: rising edge of SATISFIED (pulse)
+   */
+  name?: CircuitSignalName; // default "ACTIVE"
+};
 
 export type CircuitTargetEffect =
   | "OPEN"
@@ -974,13 +987,16 @@ export type CircuitTargetEffect =
   | "ENABLE"
   | "DISABLE";
 
+// Extend trigger ref (backwards-compatible)
 export type CircuitTriggerRef = {
   kind: CircuitTriggerKind;
-  /**
-   * For Milestone 2 items (key/lever/door), this is the circuit id (featureId).
-   * For future puzzle entities, we can evolve this to be a true unique id.
-   */
   refId: number;
+
+  /**
+   * Only used when kind === "SIGNAL".
+   * If omitted, defaults to { name: "ACTIVE" }.
+   */
+  signal?: CircuitSignalRef;
 };
 
 export type CircuitTargetRef = {
@@ -988,13 +1004,18 @@ export type CircuitTargetRef = {
   refId: number; // see note above
   effect: CircuitTargetEffect;
 };
+export type CircuitOutputDef = {
+  name: string; // e.g. "SOLVED"
+  mode?: "LEVEL" | "PULSE"; // default "LEVEL"
+};
 
 export type CircuitDef = {
-  id: number; // featureId (1..255)
+  id: number;
   logic: { type: CircuitLogicType; threshold?: number };
   behavior: { mode: CircuitBehaviorMode; invert?: boolean };
   triggers: CircuitTriggerRef[];
   targets: CircuitTargetRef[];
+  outputs?: CircuitOutputDef[]; // (optional)
 };
 
 export type ContentOptions = {
