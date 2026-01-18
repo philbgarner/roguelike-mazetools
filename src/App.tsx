@@ -364,7 +364,8 @@ const App: React.FC = () => {
   const [includeLeverHiddenPocket, setIncludeLeverHiddenPocket] =
     useState(false);
   const [leverHiddenPocketSize, setLeverHiddenPocketSize] = useState(5); // odd >= 3
-
+  const [includeLeverOpensDoor, setIncludeLeverOpensDoor] = useState(false);
+  const [leverOpensDoorCount, setLeverOpensDoorCount] = useState(2);
   const [includePlateOpensDoor, setIncludePlateOpensDoor] = useState(false);
   const [plateOpensDoorCount, setPlateOpensDoorCount] = useState(2);
 
@@ -561,6 +562,11 @@ const App: React.FC = () => {
     const content = generateDungeonContent(out, {
       includeLeverHiddenPocket,
       leverHiddenPocketSize,
+      includeLeverOpensDoor,
+      leverOpensDoorCount,
+      includePlateOpensDoor,
+      plateOpensDoorCount,
+      patternMaxAttempts,
       leverDoorCount: 1,
     });
 
@@ -1037,6 +1043,11 @@ const App: React.FC = () => {
         const content = generateDungeonContent(out, {
           includeLeverHiddenPocket,
           leverHiddenPocketSize,
+          includeLeverOpensDoor,
+          leverOpensDoorCount,
+          includePlateOpensDoor,
+          plateOpensDoorCount,
+          patternMaxAttempts,
           leverDoorCount: 1,
         });
 
@@ -1320,6 +1331,33 @@ const App: React.FC = () => {
                 onChange={(e) => setIncludeLeverHiddenPocket(e.target.checked)}
               />
               <span>Include Lever → Hidden Pocket</span>
+            </label>
+
+            <div style={{ height: 8 }} />
+
+            <label className="maze-checkbox">
+              <input
+                type="checkbox"
+                checked={includeLeverOpensDoor}
+                onChange={(e) => setIncludeLeverOpensDoor(e.target.checked)}
+              />
+              <span>Include Lever → Door (TOGGLE)</span>
+            </label>
+
+            <label className="maze-field">
+              <span>Lever→Door count (N)</span>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={leverOpensDoorCount}
+                disabled={!includeLeverOpensDoor}
+                onChange={(e) =>
+                  setLeverOpensDoorCount(
+                    clampInt(Number(e.target.value || 0), 0, 999),
+                  )
+                }
+              />
             </label>
 
             <div style={{ height: 8 }} />

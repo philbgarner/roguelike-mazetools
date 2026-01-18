@@ -20,8 +20,9 @@ import {
   applyLeverRevealsHiddenPocketPattern,
   applyPlateOpensDoorPattern,
   runPatternsBestEffort,
+  applyLeverOpensDoorPattern,
 } from "./puzzlePatterns";
-import type { PatternResult, PatternDiagnostics } from "./puzzlePatterns";
+import type { PatternDiagnostics, PatternEntry } from "./puzzlePatterns";
 
 import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
 
@@ -1023,6 +1024,8 @@ export type ContentOptions = {
   leverHiddenPocketSize?: number; // odd >= 3 (default 3)
   includeAsciiOverlay?: boolean;
 
+  includeLeverOpensDoor?: boolean;
+  leverOpensDoorCount?: number; // “N times”
   includePlateOpensDoor?: boolean;
   plateOpensDoorCount?: number; // “N times”
 
@@ -1569,6 +1572,9 @@ export function generateDungeonContent(
     includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
     leverHiddenPocketSize: opts?.leverHiddenPocketSize ?? 3,
 
+    includeLeverOpensDoor: opts?.includeLeverOpensDoor ?? false,
+    leverOpensDoorCount: opts?.leverOpensDoorCount ?? 1,
+
     includePlateOpensDoor: opts?.includePlateOpensDoor ?? false,
     plateOpensDoorCount: opts?.plateOpensDoorCount ?? 1,
 
@@ -1845,9 +1851,9 @@ export function generateDungeonContent(
   }
 
   // Budget Milestone 2 gates so optional patterns still have corridor door sites.
-  const reservedForPatterns = options.includePlateOpensDoor
-    ? options.plateOpensDoorCount | 0
-    : 0;
+  const reservedForPatterns =
+    (options.includePlateOpensDoor ? options.plateOpensDoorCount | 0 : 0) +
+    (options.includeLeverOpensDoor ? options.leverOpensDoorCount | 0 : 0);
 
   if (reservedForPatterns > 0) {
     const totalDoorSites = countCorridorDoorSites(dungeon, featureType);
@@ -2173,49 +2179,77 @@ export function generateDungeonContent(
     },
   };
 
-  const patterns: Array<() => PatternResult> = [];
+  const patterns: PatternEntry[] = [];
 
   if (options.includeLeverHiddenPocket) {
-    patterns.push(() =>
-      applyLeverRevealsHiddenPocketPattern({
-        rng: patternRng,
-        dungeon,
-        entranceRoomId,
-        rooms,
-        featureType,
-        featureId,
-        featureParam,
-        secrets,
-        levers,
-        circuitsById,
-        allocId: () => clamp255(nextId++),
-        options: {
-          pocketSize: options.leverHiddenPocketSize,
-          maxAttempts: options.patternMaxAttempts, // NEW
-        },
-      }),
-    );
+    patterns.push({
+      name: "leverHiddenPocket",
+      run: () =>
+        applyLeverRevealsHiddenPocketPattern({
+          rng: patternRng,
+          dungeon,
+          entranceRoomId,
+          rooms,
+          featureType,
+          featureId,
+          featureParam,
+          secrets,
+          levers,
+          circuitsById,
+          allocId: () => clamp255(nextId++),
+          options: {
+            pocketSize: options.leverHiddenPocketSize,
+            maxAttempts: options.patternMaxAttempts, // NEW
+          },
+        }),
+    });
+  }
+
+  if (options.includeLeverOpensDoor) {
+    const n = Math.max(0, options.leverOpensDoorCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push({
+        name: "leverOpensDoor",
+        run: () =>
+          applyLeverOpensDoorPattern({
+            rng: patternRng,
+            dungeon,
+            rooms,
+            featureType,
+            featureId,
+            featureParam,
+            doors,
+            entranceRoomId,
+            levers,
+            circuitsById,
+            allocId: () => clamp255(nextId++),
+            options: { maxAttempts: options.patternMaxAttempts },
+          }),
+      });
+    }
   }
 
   if (options.includePlateOpensDoor) {
     const n = Math.max(0, options.plateOpensDoorCount | 0);
     for (let k = 0; k < n; k++) {
-      patterns.push(() =>
-        applyPlateOpensDoorPattern({
-          rng: patternRng,
-          dungeon,
-          rooms,
-          featureType,
-          featureId,
-          featureParam,
-          doors,
-          plates,
-          blocks,
-          circuitsById,
-          allocId: () => clamp255(nextId++),
-          options: { maxAttempts: options.patternMaxAttempts },
-        }),
-      );
+      patterns.push({
+        name: "plateOpensDoor",
+        run: () =>
+          applyPlateOpensDoorPattern({
+            rng: patternRng,
+            dungeon,
+            rooms,
+            featureType,
+            featureId,
+            featureParam,
+            doors,
+            plates,
+            blocks,
+            circuitsById,
+            allocId: () => clamp255(nextId++),
+            options: { maxAttempts: options.patternMaxAttempts },
+          }),
+      });
     }
   }
 

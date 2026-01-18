@@ -2,163 +2,218 @@
 
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-This project is an experimental procedural dungeon generator built in TypeScript with a small React preview/debug app.
+CONTEXT VERSION: 2026-01-17
+LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
+CURRENT FOCUS: **Planning Milestone 4 — Puzzle Composition & Progression Grammar**
 
-It is designed to evolve toward a JRPG / metroidvania-style dungeon system with backtracking, secrets, puzzles, monsters, and loot.
+SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
-The system is intentionally layered so that geometry, gameplay intent, and puzzle logic are cleanly separated. This separation is foundational and actively enforced in code.
+* Geometry mutation uses **Option A** (distance field recomputed post-patterns)
+* Pattern diagnostics are authoritative
+* Batch harness is correct and trusted
+* Generation is deterministic and best-effort (never aborts)
+
+============================================================
+PROJECT OVERVIEW
+
+This project is an experimental procedural dungeon generator built in TypeScript
+with a React-based debug and validation harness.
+
+It is designed to evolve toward a JRPG / metroidvania-style dungeon system
+emphasizing:
+
+* backtracking
+* secrets
+* puzzles
+* progression gating
+* systemic reliability
+
+The system is intentionally layered so that:
+
+* geometry
+* gameplay intent
+* runtime puzzle logic
+
+are cleanly separated.
+
+This separation is foundational, enforced in code, and now **proven viable**
+through diagnostics and batch validation.
 
 ============================================================
 HIGH-LEVEL ARCHITECTURE
 
 The system has three conceptual layers:
 
-STRUCTURAL DUNGEON GENERATION (BSP)
-Entry: generateBspDungeon() in mazeGen.ts
+---
+
+## STRUCTURAL DUNGEON GENERATION (BSP)
+
+Entry: `generateBspDungeon()` in `mazeGen.ts`
 
 Responsibilities:
 
-BSP partitioning of the grid
-Room carving
-Corridor carving
-Wall preservation (optional outer wall retention)
-Distance-to-wall calculation
-Region (room) identification
+* BSP partitioning of the grid
+* Room carving
+* Corridor carving
+* Wall preservation (optional outer wall retention)
+* Distance-to-wall calculation
+* Region (room) identification
 
-This layer is pure geometry and has no gameplay knowledge.
+Outputs:
+
+* solid mask (wall/floor)
+* regionId mask
+* distanceToWall mask
+* BSP metadata (rooms, corridors, depth, seed)
+
+This layer is **pure geometry** and contains no gameplay knowledge.
 
 ---
 
-CONTENT GENERATION (Milestones 1–2 + Milestone 3 wiring)
-Entry: generateDungeonContent() in mazeGen.ts
+## CONTENT GENERATION (Milestones 1–3)
+
+Entry: `generateDungeonContent()` in `mazeGen.ts`
 
 Responsibilities:
 
-Place gameplay content on top of BSP geometry
-Encode progression, gating, and optional content
-Guarantee solvability by construction (incrementally)
-Remain deterministic from seed/options
+* Place gameplay content on top of BSP geometry
+* Encode progression, gating, and optional content
+* Express puzzle intent declaratively
+* Guarantee solvability by construction (best-effort)
+* Remain fully deterministic from seed/options
 
-This layer expresses gameplay intent but does not execute puzzle logic.
+This layer **does not execute puzzle logic**.
 
 ---
 
-RUNTIME / PUZZLE LOGIC (Milestone 3)
+## RUNTIME / PUZZLE LOGIC (Milestone 3)
 
 Core files:
 
-dungeonState.ts
-evaluateCircuits.ts
-walkability.ts (shared rules)
-App.tsx (debug / preview harness)
+* `dungeonState.ts`
+* `evaluateCircuits.ts`
+* `walkability.ts`
+* `App.tsx` (debug + batch harness)
 
 Responsibilities:
 
-Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets, circuits)
-Derive sensor state (plates) from world occupancy (blocks now, player later)
-Evaluate circuits based on runtime state
-Apply effects (open doors, toggle hazards, reveal passages)
-Drive interactive puzzle simulation (debug harness first, player later)
+* Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets)
+* Derive sensor state (plates from blocks; player later)
+* Evaluate circuits deterministically
+* Apply effects (open doors, toggle hazards, reveal passages)
+* Drive interactive puzzle simulation (debug harness first)
 
 ============================================================
-STRUCTURAL MASKS (BSP OUTPUT)
+IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
 
-All masks are Uint8Array with size width * height, indexed as:
-index = y * width + x
+---
 
-Mask: solid
-255 = wall
-0 = floor
+## STRUCTURAL MASKS (BSP OUTPUT)
 
-Mask: regionId
-0 = not a room (corridors, carved pockets, etc.)
-1..255 = room id
+All masks are `Uint8Array` of size `width * height`:
 
-Mask: distanceToWall
-Manhattan distance to nearest wall
-0 means wall tile
+`index = y * width + x`
+
+Masks:
+
+* solid
+
+  * 255 = wall
+  * 0 = floor
+
+* regionId
+
+  * 0 = not a room (corridors, pockets)
+  * 1..255 = room id
+
+* distanceToWall
+
+  * Manhattan distance to nearest wall
+  * 0 at walls, capped at 255
 
 Structural metadata:
 
-meta.rooms : Rect[]
-meta.corridors : { a, b, bends? }[]
-meta.bspDepth : number
-meta.seedUsed : number
+* meta.rooms : Rect[]
+* meta.corridors : { a, b, bends? }[]
+* meta.bspDepth : number
+* meta.seedUsed : number
 
-IMPORTANT POLICY (DECIDED — OPTION A)
+---
 
-Some puzzle patterns may carve additional geometry by mutating dungeon.masks.solid.
-When this happens, distanceToWall becomes stale.
+## GEOMETRY MUTATION POLICY (OPTION A — DECIDED)
+
+Some puzzle patterns may carve additional geometry by mutating
+`dungeon.masks.solid`. When this happens, `distanceToWall` becomes stale.
 
 Chosen solution (Option A):
 
-distanceToWall is recomputed after all puzzle patterns that may carve geometry
+* `distanceToWall` is recomputed **after all puzzle patterns that may carve**
+* Content placement relying on `distanceToWall` must occur before patterns
+  or after recomputation
 
-Content placement that relies on distanceToWall must occur before patterns,
-or after recomputation
+Implementation:
 
-This policy is implemented in generator wiring via:
+* `runPatternsBestEffort()` aggregates `didCarve`
+* `recomputeDungeonDistanceToWall(dungeon)` runs if `didCarve == true`
 
-* runPatternsBestEffort() returning didCarve aggregate
-* recomputeDungeonDistanceToWall(dungeon) when didCarve == true
+This policy is implemented, verified, and stable.
 
-============================================================
-CONTENT MASKS (GAMEPLAY LAYERS)
+---
 
-Mask: featureType (Uint8)
+## CONTENT MASKS (GAMEPLAY LAYERS)
 
-0 = none
-1 = monster spawn
-2 = loot chest
-3 = secret door (legacy wall-based)
-4 = door
-5 = key
-6 = lever
-7 = pressure plate (Milestone 3)
-8 = push block (Milestone 3)
-9 = hidden passage (Milestone 3)
-10 = hazard (Milestone 3)
+featureType values:
 
-Mask: featureId (Uint8)
+* 0 = none
+* 1 = monster
+* 2 = chest
+* 3 = legacy secret door (wall)
+* 4 = door
+* 5 = key
+* 6 = lever
+* 7 = pressure plate
+* 8 = push block
+* 9 = hidden passage
+* 10 = hazard
 
-Instance / circuit identifier (1..255)
+featureId:
 
-All tiles sharing a featureId belong to the same logical entity or circuit
+* Logical entity / circuit id (1..255)
 
-IMPORTANT INVARIANTS:
+INVARIANTS:
 
-featureType 9 (hidden passage) MUST have non-zero featureId
-meta.secrets[] is the authoritative source for hidden passages
+* featureType 9 MUST have non-zero featureId
+* meta.secrets[] is authoritative for hidden passages
+* Masks are for inspection; metadata is authoritative
 
-============================================================
-CONTENT METADATA (AUTHORITATIVE)
+---
 
-Metadata is the authoritative source of gameplay intent.
-Masks are for rendering and inspection only.
+## CONTENT METADATA (AUTHORITATIVE)
 
 Key fields:
 
-meta.seedUsed
-meta.roomGraph
-meta.roomDistance
-meta.entranceRoomId
-meta.farthestRoomId
-meta.mainPathRoomIds
+* meta.seedUsed
+* meta.roomGraph
+* meta.roomDistance
+* meta.entranceRoomId
+* meta.farthestRoomId
+* meta.mainPathRoomIds
 
 Placement records:
 
-meta.monsters
-meta.chests
-meta.secrets
-meta.doors
-meta.keys
-meta.levers
+* monsters
+* chests
+* secrets
+* doors
+* keys
+* levers
 
 Milestone 3 additions:
 
-meta.plates
-meta.blocks
-meta.hazards
+* plates
+* blocks
+* hazards
+* hidden
 
 Circuits:
 
@@ -174,246 +229,160 @@ Pattern diagnostics:
 
 meta.patternDiagnostics : PatternDiagnostics[]
 
-============================================================
-PUZZLE PATTERNS (MILESTONE 3)
+---
 
-Puzzle patterns are generation-time content macros.
+## PUZZLE PATTERNS (MILESTONE 3)
 
-Module: puzzlePatterns.ts
-Shared helpers: doorSites.ts
+Puzzle patterns are **generation-time content macros**.
 
-Key properties:
+Module: `puzzlePatterns.ts`
+Helpers: `doorSites.ts`
 
-Patterns are best-effort; failure never aborts generation
-Patterns may mutate geometry (explicitly reported)
+Properties:
 
-Each pattern returns PatternResult {
-ok,
-didCarve,
-reason?,
-stats?,
-reachability?
-}
+* Patterns are best-effort; failure never aborts generation
+* Patterns may mutate geometry (explicitly reported)
+* Patterns are deterministic
+* Patterns emit structured diagnostics
+* Pattern names are stable and batch-aggregatable
 
-runPatternsBestEffort(patterns) executes patterns (legacy fn or named entry),
-aggregates didCarve, and produces PatternDiagnostics[].
+Implemented patterns:
 
-Implemented patterns (current repo state):
+1. leverHiddenPocket
 
-1. Lever reveals hidden pocket (carving + validated)
+   * Carving + hidden passage reveal
+   * Lever → Hidden(REVEAL), PERSISTENT
+   * Retry loop with reachability validation
 
-* Carves a pocket behind a connector tile
-* Places featureType=9 (hidden passage) on connector tile (connector is FLOOR but blocked until revealed)
-* Places a lever in reachable space
-* Wires circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
-* Includes reachability diagnostics (pre/post reveal + shortest path distance post)
+2. leverOpensDoor
 
-2. Lever opens door (non-carving, “easy win”)
+   * Lever → Door(TOGGLE)
+   * Non-carving
 
-* Places a door at a corridor door-site
-* Places a lever in one adjacent room
-* Wires circuit: LEVER -> DOOR(TOGGLE), TOGGLE behavior
+3. plateOpensDoor
 
-3. Plate opens door (non-carving, “easy win”)
+   * Plate(+Block) → Door(OPEN), MOMENTARY
+   * Non-carving
 
-* Places a door at a corridor door-site
-* Places a plate in one adjacent room + a block adjacent to plate
-* Wires circuit: PLATE -> DOOR(OPEN), MOMENTARY behavior
+---
 
-NOTE ON NAMING (CURRENT LIMITATION)
+## REACHABILITY DIAGNOSTICS
 
-If mazeGen passes anonymous functions to runPatternsBestEffort(), diagnostics
-may show name="pattern" (fallback). This makes batch aggregation unable to
-separate results per-pattern without additional naming.
+Hidden-pocket pattern computes:
 
-============================================================
-REACHABILITY DIAGNOSTICS (IMPLEMENTED)
+* reachablePre
+* reachablePost
+* shortestPathPost
 
-Hidden-pocket pattern computes explicit reachability diagnostics:
+Diagnostics distinguish:
 
-ReachabilityStats includes:
+* Isolation failures
+* Connectivity failures
+* Trivial solutions (future tuning)
 
-start / connector / pocketCenter / goal coordinates
-reachablePre: goal reachable before reveal
-reachablePost: goal reachable after reveal
-shortestPathPost: scalar BFS distance post-reveal (or null)
+---
 
-A dedicated BFS helper computes shortest-path distance using shared walkability rules.
+## BATCH VALIDATION HARNESS
 
-Reachability stats are attached to PatternResult (and thus PatternDiagnostics) on:
+Implemented and verified.
 
-* success
-* pre-reveal reachable failures
-* post-reveal unreachable failures
+Capabilities:
 
-This enables distinguishing:
-
-* isolation failures (pocket already connected pre-reveal)
-* connectivity failures (still unreachable post-reveal)
-* “works but too trivial” / too-short paths (future tuning)
-
-============================================================
-BATCH VALIDATION HARNESS (IMPLEMENTED + VERIFIED)
-
-Goal: quantify pattern reliability and diagnose failure modes across seeds.
-
-Implemented:
-
-App.tsx Batch Runner panel
-Sequential seed runs (seedPrefix + index)
-Collection of structural stats and patternDiagnostics
-JSON export and in-app summary table
-
-Utility module: src/batchStats.ts (framework-agnostic)
-
-RECENT FIX (COMPLETED)
-
-A structural mismatch prevented batch aggregation from seeing reachability data.
-
-Resolution:
-
-batchStats.ts updated to match diagnostics shape:
-
-* reachability is read from PatternDiagnostics.reachability (top-level)
-* door-site stats read from stats.doorSites
-* reachability counters explicitly initialized to avoid NaN
-
-Result:
-
-Batch summaries can now correctly report:
-
-* pre-reveal reachable rate
-* post-reveal unreachable rate
-* average shortest-path length post-reveal
-
-============================================================
-LATEST MEASUREMENTS (BATCH RUN)
-
-Most recent user-reported batch JSON (300 runs):
-
-* ok: 235 / 300 (78%)
-
-* fail: 65 / 300 (22%)
-
-* top failure reason:
-  "Pocket goal already reachable pre-reveal (preview)." (65)
-
-* reachabilityPreReachableRate: 0.22
-
-* reachabilityPostUnreachableRate: 0.00
-
-* shortestPathPostAvg: ~77 tiles
-
-Interpretation:
-
-The pattern reliably produces a reachable pocket after reveal (post-unreachable 0%),
-but ~22% of attempts are rejected because the pocket goal is already reachable
-pre-reveal. This suggests “thin wall / accidental connectivity” or “connector
-choice already on a path that leaks into the pocket region,” and indicates the
-pattern currently does not sufficiently search alternate candidates.
+* Hundreds of seeds per run
+* Per-pattern aggregation
+* Success/failure rates
+* Reachability metrics
+* Failure reason histograms
+* JSON export
 
 ============================================================
 CURRENT MILESTONE STATUS
 
-Milestone 3 — Stateful Puzzle Execution
+Milestone 3 — **COMPLETE, STABLE, AND MEASURABLE**
 
-Status: FUNCTIONALLY COMPLETE, DIAGNOSTICALLY MEASURABLE
-
-* Geometry mutation ordering bugs fixed (Option A distance field recompute)
-* Corridor-based door-site definition unified and instrumented
-* Reachability diagnostics implemented for carving patterns
-* Batch harness correctly aggregates structural, door-site, and reachability data
-
-The system now answers “why did this pattern fail?” quantitatively.
+* Runtime puzzle execution works end-to-end
+* Geometry mutation is safe and repaired
+* Pattern reliability is quantifiable
+* No silent failures remain
 
 ============================================================
-NEXT WORK (IMMEDIATE)
-
-1. Make batch results distinguish patterns (naming)
-
-Problem:
-Batch summaries can collapse patterns into a single bucket (“pattern”) when
-anonymous functions are used.
-
-Patch plan:
-
-* In mazeGen.ts, build patterns as named PatternEntry objects:
-  patterns.push({ name: "leverHiddenPocket", run: () => applyLeverRevealsHiddenPocketPattern(...) })
-  patterns.push({ name: "leverOpensDoor", run: () => applyLeverOpensDoorPattern(...) })
-  patterns.push({ name: "plateOpensDoor", run: () => applyPlateOpensDoorPattern(...) })
-* Ensure batchStats groups by diagnostics.name and surfaces per-pattern reachability.
-
-Goal:
-Per-pattern success/failure rates in one batch run without ambiguity.
+PLANNED / OPEN DESIGN SPACE
 
 ---
 
-2. Tuning loop v1 for hidden-pocket pattern (reduce pre-reveal reachable failures)
+## Milestone 4 — Puzzle Composition & Progression Grammar
 
-Observed issue:
-~22% of runs fail because pocket goal is already reachable pre-reveal.
+Milestone 4 shifts focus from *mechanical correctness* to
+**player-facing meaning, escalation, and composition**.
 
-Likely root cause:
-Hidden-pocket pattern currently picks a single candidate connector/pocket after
-scanning, and does not retry alternate candidates when pre-reveal reachability fails.
+This milestone primarily **composes existing systems** rather than
+introducing many new mechanics.
 
-Patch plan:
+Core goals:
 
-* Add an attempt budget to LeverHiddenPocketPatternOptions:
-  options.maxAttempts (default e.g. 60)
-* Instead of picking one random candidate:
+1. Multi-step / chained puzzles
 
-  * shuffle candidate list deterministically via rng
-  * iterate up to maxAttempts candidates
-  * for each candidate:
+   * Circuits depending on other circuits
+   * Explicit puzzle phases
 
-    * preview carve + fixture placement
-    * compute reachabilityPre / reachabilityPost
-    * accept first candidate that satisfies:
-      reachablePre == false AND reachablePost == true
-  * if all attempts fail, return best diagnostic (or last diagnostic) with reason
+2. Difficulty ramping
 
-Candidate-quality bias plan (to further reduce reachablePre):
+   * Enforce minimum complexity
+   * Use reachability metrics to reject trivial layouts
+   * Increase puzzle depth with dungeon progression
 
-* Prefer connector candidates with thicker surrounding walls:
+3. Player-centric semantics
 
-  * increase pocketSolidnessScore threshold (or add a “ring score”)
-* Bias pocket placement farther from corridor thresholds / room boundaries:
+   * Consequence before cause
+   * Visual/spatial telegraphing
 
-  * reject pocket centers too close to any regionId != 0
-* Prefer connector tiles derived from corridor door-site statistics:
+4. Dungeon-scale composition
 
-  * reuse doorSites trimming (ignore first/last N tiles of corridor paths)
-  * ensure minDistToWall >= 1 (or 2) on connector-adjacent walkable
+   * Puzzle roles (main-path gate, optional reward, shortcut)
+   * Puzzle budgeting
 
-Goal:
-Raise hidden-pocket ok rate above 90% without aborting generation.
+Recommended Milestone 4 entry point:
+
+**Circuit Chaining v1**
+
+* Allow circuits to depend on other circuits
+  OR
+* Allow circuits to enable/disable other triggers
+
+This enables:
+
+* Multi-step puzzles
+* Escalation without new entities
+* Full diagnostic and batch validation
 
 ---
 
-3. Optional: Expand diagnostics surfaced in UI (non-blocking)
+## KNOWN CONSTRAINTS
 
-Patch plan:
+* Generation must remain deterministic
+* Patterns must never abort generation
+* Runtime logic must not mutate geometry
+* Diagnostics must remain authoritative
 
-* Add reachability columns to the in-app batch table:
+---
 
-  * preReachableRate
-  * postUnreachableRate
-  * shortestPathPostAvg
-* Add expandable per-run “why failed” view (top reason + example coordinates)
+## NON-GOALS (FUTURE MILESTONES)
 
-Goal:
-Data-driven iteration without leaving the debug app.
+* Combat-triggered puzzles
+* Time-pressure mechanics
+* Inventory-based puzzle items
+* Scripted narrative events
 
 ============================================================
 MENTAL MODEL SUMMARY
 
-BSP creates space
-Content generation expresses intent
-Patterns add structured puzzles
-Runtime executes logic
-Geometry mutation is explicit and repaired
-Diagnostics quantify reliability
-Batch harness turns design intuition into measurable data
+* BSP creates space
+* Content generation expresses intent
+* Patterns add structured puzzles
+* Runtime executes logic
+* Geometry mutation is explicit and repaired
+* Diagnostics quantify reliability
+* Batch harness turns design intuition into data
+* Milestone 4 composes these systems into intentional progression
 
 ---
