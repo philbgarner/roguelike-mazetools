@@ -29,12 +29,33 @@ export type ReachabilityStats = {
   shortestPathPost: number | null;
 };
 
+export type CircuitBatchMetrics = {
+  schemaVersion: 1;
+
+  circuitCount: number;
+  signalEdgeCount: number;
+
+  maxTopoDepth: number;
+  avgTopoDepth: number;
+
+  circuitsWithSignalDeps: number;
+  pctWithSignalDeps: number; // 0..1
+
+  cycleGroupCount: number;
+  cycleCircuitCount: number;
+
+  blockedByCycleCount: number;
+
+  largestCycleSize: number;
+};
+
 export type BatchRunInput = {
   seed: string;
   seedUsed: number;
   rooms: number;
   corridors: number;
   patternDiagnostics: PatternDiag[];
+  circuitMetrics: CircuitBatchMetrics | null;
 };
 
 export type BatchPatternSummary = {
@@ -63,6 +84,26 @@ export type BatchSummary = {
   roomsAvg: number;
   corridorsAvg: number;
   patterns: BatchPatternSummary[];
+
+  circuits?: {
+    runsWithMetrics: number;
+
+    circuitCountAvg: number;
+    signalEdgeCountAvg: number;
+
+    maxTopoDepthAvg: number;
+    avgTopoDepthAvg: number;
+
+    circuitsWithSignalDepsAvg: number;
+    pctWithSignalDepsAvg: number;
+
+    cycleGroupCountAvg: number;
+    cycleCircuitCountAvg: number;
+
+    blockedByCycleCountAvg: number;
+
+    largestCycleSizeAvg: number;
+  };
 };
 
 function safeNum(v: unknown): number {
@@ -79,6 +120,23 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
 
   let roomsSum = 0;
   let corridorsSum = 0;
+  let circuitRuns = 0;
+
+  let circuitCountSum = 0;
+  let signalEdgeCountSum = 0;
+
+  let maxTopoDepthSum = 0;
+  let avgTopoDepthSum = 0;
+
+  let circuitsWithSignalDepsSum = 0;
+  let pctWithSignalDepsSum = 0;
+
+  let cycleGroupCountSum = 0;
+  let cycleCircuitCountSum = 0;
+
+  let blockedByCycleCountSum = 0;
+
+  let largestCycleSizeSum = 0;
 
   function makeAcc() {
     return {
@@ -166,6 +224,27 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
 
       byPattern.set(name, next);
     }
+
+    const cm = r.circuitMetrics;
+    if (cm) {
+      circuitRuns += 1;
+
+      circuitCountSum += safeNum(cm.circuitCount);
+      signalEdgeCountSum += safeNum(cm.signalEdgeCount);
+
+      maxTopoDepthSum += safeNum(cm.maxTopoDepth);
+      avgTopoDepthSum += safeNum(cm.avgTopoDepth);
+
+      circuitsWithSignalDepsSum += safeNum(cm.circuitsWithSignalDeps);
+      pctWithSignalDepsSum += safeNum(cm.pctWithSignalDeps);
+
+      cycleGroupCountSum += safeNum(cm.cycleGroupCount);
+      cycleCircuitCountSum += safeNum(cm.cycleCircuitCount);
+
+      blockedByCycleCountSum += safeNum(cm.blockedByCycleCount);
+
+      largestCycleSizeSum += safeNum(cm.largestCycleSize);
+    }
   }
 
   const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
@@ -228,10 +307,36 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       return out;
     });
 
+  const circuits =
+    circuitRuns > 0
+      ? {
+          runsWithMetrics: circuitRuns,
+
+          circuitCountAvg: round2(circuitCountSum / circuitRuns),
+          signalEdgeCountAvg: round2(signalEdgeCountSum / circuitRuns),
+
+          maxTopoDepthAvg: round2(maxTopoDepthSum / circuitRuns),
+          avgTopoDepthAvg: round2(avgTopoDepthSum / circuitRuns),
+
+          circuitsWithSignalDepsAvg: round2(
+            circuitsWithSignalDepsSum / circuitRuns,
+          ),
+          pctWithSignalDepsAvg: round2(pctWithSignalDepsSum / circuitRuns),
+
+          cycleGroupCountAvg: round2(cycleGroupCountSum / circuitRuns),
+          cycleCircuitCountAvg: round2(cycleCircuitCountSum / circuitRuns),
+
+          blockedByCycleCountAvg: round2(blockedByCycleCountSum / circuitRuns),
+
+          largestCycleSizeAvg: round2(largestCycleSizeSum / circuitRuns),
+        }
+      : undefined;
+
   return {
     runs: totalRuns,
     roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
     corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
     patterns,
+    circuits,
   };
 }

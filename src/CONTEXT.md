@@ -1,9 +1,10 @@
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-CONTEXT VERSION: **2026-01-18**
+CONTEXT VERSION: **2026-01-18 (rev B)**
 LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
 CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
-CURRENT PHASE: **Phase 1 — Circuit Chaining (diagnostics UI in progress)**
+CURRENT PHASE: **Phase 1 — Circuit Chaining (FOUNDATIONAL)**
+PHASE STATUS: **ENGINE COMPLETE, DIAGNOSTICS PARITY ACHIEVED**
 
 SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
@@ -43,8 +44,7 @@ HIGH-LEVEL ARCHITECTURE
 
 The system has three conceptual layers:
 
----
-
+------------------------------------------------------------
 STRUCTURAL DUNGEON GENERATION (BSP)
 
 Entry: `generateBspDungeon()` in `mazeGen.ts`
@@ -67,8 +67,7 @@ Outputs:
 
 This layer is **pure geometry** and contains no gameplay knowledge.
 
----
-
+------------------------------------------------------------
 CONTENT GENERATION (Milestones 1–3)
 
 Entry: `generateDungeonContent()` in `mazeGen.ts`
@@ -83,8 +82,7 @@ Responsibilities:
 
 This layer **does not execute puzzle logic**.
 
----
-
+------------------------------------------------------------
 RUNTIME / PUZZLE LOGIC (Milestone 3+)
 
 Core files:
@@ -105,8 +103,7 @@ Responsibilities:
 ============================================================
 IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
 
----
-
+------------------------------------------------------------
 GEOMETRY MUTATION POLICY (OPTION A — DECIDED)
 
 Puzzle patterns may carve geometry by mutating `dungeon.masks.solid`,
@@ -120,8 +117,7 @@ Chosen policy:
 
 This policy is implemented, verified, and stable.
 
----
-
+------------------------------------------------------------
 CONTENT MASKS & METADATA
 
 `featureType` values (authoritative):
@@ -144,8 +140,7 @@ Invariants:
 * `meta.secrets[]` is authoritative for hidden passages
 * Masks are for inspection; metadata is authoritative
 
----
-
+------------------------------------------------------------
 PUZZLE PATTERNS (MILESTONE 3)
 
 Patterns are **generation-time macros**, not runtime logic.
@@ -161,23 +156,19 @@ Properties:
 Implemented patterns:
 
 1. **leverHiddenPocket**
-
    * Carving + hidden passage reveal
    * Lever → Hidden(REVEAL), PERSISTENT
    * Reachability validated pre/post
 
 2. **leverOpensDoor**
-
    * Lever → Door(TOGGLE)
    * Non-carving
 
 3. **plateOpensDoor**
-
    * Plate(+Block) → Door(OPEN), MOMENTARY
    * Non-carving
 
----
-
+------------------------------------------------------------
 REACHABILITY DIAGNOSTICS
 
 Hidden-pocket pattern records:
@@ -188,8 +179,7 @@ Hidden-pocket pattern records:
 
 Failure modes are classified (isolation, connectivity, triviality).
 
----
-
+------------------------------------------------------------
 BATCH VALIDATION HARNESS
 
 Implemented and trusted.
@@ -206,8 +196,7 @@ Capabilities:
 ============================================================
 MILESTONE STATUS
 
----
-
+------------------------------------------------------------
 Milestone 3 — COMPLETE, STABLE, AND MEASURABLE
 
 * Runtime puzzle execution works end-to-end
@@ -215,8 +204,7 @@ Milestone 3 — COMPLETE, STABLE, AND MEASURABLE
 * Pattern reliability is quantifiable
 * No silent failures remain
 
----
-
+------------------------------------------------------------
 Milestone 4 — Puzzle Composition & Progression Grammar
 
 Milestone 4 shifts focus from **mechanical correctness**
@@ -227,16 +215,16 @@ This milestone **composes existing systems** rather than introducing new mechani
 ============================================================
 MILESTONE 4 — PHASE BREAKDOWN
 
----
-
+------------------------------------------------------------
 Phase 1 — Circuit Chaining (FOUNDATIONAL)
 
-STATUS: **CORE IMPLEMENTATION COMPLETE**
-STATUS: **DIAGNOSTICS UI INTEGRATION IN PROGRESS**
+STATUS: **ENGINE COMPLETE**
+STATUS: **DIAGNOSTICS PARITY ACHIEVED**
+STATUS: **OBSERVATIONAL ONLY**
 
-### What was completed this session
+### What was completed
 
-**Circuit chaining engine (evaluateCircuits.ts)**
+**Circuit chaining engine (`evaluateCircuits.ts`)**
 
 * SIGNAL outputs are first-class circuit dependencies
 * Circuits are topologically sorted by SIGNAL edges
@@ -246,24 +234,29 @@ STATUS: **DIAGNOSTICS UI INTEGRATION IN PROGRESS**
 * Cycle members vs downstream-of-cycle circuits distinguished
 * Cycles never abort evaluation
 
-**New diagnostics data model**
+**Diagnostics schema stabilization**
 
-* `CircuitEvalDiagnostics`
-* `CircuitChainingDiag`
-* `SignalRef`
-* `CycleGroupDiag`
+* `CircuitEvalDiagnostics` is now explicitly versioned (`schemaVersion: 1`)
+* All diagnostics fields are stable and batch-safe
 
-Diagnostics include:
+**Global circuit metrics (authoritative)**
 
-* eval order index
-* topo depth
-* SIGNAL dependency graph
-* cycle membership
-* blocked-by-cycle classification
+Computed metrics include:
 
-**Debug UI (React)**
+* circuitCount
+* signalEdgeCount
+* maxTopoDepth
+* avgTopoDepth
+* circuitsWithSignalDeps
+* pctWithSignalDeps
+* cycleGroupCount
+* cycleCircuitCount
+* blockedByCycleCount
+* largestCycleSize
 
-New, structured circuit diagnostics UI implemented:
+**Diagnostics UI (React)**
+
+Structured, observational circuit diagnostics UI implemented:
 
 * `CircuitDiagnosticsSection`
 * `CircuitDiagToolbar`
@@ -274,71 +267,62 @@ New, structured circuit diagnostics UI implemented:
 
 The UI:
 
-* Replaces the former raw JSON circuit debug output
-* Is strictly observational (no difficulty semantics)
-* Mirrors batch-harness metrics exactly
+* Replaces raw JSON output
+* Mirrors batch harness metrics exactly
 * Makes circuit topology and composition visible
+* Does not introduce difficulty semantics
 
-### Current state
+**Batch harness parity**
 
-* Circuit chaining behavior is complete and correct
-* Diagnostics are produced and attached to `CircuitEvalResult`
-* Diagnostics are captured in `App.tsx`
-* Structured diagnostics UI is integrated but still stabilizing
+* Batch runs now evaluate circuits once per dungeon
+* Batch JSON includes the same global circuit metrics as the UI
+* Metrics schema matches UI output (schemaVersion pinned)
 
 No gameplay behavior has changed.
 
----
+------------------------------------------------------------
+Phase 1 — REMAINING (FINAL POLISH ONLY)
 
-Phase 1 — REMAINING (NEXT IMMEDIATE WORK)
+All remaining Phase 1 work is **purely presentational**:
 
-The remaining work in Phase 1 is **purely observational**.
+* Minor diagnostics UI layout polish
+* Edge-case rendering (empty graphs, single-node cycles)
+* Confirm schema stability across long batch runs
 
-1. **Stabilize diagnostics UI**
+Once complete, Phase 1 is **fully closed**.
 
-   * Minor layout polish
-   * Verify all fields render correctly across seeds
-   * Ensure empty / edge cases are handled cleanly
+------------------------------------------------------------
+Phase 2 — Puzzle Roles & Difficulty Ramping (NEXT)
 
-2. **Batch harness parity**
-
-   * Ensure batch JSON output uses the same metrics
-   * Confirm schema stability for long-term tracking
-
-Once these are complete, Phase 1 is **fully done**.
-
----
-
-Phase 2 — Puzzle Roles & Difficulty Ramping (PLANNED)
+STATUS: **READY TO BEGIN**
 
 Goals:
 
 * Assign semantic roles to composed puzzles:
-
   * MAIN_PATH_GATE
   * OPTIONAL_REWARD
   * SHORTCUT
   * FORESHADOW
 
 * Enforce progression rules using diagnostics:
-
   * Minimum topo depth for main-path gates
   * Reject trivial gates late in dungeon
   * Gradually escalate puzzle depth over room distance
 
-No new mechanics required.
+Key principle:
 
----
+* No new mechanics
+* Roles are annotations
+* Rules consume diagnostics already produced
 
+------------------------------------------------------------
 Phase 3 — Composition Patterns (PLANNED)
 
 * Introduce multi-circuit pattern macros:
-
   * Lever → Gate → Plate → Reward
   * Consequence-before-cause setups
 
 * Pattern selection informed by:
-
   * Room distance
   * Main-path vs optional classification
   * Puzzle budget constraints

@@ -19,7 +19,9 @@ import CircuitDiagnosticsSection from "./debug/CircuitDiagnosticsSection";
 import type {
   CircuitDiagFilters,
   CircuitDiagSort,
+  CircuitGlobalMetricsVM,
 } from "./debug/circuitDiagnosticsVM";
+import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
 
 import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
@@ -1088,12 +1090,30 @@ const App: React.FC = () => {
           leverDoorCount: 1,
         });
 
+        // Build an initial runtime state and derive plate presses from blocks
+        let rt0 = initDungeonRuntimeState(content);
+        rt0 = derivePlatesFromBlocks(rt0, content);
+
+        // One deterministic evaluation tick to produce diagnostics/metrics
+        const eval0 = evaluateCircuits(rt0, content.meta.circuits);
+        const diag0 = eval0.diagnostics ?? null;
+        const metrics0 = computeGlobalCircuitMetrics(diag0);
+
+        // Map VM metrics -> batch schema (schemaVersion pinned here)
+        const circuitMetrics = metrics0
+          ? ({
+              schemaVersion: 1,
+              ...metrics0,
+            } as any)
+          : null;
+
         runs.push({
           seed: seedStr,
           seedUsed: out.meta.seedUsed,
           rooms: out.meta.rooms.length,
           corridors: out.meta.corridors.length,
           patternDiagnostics: content.meta.patternDiagnostics ?? [],
+          circuitMetrics,
         });
 
         if (i % updateEvery === 0 || i === total - 1) {

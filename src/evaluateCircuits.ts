@@ -69,6 +69,8 @@ export type CircuitEvalDiagnostics = {
     cycleCircuitCount: number;
     blockedByCycleCount: number;
   };
+
+  schemaVersion: number;
 };
 
 export type CircuitChainingDiag = {
@@ -650,6 +652,7 @@ export function evaluateCircuits(
       cycleCircuitCount,
       blockedByCycleCount,
     },
+    schemaVersion: 1,
   };
 
   let orderIndex = 0;
