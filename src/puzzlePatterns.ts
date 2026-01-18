@@ -22,7 +22,6 @@
 
 import type { BspDungeonOutputs, ContentOutputs, CircuitDef } from "./mazeGen";
 import {
-  findDoorSiteCandidatesFromCorridors,
   findDoorSiteCandidatesAndStatsFromCorridors,
   type DoorSiteStatsBundle,
 } from "./doorSites";
@@ -53,6 +52,13 @@ export type LeverHiddenPocketPatternOptions = {
   minLeverToConnectorDist?: number; // Manhattan distance
   minConnectorFromEntranceManhattan?: number;
   maxCandidateSites?: number;
+
+  /**
+   * NEW: how many candidate connector attempts to try before giving up.
+   * This specifically addresses the "reachable pre-reveal" failure mode by
+   * trying alternate candidates instead of failing immediately.
+   */
+  maxAttempts?: number;
 };
 
 export type PatternResult =
@@ -202,6 +208,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     20,
     args.options?.maxCandidateSites ?? 200,
   );
+  const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
 
   const W = dungeon.width;
   const H = dungeon.height;
@@ -237,7 +244,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
   }> = [];
 
   // Collect candidates by scanning for walls adjacent to reachable floors.
-  // For each such wall tile, attempt to place a pocket beyond it.
   // We'll limit to maxCandidateSites (best effort).
   for (let y = 1; y < H - 1 && candidates.length < maxCandidateSites; y++) {
     for (let x = 1; x < W - 1 && candidates.length < maxCandidateSites; x++) {
@@ -264,8 +270,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
         continue;
 
       // Choose pocket center on the opposite side of the reachable side (roughly).
-      // We'll pick a direction that goes from A -> C -> pocket.
-      // Find the direction from A to C, then extend outward.
       const dx = x - a.x;
       const dy = y - a.y;
       const px = x + dx * (Math.floor(pocketSize / 2) + 1);
@@ -281,13 +285,11 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
       )
         continue;
 
-      // Pocket must currently be mostly solid (to keep it "secret" and avoid
-      // breaking up existing rooms/corridors).
+      // Pocket must currently be mostly solid.
       const score = pocketSolidnessScore(dungeon, { x: px, y: py }, pocketSize);
       if (score < 0.85) continue;
 
-      // Also, we don't want to carve into the same room as A.
-      // Ensure pocket center isn't in a room (regionId==0 suggests corridor/wall space).
+      // Avoid carving into rooms (keep it in corridor/wall space)
       const pCenterI = idxOf(W, px, py);
       if ((regionId[pCenterI] | 0) !== 0) continue;
 
@@ -303,165 +305,211 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     };
   }
 
-  // Pick a random candidate.
-  const picked = candidates[rng.nextInt(0, candidates.length - 1)]!;
-
-  // Choose a lever placement spot in reachable space with good separation.
-  const leverSpot = chooseLeverSpot(
-    rng,
-    dungeon,
-    ft,
-    fid,
-    start,
-    { x: picked.cx, y: picked.cy },
-    minLeverToConnectorDist,
-  );
-  if (!leverSpot) {
-    return { ok: false, didCarve: false, reason: "No lever spot found." };
+  // NEW: Instead of picking one candidate and failing immediately on reachablePre,
+  // try up to maxAttempts candidates (shuffled) and accept the first that validates.
+  const order = candidates.slice();
+  // Fisher-Yates shuffle (deterministic via PatternRng)
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = rng.nextInt(0, i);
+    const tmp = order[i]!;
+    order[i] = order[j]!;
+    order[j] = tmp;
   }
 
-  // Allocate an id for the hidden passage / secret and the lever.
-  // IMPORTANT: This id becomes the secret id (featureId for hidden passage).
-  const secretId = allocId();
-  const leverId = secretId; // keep ids aligned for simpler circuit wiring
+  const attempts = Math.min(maxAttempts, order.length);
 
-  // --- Preview validation on copies before commit ---
-  // We'll clone masks and attempt carving and placement, then validate reachability:
-  // - pocket goal unreachable pre-reveal (hidden not revealed)
-  // - pocket goal reachable post-reveal (hidden revealed)
-  const solid2 = solid.slice();
-  const ft2 = ft.slice();
-  const fid2 = fid.slice();
-  const fparam2 = fparam.slice();
+  let lastReachability: ReachabilityStats | undefined;
+  let preReachableCount = 0;
+  let postUnreachableCount = 0;
+  let leverSpotFailCount = 0;
 
-  const didCarve = carvePocketAndConnector(
-    { width: W, height: H, masks: { solid: solid2 } } as any,
-    { x: picked.cx, y: picked.cy },
-    { x: picked.px, y: picked.py },
-    pocketSize,
-  );
+  for (let ai = 0; ai < attempts; ai++) {
+    const picked = order[ai]!;
 
-  if (!didCarve) {
-    return { ok: false, didCarve: false, reason: "Carve failed (preview)." };
+    // Choose a lever placement spot in reachable space with good separation.
+    const leverSpot = chooseLeverSpot(
+      rng,
+      dungeon,
+      ft,
+      fid,
+      start,
+      { x: picked.cx, y: picked.cy },
+      minLeverToConnectorDist,
+    );
+    if (!leverSpot) {
+      leverSpotFailCount++;
+      continue;
+    }
+
+    // Allocate ids (preview uses them; we only commit if validation passes)
+    const secretId = allocId();
+    const leverId = secretId; // keep ids aligned for simpler circuit wiring
+
+    // --- Preview validation on copies before commit ---
+    const solid2 = solid.slice();
+    const ft2 = ft.slice();
+    const fid2 = fid.slice();
+    const fparam2 = fparam.slice();
+
+    const didCarve = carvePocketAndConnector(
+      { width: W, height: H, masks: { solid: solid2 } } as any,
+      { x: picked.cx, y: picked.cy },
+      { x: picked.px, y: picked.py },
+      pocketSize,
+    );
+
+    if (!didCarve) continue;
+
+    // Place hidden passage fixture at connector
+    const cI = idxOf(W, picked.cx, picked.cy);
+    ft2[cI] = 9; // hidden passage
+    fid2[cI] = secretId;
+    fparam2[cI] = 0;
+
+    // Place lever fixture
+    const lI = idxOf(W, leverSpot.x, leverSpot.y);
+    ft2[lI] = 6;
+    fid2[lI] = leverId;
+    fparam2[lI] = 0;
+
+    // Validate reachability
+    const goal = findPocketGoal({ x: picked.px, y: picked.py }, pocketSize);
+    if (!goal) continue;
+
+    const goalI = idxOf(W, goal.x, goal.y);
+
+    const reachPre = computeReachable(
+      { width: W, height: H, masks: { solid: solid2 } } as any,
+      ft2,
+      fid2,
+      start,
+      new Set(),
+    );
+
+    const revealed = new Set<number>([secretId]);
+
+    const reachPost = computeReachable(
+      { width: W, height: H, masks: { solid: solid2 } } as any,
+      ft2,
+      fid2,
+      start,
+      revealed,
+    );
+
+    const reachability: ReachabilityStats = {
+      start,
+      connector: { x: picked.cx, y: picked.cy },
+      pocketCenter: { x: picked.px, y: picked.py },
+      goal,
+      reachablePre: !!reachPre[goalI],
+      reachablePost: !!reachPost[goalI],
+      shortestPathPost: reachPost[goalI]
+        ? computeShortestPathDistance(
+            { width: W, height: H, masks: { solid: solid2 } } as any,
+            ft2,
+            fid2,
+            start,
+            revealed,
+            goal,
+          )
+        : null,
+    };
+
+    lastReachability = reachability;
+
+    if (reachability.reachablePre) {
+      preReachableCount++;
+      continue; // NEW: try another candidate instead of failing the pattern
+    }
+
+    if (!reachability.reachablePost) {
+      postUnreachableCount++;
+      continue; // try another candidate
+    }
+
+    // ---- COMMIT ----
+    carvePocketAndConnector(
+      dungeon,
+      { x: picked.cx, y: picked.cy },
+      { x: picked.px, y: picked.py },
+      pocketSize,
+    );
+
+    // Place hidden passage fixture
+    ft[cI] = 9;
+    fid[cI] = secretId;
+    fparam[cI] = 0;
+
+    // Place lever fixture
+    ft[lI] = 6;
+    fid[lI] = leverId;
+    fparam[lI] = 0;
+
+    // Add meta entries
+    secrets.push({
+      id: secretId,
+      x: picked.cx,
+      y: picked.cy,
+      roomId: 0,
+    });
+    levers.push({
+      id: leverId,
+      x: leverSpot.x,
+      y: leverSpot.y,
+      roomId: 0,
+    });
+
+    // Circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
+    circuitsById.set(secretId, {
+      id: secretId,
+      logic: { type: "OR" },
+      behavior: { mode: "PERSISTENT" },
+      triggers: [{ kind: "LEVER", refId: leverId }],
+      targets: [{ kind: "HIDDEN", refId: secretId, effect: "REVEAL" }],
+    });
+
+    return { ok: true, didCarve: true, reachability };
   }
 
-  // Place hidden passage fixture at connector (as FLOOR but blocked until revealed)
-  const cI = idxOf(W, picked.cx, picked.cy);
-  ft2[cI] = 9; // hidden passage
-  fid2[cI] = secretId;
-  fparam2[cI] = 0;
-
-  // Place lever fixture (reachable)
-  const lI = idxOf(W, leverSpot.x, leverSpot.y);
-  ft2[lI] = 6;
-  fid2[lI] = leverId;
-  fparam2[lI] = 0;
-
-  // Validate reachability
-  const goal = findPocketGoal({ x: picked.px, y: picked.py }, pocketSize);
-  if (!goal) {
-    return { ok: false, didCarve: false, reason: "No pocket goal (preview)." };
+  // If we get here, we tried N candidates and none validated.
+  // Prefer returning the most informative reason based on observed failure modes.
+  if (
+    preReachableCount > 0 &&
+    postUnreachableCount === 0 &&
+    leverSpotFailCount === 0
+  ) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: `Pocket goal already reachable pre-reveal (preview). Tried ${attempts} candidates.`,
+      reachability: lastReachability,
+    };
   }
 
-  const goalI = idxOf(W, goal.x, goal.y);
+  if (postUnreachableCount > 0) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: `Pocket goal not reachable post-reveal (preview). Tried ${attempts} candidates.`,
+      reachability: lastReachability,
+    };
+  }
 
-  const reachPre = computeReachable(
-    { width: W, height: H, masks: { solid: solid2 } } as any,
-    ft2,
-    fid2,
-    start,
-    new Set(),
-  );
+  if (leverSpotFailCount > 0) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: `No lever spot found for any candidate (preview). Tried ${attempts} candidates.`,
+      reachability: lastReachability,
+    };
+  }
 
-  const revealed = new Set<number>([secretId]);
-
-  const reachPost = computeReachable(
-    { width: W, height: H, masks: { solid: solid2 } } as any,
-    ft2,
-    fid2,
-    start,
-    revealed,
-  );
-
-  const reachability: ReachabilityStats = {
-    start,
-    connector: { x: picked.cx, y: picked.cy },
-    pocketCenter: { x: picked.px, y: picked.py },
-    goal,
-    reachablePre: !!reachPre[goalI],
-    reachablePost: !!reachPost[goalI],
-    shortestPathPost: reachPost[goalI]
-      ? computeShortestPathDistance(
-          { width: W, height: H, masks: { solid: solid2 } } as any,
-          ft2,
-          fid2,
-          start,
-          revealed,
-          goal,
-        )
-      : null,
+  return {
+    ok: false,
+    didCarve: false,
+    reason: `Failed to validate any connector candidate (preview). Tried ${attempts} candidates.`,
+    reachability: lastReachability,
   };
-
-  if (reachability.reachablePre) {
-    return {
-      ok: false,
-      didCarve: false,
-      reason: "Pocket goal already reachable pre-reveal (preview).",
-      reachability,
-    };
-  }
-
-  if (!reachability.reachablePost) {
-    return {
-      ok: false,
-      didCarve: false,
-      reason: "Pocket goal not reachable post-reveal (preview).",
-      reachability,
-    };
-  }
-
-  // Apply carving to real dungeon solid
-  carvePocketAndConnector(
-    dungeon,
-    { x: picked.cx, y: picked.cy },
-    { x: picked.px, y: picked.py },
-    pocketSize,
-  );
-
-  // Place hidden passage fixture
-  ft[cI] = 9;
-  fid[cI] = secretId;
-  fparam[cI] = 0;
-
-  // Place lever fixture
-  ft[lI] = 6;
-  fid[lI] = leverId;
-  fparam[lI] = 0;
-
-  // Add meta entries
-  secrets.push({
-    id: secretId,
-    x: picked.cx,
-    y: picked.cy,
-    roomId: 0,
-  });
-  levers.push({
-    id: leverId,
-    x: leverSpot.x,
-    y: leverSpot.y,
-    roomId: 0,
-  });
-
-  // Circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
-  circuitsById.set(secretId, {
-    id: secretId,
-    logic: { type: "OR" },
-    behavior: { mode: "PERSISTENT" },
-    triggers: [{ kind: "LEVER", refId: leverId }],
-    targets: [{ kind: "HIDDEN", refId: secretId, effect: "REVEAL" }],
-  });
-
-  return { ok: true, didCarve: true, reachability };
 }
 
 // ------------------------------------------------------------
@@ -681,8 +729,7 @@ function carvePocketAndConnector(
 }
 
 function findPocketGoal(pocketCenter: Point, pocketSize: number): Point | null {
-  // Pick the center tile as goal if valid.
-  // (We keep it simple; can be improved later.)
+  // Keep it simple: center tile
   return { x: pocketCenter.x, y: pocketCenter.y };
 }
 
@@ -745,6 +792,28 @@ export type PlateOpensDoorPatternOptions = {
   inverted?: boolean;
 };
 
+/**
+ * Encode plate config into featureParam (bitfield).
+ * Mirrors the encoding used in mazeGen.ts for consistency:
+ * bit0: modeToggle (1=toggle, 0=momentary)
+ * bit1: activatedByPlayer
+ * bit2: activatedByBlock
+ * bit3: inverted
+ */
+function encodePlateParam(o: {
+  mode: "momentary" | "toggle";
+  activatedByPlayer: boolean;
+  activatedByBlock: boolean;
+  inverted: boolean;
+}): number {
+  let p = 0;
+  if (o.mode === "toggle") p |= 1 << 0;
+  if (o.activatedByPlayer) p |= 1 << 1;
+  if (o.activatedByBlock) p |= 1 << 2;
+  if (o.inverted) p |= 1 << 3;
+  return p & 0xff;
+}
+
 export function findNearestRoomId(
   regionId: Uint8Array,
   W: number,
@@ -785,30 +854,6 @@ export function findNearestRoomId(
   }
 
   return 0;
-}
-
-function pathPointsL(p0: Point, p1: Point, p2: Point): Point[] {
-  const pts: Point[] = [];
-
-  // p0 -> p1
-  if (p0.x === p1.x) {
-    const sy = p0.y <= p1.y ? 1 : -1;
-    for (let y = p0.y; y !== p1.y + sy; y += sy) pts.push({ x: p0.x, y });
-  } else {
-    const sx = p0.x <= p1.x ? 1 : -1;
-    for (let x = p0.x; x !== p1.x + sx; x += sx) pts.push({ x, y: p0.y });
-  }
-
-  // p1 -> p2
-  if (p1.x === p2.x) {
-    const sy = p1.y <= p2.y ? 1 : -1;
-    for (let y = p1.y; y !== p2.y + sy; y += sy) pts.push({ x: p2.x, y });
-  } else {
-    const sx = p1.x <= p2.x ? 1 : -1;
-    for (let x = p1.x; x !== p2.x + sx; x += sx) pts.push({ x, y: p2.y });
-  }
-
-  return pts;
 }
 
 function sampleRoomFloorNoFeatures(
@@ -868,13 +913,7 @@ function sampleAdjacentFloorNoFeatures(
 
 /**
  * Pattern: Lever opens door (non-carving)
- * - Places a DOOR (featureType=4) onto an existing corridor floor tile that
- *   appears to connect two rooms (inferred via neighboring region ids).
- * - Places a LEVER (featureType=6) inside one of those rooms.
- * - Wires circuit: LEVER -> DOOR(TOGGLE), TOGGLE behavior.
- *
- * Best-effort: if a suitable door site / lever spot cannot be found, it fails
- * without aborting generation.
+ * (Kept as-is in your rollback; safe to keep even if not used by mazeGen.)
  */
 export function applyLeverOpensDoorPattern(args: {
   rng: PatternRng;
@@ -914,6 +953,9 @@ export function applyLeverOpensDoorPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
+      trimEnds: 2, // IMPORTANT: ignore first/last N tiles
+      duplicateBias: 1,
+      maxRadius: 10,
     },
   );
 
@@ -926,7 +968,6 @@ export function applyLeverOpensDoorPattern(args: {
     };
   }
 
-  // Start point for optional sanity checks (reachable before lever is pulled).
   const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
   const start = entranceRoom ? findAnyFloorInRect(dungeon, entranceRoom) : null;
   if (!start) {
@@ -983,7 +1024,6 @@ export function applyLeverOpensDoorPattern(args: {
 
     levers.push({ id: doorId, x: leverP.x, y: leverP.y, roomId: site.roomA });
 
-    // Circuit: LEVER -> DOOR(TOGGLE), edge-based
     circuitsById.set(doorId, {
       id: doorId,
       logic: { type: "OR" },
@@ -992,19 +1032,16 @@ export function applyLeverOpensDoorPattern(args: {
       targets: [{ kind: "DOOR", refId: doorId, effect: "TOGGLE" }],
     });
 
-    // Optional sanity:
-    // - With doors treated closed in computeReachable(), the door tile blocks.
-    // - We do NOT require a strict reachability delta yet (easy-win pattern).
-    // This is here primarily to keep the pattern consistent with the validation mindset.
     void computeReachable(dungeon, ft, fid, start, new Set());
 
-    return { ok: true, didCarve: false };
+    return { ok: true, didCarve: false, stats: { doorSites: stats } };
   }
 
   return {
     ok: false,
     didCarve: false,
     reason: "Failed to place lever+door within attempt budget.",
+    stats: { doorSites: stats },
   };
 }
 
@@ -1016,7 +1053,6 @@ export function applyLeverOpensDoorPattern(args: {
  *
  * Note:
  * - Plate.pressed is DERIVED from block occupancy at runtime.
- * - Hazards do not block movement (by design).
  */
 export function applyPlateOpensDoorPattern(args: {
   rng: PatternRng;
@@ -1058,6 +1094,9 @@ export function applyPlateOpensDoorPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
+      trimEnds: 2, // IMPORTANT: ignore first/last N tiles
+      duplicateBias: 1,
+      maxRadius: 10,
     },
   );
 
@@ -1080,7 +1119,7 @@ export function applyPlateOpensDoorPattern(args: {
     // Place door fixture
     ft[di] = 4;
     fid[di] = circuitId;
-    fparam[di] = 2;
+    fparam[di] = 0;
 
     doors.push({
       id: circuitId,
@@ -1088,7 +1127,7 @@ export function applyPlateOpensDoorPattern(args: {
       y: site.y,
       roomA: site.roomA,
       roomB: site.roomB,
-      kind: 2,
+      kind: 0 as any, // “pattern door” (not a Milestone-2 locked/lever gate)
       depth: 0,
     });
 
@@ -1113,21 +1152,29 @@ export function applyPlateOpensDoorPattern(args: {
       continue;
     }
 
+    const plateCfg = {
+      mode: "momentary" as const,
+      activatedByPlayer: false,
+      activatedByBlock: true,
+      inverted,
+    };
+
     const pi = idxOf(dungeon.width, plateP.x, plateP.y);
     ft[pi] = 7;
     fid[pi] = circuitId;
-    fparam[pi] = inverted ? 1 : 0;
+    fparam[pi] = encodePlateParam(plateCfg);
 
     plates.push({
       id: circuitId,
       x: plateP.x,
       y: plateP.y,
       roomId: site.roomA,
-      mode: "momentary",
-      activatedByPlayer: false,
-      activatedByBlock: true,
-      activatedByBlockOrPlayer: false,
-      inverted,
+      mode: plateCfg.mode,
+      activatedByPlayer: plateCfg.activatedByPlayer,
+      activatedByBlock: plateCfg.activatedByBlock,
+      activatedByBlockOrPlayer:
+        plateCfg.activatedByPlayer && plateCfg.activatedByBlock,
+      inverted: plateCfg.inverted,
     });
 
     // Place a block adjacent to the plate
@@ -1170,12 +1217,13 @@ export function applyPlateOpensDoorPattern(args: {
       targets: [{ kind: "DOOR", refId: circuitId, effect: "OPEN" }],
     });
 
-    return { ok: true, didCarve: false };
+    return { ok: true, didCarve: false, stats: { doorSites: stats } };
   }
 
   return {
     ok: false,
     didCarve: false,
     reason: "Failed to place plate+block+door within attempt budget.",
+    stats: { doorSites: stats },
   };
 }

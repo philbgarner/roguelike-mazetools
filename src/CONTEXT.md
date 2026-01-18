@@ -27,6 +27,8 @@ Region (room) identification
 
 This layer is pure geometry and has no gameplay knowledge.
 
+---
+
 CONTENT GENERATION (Milestones 1–2 + Milestone 3 wiring)
 Entry: generateDungeonContent() in mazeGen.ts
 
@@ -38,6 +40,8 @@ Guarantee solvability by construction (incrementally)
 Remain deterministic from seed/options
 
 This layer expresses gameplay intent but does not execute puzzle logic.
+
+---
 
 RUNTIME / PUZZLE LOGIC (Milestone 3)
 
@@ -93,7 +97,10 @@ distanceToWall is recomputed after all puzzle patterns that may carve geometry
 Content placement that relies on distanceToWall must occur before patterns,
 or after recomputation
 
-This policy is fully implemented in generator wiring.
+This policy is implemented in generator wiring via:
+
+* runPatternsBestEffort() returning didCarve aggregate
+* recomputeDungeonDistanceToWall(dungeon) when didCarve == true
 
 ============================================================
 CONTENT MASKS (GAMEPLAY LAYERS)
@@ -163,6 +170,10 @@ triggers,
 targets
 }[]
 
+Pattern diagnostics:
+
+meta.patternDiagnostics : PatternDiagnostics[]
+
 ============================================================
 PUZZLE PATTERNS (MILESTONE 3)
 
@@ -184,11 +195,36 @@ stats?,
 reachability?
 }
 
-Implemented patterns:
+runPatternsBestEffort(patterns) executes patterns (legacy fn or named entry),
+aggregates didCarve, and produces PatternDiagnostics[].
 
-Lever reveals hidden pocket (carving + validated)
-Lever opens door (non-carving)
-Plate opens door (non-carving)
+Implemented patterns (current repo state):
+
+1. Lever reveals hidden pocket (carving + validated)
+
+* Carves a pocket behind a connector tile
+* Places featureType=9 (hidden passage) on connector tile (connector is FLOOR but blocked until revealed)
+* Places a lever in reachable space
+* Wires circuit: LEVER -> HIDDEN(REVEAL), PERSISTENT
+* Includes reachability diagnostics (pre/post reveal + shortest path distance post)
+
+2. Lever opens door (non-carving, “easy win”)
+
+* Places a door at a corridor door-site
+* Places a lever in one adjacent room
+* Wires circuit: LEVER -> DOOR(TOGGLE), TOGGLE behavior
+
+3. Plate opens door (non-carving, “easy win”)
+
+* Places a door at a corridor door-site
+* Places a plate in one adjacent room + a block adjacent to plate
+* Wires circuit: PLATE -> DOOR(OPEN), MOMENTARY behavior
+
+NOTE ON NAMING (CURRENT LIMITATION)
+
+If mazeGen passes anonymous functions to runPatternsBestEffort(), diagnostics
+may show name="pattern" (fallback). This makes batch aggregation unable to
+separate results per-pattern without additional naming.
 
 ============================================================
 REACHABILITY DIAGNOSTICS (IMPLEMENTED)
@@ -204,16 +240,20 @@ shortestPathPost: scalar BFS distance post-reveal (or null)
 
 A dedicated BFS helper computes shortest-path distance using shared walkability rules.
 
-Reachability stats are attached to PatternResult on:
+Reachability stats are attached to PatternResult (and thus PatternDiagnostics) on:
 
-success
-pre-reveal reachable failures
-post-reveal unreachable failures
+* success
+* pre-reveal reachable failures
+* post-reveal unreachable failures
 
-This allows distinguishing isolation failures from connectivity failures.
+This enables distinguishing:
+
+* isolation failures (pocket already connected pre-reveal)
+* connectivity failures (still unreachable post-reveal)
+* “works but too trivial” / too-short paths (future tuning)
 
 ============================================================
-BATCH VALIDATION HARNESS (IMPLEMENTED + FIXED)
+BATCH VALIDATION HARNESS (IMPLEMENTED + VERIFIED)
 
 Goal: quantify pattern reliability and diagnose failure modes across seeds.
 
@@ -226,17 +266,17 @@ JSON export and in-app summary table
 
 Utility module: src/batchStats.ts (framework-agnostic)
 
-RECENT FIX (THIS SESSION):
+RECENT FIX (COMPLETED)
 
 A structural mismatch prevented batch aggregation from seeing reachability data.
 
 Resolution:
 
-batchStats.ts was updated to match the real diagnostics shape:
+batchStats.ts updated to match diagnostics shape:
 
 * reachability is read from PatternDiagnostics.reachability (top-level)
-* door-site stats are read from stats.doorSites
-* reachability counters are explicitly initialized to avoid NaN
+* door-site stats read from stats.doorSites
+* reachability counters explicitly initialized to avoid NaN
 
 Result:
 
@@ -246,7 +286,31 @@ Batch summaries can now correctly report:
 * post-reveal unreachable rate
 * average shortest-path length post-reveal
 
-This unblocks data-driven tuning.
+============================================================
+LATEST MEASUREMENTS (BATCH RUN)
+
+Most recent user-reported batch JSON (300 runs):
+
+* ok: 235 / 300 (78%)
+
+* fail: 65 / 300 (22%)
+
+* top failure reason:
+  "Pocket goal already reachable pre-reveal (preview)." (65)
+
+* reachabilityPreReachableRate: 0.22
+
+* reachabilityPostUnreachableRate: 0.00
+
+* shortestPathPostAvg: ~77 tiles
+
+Interpretation:
+
+The pattern reliably produces a reachable pocket after reveal (post-unreachable 0%),
+but ~22% of attempts are rejected because the pocket goal is already reachable
+pre-reveal. This suggests “thin wall / accidental connectivity” or “connector
+choice already on a path that leaks into the pocket region,” and indicates the
+pattern currently does not sufficiently search alternate candidates.
 
 ============================================================
 CURRENT MILESTONE STATUS
@@ -255,45 +319,91 @@ Milestone 3 — Stateful Puzzle Execution
 
 Status: FUNCTIONALLY COMPLETE, DIAGNOSTICALLY MEASURABLE
 
-Geometry mutation ordering bugs fixed
-Corridor-based door-site definition unified
-Door-site selection fully instrumented
-Reachability diagnostics implemented for carving patterns
-Batch harness correctly aggregates structural, door-site, and reachability data
+* Geometry mutation ordering bugs fixed (Option A distance field recompute)
+* Corridor-based door-site definition unified and instrumented
+* Reachability diagnostics implemented for carving patterns
+* Batch harness correctly aggregates structural, door-site, and reachability data
 
 The system now answers “why did this pattern fail?” quantitatively.
 
 ============================================================
 NEXT WORK (IMMEDIATE)
 
-1. Verify reachability metrics via Batch Runner
+1. Make batch results distinguish patterns (naming)
 
-* Run batch validation
-* Confirm hidden-pocket pattern reports:
+Problem:
+Batch summaries can collapse patterns into a single bucket (“pattern”) when
+anonymous functions are used.
 
-  * % reachablePre
-  * % unreachablePost
-  * avg shortestPathPost
-* Use JSON export as the primary verification artifact
+Patch plan:
 
-2. Tuning loop v1 for hidden-pocket pattern
+* In mazeGen.ts, build patterns as named PatternEntry objects:
+  patterns.push({ name: "leverHiddenPocket", run: () => applyLeverRevealsHiddenPocketPattern(...) })
+  patterns.push({ name: "leverOpensDoor", run: () => applyLeverOpensDoorPattern(...) })
+  patterns.push({ name: "plateOpensDoor", run: () => applyPlateOpensDoorPattern(...) })
+* Ensure batchStats groups by diagnostics.name and surfaces per-pattern reachability.
 
-When reachablePre === true:
+Goal:
+Per-pattern success/failure rates in one batch run without ambiguity.
 
-* Try alternate connector candidates (bounded attempts)
-* Bias pocket placement farther from corridors or room thresholds
+---
 
-When reachablePost === false:
+2. Tuning loop v1 for hidden-pocket pattern (reduce pre-reveal reachable failures)
 
-* Try alternate connector orientation or tile
-* Reject shallow pockets near thin walls
+Observed issue:
+~22% of runs fail because pocket goal is already reachable pre-reveal.
 
-Goal: improve success rate without aborting generation.
+Likely root cause:
+Hidden-pocket pattern currently picks a single candidate connector/pocket after
+scanning, and does not retry alternate candidates when pre-reveal reachability fails.
 
-3. Optional UI polish (non-blocking)
+Patch plan:
 
-* Add reachability columns to the in-app batch table
-* Or add expandable per-pattern diagnostic details
+* Add an attempt budget to LeverHiddenPocketPatternOptions:
+  options.maxAttempts (default e.g. 60)
+* Instead of picking one random candidate:
+
+  * shuffle candidate list deterministically via rng
+  * iterate up to maxAttempts candidates
+  * for each candidate:
+
+    * preview carve + fixture placement
+    * compute reachabilityPre / reachabilityPost
+    * accept first candidate that satisfies:
+      reachablePre == false AND reachablePost == true
+  * if all attempts fail, return best diagnostic (or last diagnostic) with reason
+
+Candidate-quality bias plan (to further reduce reachablePre):
+
+* Prefer connector candidates with thicker surrounding walls:
+
+  * increase pocketSolidnessScore threshold (or add a “ring score”)
+* Bias pocket placement farther from corridor thresholds / room boundaries:
+
+  * reject pocket centers too close to any regionId != 0
+* Prefer connector tiles derived from corridor door-site statistics:
+
+  * reuse doorSites trimming (ignore first/last N tiles of corridor paths)
+  * ensure minDistToWall >= 1 (or 2) on connector-adjacent walkable
+
+Goal:
+Raise hidden-pocket ok rate above 90% without aborting generation.
+
+---
+
+3. Optional: Expand diagnostics surfaced in UI (non-blocking)
+
+Patch plan:
+
+* Add reachability columns to the in-app batch table:
+
+  * preReachableRate
+  * postUnreachableRate
+  * shortestPathPostAvg
+* Add expandable per-run “why failed” view (top reason + example coordinates)
+
+Goal:
+Data-driven iteration without leaving the debug app.
 
 ============================================================
 MENTAL MODEL SUMMARY

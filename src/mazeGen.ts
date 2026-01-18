@@ -18,16 +18,12 @@
 import * as THREE from "three";
 import {
   applyLeverRevealsHiddenPocketPattern,
-  applyLeverOpensDoorPattern,
   applyPlateOpensDoorPattern,
   runPatternsBestEffort,
-  PatternResult,
-  PatternDiagnostics,
 } from "./puzzlePatterns";
-import {
-  findDoorSiteCandidatesFromCorridors,
-  findDoorSiteCandidatesAndStatsFromCorridors,
-} from "./doorSites";
+import type { PatternResult, PatternDiagnostics } from "./puzzlePatterns";
+
+import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
 
 // -----------------------------
 // Types
@@ -1021,20 +1017,11 @@ export type ContentOptions = {
   leverDoorCount?: number; // best-effort (default based on path length)
   gateMinDepth?: number; // avoid placing gates too close to entrance
 
-  // Milestone 3 tuning
-  // If true, place a tiny “fixture” puzzle:
-  // - 1 push-block (featureType=8)
-  // - 1 pressure plate (featureType=7)
-  // - 1 extra door (featureType=4, kind=0)
-  // And add a circuit: PLATE toggles the door.
+  // Milestone 3 toggles
   includePuzzleFixture?: boolean;
   includeLeverHiddenPocket?: boolean;
   leverHiddenPocketSize?: number; // odd >= 3 (default 3)
   includeAsciiOverlay?: boolean;
-
-  // non-carving patterns
-  includeLeverOpensDoor?: boolean;
-  leverOpensDoorCount?: number; // “N times”
 
   includePlateOpensDoor?: boolean;
   plateOpensDoorCount?: number; // “N times”
@@ -1582,8 +1569,6 @@ export function generateDungeonContent(
     includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
     leverHiddenPocketSize: opts?.leverHiddenPocketSize ?? 3,
 
-    includeLeverOpensDoor: opts?.includeLeverOpensDoor ?? false,
-    leverOpensDoorCount: opts?.leverOpensDoorCount ?? 1,
     includePlateOpensDoor: opts?.includePlateOpensDoor ?? false,
     plateOpensDoorCount: opts?.plateOpensDoorCount ?? 1,
 
@@ -1860,9 +1845,9 @@ export function generateDungeonContent(
   }
 
   // Budget Milestone 2 gates so optional patterns still have corridor door sites.
-  const reservedForPatterns =
-    (options.includeLeverOpensDoor ? options.leverOpensDoorCount | 0 : 0) +
-    (options.includePlateOpensDoor ? options.plateOpensDoorCount | 0 : 0);
+  const reservedForPatterns = options.includePlateOpensDoor
+    ? options.plateOpensDoorCount | 0
+    : 0;
 
   if (reservedForPatterns > 0) {
     const totalDoorSites = countCorridorDoorSites(dungeon, featureType);
@@ -2204,32 +2189,12 @@ export function generateDungeonContent(
         levers,
         circuitsById,
         allocId: () => clamp255(nextId++),
-        options: { pocketSize: options.leverHiddenPocketSize },
+        options: {
+          pocketSize: options.leverHiddenPocketSize,
+          maxAttempts: options.patternMaxAttempts, // NEW
+        },
       }),
     );
-  }
-
-  // NEW: “N times to max” for the easy non-carving patterns.
-  if (options.includeLeverOpensDoor) {
-    const n = Math.max(0, options.leverOpensDoorCount | 0);
-    for (let k = 0; k < n; k++) {
-      patterns.push(() =>
-        applyLeverOpensDoorPattern({
-          rng: patternRng,
-          dungeon,
-          rooms,
-          entranceRoomId,
-          featureType,
-          featureId,
-          featureParam,
-          doors,
-          levers,
-          circuitsById,
-          allocId: () => clamp255(nextId++),
-          options: { maxAttempts: options.patternMaxAttempts },
-        }),
-      );
-    }
   }
 
   if (options.includePlateOpensDoor) {

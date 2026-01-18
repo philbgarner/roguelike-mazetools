@@ -365,9 +365,6 @@ const App: React.FC = () => {
     useState(false);
   const [leverHiddenPocketSize, setLeverHiddenPocketSize] = useState(5); // odd >= 3
 
-  const [includeLeverOpensDoor, setIncludeLeverOpensDoor] = useState(false);
-  const [leverOpensDoorCount, setLeverOpensDoorCount] = useState(2);
-
   const [includePlateOpensDoor, setIncludePlateOpensDoor] = useState(false);
   const [plateOpensDoorCount, setPlateOpensDoorCount] = useState(2);
 
@@ -565,13 +562,6 @@ const App: React.FC = () => {
       includeLeverHiddenPocket,
       leverHiddenPocketSize,
       leverDoorCount: 1,
-      includeLeverOpensDoor,
-      leverOpensDoorCount,
-
-      includePlateOpensDoor,
-      plateOpensDoorCount,
-
-      patternMaxAttempts,
     });
 
     // Pattern diagnostics summary
@@ -658,8 +648,6 @@ const App: React.FC = () => {
     showStateOverlay,
     includeLeverHiddenPocket,
     leverHiddenPocketSize,
-    includeLeverOpensDoor,
-    leverOpensDoorCount,
     includePlateOpensDoor,
     plateOpensDoorCount,
     patternMaxAttempts,
@@ -1050,11 +1038,6 @@ const App: React.FC = () => {
           includeLeverHiddenPocket,
           leverHiddenPocketSize,
           leverDoorCount: 1,
-          includeLeverOpensDoor,
-          leverOpensDoorCount,
-          includePlateOpensDoor,
-          plateOpensDoorCount,
-          patternMaxAttempts,
         });
 
         runs.push({
@@ -1088,8 +1071,6 @@ const App: React.FC = () => {
     opts,
     includeLeverHiddenPocket,
     leverHiddenPocketSize,
-    includeLeverOpensDoor,
-    leverOpensDoorCount,
     includePlateOpensDoor,
     plateOpensDoorCount,
     patternMaxAttempts,
@@ -1346,31 +1327,6 @@ const App: React.FC = () => {
             <label className="maze-checkbox">
               <input
                 type="checkbox"
-                checked={includeLeverOpensDoor}
-                onChange={(e) => setIncludeLeverOpensDoor(e.target.checked)}
-              />
-              <span>Include Lever → Door (TOGGLE)</span>
-            </label>
-
-            <label className="maze-field">
-              <span>Lever→Door count (N)</span>
-              <input
-                type="number"
-                min={0}
-                max={30}
-                value={leverOpensDoorCount}
-                disabled={!includeLeverOpensDoor}
-                onChange={(e) =>
-                  setLeverOpensDoorCount(
-                    clampInt(Number(e.target.value || 0), 0, 999),
-                  )
-                }
-              />
-            </label>
-
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
                 checked={includePlateOpensDoor}
                 onChange={(e) => setIncludePlateOpensDoor(e.target.checked)}
               />
@@ -1529,7 +1485,7 @@ const App: React.FC = () => {
                             doorSitesAvg: tilesUnique=
                             {(p as any).doorSitesAvg.tilesUnique ?? "?"},{" "}
                             corridorsTotal=
-                            {(p as any).doorSitesAvg.corridorsTotal ?? "?"},{" "}
+                            {(p as any).doorSitesAvg.corridorsTotal ?? "?"},
                             validPairs=
                             {(p as any).doorSitesAvg
                               .corridorsWithValidRoomPair ?? "?"}
