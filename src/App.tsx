@@ -15,6 +15,12 @@ import {
   type DungeonRuntimeState,
 } from "./dungeonState";
 
+import CircuitDiagnosticsSection from "./debug/CircuitDiagnosticsSection";
+import type {
+  CircuitDiagFilters,
+  CircuitDiagSort,
+} from "./debug/circuitDiagnosticsVM";
+
 import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
 
 import {
@@ -360,6 +366,31 @@ const App: React.FC = () => {
   const [height, setHeight] = useState(64);
   const [seed, setSeed] = useState("seed-1234");
 
+  const [selectedCircuitId, setSelectedCircuitId] = useState<string | null>(
+    null,
+  );
+
+  const [circuitDiagnostics, setCircuitDiagnostics] = useState<
+    CircuitEvalResult["diagnostics"] | null
+  >(null);
+
+  const [selectedCircuitIndex, setSelectedCircuitIndex] = useState<
+    number | null
+  >(null);
+
+  const [circuitDiagFilters, setCircuitDiagFilters] =
+    useState<CircuitDiagFilters>({
+      search: "",
+      onlySignal: false,
+      onlyCycles: false,
+      hideDepth0: false,
+    });
+
+  const [circuitDiagSort, setCircuitDiagSort] = useState<CircuitDiagSort>({
+    kind: "evalOrder",
+    dir: "asc",
+  });
+
   // --- Content / Puzzle options ---
   const [includeLeverHiddenPocket, setIncludeLeverHiddenPocket] =
     useState(false);
@@ -397,6 +428,7 @@ const App: React.FC = () => {
   const [circuitDebug, setCircuitDebug] = useState<CircuitEvalResult["debug"]>(
     {},
   );
+
   const [showStateOverlay, setShowStateOverlay] = useState(true);
 
   // --- Batch runner ---
@@ -544,6 +576,7 @@ const App: React.FC = () => {
     const res = evaluateCircuits(derived, content.meta.circuits);
     setRuntime(res.next);
     setCircuitDebug(res.debug);
+    setCircuitDiagnostics(res.diagnostics ?? null);
   }, []);
 
   const regenerateRuntimeFromContent = React.useCallback(() => {
@@ -552,6 +585,8 @@ const App: React.FC = () => {
     const initialRuntime = initDungeonRuntimeState(content);
     const derived = derivePlatesFromBlocks(initialRuntime, content);
     const evalOut = evaluateCircuits(derived, content.meta.circuits);
+    setRuntime(evalOut.next);
+    setCircuitDebug(evalOut.debug);
 
     setRuntime(evalOut.next);
     setCircuitDebug(evalOut.debug);
@@ -588,9 +623,11 @@ const App: React.FC = () => {
     const initialRuntime = initDungeonRuntimeState(content);
     const derived = derivePlatesFromBlocks(initialRuntime, content);
     const evalOut = evaluateCircuits(derived, content.meta.circuits);
-
     setRuntime(evalOut.next);
     setCircuitDebug(evalOut.debug);
+    setCircuitDiagnostics(evalOut.diagnostics ?? null);
+    setSelectedCircuitIndex(null); // optional: reset selection on regen
+
     setSelectedBlockId(null);
 
     const composite = makeContentCompositeImageData(
@@ -1710,28 +1747,19 @@ const App: React.FC = () => {
 
             <div style={{ height: 12 }} />
 
-            <details>
-              <summary className="maze-summary">Circuit Debug</summary>
-              {circuitDebugKeys.length === 0 ? (
-                <div className="muted">No debug entries.</div>
-              ) : (
-                <div
-                  className="mono"
-                  style={{ fontSize: 12, lineHeight: 1.35 }}
-                >
-                  {circuitDebugKeys.slice(0, 60).map((k) => (
-                    <div key={k}>
-                      {k}: {JSON.stringify((circuitDebug as any)[k])}
-                    </div>
-                  ))}
-                  {circuitDebugKeys.length > 60 ? (
-                    <div className="muted">
-                      (showing first 60 of {circuitDebugKeys.length})
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </details>
+            <CircuitDiagnosticsSection
+              title="Circuit Diagnostics"
+              circuits={content.meta.circuits}
+              diagnostics={circuitDiagnostics}
+              selectedCircuitIndex={selectedCircuitIndex}
+              onSelectCircuitIndex={setSelectedCircuitIndex}
+              filters={circuitDiagFilters}
+              onChangeFilters={setCircuitDiagFilters}
+              sort={circuitDiagSort}
+              onChangeSort={setCircuitDiagSort}
+              allowJumpLinks={true}
+              showRawJson={false}
+            />
           </div>
         )}
       </div>

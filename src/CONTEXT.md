@@ -1,11 +1,9 @@
----
-
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-CONTEXT VERSION: **2026-01-17**
+CONTEXT VERSION: **2026-01-18**
 LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
 CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
-CURRENT PHASE: **Phase 1 — Circuit Chaining (instrumentation in progress)**
+CURRENT PHASE: **Phase 1 — Circuit Chaining (diagnostics UI in progress)**
 
 SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
@@ -18,7 +16,7 @@ SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 PROJECT OVERVIEW
 
 This project is an experimental procedural dungeon generator built in TypeScript
-with a React-based debug and validation harness.
+with a React-based debug, inspection, and batch-validation harness.
 
 It is designed to evolve toward a JRPG / metroidvania-style dungeon system
 emphasizing:
@@ -37,8 +35,8 @@ The system is intentionally layered so that:
 
 are cleanly separated.
 
-This separation is foundational, enforced in code, and **proven viable**
-through diagnostics and batch validation.
+This separation is foundational, enforced in code, and **proven viable** through
+runtime execution, diagnostics, and large-scale batch validation.
 
 ============================================================
 HIGH-LEVEL ARCHITECTURE
@@ -62,9 +60,9 @@ Responsibilities:
 
 Outputs:
 
-* solid mask (wall/floor)
-* regionId mask
-* distanceToWall mask
+* `solid` mask (wall/floor)
+* `regionId` mask
+* `distanceToWall` mask
 * BSP metadata (rooms, corridors, depth, seed)
 
 This layer is **pure geometry** and contains no gameplay knowledge.
@@ -94,7 +92,7 @@ Core files:
 * `dungeonState.ts`
 * `evaluateCircuits.ts`
 * `walkability.ts`
-* `App.tsx` (debug + batch harness)
+* `App.tsx` (debug UI + batch harness)
 
 Responsibilities:
 
@@ -126,7 +124,7 @@ This policy is implemented, verified, and stable.
 
 CONTENT MASKS & METADATA
 
-featureType values (authoritative):
+`featureType` values (authoritative):
 
 * 0 = none
 * 1 = monster
@@ -234,49 +232,61 @@ MILESTONE 4 — PHASE BREAKDOWN
 Phase 1 — Circuit Chaining (FOUNDATIONAL)
 
 STATUS: **CORE IMPLEMENTATION COMPLETE**
-STATUS: **DIAGNOSTICS PARTIALLY COMPLETE**
+STATUS: **DIAGNOSTICS UI INTEGRATION IN PROGRESS**
 
 ### What was completed this session
 
-* SIGNAL triggers are first-class circuit dependencies
-* `evaluateCircuits.ts` now:
+**Circuit chaining engine (evaluateCircuits.ts)**
 
-  * Topologically sorts circuits by SIGNAL dependencies
-  * Supports same-tick chained evaluation
-  * Remains deterministic and best-effort
-* Cycle handling upgraded:
+* SIGNAL outputs are first-class circuit dependencies
+* Circuits are topologically sorted by SIGNAL edges
+* Same-tick chained evaluation is supported
+* Deterministic behavior preserved
+* Cycles detected via SCC (Tarjan)
+* Cycle members vs downstream-of-cycle circuits distinguished
+* Cycles never abort evaluation
 
-  * True cycle members detected via SCC (Tarjan)
-  * Downstream-of-cycle circuits distinguished
-  * Cycles never abort evaluation
-* New chaining-aware diagnostics structures added:
+**New diagnostics data model**
 
-  * `CircuitEvalDiagnostics`
-  * `CircuitChainingDiag`
-  * `SignalRef`
-  * `CycleGroupDiag`
-* `topoSortCircuitsWithMeta()` now computes:
+* `CircuitEvalDiagnostics`
+* `CircuitChainingDiag`
+* `SignalRef`
+* `CycleGroupDiag`
 
-  * `orderIds`
-  * `evalOrderIndexById`
-  * `topoDepthById`
-  * `signalDepsById`
-  * `signalEdgeCount`
-  * `inCycleById`
-  * `blockedByCycleById`
-  * SCC cycle groups
-* `evaluateCircuits()` now:
+Diagnostics include:
 
-  * Builds a full `CircuitEvalDiagnostics` bundle
-  * Attaches it to `CircuitEvalResult`
-  * Preserves backward compatibility
+* eval order index
+* topo depth
+* SIGNAL dependency graph
+* cycle membership
+* blocked-by-cycle classification
 
-### What this enables
+**Debug UI (React)**
 
-* Circuits form a **compositional logic graph**
-* Multi-step puzzles are expressible **without new mechanics**
-* Puzzle complexity is now **measurable, not inferred**
-* Difficulty can be derived from topology, not heuristics
+New, structured circuit diagnostics UI implemented:
+
+* `CircuitDiagnosticsSection`
+* `CircuitDiagToolbar`
+* `CircuitList`
+* `CircuitInspector`
+* `GlobalCircuitMetrics`
+* `circuitDiagnosticsVM` (pure selectors / view models)
+
+The UI:
+
+* Replaces the former raw JSON circuit debug output
+* Is strictly observational (no difficulty semantics)
+* Mirrors batch-harness metrics exactly
+* Makes circuit topology and composition visible
+
+### Current state
+
+* Circuit chaining behavior is complete and correct
+* Diagnostics are produced and attached to `CircuitEvalResult`
+* Diagnostics are captured in `App.tsx`
+* Structured diagnostics UI is integrated but still stabilizing
+
+No gameplay behavior has changed.
 
 ---
 
@@ -284,33 +294,18 @@ Phase 1 — REMAINING (NEXT IMMEDIATE WORK)
 
 The remaining work in Phase 1 is **purely observational**.
 
-No gameplay behavior should change.
+1. **Stabilize diagnostics UI**
 
-1. **Expose diagnostics in the debug UI**
+   * Minor layout polish
+   * Verify all fields render correctly across seeds
+   * Ensure empty / edge cases are handled cleanly
 
-   * Show per-circuit:
+2. **Batch harness parity**
 
-     * eval order
-     * topo depth
-     * SIGNAL dependency count
-     * cycle / blocked-by-cycle flags
-   * Visualize chain depth and cycles clearly
+   * Ensure batch JSON output uses the same metrics
+   * Confirm schema stability for long-term tracking
 
-2. **Expose diagnostics in the batch harness**
-
-   * Aggregate:
-
-     * max topo depth per dungeon
-     * average topo depth
-     * % circuits with SIGNAL deps
-     * cycle incidence rate
-     * blocked-by-cycle incidence
-
-3. **Stabilize diagnostic output format**
-
-   * Ensure JSON output is stable for long-term trend tracking
-
-Once this is complete, Phase 1 is **fully done**.
+Once these are complete, Phase 1 is **fully done**.
 
 ---
 
@@ -324,6 +319,7 @@ Goals:
   * OPTIONAL_REWARD
   * SHORTCUT
   * FORESHADOW
+
 * Enforce progression rules using diagnostics:
 
   * Minimum topo depth for main-path gates
@@ -340,6 +336,7 @@ Phase 3 — Composition Patterns (PLANNED)
 
   * Lever → Gate → Plate → Reward
   * Consequence-before-cause setups
+
 * Pattern selection informed by:
 
   * Room distance
@@ -374,5 +371,3 @@ MENTAL MODEL SUMMARY
 * Diagnostics quantify reliability
 * Batch harness converts intuition into data
 * Milestone 4 turns correctness into progression grammar
-
----
