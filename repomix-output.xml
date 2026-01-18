@@ -51,6 +51,7 @@ src/
     CircuitInspector.tsx
     CircuitList.tsx
     GlobalCircuitMetrics.tsx
+    RoleDiagnosticsSection.tsx
   App.tsx
   batchStats.ts
   CONTEXT.md
@@ -73,802 +74,755 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
-<file path="src/roleDiagnostics.ts">
-// src/roleDiagnostics.ts
+<file path="src/debug/RoleDiagnosticsSection.tsx">
+// src/debug/RoleDiagnosticsSection.tsx
 //
-// Milestone 4 — Phase 2 (observational)
-// Role-aware diagnostics built on top of CircuitEvalDiagnostics + content meta.
+// Milestone 4 — Phase 2 (observational only):
+// UI surfacing for RoleDiagnosticsV1 produced by analyzeRoleDiagnosticsV1().
+// - Read-only
+// - Deterministic
+// - Batch-safe (renders stable schema; no side effects)
 //
-// Goals:
-// - No gameplay effects (observational only)
-// - Batch-safe (stable schemaVersion, stable keys)
-// - Deterministic anchor derivation (per circuit) using content meta
-// - Conservative default thresholds with depth-based ramping
-//
-// Notes:
-// - Roles are annotations (generation-time). This module only reads them.
-// - Anchor derivation is best-effort. SIGNAL-only circuits are anchored via a 2nd pass
-//   using upstream deps from CircuitEvalDiagnostics.perCircuit[].signalDeps.
+// Intended to sit next to CircuitDiagnosticsSection in App.tsx.
 
-import type { ContentOutputs, CircuitDef } from "./mazeGen";
-import type { CircuitEvalDiagnostics } from "./evaluateCircuits";
+import React, { useMemo, useState } from "react";
+import type { CircuitDef } from "../mazeGen";
+import type {
+  PuzzleRole,
+  RoleDiagnosticsV1,
+  RoleRuleHitV1,
+  RoleRuleId,
+} from "../roleDiagnostics";
 
-// -----------------------------
-// Public types
-// -----------------------------
+type RoleFilter = "ALL" | "MISSING" | PuzzleRole;
 
-export type PuzzleRole =
-  | "MAIN_PATH_GATE"
-  | "OPTIONAL_REWARD"
-  | "SHORTCUT"
-  | "FORESHADOW";
+type SortKind = "depthN" | "topoDepth" | "signalDepCount" | "circuitIndex";
+type SortDir = "asc" | "desc";
 
-export type RoleRuleId =
-  // Role integrity
-  | "ROLE_MISSING"
-  | "ROLE_UNKNOWN"
-  | "ROLE_DUPLICATE"
+type Sort = { kind: SortKind; dir: SortDir };
 
-  // MAIN_PATH_GATE quality
-  | "MAIN_TRIVIAL"
-  | "MAIN_LATE_TRIVIAL"
-  | "MAIN_TOO_DEEP_EARLY"
+export type RoleDiagnosticsSectionProps = {
+  title?: string;
 
-  // OPTIONAL_REWARD quality
-  | "OPTIONAL_TRIVIAL"
-  | "OPTIONAL_OVERGATED_BY_MAIN"
+  circuits: CircuitDef[];
+  diagnostics: RoleDiagnosticsV1 | null;
 
-  // SHORTCUT quality
-  | "SHORTCUT_NOT_REDUCING_DISTANCE"
+  selectedCircuitIndex: number | null;
+  onSelectCircuitIndex: (idx: number | null) => void;
 
-  // FORESHADOW quality
-  | "FORESHADOW_AFTER_MAIN"
-  | "FORESHADOW_TOO_DEEP";
-
-export type CircuitAnchorV1 = {
-  anchorRoomId: number | null;
-  roomDepth: number | null; // BFS distance from entrance
-  depthN: number | null; // normalized 0..1
-  onMainPath: boolean | null;
-
-  // Optional: if a door is involved and we can map it
-  doorId?: number;
-  mainPathEdgeDepth?: number;
+  /** Optional: show raw JSON dump in a <details> (UI only). */
+  showRawJson?: boolean;
 };
 
-export type CircuitRoleRecordV1 = {
+type RowVM = {
   circuitIndex: number;
   role: PuzzleRole | null;
-
-  anchor: CircuitAnchorV1;
-
   topoDepth: number;
   signalDepCount: number;
   participatesInCycle: boolean;
   blockedByCycle: boolean;
-};
 
-export type RoleRuleHitV1 = {
-  ruleId: RoleRuleId;
-  role: PuzzleRole | null;
-  circuitIndex: number;
-
-  depthN: number | null;
+  anchorRoomId: number | null;
   roomDepth: number | null;
-  topoDepth: number;
+  depthN: number | null;
+  onMainPath: boolean | null;
 
-  code: string; // short stable code for aggregation
-  detail?: string; // keep short (UI only)
+  ruleHitCount: number;
 };
 
-export type RoleThresholdsV1 = {
-  schemaVersion: 1;
-
-  main: {
-    minTopoDepth: Array<{ atLeastDepthN: number; minTopoDepth: number }>;
-
-    lateStartsAtDepthN: number;
-    lateMinTopoDepth: number;
-
-    earlyEndsAtDepthN: number;
-    earlyMaxTopoDepth: number;
-  };
-
-  optional: {
-    lateStartsAtDepthN: number;
-    lateMinTopoDepth: number;
-  };
-
-  foreshadow: {
-    maxTopoDepth: number;
-    mustOccurBeforeDepthN: number;
-  };
-
-  shortcut: {
-    minRoomDepthReduction: number;
-  };
-};
-
-export const DEFAULT_ROLE_THRESHOLDS_V1: RoleThresholdsV1 = {
-  schemaVersion: 1,
-
-  main: {
-    minTopoDepth: [
-      { atLeastDepthN: 0.0, minTopoDepth: 0 },
-      { atLeastDepthN: 0.25, minTopoDepth: 1 },
-      { atLeastDepthN: 0.45, minTopoDepth: 2 },
-      { atLeastDepthN: 0.7, minTopoDepth: 3 },
-    ],
-
-    lateStartsAtDepthN: 0.55,
-    lateMinTopoDepth: 2,
-
-    earlyEndsAtDepthN: 0.2,
-    earlyMaxTopoDepth: 3,
-  },
-
-  optional: {
-    lateStartsAtDepthN: 0.6,
-    lateMinTopoDepth: 1,
-  },
-
-  foreshadow: {
-    maxTopoDepth: 1,
-    mustOccurBeforeDepthN: 0.45,
-  },
-
-  shortcut: {
-    minRoomDepthReduction: 2,
-  },
-};
-
-export type RoleSummaryStatsV1 = {
-  schemaVersion: 1;
-
-  roleCounts: Record<PuzzleRole, number>;
-  roleMissingCount: number;
-
-  topoDepthByRole: Record<
-    PuzzleRole,
-    {
-      min: number;
-      p25: number;
-      median: number;
-      p75: number;
-      max: number;
-      avg: number;
-    }
-  >;
-
-  depthNByRole: Record<
-    PuzzleRole,
-    {
-      min: number;
-      p25: number;
-      median: number;
-      p75: number;
-      max: number;
-      avg: number;
-    }
-  >;
-
-  ruleCounts: Record<RoleRuleId, number>;
-};
-
-export type RoleDiagnosticsV1 = {
-  schemaVersion: 1;
-
-  seedUsed?: number;
-  entranceRoomId?: number;
-  farthestRoomId?: number;
-  maxRoomDepth?: number;
-
-  perCircuit: CircuitRoleRecordV1[];
-  hits: RoleRuleHitV1[];
-  summary: RoleSummaryStatsV1;
-};
-
-// -----------------------------
-// Analyzer entry point
-// -----------------------------
-
-export function analyzeRoleDiagnosticsV1(args: {
-  meta: ContentOutputs["meta"];
-  circuitEval: CircuitEvalDiagnostics;
-  thresholds?: RoleThresholdsV1;
-}): RoleDiagnosticsV1 {
-  const { meta, circuitEval } = args;
-  const thresholds = args.thresholds ?? DEFAULT_ROLE_THRESHOLDS_V1;
-
-  // Normalize depth
-  const maxRoomDepth = getMaxRoomDepth(meta);
-
-  // Build quick lookup maps for id->entity meta
-  const maps = buildMetaIdMaps(meta);
-
-  // Role annotation map (optional; may not exist yet)
-  const roleMap = (meta as any).circuitRoles as
-    | Record<number, PuzzleRole>
-    | undefined;
-
-  // Build initial per-circuit records from circuitEval (stable ordering)
-  const perCircuit: CircuitRoleRecordV1[] = circuitEval.perCircuit.map((cd) => {
-    const circuitIndex = cd.circuitIndex;
-    const circuit = meta.circuits[circuitIndex];
-
-    const role = roleMap?.[circuitIndex] ?? null;
-
-    const anchor = circuit
-      ? deriveCircuitAnchorV1({
-          meta,
-          circuit,
-          maxRoomDepth,
-          maps,
-        })
-      : {
-          anchorRoomId: null,
-          roomDepth: null,
-          depthN: null,
-          onMainPath: null,
-        };
-
-    return {
-      circuitIndex,
-      role,
-      anchor,
-      topoDepth: cd.topoDepth | 0,
-      signalDepCount: cd.signalDepCount | 0,
-      participatesInCycle: !!cd.participatesInCycle,
-      blockedByCycle: !!cd.blockedByCycle,
-    };
-  });
-
-  // Second pass: if anchor is missing (usually SIGNAL-only circuits),
-  // try to inherit a stable anchor from upstream deps (min depthN).
-  fillMissingAnchorsFromDeps(perCircuit, circuitEval);
-
-  const hits = evaluateRoleRulesV1(perCircuit, thresholds);
-
-  const summary = summarizeRoleDiagnosticsV1(perCircuit, hits);
-
-  return {
-    schemaVersion: 1,
-    seedUsed: meta.seedUsed,
-    entranceRoomId: meta.entranceRoomId,
-    farthestRoomId: meta.farthestRoomId,
-    maxRoomDepth,
-    perCircuit,
-    hits,
-    summary,
-  };
+function fmtDepthN(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toFixed(2);
 }
 
-// -----------------------------
-// Anchor derivation
-// -----------------------------
-
-type MetaIdMaps = {
-  doorById: Map<number, ContentOutputs["meta"]["doors"][number]>;
-  keyById: Map<number, ContentOutputs["meta"]["keys"][number]>;
-  leverById: Map<number, ContentOutputs["meta"]["levers"][number]>;
-  plateById: Map<number, ContentOutputs["meta"]["plates"][number]>;
-  hiddenById: Map<number, ContentOutputs["meta"]["hidden"][number]>;
-  hazardById: Map<number, ContentOutputs["meta"]["hazards"][number]>;
-};
-
-function buildMetaIdMaps(meta: ContentOutputs["meta"]): MetaIdMaps {
-  const doorById = new Map<number, ContentOutputs["meta"]["doors"][number]>();
-  const keyById = new Map<number, ContentOutputs["meta"]["keys"][number]>();
-  const leverById = new Map<number, ContentOutputs["meta"]["levers"][number]>();
-  const plateById = new Map<number, ContentOutputs["meta"]["plates"][number]>();
-  const hiddenById = new Map<
-    number,
-    ContentOutputs["meta"]["hidden"][number]
-  >();
-  const hazardById = new Map<
-    number,
-    ContentOutputs["meta"]["hazards"][number]
-  >();
-
-  for (const d of meta.doors) doorById.set(d.id, d);
-  for (const k of meta.keys) keyById.set(k.id, k);
-  for (const l of meta.levers) leverById.set(l.id, l);
-  for (const p of meta.plates) plateById.set(p.id, p);
-  for (const h of meta.hidden) hiddenById.set(h.id, h);
-  for (const hz of meta.hazards) hazardById.set(hz.id, hz);
-
-  return { doorById, keyById, leverById, plateById, hiddenById, hazardById };
+function fmtBool(v: boolean | null | undefined): string {
+  if (v == null) return "—";
+  return v ? "yes" : "no";
 }
 
-function deriveCircuitAnchorV1(args: {
-  meta: ContentOutputs["meta"];
-  circuit: CircuitDef;
-  maxRoomDepth: number;
-  maps: MetaIdMaps;
-}): CircuitAnchorV1 {
-  const { meta, circuit, maxRoomDepth, maps } = args;
-
-  const candidates: number[] = [];
-  let doorHint: { doorId: number; mainPathEdgeDepth: number } | null = null;
-
-  // Triggers: LEVER, KEY, PLATE are anchored by their roomId.
-  for (const t of circuit.triggers) {
-    if (t.kind === "LEVER") {
-      const lever = maps.leverById.get(t.refId);
-      if (lever) candidates.push(lever.roomId);
-    } else if (t.kind === "KEY") {
-      const key = maps.keyById.get(t.refId);
-      if (key) candidates.push(key.roomId);
-    } else if (t.kind === "PLATE") {
-      const plate = maps.plateById.get(t.refId);
-      if (plate) candidates.push(plate.roomId);
-    } else if (t.kind === "SIGNAL") {
-      // SIGNAL triggers are handled by 2nd-pass anchor fill using deps.
-    } else {
-      // COMBAT_CLEAR / INTERACT: no stable mapping yet
-    }
-  }
-
-  // Targets: DOOR/HAZARD/HIDDEN
-  for (const trg of circuit.targets) {
-    if (trg.kind === "DOOR") {
-      const door = maps.doorById.get(trg.refId);
-      if (door) {
-        // Door has two rooms; anchor to whichever is earlier by roomDistance
-        const ra = door.roomA;
-        const rb = door.roomB;
-        const da = meta.roomDistance.get(ra);
-        const db = meta.roomDistance.get(rb);
-
-        // Deterministic pick: min distance, tie -> min roomId
-        const pick =
-          da === undefined && db === undefined
-            ? Math.min(ra, rb)
-            : da === undefined
-              ? rb
-              : db === undefined
-                ? ra
-                : da < db
-                  ? ra
-                  : db < da
-                    ? rb
-                    : Math.min(ra, rb);
-
-        candidates.push(pick);
-        doorHint = { doorId: door.id, mainPathEdgeDepth: door.depth | 0 };
-      }
-    } else if (trg.kind === "HAZARD") {
-      const hz = maps.hazardById.get(trg.refId);
-      if (hz) candidates.push(hz.roomId);
-    } else if (trg.kind === "HIDDEN") {
-      const hid = maps.hiddenById.get(trg.refId);
-      if (hid) candidates.push(hid.roomId);
-    }
-  }
-
-  const anchorRoomId = pickAnchorRoomId(meta, candidates);
-
-  if (anchorRoomId == null) {
-    return {
-      anchorRoomId: null,
-      roomDepth: null,
-      depthN: null,
-      onMainPath: null,
-    };
-  }
-
-  const roomDepth = meta.roomDistance.get(anchorRoomId) ?? null;
-  const depthN =
-    roomDepth == null || maxRoomDepth <= 0
-      ? null
-      : clamp01(roomDepth / maxRoomDepth);
-
-  const onMainPath =
-    meta.mainPathRoomIds && Array.isArray(meta.mainPathRoomIds)
-      ? meta.mainPathRoomIds.includes(anchorRoomId)
-      : null;
-
-  const out: CircuitAnchorV1 = {
-    anchorRoomId,
-    roomDepth,
-    depthN,
-    onMainPath,
-  };
-
-  if (doorHint) {
-    out.doorId = doorHint.doorId;
-    out.mainPathEdgeDepth = doorHint.mainPathEdgeDepth;
-  }
-
-  return out;
+function pad2(n: number) {
+  const s = String(n);
+  return s.length >= 2 ? s : `0${s}`;
 }
 
-function pickAnchorRoomId(
-  meta: ContentOutputs["meta"],
-  candidates: number[],
-): number | null {
-  if (!candidates.length) return null;
-
-  // Filter invalid ids (0 means corridor / not-room in your regionId mask)
-  const rooms = candidates.filter((r) => Number.isFinite(r) && r > 0);
-  if (!rooms.length) return null;
-
-  // Deterministic: pick min by roomDistance, tie -> min roomId
-  let bestRoom = rooms[0];
-  let bestDist = meta.roomDistance.get(bestRoom);
-
-  for (let i = 1; i < rooms.length; i++) {
-    const r = rooms[i];
-    const d = meta.roomDistance.get(r);
-
-    // Treat undefined distances as "worst"
-    const dBest = bestDist ?? Number.POSITIVE_INFINITY;
-    const dHere = d ?? Number.POSITIVE_INFINITY;
-
-    if (dHere < dBest || (dHere === dBest && r < bestRoom)) {
-      bestRoom = r;
-      bestDist = d;
-    }
-  }
-
-  return bestRoom;
+function roleLabel(r: PuzzleRole | null): string {
+  return r ?? "—";
 }
 
-function fillMissingAnchorsFromDeps(
-  perCircuit: CircuitRoleRecordV1[],
-  circuitEval: CircuitEvalDiagnostics,
-) {
-  const recByIndex = new Map<number, CircuitRoleRecordV1>();
-  for (const r of perCircuit) recByIndex.set(r.circuitIndex, r);
-
-  // Do up to 2 passes to allow shallow propagation even if ordering is odd.
-  // (Still deterministic; small constant.)
-  for (let pass = 0; pass < 2; pass++) {
-    let changed = false;
-
-    for (const cd of circuitEval.perCircuit) {
-      const rec = recByIndex.get(cd.circuitIndex);
-      if (!rec) continue;
-      if (rec.anchor.anchorRoomId != null) continue;
-
-      // Choose upstream anchored circuit with minimal depthN, tie -> smallest circuitIndex
-      let best: CircuitRoleRecordV1 | null = null;
-
-      for (const dep of cd.signalDeps ?? []) {
-        const up = recByIndex.get(dep.fromCircuitIndex);
-        if (!up) continue;
-        if (up.anchor.anchorRoomId == null) continue;
-
-        if (!best) {
-          best = up;
-          continue;
-        }
-
-        const a = up.anchor.depthN ?? Number.POSITIVE_INFINITY;
-        const b = best.anchor.depthN ?? Number.POSITIVE_INFINITY;
-
-        if (a < b || (a === b && up.circuitIndex < best.circuitIndex)) {
-          best = up;
-        }
-      }
-
-      if (best) {
-        rec.anchor = { ...best.anchor };
-        changed = true;
-      }
-    }
-
-    if (!changed) break;
-  }
+function glyphFlags(r: Pick<RowVM, "participatesInCycle" | "blockedByCycle">) {
+  const a = r.participatesInCycle ? "⟳" : "";
+  const b = r.blockedByCycle ? "⊘" : "";
+  return a + b || "◉";
 }
 
-// -----------------------------
-// Rule evaluation (v1 — conservative, observational)
-// -----------------------------
+function parseSearch(raw: string) {
+  // Supported (simple, stable):
+  // - "idx:12"
+  // - "role:MAIN_PATH_GATE" or "role:missing"
+  // - "rule:MAIN_LATE_TRIVIAL"
+  // - otherwise substring match over role/rule ids
+  const s = (raw ?? "").trim();
+  const parts = s.split(/\s+/).filter(Boolean);
 
-export function evaluateRoleRulesV1(
-  perCircuit: CircuitRoleRecordV1[],
-  thresholds: RoleThresholdsV1,
-): RoleRuleHitV1[] {
-  const hits: RoleRuleHitV1[] = [];
+  let idx: number | null = null;
+  let role: string | null = null;
+  let rule: string | null = null;
+  const free: string[] = [];
 
-  for (const r of perCircuit) {
-    const role = r.role;
-    const depthN = r.anchor.depthN;
-    const roomDepth = r.anchor.roomDepth;
-    const topoDepth = r.topoDepth | 0;
-
-    // Role missing: only warn if you've begun assigning roles (heuristic: any non-null roles exist)
-    // If you'd rather always warn, remove the "anyRoleAssigned" check.
-  }
-
-  const anyRoleAssigned = perCircuit.some((r) => r.role != null);
-
-  for (const r of perCircuit) {
-    const role = r.role;
-    const depthN = r.anchor.depthN;
-    const roomDepth = r.anchor.roomDepth;
-    const topoDepth = r.topoDepth | 0;
-
-    if (anyRoleAssigned && role == null) {
-      hits.push({
-        ruleId: "ROLE_MISSING",
-        role: null,
-        circuitIndex: r.circuitIndex,
-        depthN,
-        roomDepth,
-        topoDepth,
-        code: "ROLE_MISSING",
-        detail: "Circuit has no role annotation.",
-      });
-    }
-
-    if (role === "MAIN_PATH_GATE") {
-      // MAIN_TRIVIAL: topoDepth below ramped minimum
-      const minTD = requiredMinTopoDepth(depthN, thresholds.main.minTopoDepth);
-      if (minTD != null && topoDepth < minTD) {
-        hits.push({
-          ruleId: "MAIN_TRIVIAL",
-          role,
-          circuitIndex: r.circuitIndex,
-          depthN,
-          roomDepth,
-          topoDepth,
-          code: `MAIN_TD_LT_${minTD}`,
-          detail: `Main gate topoDepth ${topoDepth} < min ${minTD} at depthN=${fmt(depthN)}`,
-        });
-      }
-
-      // MAIN_LATE_TRIVIAL: late in dungeon but still < lateMinTopoDepth
-      if (
-        depthN != null &&
-        depthN >= thresholds.main.lateStartsAtDepthN &&
-        topoDepth < thresholds.main.lateMinTopoDepth
-      ) {
-        hits.push({
-          ruleId: "MAIN_LATE_TRIVIAL",
-          role,
-          circuitIndex: r.circuitIndex,
-          depthN,
-          roomDepth,
-          topoDepth,
-          code: `MAIN_LATE_TD_LT_${thresholds.main.lateMinTopoDepth}`,
-          detail: `Late main gate topoDepth ${topoDepth} < ${thresholds.main.lateMinTopoDepth}`,
-        });
-      }
-
-      // MAIN_TOO_DEEP_EARLY: rare guardrail
-      if (
-        depthN != null &&
-        depthN <= thresholds.main.earlyEndsAtDepthN &&
-        topoDepth > thresholds.main.earlyMaxTopoDepth
-      ) {
-        hits.push({
-          ruleId: "MAIN_TOO_DEEP_EARLY",
-          role,
-          circuitIndex: r.circuitIndex,
-          depthN,
-          roomDepth,
-          topoDepth,
-          code: `MAIN_EARLY_TD_GT_${thresholds.main.earlyMaxTopoDepth}`,
-          detail: `Early main gate topoDepth ${topoDepth} > ${thresholds.main.earlyMaxTopoDepth}`,
-        });
-      }
-    }
-
-    if (role === "OPTIONAL_REWARD") {
-      if (
-        depthN != null &&
-        depthN >= thresholds.optional.lateStartsAtDepthN &&
-        topoDepth < thresholds.optional.lateMinTopoDepth
-      ) {
-        hits.push({
-          ruleId: "OPTIONAL_TRIVIAL",
-          role,
-          circuitIndex: r.circuitIndex,
-          depthN,
-          roomDepth,
-          topoDepth,
-          code: `OPT_LATE_TD_LT_${thresholds.optional.lateMinTopoDepth}`,
-          detail: `Late optional topoDepth ${topoDepth} < ${thresholds.optional.lateMinTopoDepth}`,
-        });
-      }
-      // OPTIONAL_OVERGATED_BY_MAIN is intentionally left for Phase 2+ once you compute dependency closure by role.
-    }
-
-    if (role === "FORESHADOW") {
-      if (topoDepth > thresholds.foreshadow.maxTopoDepth) {
-        hits.push({
-          ruleId: "FORESHADOW_TOO_DEEP",
-          role,
-          circuitIndex: r.circuitIndex,
-          depthN,
-          roomDepth,
-          topoDepth,
-          code: `FS_TD_GT_${thresholds.foreshadow.maxTopoDepth}`,
-          detail: `Foreshadow topoDepth ${topoDepth} > ${thresholds.foreshadow.maxTopoDepth}`,
-        });
-      }
-      if (
-        depthN != null &&
-        depthN > thresholds.foreshadow.mustOccurBeforeDepthN
-      ) {
-        hits.push({
-          ruleId: "FORESHADOW_AFTER_MAIN",
-          role,
-          circuitIndex: r.circuitIndex,
-          depthN,
-          roomDepth,
-          topoDepth,
-          code: `FS_DEPTHN_GT_${fmt(thresholds.foreshadow.mustOccurBeforeDepthN)}`,
-          detail: `Foreshadow appears late (depthN=${fmt(depthN)}).`,
-        });
-      }
-    }
-
-    // SHORTCUT_NOT_REDUCING_DISTANCE requires endpoint roomIds; leave for when shortcut semantics are introduced.
-  }
-
-  return hits;
-}
-
-function requiredMinTopoDepth(
-  depthN: number | null,
-  ramp: Array<{ atLeastDepthN: number; minTopoDepth: number }>,
-): number | null {
-  if (depthN == null) return null;
-  let best: number | null = null;
-  for (const r of ramp) {
-    if (depthN >= r.atLeastDepthN) best = r.minTopoDepth;
-  }
-  return best;
-}
-
-// -----------------------------
-// Summary stats
-// -----------------------------
-
-export function summarizeRoleDiagnosticsV1(
-  perCircuit: CircuitRoleRecordV1[],
-  hits: RoleRuleHitV1[],
-): RoleSummaryStatsV1 {
-  const roles: PuzzleRole[] = [
-    "MAIN_PATH_GATE",
-    "OPTIONAL_REWARD",
-    "SHORTCUT",
-    "FORESHADOW",
-  ];
-
-  const roleCounts: Record<PuzzleRole, number> = {
-    MAIN_PATH_GATE: 0,
-    OPTIONAL_REWARD: 0,
-    SHORTCUT: 0,
-    FORESHADOW: 0,
-  };
-
-  let roleMissingCount = 0;
-
-  const topoDepthsByRole: Record<PuzzleRole, number[]> = {
-    MAIN_PATH_GATE: [],
-    OPTIONAL_REWARD: [],
-    SHORTCUT: [],
-    FORESHADOW: [],
-  };
-
-  const depthNsByRole: Record<PuzzleRole, number[]> = {
-    MAIN_PATH_GATE: [],
-    OPTIONAL_REWARD: [],
-    SHORTCUT: [],
-    FORESHADOW: [],
-  };
-
-  for (const r of perCircuit) {
-    if (r.role == null) {
-      roleMissingCount++;
+  for (const p of parts) {
+    const mIdx = /^idx:(\d+)$/i.exec(p);
+    if (mIdx) {
+      idx = Number(mIdx[1]);
       continue;
     }
-    roleCounts[r.role]++;
-
-    topoDepthsByRole[r.role].push(r.topoDepth | 0);
-    if (r.anchor.depthN != null) depthNsByRole[r.role].push(r.anchor.depthN);
+    const mRole = /^role:(.+)$/i.exec(p);
+    if (mRole) {
+      role = mRole[1];
+      continue;
+    }
+    const mRule = /^rule:(.+)$/i.exec(p);
+    if (mRule) {
+      rule = mRule[1];
+      continue;
+    }
+    free.push(p);
   }
 
-  const topoDepthByRole = {} as RoleSummaryStatsV1["topoDepthByRole"];
-  const depthNByRole = {} as RoleSummaryStatsV1["depthNByRole"];
+  return { idx, role, rule, freeText: free.join(" ").toLowerCase() };
+}
 
-  for (const role of roles) {
-    topoDepthByRole[role] = statsOf(topoDepthsByRole[role]);
-    depthNByRole[role] = statsOf(depthNsByRole[role]);
-  }
+function sortRows(rows: RowVM[], sort: Sort): RowVM[] {
+  const dir = sort.dir === "desc" ? -1 : 1;
 
-  const ruleCounts: Record<RoleRuleId, number> = {} as any;
-  for (const h of hits) {
-    ruleCounts[h.ruleId] = (ruleCounts[h.ruleId] ?? 0) + 1;
-  }
-
-  // Ensure all known rules appear (batch-safe shape)
-  const allRuleIds: RoleRuleId[] = [
-    "ROLE_MISSING",
-    "ROLE_UNKNOWN",
-    "ROLE_DUPLICATE",
-    "MAIN_TRIVIAL",
-    "MAIN_LATE_TRIVIAL",
-    "MAIN_TOO_DEEP_EARLY",
-    "OPTIONAL_TRIVIAL",
-    "OPTIONAL_OVERGATED_BY_MAIN",
-    "SHORTCUT_NOT_REDUCING_DISTANCE",
-    "FORESHADOW_AFTER_MAIN",
-    "FORESHADOW_TOO_DEEP",
-  ];
-  for (const id of allRuleIds) ruleCounts[id] = ruleCounts[id] ?? 0;
-
-  return {
-    schemaVersion: 1,
-    roleCounts,
-    roleMissingCount,
-    topoDepthByRole,
-    depthNByRole,
-    ruleCounts,
+  const key = (r: RowVM): number => {
+    switch (sort.kind) {
+      case "depthN":
+        // nulls sort last
+        return r.depthN == null ? Number.POSITIVE_INFINITY : r.depthN;
+      case "topoDepth":
+        return r.topoDepth;
+      case "signalDepCount":
+        return r.signalDepCount;
+      case "circuitIndex":
+      default:
+        return r.circuitIndex;
+    }
   };
+
+  return [...rows].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    if (ka < kb) return -1 * dir;
+    if (ka > kb) return 1 * dir;
+    // Stable tie-breakers
+    return (a.circuitIndex - b.circuitIndex) * dir;
+  });
 }
 
-function statsOf(values: number[]): {
-  min: number;
-  p25: number;
-  median: number;
-  p75: number;
-  max: number;
-  avg: number;
-} {
-  if (!values.length) {
-    return { min: 0, p25: 0, median: 0, p75: 0, max: 0, avg: 0 };
+function buildHitsByCircuitIndex(hits: RoleRuleHitV1[]) {
+  const map = new Map<number, RoleRuleHitV1[]>();
+  for (const h of hits) {
+    const arr = map.get(h.circuitIndex) ?? [];
+    arr.push(h);
+    map.set(h.circuitIndex, arr);
   }
-  const v = values.slice().sort((a, b) => a - b);
-  const min = v[0];
-  const max = v[v.length - 1];
-  const avg = v.reduce((s, x) => s + x, 0) / v.length;
-  const p25 = quantileSorted(v, 0.25);
-  const median = quantileSorted(v, 0.5);
-  const p75 = quantileSorted(v, 0.75);
-  return { min, p25, median, p75, max, avg };
-}
-
-function quantileSorted(sorted: number[], q: number): number {
-  if (!sorted.length) return 0;
-  if (q <= 0) return sorted[0];
-  if (q >= 1) return sorted[sorted.length - 1];
-
-  const pos = (sorted.length - 1) * q;
-  const i0 = Math.floor(pos);
-  const i1 = Math.ceil(pos);
-  if (i0 === i1) return sorted[i0];
-  const t = pos - i0;
-  return sorted[i0] * (1 - t) + sorted[i1] * t;
-}
-
-// -----------------------------
-// Helpers
-// -----------------------------
-
-function getMaxRoomDepth(meta: ContentOutputs["meta"]): number {
-  const d = meta.roomDistance.get(meta.farthestRoomId);
-  if (typeof d === "number" && Number.isFinite(d)) return Math.max(1, d | 0);
-
-  // Fallback: scan map
-  let mx = 1;
-  for (const v of meta.roomDistance.values()) {
-    if (typeof v === "number" && Number.isFinite(v)) mx = Math.max(mx, v | 0);
+  // stable-ish ordering inside each list
+  for (const [k, arr] of map) {
+    arr.sort((a, b) => {
+      if (a.ruleId < b.ruleId) return -1;
+      if (a.ruleId > b.ruleId) return 1;
+      return a.code.localeCompare(b.code);
+    });
+    map.set(k, arr);
   }
-  return Math.max(1, mx);
+  return map;
 }
 
-function clamp01(v: number) {
-  return Math.max(0, Math.min(1, v));
+function ruleListFromSummary(ruleCounts: Record<string, number>) {
+  const items = Object.entries(ruleCounts)
+    .filter(([, n]) => (n | 0) > 0)
+    .sort((a, b) => b[1] - a[1]);
+  return items as Array<[RoleRuleId, number]>;
 }
 
-function fmt(v: number | null | undefined) {
-  if (v == null) return "null";
-  return (Math.round(v * 1000) / 1000).toString();
+export default function RoleDiagnosticsSection(
+  props: RoleDiagnosticsSectionProps,
+) {
+  const {
+    title = "Role Diagnostics",
+    circuits,
+    diagnostics,
+    selectedCircuitIndex,
+    onSelectCircuitIndex,
+    showRawJson = false,
+  } = props;
+
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("ALL");
+  const [onlyWithRuleHits, setOnlyWithRuleHits] = useState(false);
+  const [sort, setSort] = useState<Sort>({ kind: "depthN", dir: "asc" });
+
+  const hitsByCircuitIndex = useMemo(() => {
+    return diagnostics
+      ? buildHitsByCircuitIndex(diagnostics.hits ?? [])
+      : new Map();
+  }, [diagnostics]);
+
+  const rows: RowVM[] = useMemo(() => {
+    if (!diagnostics) return [];
+
+    return diagnostics.perCircuit.map((pc) => {
+      const hits = hitsByCircuitIndex.get(pc.circuitIndex) ?? [];
+      return {
+        circuitIndex: pc.circuitIndex,
+        role: pc.role,
+        topoDepth: pc.topoDepth | 0,
+        signalDepCount: pc.signalDepCount | 0,
+        participatesInCycle: !!pc.participatesInCycle,
+        blockedByCycle: !!pc.blockedByCycle,
+
+        anchorRoomId: pc.anchor?.anchorRoomId ?? null,
+        roomDepth: pc.anchor?.roomDepth ?? null,
+        depthN: pc.anchor?.depthN ?? null,
+        onMainPath: pc.anchor?.onMainPath ?? null,
+
+        ruleHitCount: hits.length,
+      };
+    });
+  }, [diagnostics, hitsByCircuitIndex]);
+
+  const visibleRows = useMemo(() => {
+    if (!diagnostics) return [];
+
+    const { idx, role, rule, freeText } = parseSearch(search);
+    const ruleQ = (rule ?? "").toUpperCase();
+    const roleQ = (role ?? "").toUpperCase();
+
+    const out: RowVM[] = [];
+
+    for (const r of rows) {
+      if (idx != null && r.circuitIndex !== idx) continue;
+
+      // role dropdown filter
+      if (roleFilter !== "ALL") {
+        if (roleFilter === "MISSING") {
+          if (r.role != null) continue;
+        } else {
+          if (r.role !== roleFilter) continue;
+        }
+      }
+
+      // role: query override (optional)
+      if (roleQ) {
+        if (roleQ === "MISSING") {
+          if (r.role != null) continue;
+        } else if ((r.role ?? "").toUpperCase() !== roleQ) {
+          continue;
+        }
+      }
+
+      if (onlyWithRuleHits && r.ruleHitCount <= 0) continue;
+
+      // rule: query filter
+      if (ruleQ) {
+        const hits = hitsByCircuitIndex.get(r.circuitIndex) ?? [];
+        if (!hits.some((h) => (h.ruleId ?? "").toUpperCase() === ruleQ))
+          continue;
+      }
+
+      // free-text match: role / any hit ruleId / hit code
+      if (freeText) {
+        const roleStr = (r.role ?? "").toLowerCase();
+        const hits = hitsByCircuitIndex.get(r.circuitIndex) ?? [];
+        const hitStr = hits
+          .map((h) => `${h.ruleId} ${h.code} ${h.detail ?? ""}`.toLowerCase())
+          .join(" | ");
+        const merged = `${roleStr} ${hitStr}`;
+        if (!merged.includes(freeText)) continue;
+      }
+
+      out.push(r);
+    }
+
+    return sortRows(out, sort);
+  }, [
+    diagnostics,
+    rows,
+    hitsByCircuitIndex,
+    search,
+    roleFilter,
+    onlyWithRuleHits,
+    sort,
+  ]);
+
+  const selectedRow = useMemo(() => {
+    if (!diagnostics) return null;
+    if (selectedCircuitIndex == null) return null;
+    return rows.find((r) => r.circuitIndex === selectedCircuitIndex) ?? null;
+  }, [diagnostics, rows, selectedCircuitIndex]);
+
+  const selectedCircuitDef = useMemo(() => {
+    if (!selectedRow) return null;
+    return circuits[selectedRow.circuitIndex] ?? null;
+  }, [circuits, selectedRow]);
+
+  const selectedHits = useMemo(() => {
+    if (!selectedRow) return [];
+    return hitsByCircuitIndex.get(selectedRow.circuitIndex) ?? [];
+  }, [hitsByCircuitIndex, selectedRow]);
+
+  const summaryRuleList = useMemo(() => {
+    if (!diagnostics) return [];
+    return ruleListFromSummary(diagnostics.summary.ruleCounts as any);
+  }, [diagnostics]);
+
+  const roleCounts = diagnostics?.summary.roleCounts ?? null;
+  const roleMissingCount = diagnostics?.summary.roleMissingCount ?? 0;
+
+  function toggleSort(kind: SortKind) {
+    setSort((prev) => {
+      if (prev.kind === kind) {
+        return { kind, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      // sensible defaults:
+      const dir: SortDir = kind === "depthN" ? "asc" : "desc";
+      return { kind, dir };
+    });
+  }
+
+  return (
+    <div className="panel">
+      <div className="panelTitle">{title}</div>
+
+      {!diagnostics ? (
+        <div className="muted">No role diagnostics available yet.</div>
+      ) : (
+        <>
+          {/* Toolbar */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr auto auto auto",
+              gap: 8,
+              alignItems: "center",
+              marginBottom: 10,
+            }}
+          >
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="search: idx:12  role:MAIN_PATH_GATE  rule:MAIN_LATE_TRIVIAL"
+              style={{
+                width: "100%",
+                padding: "6px 8px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "rgba(0,0,0,0.15)",
+                color: "var(--text)",
+              }}
+            />
+
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}
+              style={{
+                padding: "6px 8px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "rgba(0,0,0,0.15)",
+                color: "var(--text)",
+                fontFamily: "var(--mono)",
+                fontSize: 12,
+              }}
+              title="Role filter"
+            >
+              <option value="ALL">role: all</option>
+              <option value="MISSING">role: missing</option>
+              <option value="MAIN_PATH_GATE">role: MAIN_PATH_GATE</option>
+              <option value="OPTIONAL_REWARD">role: OPTIONAL_REWARD</option>
+              <option value="SHORTCUT">role: SHORTCUT</option>
+              <option value="FORESHADOW">role: FORESHADOW</option>
+            </select>
+
+            <label
+              className="muted"
+              style={{ fontSize: 12, display: "flex", gap: 6 }}
+            >
+              <input
+                type="checkbox"
+                checked={onlyWithRuleHits}
+                onChange={(e) => setOnlyWithRuleHits(e.target.checked)}
+              />
+              only rule hits
+            </label>
+
+            <div className="muted" style={{ fontSize: 12, textAlign: "right" }}>
+              showing {visibleRows.length} / {rows.length}
+            </div>
+          </div>
+
+          {/* Summary cards */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 10,
+              marginBottom: 10,
+            }}
+          >
+            <div className="circuitCard">
+              <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8 }}>
+                Role Counts
+              </div>
+
+              {!roleCounts ? (
+                <div className="muted">No roleCounts.</div>
+              ) : (
+                <div
+                  className="mono"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 10,
+                    fontSize: 12,
+                  }}
+                >
+                  <div>
+                    <div className="muted">MAIN_PATH_GATE</div>
+                    <div>{roleCounts.MAIN_PATH_GATE ?? 0}</div>
+                  </div>
+                  <div>
+                    <div className="muted">OPTIONAL_REWARD</div>
+                    <div>{roleCounts.OPTIONAL_REWARD ?? 0}</div>
+                  </div>
+                  <div>
+                    <div className="muted">SHORTCUT</div>
+                    <div>{roleCounts.SHORTCUT ?? 0}</div>
+                  </div>
+                  <div>
+                    <div className="muted">FORESHADOW</div>
+                    <div>{roleCounts.FORESHADOW ?? 0}</div>
+                  </div>
+                  <div style={{ gridColumn: "1 / span 2" }}>
+                    <div className="muted">roleMissingCount</div>
+                    <div>{roleMissingCount}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="circuitCard">
+              <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8 }}>
+                Rule Counts (non-zero)
+              </div>
+
+              {summaryRuleList.length === 0 ? (
+                <div className="muted">No rule hits.</div>
+              ) : (
+                <div
+                  style={{
+                    maxHeight: 140,
+                    overflow: "auto",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: 8,
+                  }}
+                >
+                  {summaryRuleList.map(([rid, n]) => (
+                    <div
+                      key={rid}
+                      className="mono"
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "6px 10px",
+                        borderBottom: "1px solid rgba(255,255,255,0.06)",
+                        fontSize: 12,
+                      }}
+                    >
+                      <span>{rid}</span>
+                      <span>{n}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Main grid: list + inspector */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1.1fr 1fr",
+              gap: 10,
+              alignItems: "stretch",
+            }}
+          >
+            {/* List */}
+            <div className="circuitCard">
+              <div className="circuitHeader">
+                <div style={{ fontWeight: 700, fontSize: 12 }}>Role List</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  sort:
+                  <button
+                    onClick={() => toggleSort("depthN")}
+                    style={{ marginLeft: 6 }}
+                    className="maze-btn"
+                    title="Sort by depthN"
+                  >
+                    depthN
+                  </button>
+                  <button
+                    onClick={() => toggleSort("topoDepth")}
+                    style={{ marginLeft: 6 }}
+                    className="maze-btn"
+                    title="Sort by topoDepth"
+                  >
+                    topo
+                  </button>
+                  <button
+                    onClick={() => toggleSort("signalDepCount")}
+                    style={{ marginLeft: 6 }}
+                    className="maze-btn"
+                    title="Sort by SIGNAL deps"
+                  >
+                    sig
+                  </button>
+                  <button
+                    onClick={() => toggleSort("circuitIndex")}
+                    style={{ marginLeft: 6 }}
+                    className="maze-btn"
+                    title="Sort by circuit index"
+                  >
+                    idx
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  maxHeight: 340,
+                  overflow: "auto",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 8,
+                }}
+              >
+                {visibleRows.length === 0 ? (
+                  <div style={{ padding: 10 }} className="muted">
+                    No circuits match filters.
+                  </div>
+                ) : null}
+
+                {visibleRows.map((r) => {
+                  const isSelected = selectedCircuitIndex === r.circuitIndex;
+                  return (
+                    <button
+                      key={r.circuitIndex}
+                      onClick={() => onSelectCircuitIndex(r.circuitIndex)}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "8px 10px",
+                        border: "none",
+                        borderBottom: "1px solid rgba(255,255,255,0.06)",
+                        background: isSelected
+                          ? "rgba(255,255,255,0.08)"
+                          : "transparent",
+                        color: "var(--text)",
+                        cursor: "pointer",
+                        fontFamily: "var(--mono)",
+                        fontSize: 12,
+                        lineHeight: 1.35,
+                      }}
+                      title="Click to inspect"
+                    >
+                      <span style={{ display: "inline-block", width: 26 }}>
+                        {glyphFlags(r)}
+                      </span>
+                      <span style={{ display: "inline-block", width: 92 }}>
+                        {roleLabel(r.role)}
+                      </span>
+                      <span style={{ display: "inline-block", width: 70 }}>
+                        dN:{fmtDepthN(r.depthN)}
+                      </span>
+                      <span style={{ display: "inline-block", width: 66 }}>
+                        topo:{r.topoDepth}
+                      </span>
+                      <span style={{ display: "inline-block", width: 56 }}>
+                        sig:{r.signalDepCount}
+                      </span>
+                      <span style={{ display: "inline-block", width: 50 }}>
+                        hits:{pad2(r.ruleHitCount)}
+                      </span>
+                      <span>idx:{r.circuitIndex}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Inspector */}
+            <div className="circuitCard">
+              <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8 }}>
+                Role Inspector
+              </div>
+
+              {!selectedRow ? (
+                <div className="muted">Select a circuit to inspect.</div>
+              ) : (
+                <>
+                  <div className="circuitRow">
+                    <div className="circuitLabel">Circuit</div>
+                    <div className="circuitItems mono">
+                      idx:{selectedRow.circuitIndex} role:
+                      {roleLabel(selectedRow.role)}
+                    </div>
+                  </div>
+
+                  <div className="circuitRow">
+                    <div className="circuitLabel">Depth</div>
+                    <div className="circuitItems mono">
+                      roomDepth:{selectedRow.roomDepth ?? "—"} depthN:
+                      {fmtDepthN(selectedRow.depthN)} onMain:
+                      {fmtBool(selectedRow.onMainPath)}
+                    </div>
+                  </div>
+
+                  <div className="circuitRow">
+                    <div className="circuitLabel">Topology</div>
+                    <div className="circuitItems mono">
+                      topoDepth:{selectedRow.topoDepth} sigDeps:
+                      {selectedRow.signalDepCount} flags:
+                      {glyphFlags(selectedRow)}
+                    </div>
+                  </div>
+
+                  <div className="circuitRow">
+                    <div className="circuitLabel">Anchor</div>
+                    <div className="circuitItems mono">
+                      anchorRoomId:{selectedRow.anchorRoomId ?? "—"}
+                    </div>
+                  </div>
+
+                  <div style={{ height: 10 }} />
+
+                  <div
+                    style={{ fontWeight: 700, fontSize: 12, marginBottom: 6 }}
+                  >
+                    Rule hits ({selectedHits.length})
+                  </div>
+
+                  {selectedHits.length === 0 ? (
+                    <div className="muted">No rule hits for this circuit.</div>
+                  ) : (
+                    <div
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 8,
+                        overflow: "auto",
+                        maxHeight: 160,
+                      }}
+                    >
+                      {selectedHits.map((h, i) => (
+                        <div
+                          key={`${h.ruleId}:${h.code}:${i}`}
+                          className="mono"
+                          style={{
+                            padding: "6px 10px",
+                            borderBottom: "1px solid rgba(255,255,255,0.06)",
+                            fontSize: 12,
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          <div>
+                            <span style={{ fontWeight: 700 }}>{h.ruleId}</span>{" "}
+                            <span className="muted">({h.code})</span>
+                          </div>
+                          {h.detail ? (
+                            <div className="muted" style={{ marginTop: 2 }}>
+                              {h.detail}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ height: 10 }} />
+
+                  <div
+                    style={{ fontWeight: 700, fontSize: 12, marginBottom: 6 }}
+                  >
+                    Circuit definition (read-only)
+                  </div>
+
+                  {!selectedCircuitDef ? (
+                    <div className="muted">
+                      No circuit def found at this index.
+                    </div>
+                  ) : (
+                    <div
+                      className="mono"
+                      style={{ fontSize: 12, lineHeight: 1.4 }}
+                    >
+                      <div className="circuitRow">
+                        <div className="circuitLabel">Triggers</div>
+                        <div className="circuitItems mono">
+                          {selectedCircuitDef.triggers?.length ? (
+                            selectedCircuitDef.triggers.map((t, i) => (
+                              <span key={i}>
+                                {t.kind}:{t.refId}
+                                {i < selectedCircuitDef.triggers.length - 1
+                                  ? ", "
+                                  : ""}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="circuitRow">
+                        <div className="circuitLabel">Targets</div>
+                        <div className="circuitItems mono">
+                          {selectedCircuitDef.targets?.length ? (
+                            selectedCircuitDef.targets.map((t, i) => (
+                              <span key={i}>
+                                {t.kind}:{t.refId}→{t.effect}
+                                {i < selectedCircuitDef.targets.length - 1
+                                  ? ", "
+                                  : ""}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {showRawJson ? (
+                    <details style={{ marginTop: 10 }}>
+                      <summary className="muted">
+                        Raw role diagnostics JSON
+                      </summary>
+                      <pre
+                        className="maze-ascii-pre"
+                        style={{ marginTop: 8, maxHeight: 260 }}
+                      >
+                        {JSON.stringify(diagnostics, null, 2)}
+                      </pre>
+                    </details>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 </file>
 
@@ -2673,6 +2627,805 @@ ReactDOM.createRoot(document.getElementById("app")!).render(
     <App />
   </React.StrictMode>,
 );
+</file>
+
+<file path="src/roleDiagnostics.ts">
+// src/roleDiagnostics.ts
+//
+// Milestone 4 — Phase 2 (observational)
+// Role-aware diagnostics built on top of CircuitEvalDiagnostics + content meta.
+//
+// Goals:
+// - No gameplay effects (observational only)
+// - Batch-safe (stable schemaVersion, stable keys)
+// - Deterministic anchor derivation (per circuit) using content meta
+// - Conservative default thresholds with depth-based ramping
+//
+// Notes:
+// - Roles are annotations (generation-time). This module only reads them.
+// - Anchor derivation is best-effort. SIGNAL-only circuits are anchored via a 2nd pass
+//   using upstream deps from CircuitEvalDiagnostics.perCircuit[].signalDeps.
+
+import type { ContentOutputs, CircuitDef } from "./mazeGen";
+import type { CircuitEvalDiagnostics } from "./evaluateCircuits";
+
+// -----------------------------
+// Public types
+// -----------------------------
+
+export type PuzzleRole =
+  | "MAIN_PATH_GATE"
+  | "OPTIONAL_REWARD"
+  | "SHORTCUT"
+  | "FORESHADOW";
+
+export type RoleRuleId =
+  // Role integrity
+  | "ROLE_MISSING"
+  | "ROLE_UNKNOWN"
+  | "ROLE_DUPLICATE"
+
+  // MAIN_PATH_GATE quality
+  | "MAIN_TRIVIAL"
+  | "MAIN_LATE_TRIVIAL"
+  | "MAIN_TOO_DEEP_EARLY"
+
+  // OPTIONAL_REWARD quality
+  | "OPTIONAL_TRIVIAL"
+  | "OPTIONAL_OVERGATED_BY_MAIN"
+
+  // SHORTCUT quality
+  | "SHORTCUT_NOT_REDUCING_DISTANCE"
+
+  // FORESHADOW quality
+  | "FORESHADOW_AFTER_MAIN"
+  | "FORESHADOW_TOO_DEEP";
+
+export type CircuitAnchorV1 = {
+  anchorRoomId: number | null;
+  roomDepth: number | null; // BFS distance from entrance
+  depthN: number | null; // normalized 0..1
+  onMainPath: boolean | null;
+
+  // Optional: if a door is involved and we can map it
+  doorId?: number;
+  mainPathEdgeDepth?: number;
+};
+
+export type CircuitRoleRecordV1 = {
+  circuitIndex: number;
+  role: PuzzleRole | null;
+
+  anchor: CircuitAnchorV1;
+
+  topoDepth: number;
+  signalDepCount: number;
+  participatesInCycle: boolean;
+  blockedByCycle: boolean;
+};
+
+export type RoleRuleHitV1 = {
+  ruleId: RoleRuleId;
+  role: PuzzleRole | null;
+  circuitIndex: number;
+
+  depthN: number | null;
+  roomDepth: number | null;
+  topoDepth: number;
+
+  code: string; // short stable code for aggregation
+  detail?: string; // keep short (UI only)
+};
+
+export type RoleThresholdsV1 = {
+  schemaVersion: 1;
+
+  main: {
+    minTopoDepth: Array<{ atLeastDepthN: number; minTopoDepth: number }>;
+
+    lateStartsAtDepthN: number;
+    lateMinTopoDepth: number;
+
+    earlyEndsAtDepthN: number;
+    earlyMaxTopoDepth: number;
+  };
+
+  optional: {
+    lateStartsAtDepthN: number;
+    lateMinTopoDepth: number;
+  };
+
+  foreshadow: {
+    maxTopoDepth: number;
+    mustOccurBeforeDepthN: number;
+  };
+
+  shortcut: {
+    minRoomDepthReduction: number;
+  };
+};
+
+export const DEFAULT_ROLE_THRESHOLDS_V1: RoleThresholdsV1 = {
+  schemaVersion: 1,
+
+  main: {
+    minTopoDepth: [
+      { atLeastDepthN: 0.0, minTopoDepth: 0 },
+      { atLeastDepthN: 0.25, minTopoDepth: 1 },
+      { atLeastDepthN: 0.45, minTopoDepth: 2 },
+      { atLeastDepthN: 0.7, minTopoDepth: 3 },
+    ],
+
+    lateStartsAtDepthN: 0.55,
+    lateMinTopoDepth: 2,
+
+    earlyEndsAtDepthN: 0.2,
+    earlyMaxTopoDepth: 3,
+  },
+
+  optional: {
+    lateStartsAtDepthN: 0.6,
+    lateMinTopoDepth: 1,
+  },
+
+  foreshadow: {
+    maxTopoDepth: 1,
+    mustOccurBeforeDepthN: 0.45,
+  },
+
+  shortcut: {
+    minRoomDepthReduction: 2,
+  },
+};
+
+export type RoleSummaryStatsV1 = {
+  schemaVersion: 1;
+
+  roleCounts: Record<PuzzleRole, number>;
+  roleMissingCount: number;
+
+  topoDepthByRole: Record<
+    PuzzleRole,
+    {
+      min: number;
+      p25: number;
+      median: number;
+      p75: number;
+      max: number;
+      avg: number;
+    }
+  >;
+
+  depthNByRole: Record<
+    PuzzleRole,
+    {
+      min: number;
+      p25: number;
+      median: number;
+      p75: number;
+      max: number;
+      avg: number;
+    }
+  >;
+
+  ruleCounts: Record<RoleRuleId, number>;
+};
+
+export type RoleDiagnosticsV1 = {
+  schemaVersion: 1;
+
+  seedUsed?: number;
+  entranceRoomId?: number;
+  farthestRoomId?: number;
+  maxRoomDepth?: number;
+
+  perCircuit: CircuitRoleRecordV1[];
+  hits: RoleRuleHitV1[];
+  summary: RoleSummaryStatsV1;
+};
+
+// -----------------------------
+// Analyzer entry point
+// -----------------------------
+
+export function analyzeRoleDiagnosticsV1(args: {
+  meta: ContentOutputs["meta"];
+  circuitEval: CircuitEvalDiagnostics;
+  thresholds?: RoleThresholdsV1;
+}): RoleDiagnosticsV1 {
+  const { meta, circuitEval } = args;
+  const thresholds = args.thresholds ?? DEFAULT_ROLE_THRESHOLDS_V1;
+
+  // Normalize depth
+  const maxRoomDepth = getMaxRoomDepth(meta);
+
+  // Build quick lookup maps for id->entity meta
+  const maps = buildMetaIdMaps(meta);
+
+  // Role annotation map (optional; may not exist yet)
+  const roleMap = (meta as any).circuitRoles as
+    | Record<number, PuzzleRole>
+    | undefined;
+
+  // Build initial per-circuit records from circuitEval (stable ordering)
+  const perCircuit: CircuitRoleRecordV1[] = circuitEval.perCircuit.map((cd) => {
+    const circuitIndex = cd.circuitIndex;
+    const circuit = meta.circuits[circuitIndex];
+
+    const role = roleMap?.[circuitIndex] ?? null;
+
+    const anchor = circuit
+      ? deriveCircuitAnchorV1({
+          meta,
+          circuit,
+          maxRoomDepth,
+          maps,
+        })
+      : {
+          anchorRoomId: null,
+          roomDepth: null,
+          depthN: null,
+          onMainPath: null,
+        };
+
+    return {
+      circuitIndex,
+      role,
+      anchor,
+      topoDepth: cd.topoDepth | 0,
+      signalDepCount: cd.signalDepCount | 0,
+      participatesInCycle: !!cd.participatesInCycle,
+      blockedByCycle: !!cd.blockedByCycle,
+    };
+  });
+
+  // Second pass: if anchor is missing (usually SIGNAL-only circuits),
+  // try to inherit a stable anchor from upstream deps (min depthN).
+  fillMissingAnchorsFromDeps(perCircuit, circuitEval);
+
+  const hits = evaluateRoleRulesV1(perCircuit, thresholds);
+
+  const summary = summarizeRoleDiagnosticsV1(perCircuit, hits);
+
+  return {
+    schemaVersion: 1,
+    seedUsed: meta.seedUsed,
+    entranceRoomId: meta.entranceRoomId,
+    farthestRoomId: meta.farthestRoomId,
+    maxRoomDepth,
+    perCircuit,
+    hits,
+    summary,
+  };
+}
+
+// -----------------------------
+// Anchor derivation
+// -----------------------------
+
+type MetaIdMaps = {
+  doorById: Map<number, ContentOutputs["meta"]["doors"][number]>;
+  keyById: Map<number, ContentOutputs["meta"]["keys"][number]>;
+  leverById: Map<number, ContentOutputs["meta"]["levers"][number]>;
+  plateById: Map<number, ContentOutputs["meta"]["plates"][number]>;
+  hiddenById: Map<number, ContentOutputs["meta"]["hidden"][number]>;
+  hazardById: Map<number, ContentOutputs["meta"]["hazards"][number]>;
+};
+
+function buildMetaIdMaps(meta: ContentOutputs["meta"]): MetaIdMaps {
+  const doorById = new Map<number, ContentOutputs["meta"]["doors"][number]>();
+  const keyById = new Map<number, ContentOutputs["meta"]["keys"][number]>();
+  const leverById = new Map<number, ContentOutputs["meta"]["levers"][number]>();
+  const plateById = new Map<number, ContentOutputs["meta"]["plates"][number]>();
+  const hiddenById = new Map<
+    number,
+    ContentOutputs["meta"]["hidden"][number]
+  >();
+  const hazardById = new Map<
+    number,
+    ContentOutputs["meta"]["hazards"][number]
+  >();
+
+  for (const d of meta.doors) doorById.set(d.id, d);
+  for (const k of meta.keys) keyById.set(k.id, k);
+  for (const l of meta.levers) leverById.set(l.id, l);
+  for (const p of meta.plates) plateById.set(p.id, p);
+  for (const h of meta.hidden) hiddenById.set(h.id, h);
+  for (const hz of meta.hazards) hazardById.set(hz.id, hz);
+
+  return { doorById, keyById, leverById, plateById, hiddenById, hazardById };
+}
+
+function deriveCircuitAnchorV1(args: {
+  meta: ContentOutputs["meta"];
+  circuit: CircuitDef;
+  maxRoomDepth: number;
+  maps: MetaIdMaps;
+}): CircuitAnchorV1 {
+  const { meta, circuit, maxRoomDepth, maps } = args;
+
+  const candidates: number[] = [];
+  let doorHint: { doorId: number; mainPathEdgeDepth: number } | null = null;
+
+  // Triggers: LEVER, KEY, PLATE are anchored by their roomId.
+  for (const t of circuit.triggers) {
+    if (t.kind === "LEVER") {
+      const lever = maps.leverById.get(t.refId);
+      if (lever) candidates.push(lever.roomId);
+    } else if (t.kind === "KEY") {
+      const key = maps.keyById.get(t.refId);
+      if (key) candidates.push(key.roomId);
+    } else if (t.kind === "PLATE") {
+      const plate = maps.plateById.get(t.refId);
+      if (plate) candidates.push(plate.roomId);
+    } else if (t.kind === "SIGNAL") {
+      // SIGNAL triggers are handled by 2nd-pass anchor fill using deps.
+    } else {
+      // COMBAT_CLEAR / INTERACT: no stable mapping yet
+    }
+  }
+
+  // Targets: DOOR/HAZARD/HIDDEN
+  for (const trg of circuit.targets) {
+    if (trg.kind === "DOOR") {
+      const door = maps.doorById.get(trg.refId);
+      if (door) {
+        // Door has two rooms; anchor to whichever is earlier by roomDistance
+        const ra = door.roomA;
+        const rb = door.roomB;
+        const da = meta.roomDistance.get(ra);
+        const db = meta.roomDistance.get(rb);
+
+        // Deterministic pick: min distance, tie -> min roomId
+        const pick =
+          da === undefined && db === undefined
+            ? Math.min(ra, rb)
+            : da === undefined
+              ? rb
+              : db === undefined
+                ? ra
+                : da < db
+                  ? ra
+                  : db < da
+                    ? rb
+                    : Math.min(ra, rb);
+
+        candidates.push(pick);
+        doorHint = { doorId: door.id, mainPathEdgeDepth: door.depth | 0 };
+      }
+    } else if (trg.kind === "HAZARD") {
+      const hz = maps.hazardById.get(trg.refId);
+      if (hz) candidates.push(hz.roomId);
+    } else if (trg.kind === "HIDDEN") {
+      const hid = maps.hiddenById.get(trg.refId);
+      if (hid) candidates.push(hid.roomId);
+    }
+  }
+
+  const anchorRoomId = pickAnchorRoomId(meta, candidates);
+
+  if (anchorRoomId == null) {
+    return {
+      anchorRoomId: null,
+      roomDepth: null,
+      depthN: null,
+      onMainPath: null,
+    };
+  }
+
+  const roomDepth = meta.roomDistance.get(anchorRoomId) ?? null;
+  const depthN =
+    roomDepth == null || maxRoomDepth <= 0
+      ? null
+      : clamp01(roomDepth / maxRoomDepth);
+
+  const onMainPath =
+    meta.mainPathRoomIds && Array.isArray(meta.mainPathRoomIds)
+      ? meta.mainPathRoomIds.includes(anchorRoomId)
+      : null;
+
+  const out: CircuitAnchorV1 = {
+    anchorRoomId,
+    roomDepth,
+    depthN,
+    onMainPath,
+  };
+
+  if (doorHint) {
+    out.doorId = doorHint.doorId;
+    out.mainPathEdgeDepth = doorHint.mainPathEdgeDepth;
+  }
+
+  return out;
+}
+
+function pickAnchorRoomId(
+  meta: ContentOutputs["meta"],
+  candidates: number[],
+): number | null {
+  if (!candidates.length) return null;
+
+  // Filter invalid ids (0 means corridor / not-room in your regionId mask)
+  const rooms = candidates.filter((r) => Number.isFinite(r) && r > 0);
+  if (!rooms.length) return null;
+
+  // Deterministic: pick min by roomDistance, tie -> min roomId
+  let bestRoom = rooms[0];
+  let bestDist = meta.roomDistance.get(bestRoom);
+
+  for (let i = 1; i < rooms.length; i++) {
+    const r = rooms[i];
+    const d = meta.roomDistance.get(r);
+
+    // Treat undefined distances as "worst"
+    const dBest = bestDist ?? Number.POSITIVE_INFINITY;
+    const dHere = d ?? Number.POSITIVE_INFINITY;
+
+    if (dHere < dBest || (dHere === dBest && r < bestRoom)) {
+      bestRoom = r;
+      bestDist = d;
+    }
+  }
+
+  return bestRoom;
+}
+
+function fillMissingAnchorsFromDeps(
+  perCircuit: CircuitRoleRecordV1[],
+  circuitEval: CircuitEvalDiagnostics,
+) {
+  const recByIndex = new Map<number, CircuitRoleRecordV1>();
+  for (const r of perCircuit) recByIndex.set(r.circuitIndex, r);
+
+  // Do up to 2 passes to allow shallow propagation even if ordering is odd.
+  // (Still deterministic; small constant.)
+  for (let pass = 0; pass < 2; pass++) {
+    let changed = false;
+
+    for (const cd of circuitEval.perCircuit) {
+      const rec = recByIndex.get(cd.circuitIndex);
+      if (!rec) continue;
+      if (rec.anchor.anchorRoomId != null) continue;
+
+      // Choose upstream anchored circuit with minimal depthN, tie -> smallest circuitIndex
+      let best: CircuitRoleRecordV1 | null = null;
+
+      for (const dep of cd.signalDeps ?? []) {
+        const up = recByIndex.get(dep.fromCircuitIndex);
+        if (!up) continue;
+        if (up.anchor.anchorRoomId == null) continue;
+
+        if (!best) {
+          best = up;
+          continue;
+        }
+
+        const a = up.anchor.depthN ?? Number.POSITIVE_INFINITY;
+        const b = best.anchor.depthN ?? Number.POSITIVE_INFINITY;
+
+        if (a < b || (a === b && up.circuitIndex < best.circuitIndex)) {
+          best = up;
+        }
+      }
+
+      if (best) {
+        rec.anchor = { ...best.anchor };
+        changed = true;
+      }
+    }
+
+    if (!changed) break;
+  }
+}
+
+// -----------------------------
+// Rule evaluation (v1 — conservative, observational)
+// -----------------------------
+
+export function evaluateRoleRulesV1(
+  perCircuit: CircuitRoleRecordV1[],
+  thresholds: RoleThresholdsV1,
+): RoleRuleHitV1[] {
+  const hits: RoleRuleHitV1[] = [];
+
+  for (const r of perCircuit) {
+    const role = r.role;
+    const depthN = r.anchor.depthN;
+    const roomDepth = r.anchor.roomDepth;
+    const topoDepth = r.topoDepth | 0;
+
+    // Role missing: only warn if you've begun assigning roles (heuristic: any non-null roles exist)
+    // If you'd rather always warn, remove the "anyRoleAssigned" check.
+  }
+
+  const anyRoleAssigned = perCircuit.some((r) => r.role != null);
+
+  for (const r of perCircuit) {
+    const role = r.role;
+    const depthN = r.anchor.depthN;
+    const roomDepth = r.anchor.roomDepth;
+    const topoDepth = r.topoDepth | 0;
+
+    if (anyRoleAssigned && role == null) {
+      hits.push({
+        ruleId: "ROLE_MISSING",
+        role: null,
+        circuitIndex: r.circuitIndex,
+        depthN,
+        roomDepth,
+        topoDepth,
+        code: "ROLE_MISSING",
+        detail: "Circuit has no role annotation.",
+      });
+    }
+
+    if (role === "MAIN_PATH_GATE") {
+      // MAIN_TRIVIAL: topoDepth below ramped minimum
+      const minTD = requiredMinTopoDepth(depthN, thresholds.main.minTopoDepth);
+      if (minTD != null && topoDepth < minTD) {
+        hits.push({
+          ruleId: "MAIN_TRIVIAL",
+          role,
+          circuitIndex: r.circuitIndex,
+          depthN,
+          roomDepth,
+          topoDepth,
+          code: `MAIN_TD_LT_${minTD}`,
+          detail: `Main gate topoDepth ${topoDepth} < min ${minTD} at depthN=${fmt(depthN)}`,
+        });
+      }
+
+      // MAIN_LATE_TRIVIAL: late in dungeon but still < lateMinTopoDepth
+      if (
+        depthN != null &&
+        depthN >= thresholds.main.lateStartsAtDepthN &&
+        topoDepth < thresholds.main.lateMinTopoDepth
+      ) {
+        hits.push({
+          ruleId: "MAIN_LATE_TRIVIAL",
+          role,
+          circuitIndex: r.circuitIndex,
+          depthN,
+          roomDepth,
+          topoDepth,
+          code: `MAIN_LATE_TD_LT_${thresholds.main.lateMinTopoDepth}`,
+          detail: `Late main gate topoDepth ${topoDepth} < ${thresholds.main.lateMinTopoDepth}`,
+        });
+      }
+
+      // MAIN_TOO_DEEP_EARLY: rare guardrail
+      if (
+        depthN != null &&
+        depthN <= thresholds.main.earlyEndsAtDepthN &&
+        topoDepth > thresholds.main.earlyMaxTopoDepth
+      ) {
+        hits.push({
+          ruleId: "MAIN_TOO_DEEP_EARLY",
+          role,
+          circuitIndex: r.circuitIndex,
+          depthN,
+          roomDepth,
+          topoDepth,
+          code: `MAIN_EARLY_TD_GT_${thresholds.main.earlyMaxTopoDepth}`,
+          detail: `Early main gate topoDepth ${topoDepth} > ${thresholds.main.earlyMaxTopoDepth}`,
+        });
+      }
+    }
+
+    if (role === "OPTIONAL_REWARD") {
+      if (
+        depthN != null &&
+        depthN >= thresholds.optional.lateStartsAtDepthN &&
+        topoDepth < thresholds.optional.lateMinTopoDepth
+      ) {
+        hits.push({
+          ruleId: "OPTIONAL_TRIVIAL",
+          role,
+          circuitIndex: r.circuitIndex,
+          depthN,
+          roomDepth,
+          topoDepth,
+          code: `OPT_LATE_TD_LT_${thresholds.optional.lateMinTopoDepth}`,
+          detail: `Late optional topoDepth ${topoDepth} < ${thresholds.optional.lateMinTopoDepth}`,
+        });
+      }
+      // OPTIONAL_OVERGATED_BY_MAIN is intentionally left for Phase 2+ once you compute dependency closure by role.
+    }
+
+    if (role === "FORESHADOW") {
+      if (topoDepth > thresholds.foreshadow.maxTopoDepth) {
+        hits.push({
+          ruleId: "FORESHADOW_TOO_DEEP",
+          role,
+          circuitIndex: r.circuitIndex,
+          depthN,
+          roomDepth,
+          topoDepth,
+          code: `FS_TD_GT_${thresholds.foreshadow.maxTopoDepth}`,
+          detail: `Foreshadow topoDepth ${topoDepth} > ${thresholds.foreshadow.maxTopoDepth}`,
+        });
+      }
+      if (
+        depthN != null &&
+        depthN > thresholds.foreshadow.mustOccurBeforeDepthN
+      ) {
+        hits.push({
+          ruleId: "FORESHADOW_AFTER_MAIN",
+          role,
+          circuitIndex: r.circuitIndex,
+          depthN,
+          roomDepth,
+          topoDepth,
+          code: `FS_DEPTHN_GT_${fmt(thresholds.foreshadow.mustOccurBeforeDepthN)}`,
+          detail: `Foreshadow appears late (depthN=${fmt(depthN)}).`,
+        });
+      }
+    }
+
+    // SHORTCUT_NOT_REDUCING_DISTANCE requires endpoint roomIds; leave for when shortcut semantics are introduced.
+  }
+
+  return hits;
+}
+
+function requiredMinTopoDepth(
+  depthN: number | null,
+  ramp: Array<{ atLeastDepthN: number; minTopoDepth: number }>,
+): number | null {
+  if (depthN == null) return null;
+  let best: number | null = null;
+  for (const r of ramp) {
+    if (depthN >= r.atLeastDepthN) best = r.minTopoDepth;
+  }
+  return best;
+}
+
+// -----------------------------
+// Summary stats
+// -----------------------------
+
+export function summarizeRoleDiagnosticsV1(
+  perCircuit: CircuitRoleRecordV1[],
+  hits: RoleRuleHitV1[],
+): RoleSummaryStatsV1 {
+  const roles: PuzzleRole[] = [
+    "MAIN_PATH_GATE",
+    "OPTIONAL_REWARD",
+    "SHORTCUT",
+    "FORESHADOW",
+  ];
+
+  const roleCounts: Record<PuzzleRole, number> = {
+    MAIN_PATH_GATE: 0,
+    OPTIONAL_REWARD: 0,
+    SHORTCUT: 0,
+    FORESHADOW: 0,
+  };
+
+  let roleMissingCount = 0;
+
+  const topoDepthsByRole: Record<PuzzleRole, number[]> = {
+    MAIN_PATH_GATE: [],
+    OPTIONAL_REWARD: [],
+    SHORTCUT: [],
+    FORESHADOW: [],
+  };
+
+  const depthNsByRole: Record<PuzzleRole, number[]> = {
+    MAIN_PATH_GATE: [],
+    OPTIONAL_REWARD: [],
+    SHORTCUT: [],
+    FORESHADOW: [],
+  };
+
+  for (const r of perCircuit) {
+    if (r.role == null) {
+      roleMissingCount++;
+      continue;
+    }
+    roleCounts[r.role]++;
+
+    topoDepthsByRole[r.role].push(r.topoDepth | 0);
+    if (r.anchor.depthN != null) depthNsByRole[r.role].push(r.anchor.depthN);
+  }
+
+  const topoDepthByRole = {} as RoleSummaryStatsV1["topoDepthByRole"];
+  const depthNByRole = {} as RoleSummaryStatsV1["depthNByRole"];
+
+  for (const role of roles) {
+    topoDepthByRole[role] = statsOf(topoDepthsByRole[role]);
+    depthNByRole[role] = statsOf(depthNsByRole[role]);
+  }
+
+  const ruleCounts: Record<RoleRuleId, number> = {} as any;
+  for (const h of hits) {
+    ruleCounts[h.ruleId] = (ruleCounts[h.ruleId] ?? 0) + 1;
+  }
+
+  // Ensure all known rules appear (batch-safe shape)
+  const allRuleIds: RoleRuleId[] = [
+    "ROLE_MISSING",
+    "ROLE_UNKNOWN",
+    "ROLE_DUPLICATE",
+    "MAIN_TRIVIAL",
+    "MAIN_LATE_TRIVIAL",
+    "MAIN_TOO_DEEP_EARLY",
+    "OPTIONAL_TRIVIAL",
+    "OPTIONAL_OVERGATED_BY_MAIN",
+    "SHORTCUT_NOT_REDUCING_DISTANCE",
+    "FORESHADOW_AFTER_MAIN",
+    "FORESHADOW_TOO_DEEP",
+  ];
+  for (const id of allRuleIds) ruleCounts[id] = ruleCounts[id] ?? 0;
+
+  return {
+    schemaVersion: 1,
+    roleCounts,
+    roleMissingCount,
+    topoDepthByRole,
+    depthNByRole,
+    ruleCounts,
+  };
+}
+
+function statsOf(values: number[]): {
+  min: number;
+  p25: number;
+  median: number;
+  p75: number;
+  max: number;
+  avg: number;
+} {
+  if (!values.length) {
+    return { min: 0, p25: 0, median: 0, p75: 0, max: 0, avg: 0 };
+  }
+  const v = values.slice().sort((a, b) => a - b);
+  const min = v[0];
+  const max = v[v.length - 1];
+  const avg = v.reduce((s, x) => s + x, 0) / v.length;
+  const p25 = quantileSorted(v, 0.25);
+  const median = quantileSorted(v, 0.5);
+  const p75 = quantileSorted(v, 0.75);
+  return { min, p25, median, p75, max, avg };
+}
+
+function quantileSorted(sorted: number[], q: number): number {
+  if (!sorted.length) return 0;
+  if (q <= 0) return sorted[0];
+  if (q >= 1) return sorted[sorted.length - 1];
+
+  const pos = (sorted.length - 1) * q;
+  const i0 = Math.floor(pos);
+  const i1 = Math.ceil(pos);
+  if (i0 === i1) return sorted[i0];
+  const t = pos - i0;
+  return sorted[i0] * (1 - t) + sorted[i1] * t;
+}
+
+// -----------------------------
+// Helpers
+// -----------------------------
+
+function getMaxRoomDepth(meta: ContentOutputs["meta"]): number {
+  const d = meta.roomDistance.get(meta.farthestRoomId);
+  if (typeof d === "number" && Number.isFinite(d)) return Math.max(1, d | 0);
+
+  // Fallback: scan map
+  let mx = 1;
+  for (const v of meta.roomDistance.values()) {
+    if (typeof v === "number" && Number.isFinite(v)) mx = Math.max(mx, v | 0);
+  }
+  return Math.max(1, mx);
+}
+
+function clamp01(v: number) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function fmt(v: number | null | undefined) {
+  if (v == null) return "null";
+  return (Math.round(v * 1000) / 1000).toString();
+}
 </file>
 
 <file path="src/walkability.ts">
@@ -6619,6 +7372,8 @@ import {
 } from "./dungeonState";
 
 import CircuitDiagnosticsSection from "./debug/CircuitDiagnosticsSection";
+import RoleDiagnosticsSection from "./debug/RoleDiagnosticsSection";
+
 import type {
   CircuitDiagFilters,
   CircuitDiagSort,
@@ -6627,6 +7382,10 @@ import type {
 import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
 
 import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
+import {
+  analyzeRoleDiagnosticsV1,
+  type RoleDiagnosticsV1,
+} from "./roleDiagnostics";
 
 import {
   aggregateBatchRuns,
@@ -7756,6 +8515,21 @@ const App: React.FC = () => {
     }
   }, [batchJson]);
 
+  const roleDiagnostics: RoleDiagnosticsV1 | null = useMemo(() => {
+    if (!content?.meta) return null;
+    if (!circuitDiagnostics) return null;
+
+    try {
+      return analyzeRoleDiagnosticsV1({
+        meta: content.meta,
+        circuitEval: circuitDiagnostics,
+        // thresholds omitted => DEFAULT_ROLE_THRESHOLDS_V1 (observational)
+      });
+    } catch {
+      return null;
+    }
+  }, [content, circuitDiagnostics]);
+
   return (
     <div className="maze-app">
       {/* Left: Controls */}
@@ -8381,6 +9155,17 @@ const App: React.FC = () => {
               sort={circuitDiagSort}
               onChangeSort={setCircuitDiagSort}
               allowJumpLinks={true}
+              showRawJson={false}
+            />
+
+            <div style={{ height: 12 }} />
+
+            <RoleDiagnosticsSection
+              title="Role Diagnostics"
+              circuits={content.meta.circuits}
+              diagnostics={roleDiagnostics}
+              selectedCircuitIndex={selectedCircuitIndex}
+              onSelectCircuitIndex={setSelectedCircuitIndex}
               showRawJson={false}
             />
           </div>
@@ -10979,11 +11764,11 @@ export function generateDungeonContent(
 <file path="src/CONTEXT.md">
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-CONTEXT VERSION: **2026-01-18 (rev C)**
+CONTEXT VERSION: **2026-01-18 (rev D)**
 LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
 CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
-CURRENT PHASE: **Phase 2 — Puzzle Roles & Difficulty Ramping (OBSERVATIONAL)**
-PHASE STATUS: **ROLE DIAGNOSTICS IMPLEMENTED**
+CURRENT PHASE: **Phase 2 — Puzzle Roles & Difficulty Ramping**
+PHASE STATUS: **ROLE DIAGNOSTICS IMPLEMENTED + UI SURFACED (OBSERVATIONAL)**
 
 SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
@@ -11189,7 +11974,7 @@ Milestone 4 — Puzzle Composition & Progression Grammar
 Milestone 4 shifts focus from **mechanical correctness**
 to **player-facing meaning, escalation, and composition**.
 
-This milestone composes existing systems rather than introducing new mechanics.
+No new mechanics are introduced in this milestone.
 
 ============================================================
 MILESTONE 4 — PHASE BREAKDOWN
@@ -11201,7 +11986,7 @@ STATUS: **COMPLETE**
 STATUS: **DIAGNOSTICS PARITY ACHIEVED**
 STATUS: **CLOSED**
 
-What was completed:
+Completed:
 
 * SIGNAL-based circuit chaining
 * Deterministic topo sorting with cycle handling
@@ -11210,15 +11995,15 @@ What was completed:
 * Stable, versioned diagnostics schema
 * Full UI + batch parity for circuit metrics
 
-No gameplay semantics were introduced in Phase 1.
-
 ------------------------------------------------------------
 Phase 2 — Puzzle Roles & Difficulty Ramping (CURRENT)
 
 STATUS: **ROLE DIAGNOSTICS IMPLEMENTED**
+STATUS: **UI SURFACED**
 STATUS: **OBSERVATIONAL ONLY**
 
-Phase 2 introduces *semantic meaning* to composed puzzles without enforcing behavior.
+Phase 2 introduces *semantic meaning* to composed puzzles
+without enforcing behavior.
 
 ------------------------------------------------------------
 What was completed
@@ -11226,13 +12011,13 @@ What was completed
 **Role diagnostics engine (`roleDiagnostics.ts`)**
 
 * New schema: `RoleDiagnosticsV1` (schemaVersion = 1)
-* Supports semantic puzzle roles:
+* Supported semantic puzzle roles:
   * `MAIN_PATH_GATE`
   * `OPTIONAL_REWARD`
   * `SHORTCUT`
   * `FORESHADOW`
 
-* Deterministic per-circuit **anchor derivation**:
+* Deterministic per-circuit anchor derivation:
   * Anchors derived from trigger/target roomIds
   * Door targets anchored to earliest side by room distance
   * SIGNAL-only circuits anchored via upstream dependency propagation
@@ -11240,20 +12025,16 @@ What was completed
 * Role-aware metrics recorded per circuit:
   * topoDepth
   * signalDepCount
-  * cycle participation
+  * cycle participation / blocking
   * anchor room depth
-  * normalized depth (depthN)
+  * normalized depth (`depthN`)
   * main-path membership
 
 **Default progression thresholds (v1)**
 
-Conservative, distance-ramped defaults introduced:
-
-* Main-path gates require increasing topoDepth deeper in the dungeon
-* Late trivial main gates are flagged
-* Early overly-deep main gates are flagged (guardrail)
-* Optional rewards must retain meaning late-game
-* Foreshadow puzzles must remain shallow and early
+* Conservative, distance-ramped defaults
+* Designed for observation, not enforcement
+* Explicit versioning to allow recalibration
 
 **Role rule evaluation (warnings only)**
 
@@ -11268,16 +12049,34 @@ Initial rule set implemented:
 * `FORESHADOW_AFTER_MAIN`
 
 Rules emit diagnostics only.
-No generation is rejected at this stage.
+No generation is rejected.
 
 **Summary statistics**
 
 Batch-safe summary metrics computed:
 
 * roleCounts
+* roleMissingCount
 * topoDepth distributions by role
 * depthN distributions by role
 * ruleCounts histogram
+
+------------------------------------------------------------
+Role Diagnostics UI (NEW)
+
+A read-only diagnostics panel has been added alongside Circuit Diagnostics.
+
+Capabilities:
+
+* Per-circuit role listing with sortable metrics
+* Role filtering and search (idx / role / rule)
+* Rule-hit inspection per circuit
+* Aggregate role counts and rule histograms
+* Shared selection state with Circuit Diagnostics
+* No mutation, no enforcement, batch-safe
+
+This UI makes progression structure and semantic anomalies
+directly visible during interactive inspection.
 
 ------------------------------------------------------------
 What Phase 2 is NOT doing (by design)
@@ -11285,43 +12084,42 @@ What Phase 2 is NOT doing (by design)
 * No new mechanics
 * No automatic role inference
 * No hard rejections
-* No tuning beyond conservative defaults
+* No generator tuning based on roles
+* No multi-circuit composition
 
 Phase 2 exists to **observe, measure, and calibrate**.
 
-------------------------------------------------------------
+============================================================
 NEXT STEPS (IMMEDIATE)
 
-1. **UI surfacing**
-   * Add a `RoleDiagnosticsSection` (or inline panel)
-   * Display:
-     * roleCounts
-     * ruleCounts
-     * per-circuit rule hits
-   * Goal: make progression structure visible
-
-2. **Batch integration**
+1. **Batch integration**
    * Export compact role diagnostics summary into batch JSON
    * Run large seed batches (500–1000)
-   * Examine histograms before tuning thresholds
+   * Examine distributions before tuning
 
-3. **Threshold calibration**
-   * Adjust default thresholds using empirical distributions
-   * Keep warnings non-fatal initially
+2. **Threshold calibration**
+   * Adjust default thresholds using empirical data
+   * Keep all rules non-fatal
+   * Version thresholds explicitly (e.g. v2)
+
+3. **UI polish (optional)**
+   * Visual emphasis for main-path vs optional roles
+   * Small sparklines or histograms per role (read-only)
 
 ------------------------------------------------------------
 Phase 2.5 — Soft Enforcement (PLANNED)
 
-Once data supports it:
+Once empirical data supports it:
 
-* Promote selected warnings (e.g. `MAIN_LATE_TRIVIAL`) to **best-effort rejections**
+* Promote selected warnings (e.g. `MAIN_LATE_TRIVIAL`)
+  to **best-effort rejections**
 * Still deterministic
 * Still never abort full generation
 
 ------------------------------------------------------------
 Phase 3 — Composition Patterns (PLANNED)
 
-Phase 3 introduces *multi-circuit composition* informed by roles:
+Introduce multi-circuit composition informed by roles:
 
 * Lever → Gate → Plate → Reward
 * Consequence-before-cause setups

@@ -1,10 +1,10 @@
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-CONTEXT VERSION: **2026-01-18 (rev C)**
+CONTEXT VERSION: **2026-01-18 (rev D)**
 LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
 CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
-CURRENT PHASE: **Phase 2 — Puzzle Roles & Difficulty Ramping (OBSERVATIONAL)**
-PHASE STATUS: **ROLE DIAGNOSTICS IMPLEMENTED**
+CURRENT PHASE: **Phase 2 — Puzzle Roles & Difficulty Ramping**
+PHASE STATUS: **ROLE DIAGNOSTICS IMPLEMENTED + UI SURFACED (OBSERVATIONAL)**
 
 SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
@@ -210,7 +210,7 @@ Milestone 4 — Puzzle Composition & Progression Grammar
 Milestone 4 shifts focus from **mechanical correctness**
 to **player-facing meaning, escalation, and composition**.
 
-This milestone composes existing systems rather than introducing new mechanics.
+No new mechanics are introduced in this milestone.
 
 ============================================================
 MILESTONE 4 — PHASE BREAKDOWN
@@ -222,7 +222,7 @@ STATUS: **COMPLETE**
 STATUS: **DIAGNOSTICS PARITY ACHIEVED**
 STATUS: **CLOSED**
 
-What was completed:
+Completed:
 
 * SIGNAL-based circuit chaining
 * Deterministic topo sorting with cycle handling
@@ -231,15 +231,15 @@ What was completed:
 * Stable, versioned diagnostics schema
 * Full UI + batch parity for circuit metrics
 
-No gameplay semantics were introduced in Phase 1.
-
 ------------------------------------------------------------
 Phase 2 — Puzzle Roles & Difficulty Ramping (CURRENT)
 
 STATUS: **ROLE DIAGNOSTICS IMPLEMENTED**
+STATUS: **UI SURFACED**
 STATUS: **OBSERVATIONAL ONLY**
 
-Phase 2 introduces *semantic meaning* to composed puzzles without enforcing behavior.
+Phase 2 introduces *semantic meaning* to composed puzzles
+without enforcing behavior.
 
 ------------------------------------------------------------
 What was completed
@@ -247,13 +247,13 @@ What was completed
 **Role diagnostics engine (`roleDiagnostics.ts`)**
 
 * New schema: `RoleDiagnosticsV1` (schemaVersion = 1)
-* Supports semantic puzzle roles:
+* Supported semantic puzzle roles:
   * `MAIN_PATH_GATE`
   * `OPTIONAL_REWARD`
   * `SHORTCUT`
   * `FORESHADOW`
 
-* Deterministic per-circuit **anchor derivation**:
+* Deterministic per-circuit anchor derivation:
   * Anchors derived from trigger/target roomIds
   * Door targets anchored to earliest side by room distance
   * SIGNAL-only circuits anchored via upstream dependency propagation
@@ -261,20 +261,16 @@ What was completed
 * Role-aware metrics recorded per circuit:
   * topoDepth
   * signalDepCount
-  * cycle participation
+  * cycle participation / blocking
   * anchor room depth
-  * normalized depth (depthN)
+  * normalized depth (`depthN`)
   * main-path membership
 
 **Default progression thresholds (v1)**
 
-Conservative, distance-ramped defaults introduced:
-
-* Main-path gates require increasing topoDepth deeper in the dungeon
-* Late trivial main gates are flagged
-* Early overly-deep main gates are flagged (guardrail)
-* Optional rewards must retain meaning late-game
-* Foreshadow puzzles must remain shallow and early
+* Conservative, distance-ramped defaults
+* Designed for observation, not enforcement
+* Explicit versioning to allow recalibration
 
 **Role rule evaluation (warnings only)**
 
@@ -289,16 +285,34 @@ Initial rule set implemented:
 * `FORESHADOW_AFTER_MAIN`
 
 Rules emit diagnostics only.
-No generation is rejected at this stage.
+No generation is rejected.
 
 **Summary statistics**
 
 Batch-safe summary metrics computed:
 
 * roleCounts
+* roleMissingCount
 * topoDepth distributions by role
 * depthN distributions by role
 * ruleCounts histogram
+
+------------------------------------------------------------
+Role Diagnostics UI (NEW)
+
+A read-only diagnostics panel has been added alongside Circuit Diagnostics.
+
+Capabilities:
+
+* Per-circuit role listing with sortable metrics
+* Role filtering and search (idx / role / rule)
+* Rule-hit inspection per circuit
+* Aggregate role counts and rule histograms
+* Shared selection state with Circuit Diagnostics
+* No mutation, no enforcement, batch-safe
+
+This UI makes progression structure and semantic anomalies
+directly visible during interactive inspection.
 
 ------------------------------------------------------------
 What Phase 2 is NOT doing (by design)
@@ -306,43 +320,42 @@ What Phase 2 is NOT doing (by design)
 * No new mechanics
 * No automatic role inference
 * No hard rejections
-* No tuning beyond conservative defaults
+* No generator tuning based on roles
+* No multi-circuit composition
 
 Phase 2 exists to **observe, measure, and calibrate**.
 
-------------------------------------------------------------
+============================================================
 NEXT STEPS (IMMEDIATE)
 
-1. **UI surfacing**
-   * Add a `RoleDiagnosticsSection` (or inline panel)
-   * Display:
-     * roleCounts
-     * ruleCounts
-     * per-circuit rule hits
-   * Goal: make progression structure visible
-
-2. **Batch integration**
+1. **Batch integration**
    * Export compact role diagnostics summary into batch JSON
    * Run large seed batches (500–1000)
-   * Examine histograms before tuning thresholds
+   * Examine distributions before tuning
 
-3. **Threshold calibration**
-   * Adjust default thresholds using empirical distributions
-   * Keep warnings non-fatal initially
+2. **Threshold calibration**
+   * Adjust default thresholds using empirical data
+   * Keep all rules non-fatal
+   * Version thresholds explicitly (e.g. v2)
+
+3. **UI polish (optional)**
+   * Visual emphasis for main-path vs optional roles
+   * Small sparklines or histograms per role (read-only)
 
 ------------------------------------------------------------
 Phase 2.5 — Soft Enforcement (PLANNED)
 
-Once data supports it:
+Once empirical data supports it:
 
-* Promote selected warnings (e.g. `MAIN_LATE_TRIVIAL`) to **best-effort rejections**
+* Promote selected warnings (e.g. `MAIN_LATE_TRIVIAL`)
+  to **best-effort rejections**
 * Still deterministic
 * Still never abort full generation
 
 ------------------------------------------------------------
 Phase 3 — Composition Patterns (PLANNED)
 
-Phase 3 introduces *multi-circuit composition* informed by roles:
+Introduce multi-circuit composition informed by roles:
 
 * Lever → Gate → Plate → Reward
 * Consequence-before-cause setups

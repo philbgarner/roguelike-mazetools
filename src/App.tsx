@@ -16,6 +16,8 @@ import {
 } from "./dungeonState";
 
 import CircuitDiagnosticsSection from "./debug/CircuitDiagnosticsSection";
+import RoleDiagnosticsSection from "./debug/RoleDiagnosticsSection";
+
 import type {
   CircuitDiagFilters,
   CircuitDiagSort,
@@ -24,6 +26,10 @@ import type {
 import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
 
 import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
+import {
+  analyzeRoleDiagnosticsV1,
+  type RoleDiagnosticsV1,
+} from "./roleDiagnostics";
 
 import {
   aggregateBatchRuns,
@@ -1153,6 +1159,21 @@ const App: React.FC = () => {
     }
   }, [batchJson]);
 
+  const roleDiagnostics: RoleDiagnosticsV1 | null = useMemo(() => {
+    if (!content?.meta) return null;
+    if (!circuitDiagnostics) return null;
+
+    try {
+      return analyzeRoleDiagnosticsV1({
+        meta: content.meta,
+        circuitEval: circuitDiagnostics,
+        // thresholds omitted => DEFAULT_ROLE_THRESHOLDS_V1 (observational)
+      });
+    } catch {
+      return null;
+    }
+  }, [content, circuitDiagnostics]);
+
   return (
     <div className="maze-app">
       {/* Left: Controls */}
@@ -1778,6 +1799,17 @@ const App: React.FC = () => {
               sort={circuitDiagSort}
               onChangeSort={setCircuitDiagSort}
               allowJumpLinks={true}
+              showRawJson={false}
+            />
+
+            <div style={{ height: 12 }} />
+
+            <RoleDiagnosticsSection
+              title="Role Diagnostics"
+              circuits={content.meta.circuits}
+              diagnostics={roleDiagnostics}
+              selectedCircuitIndex={selectedCircuitIndex}
+              onSelectCircuitIndex={setSelectedCircuitIndex}
               showRawJson={false}
             />
           </div>
