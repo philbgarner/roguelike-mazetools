@@ -2,10 +2,10 @@
 
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-CONTEXT VERSION: 2026-01-17
+CONTEXT VERSION: **2026-01-17**
 LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
 CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
-CURRENT PHASE: **Phase 1 — Circuit Chaining (in progress)**
+CURRENT PHASE: **Phase 1 — Circuit Chaining (instrumentation in progress)**
 
 SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
@@ -109,61 +109,24 @@ IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
 
 ---
 
-STRUCTURAL MASKS (BSP OUTPUT)
-
-All masks are `Uint8Array` of size `width * height`:
-
-`index = y * width + x`
-
-Masks:
-
-* solid
-
-  * 255 = wall
-  * 0 = floor
-
-* regionId
-
-  * 0 = not a room (corridors, pockets)
-  * 1..255 = room id
-
-* distanceToWall
-
-  * Manhattan distance to nearest wall
-  * 0 at walls, capped at 255
-
-Structural metadata:
-
-* meta.rooms : Rect[]
-* meta.corridors : { a, b, bends? }[]
-* meta.bspDepth : number
-* meta.seedUsed : number
-
----
-
 GEOMETRY MUTATION POLICY (OPTION A — DECIDED)
 
-Some puzzle patterns may carve additional geometry by mutating
-`dungeon.masks.solid`. When this happens, `distanceToWall` becomes stale.
+Puzzle patterns may carve geometry by mutating `dungeon.masks.solid`,
+invalidating the distance field.
 
-Chosen solution (Option A):
+Chosen policy:
 
-* `distanceToWall` is recomputed **after all puzzle patterns that may carve**
-* Content placement relying on `distanceToWall` must occur before patterns
-  or after recomputation
-
-Implementation:
-
-* `runPatternsBestEffort()` aggregates `didCarve`
-* `recomputeDungeonDistanceToWall(dungeon)` runs if `didCarve == true`
+* All geometry-mutating patterns run before final distance usage
+* `distanceToWall` is recomputed once if **any** pattern carved
+* Implemented via `runPatternsBestEffort()` → `didCarve` flag
 
 This policy is implemented, verified, and stable.
 
 ---
 
-CONTENT MASKS (GAMEPLAY LAYERS)
+CONTENT MASKS & METADATA
 
-featureType values:
+featureType values (authoritative):
 
 * 0 = none
 * 1 = monster
@@ -177,80 +140,40 @@ featureType values:
 * 9 = hidden passage
 * 10 = hazard
 
-featureId:
-
-* Logical entity / circuit id (1..255)
-
-INVARIANTS:
+Invariants:
 
 * featureType 9 MUST have non-zero featureId
-* meta.secrets[] is authoritative for hidden passages
+* `meta.secrets[]` is authoritative for hidden passages
 * Masks are for inspection; metadata is authoritative
-
----
-
-CONTENT METADATA (AUTHORITATIVE)
-
-Key fields:
-
-* meta.seedUsed
-* meta.roomGraph
-* meta.roomDistance
-* meta.entranceRoomId
-* meta.farthestRoomId
-* meta.mainPathRoomIds
-
-Placement records:
-
-* monsters
-* chests
-* secrets
-* doors
-* keys
-* levers
-* plates
-* blocks
-* hazards
-
-Circuits:
-
-* meta.circuits : CircuitDef[]
-
-Pattern diagnostics:
-
-* meta.patternDiagnostics : PatternDiagnostics[]
 
 ---
 
 PUZZLE PATTERNS (MILESTONE 3)
 
-Puzzle patterns are **generation-time content macros**.
-
-Module: `puzzlePatterns.ts`
-Helpers: `doorSites.ts`
+Patterns are **generation-time macros**, not runtime logic.
 
 Properties:
 
-* Patterns are best-effort; failure never aborts generation
-* Patterns may mutate geometry (explicitly reported)
-* Patterns are deterministic
-* Patterns emit structured diagnostics
-* Pattern names are stable and batch-aggregatable
+* Best-effort (never abort generation)
+* Deterministic
+* May mutate geometry (explicitly reported)
+* Emit structured diagnostics
+* Names are stable and batch-aggregatable
 
 Implemented patterns:
 
-1. leverHiddenPocket
+1. **leverHiddenPocket**
 
    * Carving + hidden passage reveal
    * Lever → Hidden(REVEAL), PERSISTENT
-   * Retry loop with reachability validation
+   * Reachability validated pre/post
 
-2. leverOpensDoor
+2. **leverOpensDoor**
 
    * Lever → Door(TOGGLE)
    * Non-carving
 
-3. plateOpensDoor
+3. **plateOpensDoor**
 
    * Plate(+Block) → Door(OPEN), MOMENTARY
    * Non-carving
@@ -259,31 +182,27 @@ Implemented patterns:
 
 REACHABILITY DIAGNOSTICS
 
-Hidden-pocket pattern computes:
+Hidden-pocket pattern records:
 
 * reachablePre
 * reachablePost
 * shortestPathPost
 
-Diagnostics distinguish:
-
-* Isolation failures
-* Connectivity failures
-* Trivial solutions (future tuning)
+Failure modes are classified (isolation, connectivity, triviality).
 
 ---
 
 BATCH VALIDATION HARNESS
 
-Implemented and verified.
+Implemented and trusted.
 
 Capabilities:
 
 * Hundreds of seeds per run
 * Per-pattern aggregation
-* Success/failure rates
+* Success / failure rates
 * Reachability metrics
-* Failure reason histograms
+* Failure histograms
 * JSON export
 
 ============================================================
@@ -302,11 +221,10 @@ Milestone 3 — COMPLETE, STABLE, AND MEASURABLE
 
 Milestone 4 — Puzzle Composition & Progression Grammar
 
-Milestone 4 shifts focus from *mechanical correctness* to
-**player-facing meaning, escalation, and composition**.
+Milestone 4 shifts focus from **mechanical correctness**
+to **player-facing meaning, escalation, and composition**.
 
-This milestone primarily **composes existing systems**
-rather than introducing new mechanics.
+This milestone **composes existing systems** rather than introducing new mechanics.
 
 ============================================================
 MILESTONE 4 — PHASE BREAKDOWN
@@ -316,45 +234,83 @@ MILESTONE 4 — PHASE BREAKDOWN
 Phase 1 — Circuit Chaining (FOUNDATIONAL)
 
 STATUS: **CORE IMPLEMENTATION COMPLETE**
+STATUS: **DIAGNOSTICS PARTIALLY COMPLETE**
 
-Completed this session:
+### What was completed this session
 
-* Added `SIGNAL` as a first-class circuit trigger kind
-* Extended trigger schema with:
+* SIGNAL triggers are first-class circuit dependencies
+* `evaluateCircuits.ts` now:
 
-  * `signal?: { name?: "ACTIVE" | "SATISFIED" | "SATISFIED_RISE" }`
-* Updated `evaluateCircuits.ts` to:
+  * Topologically sorts circuits by SIGNAL dependencies
+  * Supports same-tick chained evaluation
+  * Remains deterministic and best-effort
+* Cycle handling upgraded:
 
-  * Topologically sort circuits by SIGNAL dependencies
-  * Support same-tick chained evaluation
-  * Remain deterministic and best-effort (cycle-safe)
-* Corrected runtime target application to respect:
+  * True cycle members detected via SCC (Tarjan)
+  * Downstream-of-cycle circuits distinguished
+  * Cycles never abort evaluation
+* New chaining-aware diagnostics structures added:
 
-  * DoorKind / HazardType initialization contracts
-* Preserved full backward compatibility with Milestone 3 circuits
+  * `CircuitEvalDiagnostics`
+  * `CircuitChainingDiag`
+  * `SignalRef`
+  * `CycleGroupDiag`
+* `topoSortCircuitsWithMeta()` now computes:
 
-Result:
+  * `orderIds`
+  * `evalOrderIndexById`
+  * `topoDepthById`
+  * `signalDepsById`
+  * `signalEdgeCount`
+  * `inCycleById`
+  * `blockedByCycleById`
+  * SCC cycle groups
+* `evaluateCircuits()` now:
 
-* Multi-step puzzles are now expressible **without new entities**
-* Circuit graphs form a compositional language
-* Runtime remains deterministic, debuggable, and measurable
+  * Builds a full `CircuitEvalDiagnostics` bundle
+  * Attaches it to `CircuitEvalResult`
+  * Preserves backward compatibility
+
+### What this enables
+
+* Circuits form a **compositional logic graph**
+* Multi-step puzzles are expressible **without new mechanics**
+* Puzzle complexity is now **measurable, not inferred**
+* Difficulty can be derived from topology, not heuristics
 
 ---
 
-Phase 1 — Remaining (IMMEDIATE NEXT STEP)
+Phase 1 — REMAINING (NEXT IMMEDIATE WORK)
 
-* Add **chaining-aware diagnostics** to circuit evaluation:
+The remaining work in Phase 1 is **purely observational**.
 
-  * SIGNAL dependency count per circuit
-  * Topological depth (longest prerequisite chain)
-  * Cycle participation flags
-  * Evaluation order index
-* Expose these diagnostics through:
+No gameplay behavior should change.
 
-  * Debug UI
-  * Batch harness summaries
+1. **Expose diagnostics in the debug UI**
 
-This step has **no gameplay impact** and maximizes design leverage.
+   * Show per-circuit:
+
+     * eval order
+     * topo depth
+     * SIGNAL dependency count
+     * cycle / blocked-by-cycle flags
+   * Visualize chain depth and cycles clearly
+
+2. **Expose diagnostics in the batch harness**
+
+   * Aggregate:
+
+     * max topo depth per dungeon
+     * average topo depth
+     * % circuits with SIGNAL deps
+     * cycle incidence rate
+     * blocked-by-cycle incidence
+
+3. **Stabilize diagnostic output format**
+
+   * Ensure JSON output is stable for long-term trend tracking
+
+Once this is complete, Phase 1 is **fully done**.
 
 ---
 
@@ -368,11 +324,13 @@ Goals:
   * OPTIONAL_REWARD
   * SHORTCUT
   * FORESHADOW
-* Use diagnostics to enforce:
+* Enforce progression rules using diagnostics:
 
-  * Minimum puzzle depth after progression thresholds
-  * Rejection of trivial main-path gates
-  * Controlled escalation over dungeon length
+  * Minimum topo depth for main-path gates
+  * Reject trivial gates late in dungeon
+  * Gradually escalate puzzle depth over room distance
+
+No new mechanics required.
 
 ---
 
@@ -394,7 +352,7 @@ KNOWN CONSTRAINTS
 * Generation must remain deterministic
 * Patterns must never abort generation
 * Runtime logic must not mutate geometry
-* Diagnostics must remain authoritative
+* Diagnostics are authoritative
 
 ============================================================
 NON-GOALS (FUTURE MILESTONES)
