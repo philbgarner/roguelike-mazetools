@@ -328,6 +328,9 @@ Phase 2 exists to **observe, measure, and calibrate**.
 ============================================================
 NEXT STEPS (IMMEDIATE)
 
+0. **Entrance Room Rendering**
+   * ASCII rendering shows E in the centre of the entrance room, we should add this to the content rendered image as a cyan pixel.
+
 1. **Batch integration**
    * Export compact role diagnostics summary into batch JSON
    * Run large seed batches (500–1000)
