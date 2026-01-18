@@ -156,13 +156,31 @@ function makeContentCompositeImageData(
   const W = dungeon.width;
   const H = dungeon.height;
 
-  const solid = dungeon.masks.solid; // 255 wall, 0 floor
+  const solid = dungeon.masks.solid; // 255
+  const regionId = dungeon.masks.regionId; // 0 corridors, 1..255 roomswall, 0 floor
   const ft = content.masks.featureType; // 0..n
   const fid = content.masks.featureId;
   const hzType = content.masks.hazardType;
 
   const img = new ImageData(W, H);
   const data = img.data;
+
+  // Exit marker bounds (derived from regionId occupancy, then mark center tile).
+  // Exit room is currently defined as the farthest room from the entrance.
+  const exitRoomId = (content.meta.farthestRoomId ?? 0) | 0;
+  let xMin = 1e9,
+    yMin = 1e9,
+    xMax = -1,
+    yMax = -1;
+  let exitFound = false;
+
+  // Entrance marker bounds (derived from regionId; corridors are 0)
+  const entranceRoomId = (content.meta.entranceRoomId ?? 0) | 0;
+  let eMinX = 1e9,
+    eMinY = 1e9,
+    eMaxX = -1,
+    eMaxY = -1;
+  let eFound = false;
 
   // Runtime blocks overlay (blocks move; masks do not)
   const blockOcc = new Uint8Array(W * H);
@@ -182,6 +200,23 @@ function makeContentCompositeImageData(
     for (let x = 0; x < W; x++) {
       const i = idxOf(W, x, y);
       const o = i * 4;
+      // Track exit-room bounds while we already traverse the grid.
+      if (exitRoomId > 0 && regionId[i] === exitRoomId) {
+        exitFound = true;
+        if (x < xMin) xMin = x;
+        if (y < yMin) yMin = y;
+        if (x > xMax) xMax = x;
+        if (y > yMax) yMax = y;
+      }
+
+      // Track entrance-room bounds while we already traverse the grid
+      if (entranceRoomId > 0 && regionId[i] === entranceRoomId) {
+        eFound = true;
+        if (x < eMinX) eMinX = x;
+        if (y < eMinY) eMinY = y;
+        if (x > eMaxX) eMaxX = x;
+        if (y > eMaxY) eMaxY = y;
+      }
 
       const isWall = solid[i] === 255;
 
@@ -362,6 +397,34 @@ function makeContentCompositeImageData(
       data[o + 1] = g;
       data[o + 2] = b;
       data[o + 3] = a;
+    }
+  }
+
+  // Entrance marker: cyan pixel at the center of the entrance room
+  if (eFound) {
+    const cx = Math.floor((eMinX + eMaxX) / 2);
+    const cy = Math.floor((eMinY + eMaxY) / 2);
+    const ci = idxOf(W, cx, cy);
+    if (ci >= 0 && ci < solid.length && solid[ci] !== 255) {
+      const co = ci * 4;
+      data[co + 0] = 0; // R
+      data[co + 1] = 255; // G
+      data[co + 2] = 255; // B
+      data[co + 3] = 255; // A
+    }
+  }
+
+  // Exit marker: purple pixel at the center of the farthest room.
+  if (exitFound) {
+    const cx = Math.floor((xMin + xMax) / 2);
+    const cy = Math.floor((yMin + yMax) / 2);
+    const ci = idxOf(W, cx, cy);
+    if (ci >= 0 && ci < solid.length && solid[ci] !== 255) {
+      const co = ci * 4;
+      data[co + 0] = 128; // R
+      data[co + 1] = 0; // G
+      data[co + 2] = 128; // B
+      data[co + 3] = 255; // A
     }
   }
 

@@ -1,26 +1,29 @@
-PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
+---
 
-CONTEXT VERSION: **2026-01-18 (rev D)**
-LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
-CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
-CURRENT PHASE: **Phase 2 — Puzzle Roles & Difficulty Ramping**
-PHASE STATUS: **ROLE DIAGNOSTICS IMPLEMENTED + UI SURFACED (OBSERVATIONAL)**
+# PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
+**CONTEXT VERSION:** **2026-01-18 (rev E)**
+**LAST COMPLETED MILESTONE:** **Milestone 3 — Stateful Puzzle Execution**
+**CURRENT MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
+**CURRENT PHASE:** **Phase 2 — Puzzle Roles & Difficulty Ramping**
+**PHASE STATUS:** **ROLE DIAGNOSTICS + STRUCTURAL LANDMARK VISUALIZATION (OBSERVATIONAL)**
+
+---
+
+## SAFE ASSUMPTIONS (DO NOT RE-DISCUSS)
 
 * Geometry mutation uses **Option A** (distance field recomputed post-patterns)
 * Pattern diagnostics are authoritative
 * Batch harness is correct and trusted
 * Generation is deterministic and best-effort (never aborts)
 
-============================================================
-PROJECT OVERVIEW
+---
 
-This project is an experimental procedural dungeon generator built in TypeScript
-with a React-based debug, inspection, and batch-validation harness.
+## PROJECT OVERVIEW
 
-It is designed to evolve toward a JRPG / metroidvania-style dungeon system
-emphasizing:
+This project is an experimental procedural dungeon generator built in TypeScript with a React-based debug, inspection, and batch-validation harness.
+
+It is designed to evolve toward a JRPG / metroidvania-style dungeon system emphasizing:
 
 * backtracking
 * secrets
@@ -36,20 +39,17 @@ The system is intentionally layered so that:
 
 are cleanly separated.
 
-This separation is foundational, enforced in code, and **proven viable** through
-runtime execution, diagnostics, and large-scale batch validation.
+This separation is foundational, enforced in code, and **proven viable** through runtime execution, diagnostics, and large-scale batch validation.
 
-============================================================
-HIGH-LEVEL ARCHITECTURE
+---
 
-The system has three conceptual layers:
+## HIGH-LEVEL ARCHITECTURE
 
-------------------------------------------------------------
-STRUCTURAL DUNGEON GENERATION (BSP)
+### STRUCTURAL DUNGEON GENERATION (BSP)
 
-Entry: `generateBspDungeon()` in `mazeGen.ts`
+**Entry:** `generateBspDungeon()` in `mazeGen.ts`
 
-Responsibilities:
+**Responsibilities:**
 
 * BSP partitioning of the grid
 * Room carving
@@ -58,7 +58,7 @@ Responsibilities:
 * Distance-to-wall calculation
 * Region (room) identification
 
-Outputs:
+**Outputs:**
 
 * `solid` mask (wall/floor)
 * `regionId` mask
@@ -67,12 +67,13 @@ Outputs:
 
 This layer is **pure geometry** and contains no gameplay knowledge.
 
-------------------------------------------------------------
-CONTENT GENERATION (Milestones 1–3)
+---
 
-Entry: `generateDungeonContent()` in `mazeGen.ts`
+### CONTENT GENERATION (Milestones 1–3)
 
-Responsibilities:
+**Entry:** `generateDungeonContent()` in `mazeGen.ts`
+
+**Responsibilities:**
 
 * Place gameplay content on top of BSP geometry
 * Encode progression, gating, and optional content
@@ -82,17 +83,18 @@ Responsibilities:
 
 This layer **does not execute puzzle logic**.
 
-------------------------------------------------------------
-RUNTIME / PUZZLE LOGIC (Milestone 3+)
+---
 
-Core files:
+### RUNTIME / PUZZLE LOGIC (Milestone 3+)
+
+**Core files:**
 
 * `dungeonState.ts`
 * `evaluateCircuits.ts`
 * `walkability.ts`
 * `App.tsx` (debug UI + batch harness)
 
-Responsibilities:
+**Responsibilities:**
 
 * Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets)
 * Derive sensor state (plates from blocks; player later)
@@ -100,27 +102,27 @@ Responsibilities:
 * Apply effects (open doors, toggle hazards, reveal passages)
 * Drive interactive puzzle simulation (debug harness first)
 
-============================================================
-IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
+---
 
-------------------------------------------------------------
-GEOMETRY MUTATION POLICY (OPTION A — DECIDED)
+## IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
 
-Puzzle patterns may carve geometry by mutating `dungeon.masks.solid`,
-invalidating the distance field.
+### GEOMETRY MUTATION POLICY — OPTION A (DECIDED)
 
-Chosen policy:
+Puzzle patterns may carve geometry by mutating `dungeon.masks.solid`, invalidating the distance field.
+
+**Policy:**
 
 * All geometry-mutating patterns run before final distance usage
 * `distanceToWall` is recomputed once if **any** pattern carved
 * Implemented via `runPatternsBestEffort()` → `didCarve` flag
 
-This policy is implemented, verified, and stable.
+Implemented, verified, and stable.
 
-------------------------------------------------------------
-CONTENT MASKS & METADATA
+---
 
-`featureType` values (authoritative):
+### CONTENT MASKS & METADATA
+
+Authoritative `featureType` values:
 
 * 0 = none
 * 1 = monster
@@ -134,14 +136,15 @@ CONTENT MASKS & METADATA
 * 9 = hidden passage
 * 10 = hazard
 
-Invariants:
+**Invariants:**
 
 * featureType 9 MUST have non-zero featureId
 * `meta.secrets[]` is authoritative for hidden passages
 * Masks are for inspection; metadata is authoritative
 
-------------------------------------------------------------
-PUZZLE PATTERNS (MILESTONE 3)
+---
+
+### PUZZLE PATTERNS (MILESTONE 3)
 
 Patterns are **generation-time macros**, not runtime logic.
 
@@ -156,20 +159,12 @@ Properties:
 Implemented patterns:
 
 1. **leverHiddenPocket**
-   * Carving + hidden passage reveal
-   * Lever → Hidden(REVEAL), PERSISTENT
-   * Reachability validated pre/post
-
 2. **leverOpensDoor**
-   * Lever → Door(TOGGLE)
-   * Non-carving
-
 3. **plateOpensDoor**
-   * Plate(+Block) → Door(OPEN), MOMENTARY
-   * Non-carving
 
-------------------------------------------------------------
-REACHABILITY DIAGNOSTICS
+---
+
+### REACHABILITY DIAGNOSTICS
 
 Hidden-pocket pattern records:
 
@@ -177,10 +172,11 @@ Hidden-pocket pattern records:
 * reachablePost
 * shortestPathPost
 
-Failure modes are classified (isolation, connectivity, triviality).
+Failure modes are classified and batch-aggregated.
 
-------------------------------------------------------------
-BATCH VALIDATION HARNESS
+---
+
+### BATCH VALIDATION HARNESS
 
 Implemented and trusted.
 
@@ -193,170 +189,124 @@ Capabilities:
 * Failure histograms
 * JSON export
 
-============================================================
-MILESTONE STATUS
+---
 
-------------------------------------------------------------
-Milestone 3 — COMPLETE, STABLE, AND MEASURABLE
+## STRUCTURAL LANDMARK VISUALIZATION (NEW)
+
+To support progression reasoning and diagnostics clarity, **structural landmarks** are now rendered in the content composite image:
+
+### Entrance Tile (NEW)
+
+* Entrance room is identified via `content.meta.entranceRoomId`
+* The room footprint is derived from `dungeon.masks.regionId`
+* The **center tile** of the entrance room is rendered as a **cyan pixel**
+* Render-only change (no metadata or gameplay impact)
+
+### Exit Tile (NEW)
+
+* Exit room is defined as `content.meta.farthestRoomId`
+
+  * Farthest room by room-graph distance from the entrance
+* The room footprint is derived from `dungeon.masks.regionId`
+* The **center tile** of the exit room is rendered as a **purple pixel**
+* Render-only change; no new featureType introduced
+
+These markers:
+
+* Make dungeon flow visually legible
+* Support role diagnostics interpretation
+* Are batch-safe and deterministic
+* Do not affect runtime logic or generation outcomes
+
+---
+
+## MILESTONE STATUS
+
+### Milestone 3 — COMPLETE, STABLE, MEASURABLE
 
 * Runtime puzzle execution works end-to-end
 * Geometry mutation is safe and repaired
 * Pattern reliability is quantifiable
 * No silent failures remain
 
-------------------------------------------------------------
-Milestone 4 — Puzzle Composition & Progression Grammar
+---
 
-Milestone 4 shifts focus from **mechanical correctness**
-to **player-facing meaning, escalation, and composition**.
+### Milestone 4 — Puzzle Composition & Progression Grammar
+
+Milestone 4 shifts focus from **mechanical correctness** to
+**player-facing meaning, escalation, and composition**.
 
 No new mechanics are introduced in this milestone.
 
-============================================================
-MILESTONE 4 — PHASE BREAKDOWN
+---
 
-------------------------------------------------------------
-Phase 1 — Circuit Chaining (FOUNDATIONAL)
+## MILESTONE 4 — PHASE BREAKDOWN
 
-STATUS: **COMPLETE**
-STATUS: **DIAGNOSTICS PARITY ACHIEVED**
-STATUS: **CLOSED**
+### Phase 1 — Circuit Chaining (FOUNDATIONAL)
 
-Completed:
+**STATUS:** COMPLETE
+**STATUS:** DIAGNOSTICS PARITY ACHIEVED
+**STATUS:** CLOSED
 
-* SIGNAL-based circuit chaining
-* Deterministic topo sorting with cycle handling
-* Same-tick chained evaluation
-* Cycle detection without abort
-* Stable, versioned diagnostics schema
-* Full UI + batch parity for circuit metrics
+---
 
-------------------------------------------------------------
-Phase 2 — Puzzle Roles & Difficulty Ramping (CURRENT)
+### Phase 2 — Puzzle Roles & Difficulty Ramping (CURRENT)
 
-STATUS: **ROLE DIAGNOSTICS IMPLEMENTED**
-STATUS: **UI SURFACED**
-STATUS: **OBSERVATIONAL ONLY**
+**STATUS:** ROLE DIAGNOSTICS IMPLEMENTED
+**STATUS:** UI SURFACED
+**STATUS:** STRUCTURAL LANDMARKS VISIBLE
+**STATUS:** OBSERVATIONAL ONLY
 
 Phase 2 introduces *semantic meaning* to composed puzzles
 without enforcing behavior.
 
-------------------------------------------------------------
-What was completed
+#### Completed in Phase 2
 
-**Role diagnostics engine (`roleDiagnostics.ts`)**
+* Role diagnostics engine (`roleDiagnostics.ts`)
+* Stable schema (`RoleDiagnosticsV1`)
+* Deterministic anchor derivation
+* Role-aware metrics per circuit
+* Rule evaluation (warnings only)
+* Aggregate role & rule statistics
+* Dedicated Role Diagnostics UI
+* Entrance + exit tile visualization
 
-* New schema: `RoleDiagnosticsV1` (schemaVersion = 1)
-* Supported semantic puzzle roles:
-  * `MAIN_PATH_GATE`
-  * `OPTIONAL_REWARD`
-  * `SHORTCUT`
-  * `FORESHADOW`
+No tuning or enforcement occurs in this phase.
 
-* Deterministic per-circuit anchor derivation:
-  * Anchors derived from trigger/target roomIds
-  * Door targets anchored to earliest side by room distance
-  * SIGNAL-only circuits anchored via upstream dependency propagation
+---
 
-* Role-aware metrics recorded per circuit:
-  * topoDepth
-  * signalDepCount
-  * cycle participation / blocking
-  * anchor room depth
-  * normalized depth (`depthN`)
-  * main-path membership
-
-**Default progression thresholds (v1)**
-
-* Conservative, distance-ramped defaults
-* Designed for observation, not enforcement
-* Explicit versioning to allow recalibration
-
-**Role rule evaluation (warnings only)**
-
-Initial rule set implemented:
-
-* `ROLE_MISSING`
-* `MAIN_TRIVIAL`
-* `MAIN_LATE_TRIVIAL`
-* `MAIN_TOO_DEEP_EARLY`
-* `OPTIONAL_TRIVIAL`
-* `FORESHADOW_TOO_DEEP`
-* `FORESHADOW_AFTER_MAIN`
-
-Rules emit diagnostics only.
-No generation is rejected.
-
-**Summary statistics**
-
-Batch-safe summary metrics computed:
-
-* roleCounts
-* roleMissingCount
-* topoDepth distributions by role
-* depthN distributions by role
-* ruleCounts histogram
-
-------------------------------------------------------------
-Role Diagnostics UI (NEW)
-
-A read-only diagnostics panel has been added alongside Circuit Diagnostics.
-
-Capabilities:
-
-* Per-circuit role listing with sortable metrics
-* Role filtering and search (idx / role / rule)
-* Rule-hit inspection per circuit
-* Aggregate role counts and rule histograms
-* Shared selection state with Circuit Diagnostics
-* No mutation, no enforcement, batch-safe
-
-This UI makes progression structure and semantic anomalies
-directly visible during interactive inspection.
-
-------------------------------------------------------------
-What Phase 2 is NOT doing (by design)
-
-* No new mechanics
-* No automatic role inference
-* No hard rejections
-* No generator tuning based on roles
-* No multi-circuit composition
-
-Phase 2 exists to **observe, measure, and calibrate**.
-
-============================================================
-NEXT STEPS (IMMEDIATE)
-
-0. **Entrance Room Rendering**
-   * ASCII rendering shows E in the centre of the entrance room, we should add this to the content rendered image as a cyan pixel.
+## NEXT STEPS (IMMEDIATE)
 
 1. **Batch integration**
-   * Export compact role diagnostics summary into batch JSON
-   * Run large seed batches (500–1000)
-   * Examine distributions before tuning
+
+   * Export compact role-diagnostics summaries
+   * Run large batches (500–1000 seeds)
+   * Examine distributions by role and depth
 
 2. **Threshold calibration**
-   * Adjust default thresholds using empirical data
+
+   * Adjust default role thresholds using empirical data
    * Keep all rules non-fatal
-   * Version thresholds explicitly (e.g. v2)
+   * Explicitly version thresholds (e.g. v2)
 
 3. **UI polish (optional)**
-   * Visual emphasis for main-path vs optional roles
-   * Small sparklines or histograms per role (read-only)
 
-------------------------------------------------------------
-Phase 2.5 — Soft Enforcement (PLANNED)
+   * Stronger visual distinction for main-path vs optional
+   * Lightweight histograms or sparklines (read-only)
 
-Once empirical data supports it:
+---
 
-* Promote selected warnings (e.g. `MAIN_LATE_TRIVIAL`)
-  to **best-effort rejections**
-* Still deterministic
-* Still never abort full generation
+## PLANNED FOLLOW-UPS
 
-------------------------------------------------------------
-Phase 3 — Composition Patterns (PLANNED)
+### Phase 2.5 — Soft Enforcement (PLANNED)
+
+* Promote selected warnings to **best-effort rejections**
+* Never abort generation
+* Deterministic outcomes preserved
+
+---
+
+### Phase 3 — Composition Patterns (PLANNED)
 
 Introduce multi-circuit composition informed by roles:
 
@@ -364,33 +314,11 @@ Introduce multi-circuit composition informed by roles:
 * Consequence-before-cause setups
 * Intentional foreshadow → payoff chains
 
-Pattern selection informed by:
+No new mechanics introduced.
 
-* Room distance
-* Role budgets
-* Existing role diagnostics
-* Main-path vs optional classification
+---
 
-No new mechanics are introduced in Phase 3.
-
-============================================================
-KNOWN CONSTRAINTS
-
-* Generation must remain deterministic
-* Patterns must never abort generation
-* Runtime logic must not mutate geometry
-* Diagnostics are authoritative
-
-============================================================
-NON-GOALS (FUTURE MILESTONES)
-
-* Combat-triggered puzzles
-* Time-pressure mechanics
-* Inventory-based puzzle items
-* Scripted narrative events
-
-============================================================
-MENTAL MODEL SUMMARY
+## MENTAL MODEL SUMMARY
 
 * BSP creates space
 * Content generation expresses intent
@@ -400,4 +328,6 @@ MENTAL MODEL SUMMARY
 * Runtime executes state
 * Diagnostics quantify structure
 * Batch harness converts intuition into data
-* Milestone 4 turns correctness into progression grammar
+* **Milestone 4 turns correctness into progression grammar**
+
+---
