@@ -28,6 +28,162 @@ import {
 
 type Point = { x: number; y: number };
 
+export type PuzzleRole =
+  | "MAIN_PATH_GATE"
+  | "OPTIONAL_REWARD"
+  | "SHORTCUT"
+  | "FORESHADOW";
+
+export type RoleRuleId =
+  // Role integrity
+  | "ROLE_MISSING"
+  | "ROLE_UNKNOWN"
+  | "ROLE_DUPLICATE"
+
+  // MAIN_PATH_GATE quality
+  | "MAIN_TRIVIAL" // topoDepth too small
+  | "MAIN_LATE_TRIVIAL" // trivial too deep in dungeon
+  | "MAIN_TOO_DEEP_EARLY" // overly chained too early (rare but useful)
+
+  // OPTIONAL_REWARD quality
+  | "OPTIONAL_TRIVIAL" // optional behind no meaningful logic
+  | "OPTIONAL_OVERGATED_BY_MAIN" // optional depends on main gate chains
+
+  // SHORTCUT quality
+  | "SHORTCUT_NOT_REDUCING_DISTANCE" // doesn’t reduce roomDistance meaningfully
+
+  // FORESHADOW quality
+  | "FORESHADOW_AFTER_MAIN" // appears after its “paid-off” gate
+  | "FORESHADOW_TOO_DEEP"; // too complex for foreshadow slot
+
+export type CircuitAnchorV1 = {
+  anchorRoomId: number | null; // null if cannot map (should be rare)
+  roomDepth: number | null; // BFS distance from entrance room
+  depthN: number | null; // roomDepth / maxDepth  (0..1)
+  onMainPath: boolean | null;
+
+  // Optional: if a door is involved and you can map it:
+  doorId?: number; // meta.doors[].id if applicable
+  mainPathEdgeDepth?: number; // meta.doors[].depth (0..)
+};
+
+export type CircuitRoleRecordV1 = {
+  circuitIndex: number; // aligns to meta.circuits index (stable)
+  role: PuzzleRole | null;
+
+  anchor: CircuitAnchorV1;
+
+  // Pulled from CircuitEvalDiagnostics.perCircuit
+  topoDepth: number; // longest SIGNAL prereq chain length (0..)
+  signalDepCount: number;
+  participatesInCycle: boolean;
+  blockedByCycle: boolean;
+};
+
+export type RoleRuleHitV1 = {
+  ruleId: RoleRuleId;
+  role: PuzzleRole | null;
+  circuitIndex: number;
+
+  // Helps UI + batch debugging without huge payloads
+  depthN: number | null;
+  roomDepth: number | null;
+  topoDepth: number;
+
+  // Short stable code for aggregation; optional human string for UI only
+  code: string; // e.g. "TD_LT_MIN@late"
+  detail?: string; // keep this short
+};
+
+export type RoleSummaryStatsV1 = {
+  schemaVersion: 1;
+
+  roleCounts: Record<PuzzleRole, number>;
+  roleMissingCount: number;
+
+  // Basic depth stats by role (for histograms in batch later)
+  topoDepthByRole: Record<
+    PuzzleRole,
+    {
+      min: number;
+      p25: number;
+      median: number;
+      p75: number;
+      max: number;
+      avg: number;
+    }
+  >;
+
+  // “Where these roles occur”
+  depthNByRole: Record<
+    PuzzleRole,
+    {
+      min: number;
+      p25: number;
+      median: number;
+      p75: number;
+      max: number;
+      avg: number;
+    }
+  >;
+
+  // Rule tallies: batch-friendly
+  ruleCounts: Record<RoleRuleId, number>;
+};
+
+export type RoleDiagnosticsV1 = {
+  schemaVersion: 1;
+
+  // Traceability (mirrors your CircuitEvalDiagnostics pattern)
+  seedUsed?: number;
+  entranceRoomId?: number;
+  farthestRoomId?: number;
+  maxDepth?: number;
+
+  // One record per circuit (stable index ordering)
+  perCircuit: CircuitRoleRecordV1[];
+
+  // Any rule hits (warnings at first)
+  hits: RoleRuleHitV1[];
+
+  // Compact summary for batch aggregation + UI headline
+  summary: RoleSummaryStatsV1;
+};
+
+export type RoleThresholdsV1 = {
+  schemaVersion: 1;
+
+  main: {
+    // topoDepth floor by depthN segment
+    minTopoDepth: Array<{ atLeastDepthN: number; minTopoDepth: number }>;
+
+    // “late trivial” definition
+    lateStartsAtDepthN: number; // e.g. 0.55
+    lateMinTopoDepth: number; // e.g. 2
+
+    // guardrail: too-deep-too-early (rare)
+    earlyEndsAtDepthN: number; // e.g. 0.20
+    earlyMaxTopoDepth: number; // e.g. 3
+  };
+
+  optional: {
+    // optional should have at least *some* meaning later; early can be fluff
+    lateStartsAtDepthN: number; // e.g. 0.60
+    lateMinTopoDepth: number; // e.g. 1
+  };
+
+  foreshadow: {
+    // foreshadow should be simple and early-ish
+    maxTopoDepth: number; // e.g. 1
+    mustOccurBeforeDepthN: number; // e.g. 0.45
+  };
+
+  shortcut: {
+    // must improve travel meaningfully (room-distance reduction)
+    minRoomDepthReduction: number; // e.g. 2 rooms
+  };
+};
+
 export type ReachabilityStats = {
   start: Point;
   connector: Point;
@@ -94,6 +250,43 @@ export type PatternEntry =
       name: string;
       run: PatternFn;
     };
+
+export const DEFAULT_ROLE_THRESHOLDS_V1: RoleThresholdsV1 = {
+  schemaVersion: 1,
+
+  main: {
+    // Ramp: early can be topoDepth 0/1, but by midgame we want real chaining.
+    minTopoDepth: [
+      { atLeastDepthN: 0.0, minTopoDepth: 0 },
+      { atLeastDepthN: 0.25, minTopoDepth: 1 },
+      { atLeastDepthN: 0.45, minTopoDepth: 2 },
+      { atLeastDepthN: 0.7, minTopoDepth: 3 },
+    ],
+
+    lateStartsAtDepthN: 0.55,
+    lateMinTopoDepth: 2,
+
+    earlyEndsAtDepthN: 0.2,
+    earlyMaxTopoDepth: 3,
+  },
+
+  optional: {
+    // Optional rewards can be “easy candy” early, but shouldn’t stay trivial late.
+    lateStartsAtDepthN: 0.6,
+    lateMinTopoDepth: 1,
+  },
+
+  foreshadow: {
+    // Foreshadow should not be a big chain; it’s a teaching moment.
+    maxTopoDepth: 1,
+    mustOccurBeforeDepthN: 0.45,
+  },
+
+  shortcut: {
+    // If a shortcut doesn’t reduce distance by at least 2 rooms, it’s cosmetic.
+    minRoomDepthReduction: 2,
+  },
+};
 
 /**
  * Best-effort execution:

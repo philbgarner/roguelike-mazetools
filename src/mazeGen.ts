@@ -22,7 +22,11 @@ import {
   runPatternsBestEffort,
   applyLeverOpensDoorPattern,
 } from "./puzzlePatterns";
-import type { PatternDiagnostics, PatternEntry } from "./puzzlePatterns";
+import type {
+  PatternDiagnostics,
+  PatternEntry,
+  PuzzleRole,
+} from "./puzzlePatterns";
 
 import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
 
@@ -1183,6 +1187,8 @@ export type ContentOutputs = {
     circuits: CircuitDef[];
 
     patternDiagnostics: PatternDiagnostics[];
+
+    circuitRoles?: Record<number, PuzzleRole>;
   };
 };
 

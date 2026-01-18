@@ -1,10 +1,10 @@
 PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-CONTEXT VERSION: **2026-01-18 (rev B)**
+CONTEXT VERSION: **2026-01-18 (rev C)**
 LAST COMPLETED MILESTONE: **Milestone 3 — Stateful Puzzle Execution**
 CURRENT MILESTONE: **Milestone 4 — Puzzle Composition & Progression Grammar**
-CURRENT PHASE: **Phase 1 — Circuit Chaining (FOUNDATIONAL)**
-PHASE STATUS: **ENGINE COMPLETE, DIAGNOSTICS PARITY ACHIEVED**
+CURRENT PHASE: **Phase 2 — Puzzle Roles & Difficulty Ramping (OBSERVATIONAL)**
+PHASE STATUS: **ROLE DIAGNOSTICS IMPLEMENTED**
 
 SAFE ASSUMPTIONS (DO NOT RE-DISCUSS):
 
@@ -210,7 +210,7 @@ Milestone 4 — Puzzle Composition & Progression Grammar
 Milestone 4 shifts focus from **mechanical correctness**
 to **player-facing meaning, escalation, and composition**.
 
-This milestone **composes existing systems** rather than introducing new mechanics.
+This milestone composes existing systems rather than introducing new mechanics.
 
 ============================================================
 MILESTONE 4 — PHASE BREAKDOWN
@@ -218,114 +218,144 @@ MILESTONE 4 — PHASE BREAKDOWN
 ------------------------------------------------------------
 Phase 1 — Circuit Chaining (FOUNDATIONAL)
 
-STATUS: **ENGINE COMPLETE**
+STATUS: **COMPLETE**
 STATUS: **DIAGNOSTICS PARITY ACHIEVED**
+STATUS: **CLOSED**
+
+What was completed:
+
+* SIGNAL-based circuit chaining
+* Deterministic topo sorting with cycle handling
+* Same-tick chained evaluation
+* Cycle detection without abort
+* Stable, versioned diagnostics schema
+* Full UI + batch parity for circuit metrics
+
+No gameplay semantics were introduced in Phase 1.
+
+------------------------------------------------------------
+Phase 2 — Puzzle Roles & Difficulty Ramping (CURRENT)
+
+STATUS: **ROLE DIAGNOSTICS IMPLEMENTED**
 STATUS: **OBSERVATIONAL ONLY**
 
-### What was completed
-
-**Circuit chaining engine (`evaluateCircuits.ts`)**
-
-* SIGNAL outputs are first-class circuit dependencies
-* Circuits are topologically sorted by SIGNAL edges
-* Same-tick chained evaluation is supported
-* Deterministic behavior preserved
-* Cycles detected via SCC (Tarjan)
-* Cycle members vs downstream-of-cycle circuits distinguished
-* Cycles never abort evaluation
-
-**Diagnostics schema stabilization**
-
-* `CircuitEvalDiagnostics` is now explicitly versioned (`schemaVersion: 1`)
-* All diagnostics fields are stable and batch-safe
-
-**Global circuit metrics (authoritative)**
-
-Computed metrics include:
-
-* circuitCount
-* signalEdgeCount
-* maxTopoDepth
-* avgTopoDepth
-* circuitsWithSignalDeps
-* pctWithSignalDeps
-* cycleGroupCount
-* cycleCircuitCount
-* blockedByCycleCount
-* largestCycleSize
-
-**Diagnostics UI (React)**
-
-Structured, observational circuit diagnostics UI implemented:
-
-* `CircuitDiagnosticsSection`
-* `CircuitDiagToolbar`
-* `CircuitList`
-* `CircuitInspector`
-* `GlobalCircuitMetrics`
-* `circuitDiagnosticsVM` (pure selectors / view models)
-
-The UI:
-
-* Replaces raw JSON output
-* Mirrors batch harness metrics exactly
-* Makes circuit topology and composition visible
-* Does not introduce difficulty semantics
-
-**Batch harness parity**
-
-* Batch runs now evaluate circuits once per dungeon
-* Batch JSON includes the same global circuit metrics as the UI
-* Metrics schema matches UI output (schemaVersion pinned)
-
-No gameplay behavior has changed.
+Phase 2 introduces *semantic meaning* to composed puzzles without enforcing behavior.
 
 ------------------------------------------------------------
-Phase 1 — REMAINING (FINAL POLISH ONLY)
+What was completed
 
-All remaining Phase 1 work is **purely presentational**:
+**Role diagnostics engine (`roleDiagnostics.ts`)**
 
-* Minor diagnostics UI layout polish
-* Edge-case rendering (empty graphs, single-node cycles)
-* Confirm schema stability across long batch runs
+* New schema: `RoleDiagnosticsV1` (schemaVersion = 1)
+* Supports semantic puzzle roles:
+  * `MAIN_PATH_GATE`
+  * `OPTIONAL_REWARD`
+  * `SHORTCUT`
+  * `FORESHADOW`
 
-Once complete, Phase 1 is **fully closed**.
+* Deterministic per-circuit **anchor derivation**:
+  * Anchors derived from trigger/target roomIds
+  * Door targets anchored to earliest side by room distance
+  * SIGNAL-only circuits anchored via upstream dependency propagation
+
+* Role-aware metrics recorded per circuit:
+  * topoDepth
+  * signalDepCount
+  * cycle participation
+  * anchor room depth
+  * normalized depth (depthN)
+  * main-path membership
+
+**Default progression thresholds (v1)**
+
+Conservative, distance-ramped defaults introduced:
+
+* Main-path gates require increasing topoDepth deeper in the dungeon
+* Late trivial main gates are flagged
+* Early overly-deep main gates are flagged (guardrail)
+* Optional rewards must retain meaning late-game
+* Foreshadow puzzles must remain shallow and early
+
+**Role rule evaluation (warnings only)**
+
+Initial rule set implemented:
+
+* `ROLE_MISSING`
+* `MAIN_TRIVIAL`
+* `MAIN_LATE_TRIVIAL`
+* `MAIN_TOO_DEEP_EARLY`
+* `OPTIONAL_TRIVIAL`
+* `FORESHADOW_TOO_DEEP`
+* `FORESHADOW_AFTER_MAIN`
+
+Rules emit diagnostics only.
+No generation is rejected at this stage.
+
+**Summary statistics**
+
+Batch-safe summary metrics computed:
+
+* roleCounts
+* topoDepth distributions by role
+* depthN distributions by role
+* ruleCounts histogram
 
 ------------------------------------------------------------
-Phase 2 — Puzzle Roles & Difficulty Ramping (NEXT)
-
-STATUS: **READY TO BEGIN**
-
-Goals:
-
-* Assign semantic roles to composed puzzles:
-  * MAIN_PATH_GATE
-  * OPTIONAL_REWARD
-  * SHORTCUT
-  * FORESHADOW
-
-* Enforce progression rules using diagnostics:
-  * Minimum topo depth for main-path gates
-  * Reject trivial gates late in dungeon
-  * Gradually escalate puzzle depth over room distance
-
-Key principle:
+What Phase 2 is NOT doing (by design)
 
 * No new mechanics
-* Roles are annotations
-* Rules consume diagnostics already produced
+* No automatic role inference
+* No hard rejections
+* No tuning beyond conservative defaults
+
+Phase 2 exists to **observe, measure, and calibrate**.
+
+------------------------------------------------------------
+NEXT STEPS (IMMEDIATE)
+
+1. **UI surfacing**
+   * Add a `RoleDiagnosticsSection` (or inline panel)
+   * Display:
+     * roleCounts
+     * ruleCounts
+     * per-circuit rule hits
+   * Goal: make progression structure visible
+
+2. **Batch integration**
+   * Export compact role diagnostics summary into batch JSON
+   * Run large seed batches (500–1000)
+   * Examine histograms before tuning thresholds
+
+3. **Threshold calibration**
+   * Adjust default thresholds using empirical distributions
+   * Keep warnings non-fatal initially
+
+------------------------------------------------------------
+Phase 2.5 — Soft Enforcement (PLANNED)
+
+Once data supports it:
+
+* Promote selected warnings (e.g. `MAIN_LATE_TRIVIAL`) to **best-effort rejections**
+* Still deterministic
+* Still never abort full generation
 
 ------------------------------------------------------------
 Phase 3 — Composition Patterns (PLANNED)
 
-* Introduce multi-circuit pattern macros:
-  * Lever → Gate → Plate → Reward
-  * Consequence-before-cause setups
+Phase 3 introduces *multi-circuit composition* informed by roles:
 
-* Pattern selection informed by:
-  * Room distance
-  * Main-path vs optional classification
-  * Puzzle budget constraints
+* Lever → Gate → Plate → Reward
+* Consequence-before-cause setups
+* Intentional foreshadow → payoff chains
+
+Pattern selection informed by:
+
+* Room distance
+* Role budgets
+* Existing role diagnostics
+* Main-path vs optional classification
+
+No new mechanics are introduced in Phase 3.
 
 ============================================================
 KNOWN CONSTRAINTS
@@ -352,6 +382,6 @@ MENTAL MODEL SUMMARY
 * Circuits encode logic
 * Signals compose logic
 * Runtime executes state
-* Diagnostics quantify reliability
+* Diagnostics quantify structure
 * Batch harness converts intuition into data
 * Milestone 4 turns correctness into progression grammar
