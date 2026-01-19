@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-18 (rev E)**
+**CONTEXT VERSION:** **2026-01-18 (rev G)**
 **LAST COMPLETED MILESTONE:** **Milestone 3 — Stateful Puzzle Execution**
 **CURRENT MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
-**CURRENT PHASE:** **Phase 2 — Puzzle Roles & Difficulty Ramping**
-**PHASE STATUS:** **ROLE DIAGNOSTICS + STRUCTURAL LANDMARK VISUALIZATION (OBSERVATIONAL)**
+**CURRENT PHASE:** **Phase 3 — Composition Patterns (ROLE-AWARE, BEST-EFFORT)**
+**PHASE STATUS:** **PHASE 3 ONLINE, RELIABILITY DIAGNOSED, STRUCTURAL LIMITS IDENTIFIED**
 
 ---
 
@@ -37,9 +37,7 @@ The system is intentionally layered so that:
 * gameplay intent
 * runtime puzzle logic
 
-are cleanly separated.
-
-This separation is foundational, enforced in code, and **proven viable** through runtime execution, diagnostics, and large-scale batch validation.
+are cleanly separated, enforced in code, and verified through runtime simulation and batch diagnostics.
 
 ---
 
@@ -49,37 +47,35 @@ This separation is foundational, enforced in code, and **proven viable** through
 
 **Entry:** `generateBspDungeon()` in `mazeGen.ts`
 
-**Responsibilities:**
+Responsibilities:
 
-* BSP partitioning of the grid
+* BSP partitioning
 * Room carving
 * Corridor carving
-* Wall preservation (optional outer wall retention)
+* Wall preservation
 * Distance-to-wall calculation
 * Region (room) identification
 
-**Outputs:**
+Outputs:
 
-* `solid` mask (wall/floor)
-* `regionId` mask
-* `distanceToWall` mask
+* `solid`, `regionId`, `distanceToWall` masks
 * BSP metadata (rooms, corridors, depth, seed)
 
 This layer is **pure geometry** and contains no gameplay knowledge.
 
 ---
 
-### CONTENT GENERATION (Milestones 1–3)
+### CONTENT GENERATION (Milestones 1–4)
 
 **Entry:** `generateDungeonContent()` in `mazeGen.ts`
 
-**Responsibilities:**
+Responsibilities:
 
-* Place gameplay content on top of BSP geometry
-* Encode progression, gating, and optional content
-* Express puzzle intent declaratively
+* Place gameplay content on geometry
+* Encode progression intent declaratively
+* Express puzzle structure via patterns
 * Guarantee solvability by construction (best-effort)
-* Remain fully deterministic from seed/options
+* Remain deterministic from seed/options
 
 This layer **does not execute puzzle logic**.
 
@@ -87,36 +83,31 @@ This layer **does not execute puzzle logic**.
 
 ### RUNTIME / PUZZLE LOGIC (Milestone 3+)
 
-**Core files:**
+Core files:
 
 * `dungeonState.ts`
 * `evaluateCircuits.ts`
 * `walkability.ts`
 * `App.tsx` (debug UI + batch harness)
 
-**Responsibilities:**
+Responsibilities:
 
-* Hold mutable gameplay state (doors, levers, plates, blocks, hazards, secrets)
-* Derive sensor state (plates from blocks; player later)
+* Hold mutable gameplay state
 * Evaluate circuits deterministically
-* Apply effects (open doors, toggle hazards, reveal passages)
-* Drive interactive puzzle simulation (debug harness first)
+* Apply effects (doors, hazards, secrets)
+* Drive interactive simulation (debug harness)
 
 ---
 
 ## IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
 
-### GEOMETRY MUTATION POLICY — OPTION A (DECIDED)
+### GEOMETRY MUTATION POLICY — OPTION A
 
-Puzzle patterns may carve geometry by mutating `dungeon.masks.solid`, invalidating the distance field.
+* Geometry-mutating patterns run before final distance usage
+* `distanceToWall` recomputed once if **any** pattern carved
+* Implemented via `runPatternsBestEffort()` → `didCarve`
 
-**Policy:**
-
-* All geometry-mutating patterns run before final distance usage
-* `distanceToWall` is recomputed once if **any** pattern carved
-* Implemented via `runPatternsBestEffort()` → `didCarve` flag
-
-Implemented, verified, and stable.
+Stable and verified.
 
 ---
 
@@ -124,210 +115,270 @@ Implemented, verified, and stable.
 
 Authoritative `featureType` values:
 
-* 0 = none
-* 1 = monster
-* 2 = chest
-* 3 = legacy secret door (wall)
-* 4 = door
-* 5 = key
-* 6 = lever
-* 7 = pressure plate
-* 8 = push block
-* 9 = hidden passage
-* 10 = hazard
+* 0 none
+* 1 monster
+* 2 chest
+* 3 legacy secret door
+* 4 door
+* 5 key
+* 6 lever
+* 7 pressure plate
+* 8 push block
+* 9 hidden passage
+* 10 hazard
 
-**Invariants:**
+Invariants:
 
 * featureType 9 MUST have non-zero featureId
-* `meta.secrets[]` is authoritative for hidden passages
-* Masks are for inspection; metadata is authoritative
+* `meta.secrets[]` is authoritative
+* Masks are diagnostic; metadata is authoritative
 
 ---
 
 ### PUZZLE PATTERNS (MILESTONE 3)
 
-Patterns are **generation-time macros**, not runtime logic.
+Stable patterns:
 
-Properties:
+1. **leverHiddenPocket** *(carving; reachability validated)*
+2. **leverOpensDoor** *(non-carving)*
+3. **plateOpensDoor** *(non-carving)*
 
-* Best-effort (never abort generation)
-* Deterministic
-* May mutate geometry (explicitly reported)
-* Emit structured diagnostics
-* Names are stable and batch-aggregatable
+All patterns are:
 
-Implemented patterns:
-
-1. **leverHiddenPocket**
-2. **leverOpensDoor**
-3. **plateOpensDoor**
-
----
-
-### REACHABILITY DIAGNOSTICS
-
-Hidden-pocket pattern records:
-
-* reachablePre
-* reachablePost
-* shortestPathPost
-
-Failure modes are classified and batch-aggregated.
+* deterministic
+* best-effort
+* batch-aggregatable
+* diagnostics-emitting
 
 ---
 
 ### BATCH VALIDATION HARNESS
 
-Implemented and trusted.
-
 Capabilities:
 
 * Hundreds of seeds per run
 * Per-pattern aggregation
-* Success / failure rates
-* Reachability metrics
+* Success/failure rates
 * Failure histograms
+* Circuit structure metrics
 * JSON export
+
+Trusted and authoritative.
 
 ---
 
-## STRUCTURAL LANDMARK VISUALIZATION (NEW)
+## STRUCTURAL LANDMARK VISUALIZATION
 
-To support progression reasoning and diagnostics clarity, **structural landmarks** are now rendered in the content composite image:
+### Entrance Tile
 
-### Entrance Tile (NEW)
+* Identified via `content.meta.entranceRoomId`
+* Center tile rendered **cyan**
+* Render-only; no gameplay impact
 
-* Entrance room is identified via `content.meta.entranceRoomId`
-* The room footprint is derived from `dungeon.masks.regionId`
-* The **center tile** of the entrance room is rendered as a **cyan pixel**
-* Render-only change (no metadata or gameplay impact)
+### Exit Tile
 
-### Exit Tile (NEW)
-
-* Exit room is defined as `content.meta.farthestRoomId`
-
-  * Farthest room by room-graph distance from the entrance
-* The room footprint is derived from `dungeon.masks.regionId`
-* The **center tile** of the exit room is rendered as a **purple pixel**
-* Render-only change; no new featureType introduced
-
-These markers:
-
-* Make dungeon flow visually legible
-* Support role diagnostics interpretation
-* Are batch-safe and deterministic
-* Do not affect runtime logic or generation outcomes
+* Identified via `content.meta.farthestRoomId`
+* Center tile rendered **purple**
+* Render-only; no gameplay impact
 
 ---
 
 ## MILESTONE STATUS
 
-### Milestone 3 — COMPLETE, STABLE, MEASURABLE
+### Milestone 3 — COMPLETE, STABLE
 
-* Runtime puzzle execution works end-to-end
-* Geometry mutation is safe and repaired
-* Pattern reliability is quantifiable
-* No silent failures remain
+* Runtime puzzle execution verified
+* Geometry mutation safe
+* Diagnostics trustworthy
+* No silent failures
 
 ---
 
-### Milestone 4 — Puzzle Composition & Progression Grammar
+## MILESTONE 4 — PUZZLE COMPOSITION & PROGRESSION GRAMMAR
 
-Milestone 4 shifts focus from **mechanical correctness** to
-**player-facing meaning, escalation, and composition**.
-
-No new mechanics are introduced in this milestone.
+Milestone 4 focuses on **meaning, escalation, and structure**, not new mechanics.
 
 ---
 
 ## MILESTONE 4 — PHASE BREAKDOWN
 
-### Phase 1 — Circuit Chaining (FOUNDATIONAL)
+### Phase 1 — Circuit Chaining
 
 **STATUS:** COMPLETE
-**STATUS:** DIAGNOSTICS PARITY ACHIEVED
 **STATUS:** CLOSED
 
 ---
 
-### Phase 2 — Puzzle Roles & Difficulty Ramping (CURRENT)
+### Phase 2 — Puzzle Roles & Difficulty Ramping
 
 **STATUS:** ROLE DIAGNOSTICS IMPLEMENTED
 **STATUS:** UI SURFACED
-**STATUS:** STRUCTURAL LANDMARKS VISIBLE
 **STATUS:** OBSERVATIONAL ONLY
 
-Phase 2 introduces *semantic meaning* to composed puzzles
-without enforcing behavior.
-
-#### Completed in Phase 2
-
-* Role diagnostics engine (`roleDiagnostics.ts`)
-* Stable schema (`RoleDiagnosticsV1`)
-* Deterministic anchor derivation
-* Role-aware metrics per circuit
-* Rule evaluation (warnings only)
-* Aggregate role & rule statistics
-* Dedicated Role Diagnostics UI
-* Entrance + exit tile visualization
-
-No tuning or enforcement occurs in this phase.
+Provides semantic meaning without enforcement.
 
 ---
 
-## NEXT STEPS (IMMEDIATE)
+### Phase 3 — Composition Patterns (CURRENT)
 
-1. **Batch integration**
-
-   * Export compact role-diagnostics summaries
-   * Run large batches (500–1000 seeds)
-   * Examine distributions by role and depth
-
-2. **Threshold calibration**
-
-   * Adjust default role thresholds using empirical data
-   * Keep all rules non-fatal
-   * Explicitly version thresholds (e.g. v2)
-
-3. **UI polish (optional)**
-
-   * Stronger visual distinction for main-path vs optional
-   * Lightweight histograms or sparklines (read-only)
+**STATUS:** FIRST ROLE-AWARE COMPOSITION PATTERN IMPLEMENTED
+**STATUS:** RELIABILITY INVESTIGATED VIA BATCH
+**STATUS:** STRUCTURAL FAILURE MODES IDENTIFIED
 
 ---
 
-## PLANNED FOLLOW-UPS
+## PHASE 3 — CURRENT IMPLEMENTATION
 
-### Phase 2.5 — Soft Enforcement (PLANNED)
+### Composition Pattern: `gateThenOptionalReward`
 
-* Promote selected warnings to **best-effort rejections**
+A two-circuit, role-aware composition:
+
+* MAIN_PATH_GATE on main path
+* OPTIONAL_REWARD branch behind a plate + signal
+* Uses SIGNAL dependency (`PLATE && SIGNAL(gate ACTIVE)`)
+
+---
+
+## PHASE 3 — RECENT WORK (NEW IN rev G)
+
+### Branch-Retry Fallback Implemented
+
+* Pattern now retries **multiple off-main branch neighbors** for the same deep room
+* Prevents early failure when one branch edge is unusable
+* Deterministic and best-effort
+* No regression in other patterns
+
+---
+
+### Batch Results After Fallback (300 seeds)
+
+* `gateThenOptionalReward` okRate: **0.95 (286/300)**
+* Failures unchanged from baseline
+
+Dominant failure reasons:
+
+1. **Failed: no viable branch door site** (9)
+2. **No main-path edge has an off-main branch with a door site** (5)
+
+Circuit health unchanged:
+
+* `signalEdgeCountAvg ≈ 0.95`
+* `maxTopoDepthAvg ≈ 0.95`
+* Cycles: **0**
+
+---
+
+## DIAGNOSIS (IMPORTANT)
+
+The branch-retry fallback **worked correctly**, but **did not activate** in the failing cases.
+
+This revealed the true limiting factor:
+
+### Failure Class A
+
+**No main-path edge has an off-main branch with a door site**
+
+* Structural/topological limitation
+* Occurs **before attempts begin**
+* Not fixable via retries
+
+### Failure Class B
+
+**Failed: no viable branch door site**
+
+* Branch retry exhausted
+* Root cause is **attempt budget being consumed on the same main-path edge**
+* Indicates **main-edge exhaustion**, not branch choice failure
+
+---
+
+## KEY INSIGHT (PHASE 3)
+
+> Remaining failures are caused by **insufficient exploration of distinct main-path edges**, not incorrect branch selection.
+
+This is a **structural search ordering issue**, not a logic bug.
+
+---
+
+## NEXT STEPS (IMMEDIATE, HIGH-ROI)
+
+### 1) Main-Edge Retry Strategy (REQUIRED)
+
+Refactor `gateThenOptionalReward` attempt loop to prioritize **main-edge exploration**:
+
+Recommended structure:
+
+* Iterate over distinct main-path edges first
+* For each edge, try a small fixed number of branch placements
+* Avoid burning entire attempt budget on a single bad corridor
+
+This is expected to push okRate toward **98–99%**.
+
+---
+
+### 2) Candidate Availability Counters (OPTIONAL BUT VALUABLE)
+
+Add diagnostics to record:
+
+* main-path edges with off-main neighbors
+* edges with at least one usable branch site
+* total `(mainEdge, branchRoom, doorSite)` triples
+
+This cleanly separates:
+
+* “Dungeon has no branches”
+* vs “Search policy too narrow”
+
+---
+
+### 3) Larger Batch Validation
+
+After main-edge retry:
+
+* Run **500–1000 seeds**
+* Confirm:
+
+  * okRate improvement
+  * signal metrics stability
+  * failure class distribution
+
+---
+
+## PHASE 2.5 — SOFT ENFORCEMENT (NOT STARTED)
+
+Now well-supported by data.
+
+Planned approach:
+
+* Promote a **small subset** of role-rule warnings to retry triggers
 * Never abort generation
-* Deterministic outcomes preserved
+* Use pattern retries, not hard vetoes
 
 ---
 
-### Phase 3 — Composition Patterns (PLANNED)
+## WHERE WE ARE IN MILESTONE 4
 
-Introduce multi-circuit composition informed by roles:
+* **Phase 1:** complete
+* **Phase 2:** complete (observational)
+* **Phase 3:** active, healthy, structurally understood
+* **Phase 2.5:** planned, data-ready
 
-* Lever → Gate → Plate → Reward
-* Consequence-before-cause setups
-* Intentional foreshadow → payoff chains
-
-No new mechanics introduced.
+Milestone 4 is now transitioning from **“does composition work?”** to
+**“how reliably and how intentionally does it work?”**
 
 ---
 
 ## MENTAL MODEL SUMMARY
 
 * BSP creates space
-* Content generation expresses intent
-* Patterns add structured puzzles
+* Content expresses intent
+* Patterns compose structure
 * Circuits encode logic
 * Signals compose logic
 * Runtime executes state
 * Diagnostics quantify structure
-* Batch harness converts intuition into data
-* **Milestone 4 turns correctness into progression grammar**
+* Batch harness turns intuition into data
+* **Phase 3 revealed true structural limits**
+* **Next step is controlled exploration, not new mechanics**
 
 ---

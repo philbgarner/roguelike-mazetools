@@ -21,6 +21,7 @@ import {
   applyPlateOpensDoorPattern,
   runPatternsBestEffort,
   applyLeverOpensDoorPattern,
+  applyGateThenOptionalRewardPattern,
 } from "./puzzlePatterns";
 import type {
   PatternDiagnostics,
@@ -1056,6 +1057,14 @@ export type ContentOptions = {
 
   // Optional: budget for each pattern’s internal search (passed to pattern options)
   patternMaxAttempts?: number; // default 60
+
+  // -----------------------------
+  // Milestone 4 — Phase 3 (composition)
+  // -----------------------------
+  includePhase3Compositions?: boolean;
+
+  // MAIN_PATH_GATE -> OPTIONAL_REWARD (signal-gated)
+  gateThenOptionalRewardCount?: number; // default 0
 };
 
 export type ContentOutputs = {
@@ -1192,7 +1201,7 @@ export type ContentOutputs = {
   };
 };
 
-function clamp255(v: number) {
+export function clamp255(v: number) {
   return Math.max(0, Math.min(255, v | 0));
 }
 
@@ -1606,6 +1615,12 @@ export function generateDungeonContent(
     plateOpensDoorCount: opts?.plateOpensDoorCount ?? 1,
 
     patternMaxAttempts: opts?.patternMaxAttempts ?? 60,
+
+    // -----------------------------
+    // Milestone 4 — Phase 3 (composition)
+    // -----------------------------
+    includePhase3Compositions: opts?.includePhase3Compositions ?? false,
+    gateThenOptionalRewardCount: opts?.gateThenOptionalRewardCount ?? 0,
   };
 
   const seedUsed = hashSeedToUint32(options.seed);
@@ -2136,6 +2151,7 @@ export function generateDungeonContent(
   // Phase 1: Build meta.circuits (from Milestone 2 gates)
   // ------------------------------------
   const circuitsById = new Map<number, CircuitDef>();
+  const circuitRoles: Record<number, PuzzleRole> = {};
 
   function ensureCircuit(id: number): CircuitDef {
     let c = circuitsById.get(id);
@@ -2273,6 +2289,45 @@ export function generateDungeonContent(
             plates,
             blocks,
             circuitsById,
+            allocId: () => clamp255(nextId++),
+            options: { maxAttempts: options.patternMaxAttempts },
+          }),
+      });
+    }
+  }
+
+  if (options.includePhase3Compositions) {
+    const n = Math.max(0, options.gateThenOptionalRewardCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push({
+        name: "gateThenOptionalReward",
+        run: () =>
+          applyGateThenOptionalRewardPattern({
+            rng: patternRng,
+            dungeon,
+            rooms,
+
+            // topology context
+            entranceRoomId,
+            roomGraph,
+            roomDistance,
+            mainPathRoomIds,
+
+            // masks
+            featureType,
+            featureId,
+            featureParam,
+            lootTier,
+
+            // meta
+            doors,
+            levers,
+            plates,
+            blocks,
+            chests,
+            circuitsById,
+            circuitRoles: circuitRoles, // IMPORTANT (write roles here)
+
             allocId: () => clamp255(nextId++),
             options: { maxAttempts: options.patternMaxAttempts },
           }),
@@ -2429,6 +2484,7 @@ export function generateDungeonContent(
       circuits,
       rooms,
       patternDiagnostics: diagnostics,
+      circuitRoles,
     },
   };
 }

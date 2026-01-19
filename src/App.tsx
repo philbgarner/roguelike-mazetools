@@ -674,7 +674,21 @@ const App: React.FC = () => {
       plateOpensDoorCount,
       patternMaxAttempts,
       leverDoorCount: 1,
+      // Phase 3 (composition)
+      includePhase3Compositions: true,
+      gateThenOptionalRewardCount: 1, // start with 1 for clean signals/topo metrics
     });
+
+    console.log("includePhase3Compositions:", true);
+    console.log(
+      "patternDiagnostics len:",
+      content.meta.patternDiagnostics?.length,
+    );
+    console.log(
+      "patternDiagnostics names:",
+      content.meta.patternDiagnostics?.map((d) => d.name),
+    );
+    console.log("circuits len:", content.meta.circuits.length);
 
     // Pattern diagnostics summary
     const diags = content.meta.patternDiagnostics ?? [];
@@ -1157,6 +1171,10 @@ const App: React.FC = () => {
           plateOpensDoorCount,
           patternMaxAttempts,
           leverDoorCount: 1,
+
+          // Phase 3 (composition)
+          includePhase3Compositions: true,
+          gateThenOptionalRewardCount: 1,
         });
 
         // Build an initial runtime state and derive plate presses from blocks
