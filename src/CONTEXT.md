@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-20 (rev I)**
-**LAST COMPLETED MILESTONE:** **Milestone 3 — Stateful Puzzle Execution**
-**CURRENT MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
-**CURRENT PHASE:** **Phase 3 — Composition Patterns (ROLE-AWARE, BEST-EFFORT)**
-**PHASE STATUS:** **PHASE 3 ONLINE, FAILURE MODES ISOLATED TO RARE STRUCTURAL DEGENERACY**
+**CONTEXT VERSION:** **2026-01-21 (rev L)**
+**LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
+**CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
+**CURRENT PHASE:** **Milestone 5 Kickoff — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
+**PHASE STATUS:** **MILESTONE 4 CLOSED; COMPOSITION RELIABLE; INTENT MISALIGNMENTS NOW VISIBLE**
 
 ---
 
@@ -65,7 +65,7 @@ This layer is **pure geometry** and contains no gameplay knowledge.
 
 ---
 
-### CONTENT GENERATION (Milestones 1–4)
+### CONTENT GENERATION (Milestones 1–5)
 
 **Entry:** `generateDungeonContent()` in `mazeGen.ts`
 
@@ -139,7 +139,7 @@ Invariants:
 
 Stable patterns:
 
-1. **leverHiddenPocket** *(carving; reachability validated)*
+1. **leverHiddenPocket** *(carving; reachability validated with multi-candidate retry)*
 2. **leverOpensDoor** *(non-carving)*
 3. **plateOpensDoor** *(non-carving)*
 
@@ -198,32 +198,22 @@ Trusted and authoritative.
 
 Milestone 4 focuses on **meaning, escalation, and structure**, not new mechanics.
 
----
-
-## MILESTONE 4 — PHASE BREAKDOWN
-
 ### Phase 1 — Circuit Chaining
 
 **STATUS:** COMPLETE
 **STATUS:** CLOSED
 
----
-
 ### Phase 2 — Puzzle Roles & Difficulty Ramping
 
 **STATUS:** ROLE DIAGNOSTICS IMPLEMENTED
 **STATUS:** UI SURFACED
-**STATUS:** OBSERVATIONAL ONLY
+**STATUS:** OBSERVATIONAL ONLY (BY DESIGN)
 
-Provides semantic meaning without enforcement.
+### Phase 3 — Composition Patterns
 
----
-
-### Phase 3 — Composition Patterns (CURRENT)
-
-**STATUS:** ROLE-AWARE COMPOSITION WORKING
-**STATUS:** FAILURE MODES FULLY CLASSIFIED
-**STATUS:** RELIABILITY ~99.4–99.9% DEPENDING ON STRUCTURAL DEGENERACY
+**STATUS:** COMPLETE
+**STATUS:** RELIABILITY PATCHED
+**STATUS:** CLOSED
 
 ---
 
@@ -246,126 +236,85 @@ Uses SIGNAL dependency to express logical composition.
 
 ---
 
-## TODAY’S WORK (rev I)
+## NEWLY DIAGNOSED ISSUE — INTENT / PLACEMENT MISALIGNMENT (rev L)
 
-### 1) Structural Starvation Eliminated
+### Symptom
 
-* Main-path edges are now **pre-filtered** to only those with off-main neighbors
-* Eliminated wasted attempts on impossible edges
-* Removed dominant “no branch neighbor” failure class
+In some seeds (e.g. seed-1234), multiple lever-linked doors appear **stacked within the same room or corridor cluster**, often near an early chokepoint.
+This results in:
 
----
+* Multiple doors controlling the *same* logical passage
+* Redundant gating
+* Broken perceived progression (two levers open what is effectively one gate)
 
-### 2) Degenerate Branch Collision Identified
+### Root Cause
 
-Through stepwise instrumentation, remaining failures were isolated to:
+Current placement logic correctly enforces **tile-level validity**, but does **not enforce graph-level intent**.
 
-* **Gate door site and branch door site resolving to the same corridor tile**
+The system is effectively interpreting:
 
-This is a **structural chokepoint degeneracy**, not an occupancy or placement bug.
+> “spawn N lever-linked doors”
 
----
+instead of the intended meaning:
 
-### 3) Collision Handling Implemented
+> “spawn N progression gates, each controlling a distinct chokepoint deeper in the room graph”
 
-* Branch door candidates now **exclude the chosen gate tile**
-* Colliding branch sites are treated as **non-usable**, allowing search to continue
-* Collision counters added and verified
+Because corridors can expose multiple valid door tiles along the same logical connector, multiple doors may be placed on the **same room-graph edge**, producing visual and mechanical stacking.
 
----
-
-### 4) Final Remaining Failure Class (Rare)
-
-After collision filtering:
-
-* ~6 / 1000 seeds still fail when:
-
-  * **Every available branch door candidate on all considered edges coincides with the chosen gate site**
-  * After exclusion, no usable branch door sites remain
-
-This is **not** a logic failure — it is a **gate-site selection degeneracy** in highly constrained BSP topologies.
+This is **not a bug**, but an *intent modeling gap* now visible due to Milestone 4’s reliability.
 
 ---
 
-## CURRENT STATE (rev I)
+## INTERPRETATION (CANONICAL)
 
-### What Works Reliably
+* Doors are **mechanical actuators**
+* Gates are **graph separations**
+* Progression intent operates at the **room-graph level**, not the tile level
 
-* Role-aware composition semantics are correct
-* SIGNAL-based logic chaining is stable
-* Diagnostics precisely explain failures
-* No silent or misclassified failures remain
-* Remaining failures are deterministic and understood
-
-### What Still Fails (Rarely)
-
-* Extremely constrained layouts where:
-
-  * Branch edges exist
-  * Branch door sites exist
-  * **But all branch door sites collapse to the same tile as the gate site**
-
-This is a **selection-policy limitation**, not a structural impossibility.
+Milestone 4 proved composition works.
+Milestone 5 exists to align *placement intent* with *progression meaning*.
 
 ---
 
-## WHERE WE ARE IN MILESTONE 4
+## NEXT STEPS — MILESTONE 5 (UPDATED)
 
-* **Phase 1:** COMPLETE
+### Phase 2.5 — Soft Enforcement (ACTIVE)
 
-* **Phase 2:** COMPLETE (observational)
+#### Intent-Aware Gate Selection (PROPOSED)
 
-* **Phase 3:** **FUNCTIONALLY COMPLETE**
+Introduce **soft, graph-level constraints** for multi-gate placement:
 
-  * Composition semantics correct
-  * Failure modes isolated
-  * Reliability near ceiling for current constraints
+1. **Gate De-Duplication by Graph Edge**
 
-* **Phase 2.5:** UNSTARTED — NOW CLEARLY JUSTIFIED
+   * Treat each corridor / room-connector as a canonical “gate edge”
+   * Enforce **at most one door per edge**
+   * Prevents stacked doors at the same chokepoint
 
-Milestone 4 has definitively transitioned from:
+2. **Monotonic Depth Progression**
 
-> “Can we compose puzzles?”
+   * When placing multiple gates:
 
-to:
+     * Gate *i+1* must be placed **strictly deeper in the room graph** than Gate *i*
+     * Depth measured by:
 
-> **“How intentionally do we steer composition under structural constraints?”**
+       * distance from entrance room, or
+       * main-path index toward `farthestRoomId`
+   * Ensures each lever unlocks a *new region*
 
----
+3. **Soft Enforcement Only**
 
-## NEXT STEPS (CLEAR & LOW-RISK)
+   * These rules:
 
-### 1) Gate-Site Viability Pre-Check (HIGH ROI)
-
-Before committing to a `gateSite`:
-
-* Evaluate whether that gate site would **eliminate all usable branch door sites**
-* If so:
-
-  * Skip this gate site
-  * Try the next gate site on the same edge
-
-This is a **local, deterministic, best-effort** refinement.
-
-**Expected outcome:** push success rate toward **~100%**.
+     * influence candidate ordering
+     * apply only on retries
+     * never hard-veto placement
+   * Best-effort guarantees preserved
 
 ---
 
-### 2) Phase 2.5 — Soft Enforcement (NEXT PHASE)
+### Expand Composition Library (UNCHANGED)
 
-With diagnostics now precise:
-
-* Promote selected role warnings into **retry guidance**
-* Apply **intent pressure**, not hard vetoes
-* Preserve best-effort guarantees
-
-This introduces *meaningful structure* without fragility.
-
----
-
-### 3) Expand Composition Library
-
-With confidence in the framework:
+With intent alignment now explicit:
 
 * Optional → Optional chains
 * Soft shortcuts
@@ -374,19 +323,20 @@ With confidence in the framework:
 
 ---
 
-## MENTAL MODEL (FINALIZED)
+## MENTAL MODEL (REFINED)
 
 * BSP creates space
 * Content expresses intent
+* **Progression intent lives at the graph level**
 * Patterns compose structure
 * Circuits encode logic
 * Signals compose logic
 * Runtime executes state
 * Diagnostics quantify structure
 * Batch harness turns intuition into data
-* **Search order matters as much as logic**
-* **Structural degeneracy is observable, not mysterious**
-* **Phase 3 proved composition works**
-* **Phase 4 will refine meaning, not mechanics**
+* **Search order shapes meaning**
+* **Gates are graph cuts, not tiles**
+* **Milestone 4 proved composition**
+* **Milestone 5 aligns intent with placement**
 
 ---

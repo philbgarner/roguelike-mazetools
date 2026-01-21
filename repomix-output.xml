@@ -6096,6 +6096,7 @@ type Point = { x: number; y: number };
 const MAX_MAIN_EDGES_TO_TRY = 32; // hard cap for runtime
 const MAX_BRANCH_TRIES_PER_MAIN_EDGE = 6; // prevents “edge budget burn”
 const MAX_DOOR_SITE_TRIES_PER_BRANCH = 12; // keep cheap/local
+const MAX_GATE_SITE_TRIES_PER_MAIN_EDGE = 24; // Phase 3 polish: avoid rare gate-site degeneracy
 
 type RoomEdge = { a: number; b: number };
 
@@ -6568,6 +6569,7 @@ export function applyGateThenOptionalRewardPattern(args: {
   let failBlockAdj = 0;
   let failChest = 0;
   let failBranchSameAsGate = 0;
+  let failGateEliminatesAllBranchSites = 0;
 
   // --- Explore edges first ---
   for (const edge of mainEdgesToTry) {
@@ -6584,7 +6586,10 @@ export function applyGateThenOptionalRewardPattern(args: {
     let edgeHadBranches = false;
     let edgeHadUsableDoorSite = false;
 
-    const maxGateSiteTries = Math.min(6, gateSites.length);
+    const maxGateSiteTries = Math.min(
+      MAX_GATE_SITE_TRIES_PER_MAIN_EDGE,
+      gateSites.length,
+    );
 
     for (let gs = 0; gs < maxGateSiteTries; gs++) {
       const gateSite = gateSites[gs]!;
@@ -6631,6 +6636,29 @@ export function applyGateThenOptionalRewardPattern(args: {
       }
 
       edgeHadBranches = true;
+
+      // Gate-site viability pre-check:
+      // If choosing this gateSite would eliminate *all* usable branch door sites
+      // (i.e., every candidate branch door site coincides with the gate tile or
+      // is currently occupied), skip this gateSite and try another on the same edge.
+      let gateAllowsAnyBranch = false;
+      for (const br of offMain) {
+        const bk = edgeKey(branchAnchorRoomId, br);
+        const all = edgeToSites.get(bk) ?? [];
+        for (const s of all) {
+          if (s.x === gateSite.x && s.y === gateSite.y) continue;
+          const di = idxOf(dungeon.width, s.x, s.y);
+          if ((ft[di] | 0) !== 0) continue;
+          gateAllowsAnyBranch = true;
+          break;
+        }
+        if (gateAllowsAnyBranch) break;
+      }
+
+      if (!gateAllowsAnyBranch) {
+        failGateEliminatesAllBranchSites++;
+        continue; // try next gateSite
+      }
 
       const offMainShuffled = offMain.slice();
       shuffleInPlace(offMainShuffled, rng);
@@ -6866,7 +6894,7 @@ export function applyGateThenOptionalRewardPattern(args: {
             id: blockId,
             x: blockP.x,
             y: blockP.y,
-            roomId: deepRoomId,
+            roomId: plateRoomId,
             weightClass: 0,
           });
 
@@ -6932,7 +6960,30 @@ export function applyGateThenOptionalRewardPattern(args: {
   } else if (mainEdgesWithBranches > 0 && mainEdgesWithUsableDoorSites === 0) {
     reason =
       "Failed: no usable branch door site exists on any considered main-path edge.";
-  } else {
+  }
+
+  // Always append counters for batch forensics (even in structural buckets).
+  reason +=
+    ` (edgeConsidered=${mainEdgesConsidered}` +
+    ` edgeWithBranches=${mainEdgesWithBranches}` +
+    ` edgeWithBranchSites=${mainEdgesWithUsableDoorSites}` +
+    ` gateOcc=${failGateOccupied}` +
+    ` noBranchNbr=${failNoBranchNeighbors}` +
+    ` noBranchSites=${failNoBranchDoorSites}` +
+    ` branchOcc=${failBranchOccupied}` +
+    ` branchSameAsGate=${failBranchSameAsGate}` +
+    ` gateElim=${failGateEliminatesAllBranchSites}` +
+    ` leverFail=${failLever}` +
+    ` plateFail=${failPlate}` +
+    ` blockAdjFail=${failBlockAdj}` +
+    ` chestFail=${failChest}` +
+    `)`;
+
+  if (
+    mainEdgesConsidered > 0 &&
+    !(mainEdgesWithBranches > 0 && mainEdgesWithUsableDoorSites === 0) &&
+    !(mainEdgesConsidered > 0 && mainEdgesWithBranches === 0)
+  ) {
     // fall back to dominant local placement failures
     const max = Math.max(
       failGateOccupied,
@@ -6940,6 +6991,7 @@ export function applyGateThenOptionalRewardPattern(args: {
       failNoBranchDoorSites,
       failBranchOccupied,
       failBranchSameAsGate,
+      failGateEliminatesAllBranchSites,
       failLever,
       failPlate,
       failBlockAdj,
@@ -6963,24 +7015,11 @@ export function applyGateThenOptionalRewardPattern(args: {
       reason = "Failed: no adjacent block tile near plate.";
     else if (max === failChest && max > 0)
       reason = "Failed: could not place chest in branch room.";
+    else if (max === failGateEliminatesAllBranchSites && max > 0)
+      reason =
+        "Failed: chosen gate site eliminates all usable branch door sites.";
     else if (max === failBranchSameAsGate && max > 0)
       reason = "Failed: branch door sites collided with gate site.";
-
-    // IMPORTANT: even if max==0, show all counters so batch can reveal the path
-    reason +=
-      ` (edgeConsidered=${mainEdgesConsidered}` +
-      ` edgeWithBranches=${mainEdgesWithBranches}` +
-      ` edgeWithBranchSites=${mainEdgesWithUsableDoorSites}` +
-      ` gateOcc=${failGateOccupied}` +
-      ` noBranchNbr=${failNoBranchNeighbors}` +
-      ` noBranchSites=${failNoBranchDoorSites}` +
-      ` branchOcc=${failBranchOccupied}` +
-      ` branchSameAsGate=${failBranchSameAsGate}` +
-      ` leverFail=${failLever}` +
-      ` plateFail=${failPlate}` +
-      ` blockAdjFail=${failBlockAdj}` +
-      ` chestFail=${failChest}` +
-      `)`;
   }
 
   return {
@@ -7995,7 +8034,7 @@ export function applyPlateOpensDoorPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2, // IMPORTANT: ignore first/last N tiles
+      trimEnds: 2,
       duplicateBias: 1,
       maxRadius: 10,
     },
@@ -8005,9 +8044,36 @@ export function applyPlateOpensDoorPattern(args: {
     return {
       ok: false,
       didCarve: false,
-      reason: "Plate Pattern: No valid door sites found.",
+      reason: "No valid corridor door sites.",
       stats: { doorSites: stats },
     };
+  }
+
+  // A1: relaxed fallback pool (helps rare “single chokepoint tile” degeneracy).
+  // We keep it cheap: same function, but more permissive knobs.
+  const relaxed = findDoorSiteCandidatesAndStatsFromCorridors(dungeon, ft, {
+    minDistToWall: 1,
+    preferCorridor: true,
+    trimEnds: 0, // key change
+    duplicateBias: 1,
+    maxRadius: 12, // small bump; still cheap
+  });
+
+  // Merge unique relaxed candidates into the main candidate list.
+  // Key by (x,y,roomA,roomB) so we don't blow up duplicates.
+  const seenKey = new Set<string>();
+  for (const s of candidates) {
+    const lo = Math.min(s.roomA, s.roomB);
+    const hi = Math.max(s.roomA, s.roomB);
+    seenKey.add(`${s.x},${s.y},${lo},${hi}`);
+  }
+  for (const s of relaxed.candidates) {
+    const lo = Math.min(s.roomA, s.roomB);
+    const hi = Math.max(s.roomA, s.roomB);
+    const k = `${s.x},${s.y},${lo},${hi}`;
+    if (seenKey.has(k)) continue;
+    seenKey.add(k);
+    candidates.push(s);
   }
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -12680,11 +12746,11 @@ export function generateDungeonContent(
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-20 (rev I)**
-**LAST COMPLETED MILESTONE:** **Milestone 3 — Stateful Puzzle Execution**
-**CURRENT MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
-**CURRENT PHASE:** **Phase 3 — Composition Patterns (ROLE-AWARE, BEST-EFFORT)**
-**PHASE STATUS:** **PHASE 3 ONLINE, FAILURE MODES ISOLATED TO RARE STRUCTURAL DEGENERACY**
+**CONTEXT VERSION:** **2026-01-21 (rev L)**
+**LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
+**CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
+**CURRENT PHASE:** **Milestone 5 Kickoff — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
+**PHASE STATUS:** **MILESTONE 4 CLOSED; COMPOSITION RELIABLE; INTENT MISALIGNMENTS NOW VISIBLE**
 
 ---
 
@@ -12743,7 +12809,7 @@ This layer is **pure geometry** and contains no gameplay knowledge.
 
 ---
 
-### CONTENT GENERATION (Milestones 1–4)
+### CONTENT GENERATION (Milestones 1–5)
 
 **Entry:** `generateDungeonContent()` in `mazeGen.ts`
 
@@ -12817,7 +12883,7 @@ Invariants:
 
 Stable patterns:
 
-1. **leverHiddenPocket** *(carving; reachability validated)*
+1. **leverHiddenPocket** *(carving; reachability validated with multi-candidate retry)*
 2. **leverOpensDoor** *(non-carving)*
 3. **plateOpensDoor** *(non-carving)*
 
@@ -12876,32 +12942,22 @@ Trusted and authoritative.
 
 Milestone 4 focuses on **meaning, escalation, and structure**, not new mechanics.
 
----
-
-## MILESTONE 4 — PHASE BREAKDOWN
-
 ### Phase 1 — Circuit Chaining
 
 **STATUS:** COMPLETE
 **STATUS:** CLOSED
 
----
-
 ### Phase 2 — Puzzle Roles & Difficulty Ramping
 
 **STATUS:** ROLE DIAGNOSTICS IMPLEMENTED
 **STATUS:** UI SURFACED
-**STATUS:** OBSERVATIONAL ONLY
+**STATUS:** OBSERVATIONAL ONLY (BY DESIGN)
 
-Provides semantic meaning without enforcement.
+### Phase 3 — Composition Patterns
 
----
-
-### Phase 3 — Composition Patterns (CURRENT)
-
-**STATUS:** ROLE-AWARE COMPOSITION WORKING
-**STATUS:** FAILURE MODES FULLY CLASSIFIED
-**STATUS:** RELIABILITY ~99.4–99.9% DEPENDING ON STRUCTURAL DEGENERACY
+**STATUS:** COMPLETE
+**STATUS:** RELIABILITY PATCHED
+**STATUS:** CLOSED
 
 ---
 
@@ -12924,126 +12980,85 @@ Uses SIGNAL dependency to express logical composition.
 
 ---
 
-## TODAY’S WORK (rev I)
+## NEWLY DIAGNOSED ISSUE — INTENT / PLACEMENT MISALIGNMENT (rev L)
 
-### 1) Structural Starvation Eliminated
+### Symptom
 
-* Main-path edges are now **pre-filtered** to only those with off-main neighbors
-* Eliminated wasted attempts on impossible edges
-* Removed dominant “no branch neighbor” failure class
+In some seeds (e.g. seed-1234), multiple lever-linked doors appear **stacked within the same room or corridor cluster**, often near an early chokepoint.
+This results in:
 
----
+* Multiple doors controlling the *same* logical passage
+* Redundant gating
+* Broken perceived progression (two levers open what is effectively one gate)
 
-### 2) Degenerate Branch Collision Identified
+### Root Cause
 
-Through stepwise instrumentation, remaining failures were isolated to:
+Current placement logic correctly enforces **tile-level validity**, but does **not enforce graph-level intent**.
 
-* **Gate door site and branch door site resolving to the same corridor tile**
+The system is effectively interpreting:
 
-This is a **structural chokepoint degeneracy**, not an occupancy or placement bug.
+> “spawn N lever-linked doors”
 
----
+instead of the intended meaning:
 
-### 3) Collision Handling Implemented
+> “spawn N progression gates, each controlling a distinct chokepoint deeper in the room graph”
 
-* Branch door candidates now **exclude the chosen gate tile**
-* Colliding branch sites are treated as **non-usable**, allowing search to continue
-* Collision counters added and verified
+Because corridors can expose multiple valid door tiles along the same logical connector, multiple doors may be placed on the **same room-graph edge**, producing visual and mechanical stacking.
 
----
-
-### 4) Final Remaining Failure Class (Rare)
-
-After collision filtering:
-
-* ~6 / 1000 seeds still fail when:
-
-  * **Every available branch door candidate on all considered edges coincides with the chosen gate site**
-  * After exclusion, no usable branch door sites remain
-
-This is **not** a logic failure — it is a **gate-site selection degeneracy** in highly constrained BSP topologies.
+This is **not a bug**, but an *intent modeling gap* now visible due to Milestone 4’s reliability.
 
 ---
 
-## CURRENT STATE (rev I)
+## INTERPRETATION (CANONICAL)
 
-### What Works Reliably
+* Doors are **mechanical actuators**
+* Gates are **graph separations**
+* Progression intent operates at the **room-graph level**, not the tile level
 
-* Role-aware composition semantics are correct
-* SIGNAL-based logic chaining is stable
-* Diagnostics precisely explain failures
-* No silent or misclassified failures remain
-* Remaining failures are deterministic and understood
-
-### What Still Fails (Rarely)
-
-* Extremely constrained layouts where:
-
-  * Branch edges exist
-  * Branch door sites exist
-  * **But all branch door sites collapse to the same tile as the gate site**
-
-This is a **selection-policy limitation**, not a structural impossibility.
+Milestone 4 proved composition works.
+Milestone 5 exists to align *placement intent* with *progression meaning*.
 
 ---
 
-## WHERE WE ARE IN MILESTONE 4
+## NEXT STEPS — MILESTONE 5 (UPDATED)
 
-* **Phase 1:** COMPLETE
+### Phase 2.5 — Soft Enforcement (ACTIVE)
 
-* **Phase 2:** COMPLETE (observational)
+#### Intent-Aware Gate Selection (PROPOSED)
 
-* **Phase 3:** **FUNCTIONALLY COMPLETE**
+Introduce **soft, graph-level constraints** for multi-gate placement:
 
-  * Composition semantics correct
-  * Failure modes isolated
-  * Reliability near ceiling for current constraints
+1. **Gate De-Duplication by Graph Edge**
 
-* **Phase 2.5:** UNSTARTED — NOW CLEARLY JUSTIFIED
+   * Treat each corridor / room-connector as a canonical “gate edge”
+   * Enforce **at most one door per edge**
+   * Prevents stacked doors at the same chokepoint
 
-Milestone 4 has definitively transitioned from:
+2. **Monotonic Depth Progression**
 
-> “Can we compose puzzles?”
+   * When placing multiple gates:
 
-to:
+     * Gate *i+1* must be placed **strictly deeper in the room graph** than Gate *i*
+     * Depth measured by:
 
-> **“How intentionally do we steer composition under structural constraints?”**
+       * distance from entrance room, or
+       * main-path index toward `farthestRoomId`
+   * Ensures each lever unlocks a *new region*
 
----
+3. **Soft Enforcement Only**
 
-## NEXT STEPS (CLEAR & LOW-RISK)
+   * These rules:
 
-### 1) Gate-Site Viability Pre-Check (HIGH ROI)
-
-Before committing to a `gateSite`:
-
-* Evaluate whether that gate site would **eliminate all usable branch door sites**
-* If so:
-
-  * Skip this gate site
-  * Try the next gate site on the same edge
-
-This is a **local, deterministic, best-effort** refinement.
-
-**Expected outcome:** push success rate toward **~100%**.
+     * influence candidate ordering
+     * apply only on retries
+     * never hard-veto placement
+   * Best-effort guarantees preserved
 
 ---
 
-### 2) Phase 2.5 — Soft Enforcement (NEXT PHASE)
+### Expand Composition Library (UNCHANGED)
 
-With diagnostics now precise:
-
-* Promote selected role warnings into **retry guidance**
-* Apply **intent pressure**, not hard vetoes
-* Preserve best-effort guarantees
-
-This introduces *meaningful structure* without fragility.
-
----
-
-### 3) Expand Composition Library
-
-With confidence in the framework:
+With intent alignment now explicit:
 
 * Optional → Optional chains
 * Soft shortcuts
@@ -13052,20 +13067,21 @@ With confidence in the framework:
 
 ---
 
-## MENTAL MODEL (FINALIZED)
+## MENTAL MODEL (REFINED)
 
 * BSP creates space
 * Content expresses intent
+* **Progression intent lives at the graph level**
 * Patterns compose structure
 * Circuits encode logic
 * Signals compose logic
 * Runtime executes state
 * Diagnostics quantify structure
 * Batch harness turns intuition into data
-* **Search order matters as much as logic**
-* **Structural degeneracy is observable, not mysterious**
-* **Phase 3 proved composition works**
-* **Phase 4 will refine meaning, not mechanics**
+* **Search order shapes meaning**
+* **Gates are graph cuts, not tiles**
+* **Milestone 4 proved composition**
+* **Milestone 5 aligns intent with placement**
 
 ---
 </file>

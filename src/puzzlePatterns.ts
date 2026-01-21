@@ -32,6 +32,7 @@ type Point = { x: number; y: number };
 const MAX_MAIN_EDGES_TO_TRY = 32; // hard cap for runtime
 const MAX_BRANCH_TRIES_PER_MAIN_EDGE = 6; // prevents “edge budget burn”
 const MAX_DOOR_SITE_TRIES_PER_BRANCH = 12; // keep cheap/local
+const MAX_GATE_SITE_TRIES_PER_MAIN_EDGE = 24; // Phase 3 polish: avoid rare gate-site degeneracy
 
 type RoomEdge = { a: number; b: number };
 
@@ -504,6 +505,7 @@ export function applyGateThenOptionalRewardPattern(args: {
   let failBlockAdj = 0;
   let failChest = 0;
   let failBranchSameAsGate = 0;
+  let failGateEliminatesAllBranchSites = 0;
 
   // --- Explore edges first ---
   for (const edge of mainEdgesToTry) {
@@ -520,7 +522,10 @@ export function applyGateThenOptionalRewardPattern(args: {
     let edgeHadBranches = false;
     let edgeHadUsableDoorSite = false;
 
-    const maxGateSiteTries = Math.min(6, gateSites.length);
+    const maxGateSiteTries = Math.min(
+      MAX_GATE_SITE_TRIES_PER_MAIN_EDGE,
+      gateSites.length,
+    );
 
     for (let gs = 0; gs < maxGateSiteTries; gs++) {
       const gateSite = gateSites[gs]!;
@@ -567,6 +572,29 @@ export function applyGateThenOptionalRewardPattern(args: {
       }
 
       edgeHadBranches = true;
+
+      // Gate-site viability pre-check:
+      // If choosing this gateSite would eliminate *all* usable branch door sites
+      // (i.e., every candidate branch door site coincides with the gate tile or
+      // is currently occupied), skip this gateSite and try another on the same edge.
+      let gateAllowsAnyBranch = false;
+      for (const br of offMain) {
+        const bk = edgeKey(branchAnchorRoomId, br);
+        const all = edgeToSites.get(bk) ?? [];
+        for (const s of all) {
+          if (s.x === gateSite.x && s.y === gateSite.y) continue;
+          const di = idxOf(dungeon.width, s.x, s.y);
+          if ((ft[di] | 0) !== 0) continue;
+          gateAllowsAnyBranch = true;
+          break;
+        }
+        if (gateAllowsAnyBranch) break;
+      }
+
+      if (!gateAllowsAnyBranch) {
+        failGateEliminatesAllBranchSites++;
+        continue; // try next gateSite
+      }
 
       const offMainShuffled = offMain.slice();
       shuffleInPlace(offMainShuffled, rng);
@@ -802,7 +830,7 @@ export function applyGateThenOptionalRewardPattern(args: {
             id: blockId,
             x: blockP.x,
             y: blockP.y,
-            roomId: deepRoomId,
+            roomId: plateRoomId,
             weightClass: 0,
           });
 
@@ -868,7 +896,30 @@ export function applyGateThenOptionalRewardPattern(args: {
   } else if (mainEdgesWithBranches > 0 && mainEdgesWithUsableDoorSites === 0) {
     reason =
       "Failed: no usable branch door site exists on any considered main-path edge.";
-  } else {
+  }
+
+  // Always append counters for batch forensics (even in structural buckets).
+  reason +=
+    ` (edgeConsidered=${mainEdgesConsidered}` +
+    ` edgeWithBranches=${mainEdgesWithBranches}` +
+    ` edgeWithBranchSites=${mainEdgesWithUsableDoorSites}` +
+    ` gateOcc=${failGateOccupied}` +
+    ` noBranchNbr=${failNoBranchNeighbors}` +
+    ` noBranchSites=${failNoBranchDoorSites}` +
+    ` branchOcc=${failBranchOccupied}` +
+    ` branchSameAsGate=${failBranchSameAsGate}` +
+    ` gateElim=${failGateEliminatesAllBranchSites}` +
+    ` leverFail=${failLever}` +
+    ` plateFail=${failPlate}` +
+    ` blockAdjFail=${failBlockAdj}` +
+    ` chestFail=${failChest}` +
+    `)`;
+
+  if (
+    mainEdgesConsidered > 0 &&
+    !(mainEdgesWithBranches > 0 && mainEdgesWithUsableDoorSites === 0) &&
+    !(mainEdgesConsidered > 0 && mainEdgesWithBranches === 0)
+  ) {
     // fall back to dominant local placement failures
     const max = Math.max(
       failGateOccupied,
@@ -876,6 +927,7 @@ export function applyGateThenOptionalRewardPattern(args: {
       failNoBranchDoorSites,
       failBranchOccupied,
       failBranchSameAsGate,
+      failGateEliminatesAllBranchSites,
       failLever,
       failPlate,
       failBlockAdj,
@@ -899,24 +951,11 @@ export function applyGateThenOptionalRewardPattern(args: {
       reason = "Failed: no adjacent block tile near plate.";
     else if (max === failChest && max > 0)
       reason = "Failed: could not place chest in branch room.";
+    else if (max === failGateEliminatesAllBranchSites && max > 0)
+      reason =
+        "Failed: chosen gate site eliminates all usable branch door sites.";
     else if (max === failBranchSameAsGate && max > 0)
       reason = "Failed: branch door sites collided with gate site.";
-
-    // IMPORTANT: even if max==0, show all counters so batch can reveal the path
-    reason +=
-      ` (edgeConsidered=${mainEdgesConsidered}` +
-      ` edgeWithBranches=${mainEdgesWithBranches}` +
-      ` edgeWithBranchSites=${mainEdgesWithUsableDoorSites}` +
-      ` gateOcc=${failGateOccupied}` +
-      ` noBranchNbr=${failNoBranchNeighbors}` +
-      ` noBranchSites=${failNoBranchDoorSites}` +
-      ` branchOcc=${failBranchOccupied}` +
-      ` branchSameAsGate=${failBranchSameAsGate}` +
-      ` leverFail=${failLever}` +
-      ` plateFail=${failPlate}` +
-      ` blockAdjFail=${failBlockAdj}` +
-      ` chestFail=${failChest}` +
-      `)`;
   }
 
   return {
@@ -1931,7 +1970,7 @@ export function applyPlateOpensDoorPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2, // IMPORTANT: ignore first/last N tiles
+      trimEnds: 2,
       duplicateBias: 1,
       maxRadius: 10,
     },
@@ -1941,9 +1980,36 @@ export function applyPlateOpensDoorPattern(args: {
     return {
       ok: false,
       didCarve: false,
-      reason: "Plate Pattern: No valid door sites found.",
+      reason: "No valid corridor door sites.",
       stats: { doorSites: stats },
     };
+  }
+
+  // A1: relaxed fallback pool (helps rare “single chokepoint tile” degeneracy).
+  // We keep it cheap: same function, but more permissive knobs.
+  const relaxed = findDoorSiteCandidatesAndStatsFromCorridors(dungeon, ft, {
+    minDistToWall: 1,
+    preferCorridor: true,
+    trimEnds: 0, // key change
+    duplicateBias: 1,
+    maxRadius: 12, // small bump; still cheap
+  });
+
+  // Merge unique relaxed candidates into the main candidate list.
+  // Key by (x,y,roomA,roomB) so we don't blow up duplicates.
+  const seenKey = new Set<string>();
+  for (const s of candidates) {
+    const lo = Math.min(s.roomA, s.roomB);
+    const hi = Math.max(s.roomA, s.roomB);
+    seenKey.add(`${s.x},${s.y},${lo},${hi}`);
+  }
+  for (const s of relaxed.candidates) {
+    const lo = Math.min(s.roomA, s.roomB);
+    const hi = Math.max(s.roomA, s.roomB);
+    const k = `${s.x},${s.y},${lo},${hi}`;
+    if (seenKey.has(k)) continue;
+    seenKey.add(k);
+    candidates.push(s);
   }
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
