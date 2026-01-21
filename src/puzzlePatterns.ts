@@ -432,8 +432,6 @@ export function applyGateThenOptionalRewardPattern(args: {
     };
   }
 
-  const mainPathSet = new Set<number>(mainPathRoomIds);
-
   // Build edge -> sites map for fast lookups
   const edgeToSites = new Map<string, typeof candidates>();
   for (const s of candidates) {
@@ -456,15 +454,41 @@ export function applyGateThenOptionalRewardPattern(args: {
     mainEdges.push(normEdge(mainPathRoomIds[i]!, mainPathRoomIds[i + 1]!));
   }
 
-  shuffleInPlace(mainEdges, rng);
+  // Pre-filter: only consider main-path edges that have at least one off-main neighbor
+  // from either endpoint room. This eliminates "structural impossibility" edges that
+  // can never host an optional branch.
+  const mainPathSet = new Set<number>(mainPathRoomIds);
+  const isBranchableMainEdge = (e: RoomEdge): boolean => {
+    const na = roomGraph.get(e.a);
+    if (na) {
+      for (const n of na) if (!mainPathSet.has(n)) return true;
+    }
+    const nb = roomGraph.get(e.b);
+    if (nb) {
+      for (const n of nb) if (!mainPathSet.has(n)) return true;
+    }
+    return false;
+  };
+
+  const branchableMainEdges = mainEdges.filter(isBranchableMainEdge);
+  shuffleInPlace(branchableMainEdges, rng);
 
   // options.maxAttempts is repurposed as “how many distinct main edges to consider”
   const maxMainEdges = Math.max(1, args.options?.maxAttempts ?? 80) | 0;
 
-  const mainEdgesToTry = mainEdges.slice(
+  const mainEdgesToTry = branchableMainEdges.slice(
     0,
-    Math.min(mainEdges.length, MAX_MAIN_EDGES_TO_TRY, maxMainEdges),
+    Math.min(branchableMainEdges.length, MAX_MAIN_EDGES_TO_TRY, maxMainEdges),
   );
+
+  if (!mainEdgesToTry.length) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason:
+        "No branchable main-path edges (all main-path rooms have no off-main neighbors).",
+    };
+  }
 
   let mainEdgesConsidered = 0;
   let mainEdgesWithBranches = 0;
@@ -562,10 +586,23 @@ export function applyGateThenOptionalRewardPattern(args: {
           continue;
         }
 
-        // A site exists on this branch edge => structurally usable in principle
+        // Filter out the gate tile to prevent "same chokepoint" collisions.
+        // If filtering empties the set, treat it like no usable sites for this branch edge.
+        const branchSites = branchSitesAll.filter(
+          (s) => !(s.x === gateSite.x && s.y === gateSite.y),
+        );
+
+        if (!branchSites.length) {
+          // Count how many collision candidates we eliminated for diagnostics.
+          // This is per-branch-edge attempt.
+          failBranchSameAsGate += branchSitesAll.length;
+          failNoBranchDoorSites++;
+          continue;
+        }
+
+        // A usable site exists on this branch edge => structurally usable in principle
         edgeHadUsableDoorSite = true;
 
-        const branchSites = branchSitesAll.slice();
         shuffleInPlace(branchSites, rng);
 
         const maxBranchSiteTries = Math.min(
@@ -575,12 +612,6 @@ export function applyGateThenOptionalRewardPattern(args: {
 
         for (let si = 0; si < maxBranchSiteTries; si++) {
           const branchSite = branchSites[si]!;
-
-          // Don’t reuse the gate tile (paranoia)
-          if (branchSite.x === gateSite.x && branchSite.y === gateSite.y) {
-            failBranchSameAsGate++;
-            continue;
-          }
 
           const branchDi = idxOf(dungeon.width, branchSite.x, branchSite.y);
           if ((ft[branchDi] | 0) !== 0) {
@@ -844,6 +875,7 @@ export function applyGateThenOptionalRewardPattern(args: {
       failNoBranchNeighbors,
       failNoBranchDoorSites,
       failBranchOccupied,
+      failBranchSameAsGate,
       failLever,
       failPlate,
       failBlockAdj,
@@ -879,6 +911,7 @@ export function applyGateThenOptionalRewardPattern(args: {
       ` noBranchNbr=${failNoBranchNeighbors}` +
       ` noBranchSites=${failNoBranchDoorSites}` +
       ` branchOcc=${failBranchOccupied}` +
+      ` branchSameAsGate=${failBranchSameAsGate}` +
       ` leverFail=${failLever}` +
       ` plateFail=${failPlate}` +
       ` blockAdjFail=${failBlockAdj}` +

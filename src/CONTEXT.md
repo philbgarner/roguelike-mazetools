@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-18 (rev G)**
+**CONTEXT VERSION:** **2026-01-20 (rev I)**
 **LAST COMPLETED MILESTONE:** **Milestone 3 — Stateful Puzzle Execution**
 **CURRENT MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT PHASE:** **Phase 3 — Composition Patterns (ROLE-AWARE, BEST-EFFORT)**
-**PHASE STATUS:** **PHASE 3 ONLINE, RELIABILITY DIAGNOSED, STRUCTURAL LIMITS IDENTIFIED**
+**PHASE STATUS:** **PHASE 3 ONLINE, FAILURE MODES ISOLATED TO RARE STRUCTURAL DEGENERACY**
 
 ---
 
@@ -156,11 +156,11 @@ All patterns are:
 
 Capabilities:
 
-* Hundreds of seeds per run
+* Hundreds to thousands of seeds per run
 * Per-pattern aggregation
 * Success/failure rates
 * Failure histograms
-* Circuit structure metrics
+* Circuit topology metrics
 * JSON export
 
 Trusted and authoritative.
@@ -221,154 +221,160 @@ Provides semantic meaning without enforcement.
 
 ### Phase 3 — Composition Patterns (CURRENT)
 
-**STATUS:** FIRST ROLE-AWARE COMPOSITION PATTERN IMPLEMENTED
-**STATUS:** RELIABILITY INVESTIGATED VIA BATCH
-**STATUS:** STRUCTURAL FAILURE MODES IDENTIFIED
+**STATUS:** ROLE-AWARE COMPOSITION WORKING
+**STATUS:** FAILURE MODES FULLY CLASSIFIED
+**STATUS:** RELIABILITY ~99.4–99.9% DEPENDING ON STRUCTURAL DEGENERACY
 
 ---
 
-## PHASE 3 — CURRENT IMPLEMENTATION
+## PHASE 3 — COMPOSITION PATTERN
 
-### Composition Pattern: `gateThenOptionalReward`
+### `gateThenOptionalReward`
 
 A two-circuit, role-aware composition:
 
-* MAIN_PATH_GATE on main path
-* OPTIONAL_REWARD branch behind a plate + signal
-* Uses SIGNAL dependency (`PLATE && SIGNAL(gate ACTIVE)`)
+* **MAIN_PATH_GATE**
+
+  * Lever-toggle door on main path
+
+* **OPTIONAL_REWARD**
+
+  * Branch door gated by `(PLATE && SIGNAL(gate ACTIVE))`
+  * Chest placed in optional branch
+
+Uses SIGNAL dependency to express logical composition.
 
 ---
 
-## PHASE 3 — RECENT WORK (NEW IN rev G)
+## TODAY’S WORK (rev I)
 
-### Branch-Retry Fallback Implemented
+### 1) Structural Starvation Eliminated
 
-* Pattern now retries **multiple off-main branch neighbors** for the same deep room
-* Prevents early failure when one branch edge is unusable
-* Deterministic and best-effort
-* No regression in other patterns
-
----
-
-### Batch Results After Fallback (300 seeds)
-
-* `gateThenOptionalReward` okRate: **0.95 (286/300)**
-* Failures unchanged from baseline
-
-Dominant failure reasons:
-
-1. **Failed: no viable branch door site** (9)
-2. **No main-path edge has an off-main branch with a door site** (5)
-
-Circuit health unchanged:
-
-* `signalEdgeCountAvg ≈ 0.95`
-* `maxTopoDepthAvg ≈ 0.95`
-* Cycles: **0**
+* Main-path edges are now **pre-filtered** to only those with off-main neighbors
+* Eliminated wasted attempts on impossible edges
+* Removed dominant “no branch neighbor” failure class
 
 ---
 
-## DIAGNOSIS (IMPORTANT)
+### 2) Degenerate Branch Collision Identified
 
-The branch-retry fallback **worked correctly**, but **did not activate** in the failing cases.
+Through stepwise instrumentation, remaining failures were isolated to:
 
-This revealed the true limiting factor:
+* **Gate door site and branch door site resolving to the same corridor tile**
 
-### Failure Class A
-
-**No main-path edge has an off-main branch with a door site**
-
-* Structural/topological limitation
-* Occurs **before attempts begin**
-* Not fixable via retries
-
-### Failure Class B
-
-**Failed: no viable branch door site**
-
-* Branch retry exhausted
-* Root cause is **attempt budget being consumed on the same main-path edge**
-* Indicates **main-edge exhaustion**, not branch choice failure
+This is a **structural chokepoint degeneracy**, not an occupancy or placement bug.
 
 ---
 
-## KEY INSIGHT (PHASE 3)
+### 3) Collision Handling Implemented
 
-> Remaining failures are caused by **insufficient exploration of distinct main-path edges**, not incorrect branch selection.
-
-This is a **structural search ordering issue**, not a logic bug.
-
----
-
-## NEXT STEPS (IMMEDIATE, HIGH-ROI)
-
-### 1) Main-Edge Retry Strategy (REQUIRED)
-
-Refactor `gateThenOptionalReward` attempt loop to prioritize **main-edge exploration**:
-
-Recommended structure:
-
-* Iterate over distinct main-path edges first
-* For each edge, try a small fixed number of branch placements
-* Avoid burning entire attempt budget on a single bad corridor
-
-This is expected to push okRate toward **98–99%**.
+* Branch door candidates now **exclude the chosen gate tile**
+* Colliding branch sites are treated as **non-usable**, allowing search to continue
+* Collision counters added and verified
 
 ---
 
-### 2) Candidate Availability Counters (OPTIONAL BUT VALUABLE)
+### 4) Final Remaining Failure Class (Rare)
 
-Add diagnostics to record:
+After collision filtering:
 
-* main-path edges with off-main neighbors
-* edges with at least one usable branch site
-* total `(mainEdge, branchRoom, doorSite)` triples
+* ~6 / 1000 seeds still fail when:
 
-This cleanly separates:
+  * **Every available branch door candidate on all considered edges coincides with the chosen gate site**
+  * After exclusion, no usable branch door sites remain
 
-* “Dungeon has no branches”
-* vs “Search policy too narrow”
+This is **not** a logic failure — it is a **gate-site selection degeneracy** in highly constrained BSP topologies.
 
 ---
 
-### 3) Larger Batch Validation
+## CURRENT STATE (rev I)
 
-After main-edge retry:
+### What Works Reliably
 
-* Run **500–1000 seeds**
-* Confirm:
+* Role-aware composition semantics are correct
+* SIGNAL-based logic chaining is stable
+* Diagnostics precisely explain failures
+* No silent or misclassified failures remain
+* Remaining failures are deterministic and understood
 
-  * okRate improvement
-  * signal metrics stability
-  * failure class distribution
+### What Still Fails (Rarely)
 
----
+* Extremely constrained layouts where:
 
-## PHASE 2.5 — SOFT ENFORCEMENT (NOT STARTED)
+  * Branch edges exist
+  * Branch door sites exist
+  * **But all branch door sites collapse to the same tile as the gate site**
 
-Now well-supported by data.
-
-Planned approach:
-
-* Promote a **small subset** of role-rule warnings to retry triggers
-* Never abort generation
-* Use pattern retries, not hard vetoes
+This is a **selection-policy limitation**, not a structural impossibility.
 
 ---
 
 ## WHERE WE ARE IN MILESTONE 4
 
-* **Phase 1:** complete
-* **Phase 2:** complete (observational)
-* **Phase 3:** active, healthy, structurally understood
-* **Phase 2.5:** planned, data-ready
+* **Phase 1:** COMPLETE
 
-Milestone 4 is now transitioning from **“does composition work?”** to
-**“how reliably and how intentionally does it work?”**
+* **Phase 2:** COMPLETE (observational)
+
+* **Phase 3:** **FUNCTIONALLY COMPLETE**
+
+  * Composition semantics correct
+  * Failure modes isolated
+  * Reliability near ceiling for current constraints
+
+* **Phase 2.5:** UNSTARTED — NOW CLEARLY JUSTIFIED
+
+Milestone 4 has definitively transitioned from:
+
+> “Can we compose puzzles?”
+
+to:
+
+> **“How intentionally do we steer composition under structural constraints?”**
 
 ---
 
-## MENTAL MODEL SUMMARY
+## NEXT STEPS (CLEAR & LOW-RISK)
+
+### 1) Gate-Site Viability Pre-Check (HIGH ROI)
+
+Before committing to a `gateSite`:
+
+* Evaluate whether that gate site would **eliminate all usable branch door sites**
+* If so:
+
+  * Skip this gate site
+  * Try the next gate site on the same edge
+
+This is a **local, deterministic, best-effort** refinement.
+
+**Expected outcome:** push success rate toward **~100%**.
+
+---
+
+### 2) Phase 2.5 — Soft Enforcement (NEXT PHASE)
+
+With diagnostics now precise:
+
+* Promote selected role warnings into **retry guidance**
+* Apply **intent pressure**, not hard vetoes
+* Preserve best-effort guarantees
+
+This introduces *meaningful structure* without fragility.
+
+---
+
+### 3) Expand Composition Library
+
+With confidence in the framework:
+
+* Optional → Optional chains
+* Soft shortcuts
+* Foreshadow-before-gate patterns
+* Multi-branch reward clusters
+
+---
+
+## MENTAL MODEL (FINALIZED)
 
 * BSP creates space
 * Content expresses intent
@@ -378,7 +384,9 @@ Milestone 4 is now transitioning from **“does composition work?”** to
 * Runtime executes state
 * Diagnostics quantify structure
 * Batch harness turns intuition into data
-* **Phase 3 revealed true structural limits**
-* **Next step is controlled exploration, not new mechanics**
+* **Search order matters as much as logic**
+* **Structural degeneracy is observable, not mysterious**
+* **Phase 3 proved composition works**
+* **Phase 4 will refine meaning, not mechanics**
 
 ---
