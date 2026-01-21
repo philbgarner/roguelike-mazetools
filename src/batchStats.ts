@@ -7,6 +7,26 @@
 
 import type { DoorSiteStatsBundle } from "./doorSites";
 
+export type GateEdgeReuseDiagV1 = {
+  schemaVersion: 1;
+
+  // Total doors placed by the pattern run (typically 0, 1, or 2)
+  doorsPlaced: number;
+
+  // Unique graph edges among those doors
+  uniqueEdgesPlaced: number;
+
+  // Count of doors whose edge was already occupied BEFORE this pattern committed
+  reusedExistingCount: number;
+
+  // Count of doors that reuse an edge already placed earlier in THIS pattern commit
+  // (should usually be 0; helpful as a sanity check)
+  reusedInternalCount: number;
+
+  // Small list of edgeIds that were reused (best-effort; keep short)
+  reusedEdgeIds: string[];
+};
+
 export type PatternDiag = {
   name: string;
   ok: boolean;
@@ -15,6 +35,7 @@ export type PatternDiag = {
   ms?: number;
   stats?: DoorSiteStatsBundle;
   reachability?: ReachabilityStats;
+  gateEdgeReuse?: GateEdgeReuseDiagV1;
 };
 
 export type Point = { x: number; y: number };
@@ -77,6 +98,21 @@ export type BatchPatternSummary = {
   reachabilityPostUnreachable?: number;
   reachabilityPostUnreachableRate?: number; // 0..1
   shortestPathPostAvg?: number;
+
+  // Optional: graph-edge reuse diagnostics (present when any run reported it)
+  gateEdgeReuseAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    doorsPlacedAvg: number;
+    uniqueEdgesPlacedAvg: number;
+
+    reusedExistingCountAvg: number;
+    reusedInternalCountAvg: number;
+
+    runsWithExistingReuse: number;
+    pctRunsWithExistingReuse: number; // 0..1
+  };
 };
 
 export type BatchSummary = {
@@ -153,6 +189,12 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       reachabilityPostUnreachable: 0,
       shortestPathPostSum: 0,
       shortestPathPostCount: 0,
+      gateEdgeReuseCount: 0,
+      gateDoorsPlacedSum: 0,
+      gateUniqueEdgesSum: 0,
+      gateReusedExistingSum: 0,
+      gateReusedInternalSum: 0,
+      gateRunsWithExistingReuse: 0,
     };
   }
 
@@ -172,6 +214,12 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       reachabilityPostUnreachable: number;
       shortestPathPostSum: number;
       shortestPathPostCount: number;
+      gateEdgeReuseCount: number;
+      gateDoorsPlacedSum: number;
+      gateUniqueEdgesSum: number;
+      gateReusedExistingSum: number;
+      gateReusedInternalSum: number;
+      gateRunsWithExistingReuse: number;
     }
   >();
 
@@ -220,6 +268,17 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
           next.shortestPathPostSum += sp;
           next.shortestPathPostCount += 1;
         }
+      }
+
+      const gr = d.gateEdgeReuse;
+      if (gr) {
+        next.gateEdgeReuseCount += 1;
+        next.gateDoorsPlacedSum += safeNum(gr.doorsPlaced);
+        next.gateUniqueEdgesSum += safeNum(gr.uniqueEdgesPlaced);
+        next.gateReusedExistingSum += safeNum(gr.reusedExistingCount);
+        next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
+        if ((gr.reusedExistingCount | 0) > 0)
+          next.gateRunsWithExistingReuse += 1;
       }
 
       byPattern.set(name, next);
@@ -302,6 +361,30 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         if (acc.shortestPathPostCount > 0) {
           out.shortestPathPostAvg = round2(shortestPathPostAvg);
         }
+      }
+
+      if (acc.gateEdgeReuseCount > 0) {
+        const runsWithDiag = acc.gateEdgeReuseCount;
+        const doorsPlacedAvg = acc.gateDoorsPlacedSum / runsWithDiag;
+        const uniqueEdgesPlacedAvg = acc.gateUniqueEdgesSum / runsWithDiag;
+        const reusedExistingCountAvg = acc.gateReusedExistingSum / runsWithDiag;
+        const reusedInternalCountAvg = acc.gateReusedInternalSum / runsWithDiag;
+
+        out.gateEdgeReuseAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          doorsPlacedAvg: round2(doorsPlacedAvg),
+          uniqueEdgesPlacedAvg: round2(uniqueEdgesPlacedAvg),
+
+          reusedExistingCountAvg: round2(reusedExistingCountAvg),
+          reusedInternalCountAvg: round2(reusedInternalCountAvg),
+
+          runsWithExistingReuse: acc.gateRunsWithExistingReuse,
+          pctRunsWithExistingReuse: round2(
+            runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
+          ),
+        };
       }
 
       return out;

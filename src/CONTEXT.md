@@ -1,12 +1,10 @@
----
-
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-21 (rev L)**
+**CONTEXT VERSION:** **2026-01-21 (rev M)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Milestone 5 Kickoff — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **MILESTONE 4 CLOSED; COMPOSITION RELIABLE; INTENT MISALIGNMENTS NOW VISIBLE**
+**CURRENT PHASE:** **Phase 2.5 — Soft Enforcement Instrumentation (DIAGNOSTIC-ONLY)**
+**PHASE STATUS:** **GRAPH-LEVEL INTENT MISALIGNMENTS INSTRUMENTED; NO PLACEMENT CHANGES YET**
 
 ---
 
@@ -194,22 +192,21 @@ Trusted and authoritative.
 
 ---
 
-## MILESTONE 4 — PUZZLE COMPOSITION & PROGRESSION GRAMMAR
+### Milestone 4 — PUZZLE COMPOSITION & PROGRESSION GRAMMAR
 
-Milestone 4 focuses on **meaning, escalation, and structure**, not new mechanics.
+Milestone 4 focused on **meaning, escalation, and structure**, not new mechanics.
 
-### Phase 1 — Circuit Chaining
+#### Phase 1 — Circuit Chaining
 
-**STATUS:** COMPLETE
-**STATUS:** CLOSED
+**STATUS:** COMPLETE / CLOSED
 
-### Phase 2 — Puzzle Roles & Difficulty Ramping
+#### Phase 2 — Puzzle Roles & Difficulty Ramping
 
 **STATUS:** ROLE DIAGNOSTICS IMPLEMENTED
 **STATUS:** UI SURFACED
 **STATUS:** OBSERVATIONAL ONLY (BY DESIGN)
 
-### Phase 3 — Composition Patterns
+#### Phase 3 — Composition Patterns
 
 **STATUS:** COMPLETE
 **STATUS:** RELIABILITY PATCHED
@@ -236,94 +233,112 @@ Uses SIGNAL dependency to express logical composition.
 
 ---
 
-## NEWLY DIAGNOSED ISSUE — INTENT / PLACEMENT MISALIGNMENT (rev L)
+## NEW IN REV M — GRAPH-LEVEL GATE REUSE INSTRUMENTATION
 
-### Symptom
+### Motivation
 
-In some seeds (e.g. seed-1234), multiple lever-linked doors appear **stacked within the same room or corridor cluster**, often near an early chokepoint.
-This results in:
+With Milestone 4 complete, composition reliability revealed a **semantic misalignment**:
 
-* Multiple doors controlling the *same* logical passage
-* Redundant gating
-* Broken perceived progression (two levers open what is effectively one gate)
+* Multiple doors can be placed along the **same room-graph edge**
+* This produces stacked or redundant gates
+* Tile-level validity is preserved, but **progression meaning is degraded**
 
-### Root Cause
-
-Current placement logic correctly enforces **tile-level validity**, but does **not enforce graph-level intent**.
-
-The system is effectively interpreting:
-
-> “spawn N lever-linked doors”
-
-instead of the intended meaning:
-
-> “spawn N progression gates, each controlling a distinct chokepoint deeper in the room graph”
-
-Because corridors can expose multiple valid door tiles along the same logical connector, multiple doors may be placed on the **same room-graph edge**, producing visual and mechanical stacking.
-
-This is **not a bug**, but an *intent modeling gap* now visible due to Milestone 4’s reliability.
+This is **not a bug** — it is an intent-modeling gap.
 
 ---
 
-## INTERPRETATION (CANONICAL)
+### Canonical Interpretation (LOCKED)
 
-* Doors are **mechanical actuators**
-* Gates are **graph separations**
+* **Doors** are mechanical actuators
+* **Gates** are graph separations
 * Progression intent operates at the **room-graph level**, not the tile level
 
-Milestone 4 proved composition works.
-Milestone 5 exists to align *placement intent* with *progression meaning*.
+---
+
+### Instrumentation Added (NO BEHAVIOR CHANGE)
+
+The following diagnostic-only additions were implemented:
+
+#### Graph Edge Identity
+
+* New helper: `graphEdgeId(roomA, roomB)`
+* Produces canonical, order-independent room-graph edge IDs
+* Used exclusively for diagnostics (no placement logic yet)
+
+#### Gate Edge Reuse Diagnostic
+
+* New diagnostic payload: `GateEdgeReuseDiagV1`
+* Emitted by `gateThenOptionalReward` on **successful placement**
+* Tracks:
+
+  * total doors placed
+  * unique graph edges used
+  * reuse of edges already occupied before this pattern
+  * reuse within the same pattern commit
+
+#### Plumbing
+
+* `PatternResult` and `PatternDiagnostics` extended to carry `gateEdgeReuse`
+* `runPatternsBestEffort()` forwards the diagnostic unchanged
+* No placement heuristics modified
+
+#### Batch Aggregation
+
+* `aggregateBatchRuns()` extended to compute `gateEdgeReuseAvg` per pattern
+* Reported metrics include:
+
+  * average doors placed
+  * average unique edges
+  * reuse frequency
+  * percent of runs exhibiting edge reuse
+
+This allows **quantitative measurement of stacked-gate frequency** across thousands of seeds.
 
 ---
 
-## NEXT STEPS — MILESTONE 5 (UPDATED)
+## CURRENT STATE SUMMARY
 
-### Phase 2.5 — Soft Enforcement (ACTIVE)
-
-#### Intent-Aware Gate Selection (PROPOSED)
-
-Introduce **soft, graph-level constraints** for multi-gate placement:
-
-1. **Gate De-Duplication by Graph Edge**
-
-   * Treat each corridor / room-connector as a canonical “gate edge”
-   * Enforce **at most one door per edge**
-   * Prevents stacked doors at the same chokepoint
-
-2. **Monotonic Depth Progression**
-
-   * When placing multiple gates:
-
-     * Gate *i+1* must be placed **strictly deeper in the room graph** than Gate *i*
-     * Depth measured by:
-
-       * distance from entrance room, or
-       * main-path index toward `farthestRoomId`
-   * Ensures each lever unlocks a *new region*
-
-3. **Soft Enforcement Only**
-
-   * These rules:
-
-     * influence candidate ordering
-     * apply only on retries
-     * never hard-veto placement
-   * Best-effort guarantees preserved
+* Milestone 4 is **fully closed and validated**
+* Composition patterns are stable and expressive
+* Intent/placement misalignment is now **measured, not hypothesized**
+* No enforcement or bias has been introduced yet
+* The system remains deterministic and best-effort
 
 ---
 
-### Expand Composition Library (UNCHANGED)
+## NEXT STEPS — MILESTONE 5 (PHASE 2.5 → PHASE 3)
 
-With intent alignment now explicit:
+### Phase 2.5 — Soft Enforcement (NEXT)
 
-* Optional → Optional chains
-* Soft shortcuts
-* Foreshadow-before-gate patterns
-* Multi-branch reward clusters
+**Goal:** Align gate placement with progression intent **without hard constraints**.
+
+Planned steps:
+
+1. **Observe Batch Metrics**
+
+   * Run 1k–5k seed batches
+   * Establish baseline gate-edge reuse rates
+
+2. **Introduce Candidate Scoring (NOT vetoes)**
+
+   * Prefer unused graph edges
+   * Prefer monotonic depth progression
+   * Bias increases only on retries
+
+3. **Retry Escalation**
+
+   * Early attempts: local, cheap, permissive
+   * Later attempts: deeper, unused edges preferred
+
+4. **No Hard Guarantees**
+
+   * Never abort generation
+   * Never forbid reuse outright
+   * Preserve determinism
 
 ---
 
-## MENTAL MODEL (REFINED)
+## REFINED MENTAL MODEL
 
 * BSP creates space
 * Content expresses intent

@@ -26,6 +26,8 @@ import {
   findDoorSiteCandidatesAndStatsFromCorridors,
   type DoorSiteStatsBundle,
 } from "./doorSites";
+import type { GateEdgeReuseDiagV1 } from "./batchStats";
+import { graphEdgeId } from "./graphEdgeId";
 
 type Point = { x: number; y: number };
 
@@ -244,6 +246,7 @@ export type PatternResult =
       didCarve: boolean;
       stats?: DoorSiteStatsBundle;
       reachability?: ReachabilityStats;
+      gateEdgeReuse?: GateEdgeReuseDiagV1;
     }
   | {
       ok: false;
@@ -251,6 +254,7 @@ export type PatternResult =
       reason: string;
       stats?: DoorSiteStatsBundle;
       reachability?: ReachabilityStats;
+      gateEdgeReuse?: GateEdgeReuseDiagV1;
     };
 
 type PatternFn = () => PatternResult;
@@ -263,6 +267,7 @@ export type PatternDiagnostics = {
   ms: number;
   stats?: DoorSiteStatsBundle;
   reachability?: ReachabilityStats;
+  gateEdgeReuse?: GateEdgeReuseDiagV1;
 };
 
 export type PatternEntry =
@@ -407,6 +412,42 @@ export function applyGateThenOptionalRewardPattern(args: {
   } = args;
 
   const rewardTier = clamp255(args.options?.rewardLootTier ?? 2);
+
+  // --- Gate-edge reuse diagnostics (no behavior change) ---
+  // Snapshot edges already occupied by doors BEFORE this pattern places anything.
+  const existingDoorEdges = new Set<string>();
+  for (const d of doors) existingDoorEdges.add(graphEdgeId(d.roomA, d.roomB));
+
+  const placedEdgesThisCommit = new Set<string>();
+  const gateEdgeReuse: GateEdgeReuseDiagV1 = {
+    schemaVersion: 1,
+    doorsPlaced: 0,
+    uniqueEdgesPlaced: 0,
+    reusedExistingCount: 0,
+    reusedInternalCount: 0,
+    reusedEdgeIds: [],
+  };
+
+  function noteDoorEdgePlacement(roomA: number, roomB: number) {
+    const eid = graphEdgeId(roomA, roomB);
+    gateEdgeReuse.doorsPlaced += 1;
+
+    const reusedExisting = existingDoorEdges.has(eid);
+    const reusedInternal = placedEdgesThisCommit.has(eid);
+
+    if (reusedExisting) gateEdgeReuse.reusedExistingCount += 1;
+    if (reusedInternal) gateEdgeReuse.reusedInternalCount += 1;
+
+    if (
+      (reusedExisting || reusedInternal) &&
+      gateEdgeReuse.reusedEdgeIds.length < 8
+    ) {
+      gateEdgeReuse.reusedEdgeIds.push(eid);
+    }
+
+    placedEdgesThisCommit.add(eid);
+    gateEdgeReuse.uniqueEdgesPlaced = placedEdgesThisCommit.size;
+  }
 
   if (mainPathRoomIds.length < 2) {
     return { ok: false, didCarve: false, reason: "Main path too short." };
@@ -763,6 +804,7 @@ export function applyGateThenOptionalRewardPattern(args: {
             kind: 2,
             depth: 0,
           });
+          noteDoorEdgePlacement(gateSite.roomA, gateSite.roomB);
 
           // 2) Lever fixture
           const gateLi = idxOf(dungeon.width, leverP.x, leverP.y);
@@ -801,6 +843,7 @@ export function applyGateThenOptionalRewardPattern(args: {
             kind: 0 as any,
             depth: 0,
           });
+          noteDoorEdgePlacement(branchSite.roomA, branchSite.roomB);
 
           // 4) Plate fixture (id = branchId)
           const pi = idxOf(dungeon.width, plateP.x, plateP.y);
@@ -877,6 +920,7 @@ export function applyGateThenOptionalRewardPattern(args: {
             mainEdgesConsidered,
             mainEdgesWithBranches,
             mainEdgesWithUsableDoorSites,
+            gateEdgeReuse,
           } as any;
         }
       }
@@ -1016,6 +1060,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
         ms: Math.max(0, t1 - t0),
         stats: res.stats,
         reachability: res.reachability,
+        gateEdgeReuse: res.gateEdgeReuse,
       });
       continue;
     }
@@ -1028,6 +1073,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
       ms: Math.max(0, t1 - t0),
       stats: res.stats,
       reachability: res.reachability,
+      gateEdgeReuse: res.gateEdgeReuse,
     });
   }
 
