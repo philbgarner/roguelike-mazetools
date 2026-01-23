@@ -7,6 +7,26 @@
 
 import type { DoorSiteStatsBundle } from "./doorSites";
 
+export type LeverBehindOwnGateDiagV1 = {
+  schemaVersion: 1;
+  gateDoorId: number; // the door id the lever controls (same id for this pattern)
+  leverId: number; // lever fixture id (same id for this pattern)
+  leverX: number;
+  leverY: number;
+
+  // Reachability of the lever from entrance with all doors closed:
+  reachableWithGateClosed: boolean;
+
+  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
+  reachableIfGateWereOpen: boolean;
+
+  // The actual diagnostic flag we care about:
+  isBehindOwnGate: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
 export type GateEdgeReuseDiagV1 = {
   schemaVersion: 1;
 
@@ -36,6 +56,7 @@ export type PatternDiag = {
   stats?: DoorSiteStatsBundle;
   reachability?: ReachabilityStats;
   gateEdgeReuse?: GateEdgeReuseDiagV1;
+  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
 };
 
 export type Point = { x: number; y: number };
@@ -112,6 +133,29 @@ export type BatchPatternSummary = {
 
     runsWithExistingReuse: number;
     pctRunsWithExistingReuse: number; // 0..1
+  };
+
+  leverAccessAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    // A) Lever is behind *its own* gate (opening only that gate makes it reachable)
+    leverBehindOwnGateCount: number;
+    pctLeverBehindOwnGate: number; // 0..1
+
+    // B) Lever becomes reachable if ALL doors are opened, but NOT if only its own gate is opened
+    // => blocked by some other door(s)
+    leverBlockedByOtherDoorCount: number;
+    pctLeverBlockedByOtherDoor: number; // 0..1
+
+    // C) Lever is unreachable even if all doors are opened
+    // => topology/disconnect/walls/hidden etc.
+    leverUnreachableEvenIfAllDoorsOpenCount: number;
+    pctLeverUnreachableEvenIfAllDoorsOpen: number; // 0..1
+
+    // (Optional but useful) Old signal: unreachable even when only gate is opened (other doors still closed)
+    leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+    pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
   };
 };
 
@@ -195,6 +239,11 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       gateReusedExistingSum: 0,
       gateReusedInternalSum: 0,
       gateRunsWithExistingReuse: 0,
+      leverAccessDiagCount: 0,
+      leverBehindOwnGateCount: 0,
+      leverBlockedByOtherDoorCount: 0,
+      leverUnreachableEvenIfAllDoorsOpenCount: 0,
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
     };
   }
 
@@ -220,6 +269,11 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       gateReusedExistingSum: number;
       gateReusedInternalSum: number;
       gateRunsWithExistingReuse: number;
+      leverAccessDiagCount: number;
+      leverBehindOwnGateCount: number;
+      leverBlockedByOtherDoorCount: number;
+      leverUnreachableEvenIfAllDoorsOpenCount: number;
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
     }
   >();
 
@@ -279,6 +333,21 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
         if ((gr.reusedExistingCount | 0) > 0)
           next.gateRunsWithExistingReuse += 1;
+      }
+      const lb = d.leverBehindOwnGate;
+      if (lb) {
+        next.leverAccessDiagCount += 1;
+
+        if (lb.isBehindOwnGate) next.leverBehindOwnGateCount += 1;
+
+        if (lb.blockedByOtherDoor) next.leverBlockedByOtherDoorCount += 1;
+
+        if (lb.unreachableEvenIfAllDoorsOpen)
+          next.leverUnreachableEvenIfAllDoorsOpenCount += 1;
+
+        // Keep the old diagnostic bucket (but renamed to reflect what it really means)
+        if (!lb.reachableIfGateWereOpen)
+          next.leverUnreachableWithGateOpenButOtherDoorsClosedCount += 1;
       }
 
       byPattern.set(name, next);
@@ -383,6 +452,42 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
           runsWithExistingReuse: acc.gateRunsWithExistingReuse,
           pctRunsWithExistingReuse: round2(
             runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
+          ),
+        };
+      }
+
+      if (acc.leverAccessDiagCount > 0) {
+        const runsWithDiag = acc.leverAccessDiagCount;
+
+        out.leverAccessAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
+          pctLeverBehindOwnGate: round2(
+            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
+          ),
+
+          leverBlockedByOtherDoorCount: acc.leverBlockedByOtherDoorCount,
+          pctLeverBlockedByOtherDoor: round2(
+            runsWithDiag ? acc.leverBlockedByOtherDoorCount / runsWithDiag : 0,
+          ),
+
+          leverUnreachableEvenIfAllDoorsOpenCount:
+            acc.leverUnreachableEvenIfAllDoorsOpenCount,
+          pctLeverUnreachableEvenIfAllDoorsOpen: round2(
+            runsWithDiag
+              ? acc.leverUnreachableEvenIfAllDoorsOpenCount / runsWithDiag
+              : 0,
+          ),
+
+          leverUnreachableWithGateOpenButOtherDoorsClosedCount:
+            acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount,
+          pctLeverUnreachableWithGateOpenButOtherDoorsClosed: round2(
+            runsWithDiag
+              ? acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount /
+                  runsWithDiag
+              : 0,
           ),
         };
       }

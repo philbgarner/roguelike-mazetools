@@ -1,10 +1,10 @@
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-21 (rev M)**
+**CONTEXT VERSION:** **2026-01-22 (rev O)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Phase 2.5 — Soft Enforcement Instrumentation (DIAGNOSTIC-ONLY)**
-**PHASE STATUS:** **GRAPH-LEVEL INTENT MISALIGNMENTS INSTRUMENTED; NO PLACEMENT CHANGES YET**
+**CURRENT PHASE:** **Milestone 5 Kickoff — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
+**PHASE STATUS:** **PHASE 2.5 SOFT ENFORCEMENT ONLINE; RELIABILITY + INTENT MISALIGNMENT NOW MEASURED**
 
 ---
 
@@ -17,204 +17,98 @@
 
 ---
 
+## POLICY ESCALATION PRINCIPLE
+
+A rule may only become **hard** if:
+
+1. it first exists as a **diagnostic**,
+2. then as a **soft steering signal**,
+3. and demonstrates **stable, predictable behavior under pressure**.
+
+Milestone 5 proceeds strictly in this order.
+
+---
+
 ## PROJECT OVERVIEW
 
 This project is an experimental procedural dungeon generator built in TypeScript with a React-based debug, inspection, and batch-validation harness.
 
 It is designed to evolve toward a JRPG / metroidvania-style dungeon system emphasizing:
 
-* backtracking
-* secrets
-* puzzles
-* progression gating
-* systemic reliability
-
-The system is intentionally layered so that:
-
-* geometry
-* gameplay intent
-* runtime puzzle logic
-
-are cleanly separated, enforced in code, and verified through runtime simulation and batch diagnostics.
+* backtracking + gating
+* stateful puzzle circuits (levers, plates, blocks, secrets)
+* compositional progression grammar (teach → gate → reward → shortcut)
+* deterministic best-effort generation (patterns may skip; dungeons always generate)
 
 ---
 
-## HIGH-LEVEL ARCHITECTURE
+## MILESTONE ROADMAP (HIGH LEVEL)
 
-### STRUCTURAL DUNGEON GENERATION (BSP)
+### Milestone 1 — Geometry & Basic Metadata
 
-**Entry:** `generateBspDungeon()` in `mazeGen.ts`
+* BSP rooms/corridors, region labeling, distance fields, walkability.
 
-Responsibilities:
+### Milestone 2 — Content Placement v1
 
-* BSP partitioning
-* Room carving
-* Corridor carving
-* Wall preservation
-* Distance-to-wall calculation
-* Region (room) identification
+* Doors/keys/levers/plates/blocks/hazards placed as fixtures.
 
-Outputs:
+### Milestone 3 — Stateful Puzzle Execution
 
-* `solid`, `regionId`, `distanceToWall` masks
-* BSP metadata (rooms, corridors, depth, seed)
+* Runtime state model for fixtures (doors, keys, levers, plates, blocks, hazards, secrets).
+* Deterministic circuit evaluator (`evaluateCircuits.ts`).
+* SIGNAL triggers + topo-sort ordering for circuit chaining; cycle-tolerant best-effort behavior.
+* Circuit diagnostics UI.
 
-This layer is **pure geometry** and contains no gameplay knowledge.
+### Milestone 4 — Puzzle Composition & Progression Grammar (CLOSED)
 
----
+* Role diagnostics schema + UI (read-only, batch-safe).
+* Role-aware composition patterns using SIGNAL dependencies.
+* Best-effort execution with authoritative diagnostics.
+* Reliability patching to reach near-100% batch stability.
 
-### CONTENT GENERATION (Milestones 1–5)
+### Milestone 5 — Intent Steering & Progression Policy (CURRENT)
 
-**Entry:** `generateDungeonContent()` in `mazeGen.ts`
-
-Responsibilities:
-
-* Place gameplay content on geometry
-* Encode progression intent declaratively
-* Express puzzle structure via patterns
-* Guarantee solvability by construction (best-effort)
-* Remain deterministic from seed/options
-
-This layer **does not execute puzzle logic**.
+* Soft enforcement (pressure, not veto).
+* Measure and reduce intent misalignment (stacked gates, inaccessible levers, pacing issues).
+* Transition validated rules into hard policy only after proof.
 
 ---
 
-### RUNTIME / PUZZLE LOGIC (Milestone 3+)
+## DEFINITIONS — PROGRESSION GRAMMAR (WORDS BEFORE CODE)
 
-Core files:
+Progression grammar is the set of repeatable, composable micro-structures that shape player experience:
 
-* `dungeonState.ts`
-* `evaluateCircuits.ts`
-* `walkability.ts`
-* `App.tsx` (debug UI + batch harness)
+* **Teach** — demonstrate a mechanic safely.
+* **Gate** — require a mechanic for progress.
+* **Reward** — optional content locked behind meaningful logic.
+* **Foreshadow** — visible but inaccessible content.
+* **Shortcut** — later unlock reduces backtracking cost.
+* **Ramp** — complexity increases with dungeon depth.
 
-Responsibilities:
+In-engine, grammar is expressed via:
 
-* Hold mutable gameplay state
-* Evaluate circuits deterministically
-* Apply effects (doors, hazards, secrets)
-* Drive interactive simulation (debug harness)
-
----
-
-## IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
-
-### GEOMETRY MUTATION POLICY — OPTION A
-
-* Geometry-mutating patterns run before final distance usage
-* `distanceToWall` recomputed once if **any** pattern carved
-* Implemented via `runPatternsBestEffort()` → `didCarve`
-
-Stable and verified.
+* patterns that place fixtures + circuits
+* roles assigned to circuits
+* diagnostics and thresholds that score intent alignment
+* later: policy that steers, repairs, or vetoes placements
 
 ---
 
-### CONTENT MASKS & METADATA
+## MILESTONE 4 STATUS — COMPLETE
 
-Authoritative `featureType` values:
+Milestone 4 is considered complete when:
 
-* 0 none
-* 1 monster
-* 2 chest
-* 3 legacy secret door
-* 4 door
-* 5 key
-* 6 lever
-* 7 pressure plate
-* 8 push block
-* 9 hidden passage
-* 10 hazard
+* Circuit chaining via SIGNAL exists and is deterministic
+* Diagnostics exist for circuits and roles (UI + batch)
+* At least one multi-circuit composition pattern exists
+* Patterns are best-effort with batch-aggregated failure reasons
+* Reliability is batch-verified and stable
 
-Invariants:
-
-* featureType 9 MUST have non-zero featureId
-* `meta.secrets[]` is authoritative
-* Masks are diagnostic; metadata is authoritative
+**As of rev O: Milestone 4 remains CLOSED.**
 
 ---
 
-### PUZZLE PATTERNS (MILESTONE 3)
-
-Stable patterns:
-
-1. **leverHiddenPocket** *(carving; reachability validated with multi-candidate retry)*
-2. **leverOpensDoor** *(non-carving)*
-3. **plateOpensDoor** *(non-carving)*
-
-All patterns are:
-
-* deterministic
-* best-effort
-* batch-aggregatable
-* diagnostics-emitting
-
----
-
-### BATCH VALIDATION HARNESS
-
-Capabilities:
-
-* Hundreds to thousands of seeds per run
-* Per-pattern aggregation
-* Success/failure rates
-* Failure histograms
-* Circuit topology metrics
-* JSON export
-
-Trusted and authoritative.
-
----
-
-## STRUCTURAL LANDMARK VISUALIZATION
-
-### Entrance Tile
-
-* Identified via `content.meta.entranceRoomId`
-* Center tile rendered **cyan**
-* Render-only; no gameplay impact
-
-### Exit Tile
-
-* Identified via `content.meta.farthestRoomId`
-* Center tile rendered **purple**
-* Render-only; no gameplay impact
-
----
-
-## MILESTONE STATUS
-
-### Milestone 3 — COMPLETE, STABLE
-
-* Runtime puzzle execution verified
-* Geometry mutation safe
-* Diagnostics trustworthy
-* No silent failures
-
----
-
-### Milestone 4 — PUZZLE COMPOSITION & PROGRESSION GRAMMAR
-
-Milestone 4 focused on **meaning, escalation, and structure**, not new mechanics.
-
-#### Phase 1 — Circuit Chaining
-
-**STATUS:** COMPLETE / CLOSED
-
-#### Phase 2 — Puzzle Roles & Difficulty Ramping
-
-**STATUS:** ROLE DIAGNOSTICS IMPLEMENTED
-**STATUS:** UI SURFACED
-**STATUS:** OBSERVATIONAL ONLY (BY DESIGN)
-
-#### Phase 3 — Composition Patterns
-
-**STATUS:** COMPLETE
-**STATUS:** RELIABILITY PATCHED
-**STATUS:** CLOSED
-
----
-
-## PHASE 3 — COMPOSITION PATTERN
+## PHASE 3 COMPOSITION PATTERN (FOUNDATIONAL)
 
 ### `gateThenOptionalReward`
 
@@ -222,136 +116,102 @@ A two-circuit, role-aware composition:
 
 * **MAIN_PATH_GATE**
 
-  * Lever-toggle door on main path
+  * Lever-toggle door placed on a main-path edge.
 
 * **OPTIONAL_REWARD**
 
-  * Branch door gated by `(PLATE && SIGNAL(gate ACTIVE))`
-  * Chest placed in optional branch
+  * Branch door to an off-main room.
+  * Gated by: `PLATE && SIGNAL(gate ACTIVE)`.
+  * Chest placed in the optional branch room.
 
-Uses SIGNAL dependency to express logical composition.
-
----
-
-## NEW IN REV M — GRAPH-LEVEL GATE REUSE INSTRUMENTATION
-
-### Motivation
-
-With Milestone 4 complete, composition reliability revealed a **semantic misalignment**:
-
-* Multiple doors can be placed along the **same room-graph edge**
-* This produces stacked or redundant gates
-* Tile-level validity is preserved, but **progression meaning is degraded**
-
-This is **not a bug** — it is an intent-modeling gap.
+This pattern expresses **logical composition**: the reward circuit depends on the main-path gate’s activation.
 
 ---
 
-### Canonical Interpretation (LOCKED)
+## PATTERN DIAGNOSTICS (AUTHORITATIVE)
 
-* **Doors** are mechanical actuators
-* **Gates** are graph separations
-* Progression intent operates at the **room-graph level**, not the tile level
+Patterns execute best-effort and emit diagnostics per run:
+
+* ok / fail + reason
+* didCarve
+* door-site statistics
+* reachability stats (for carving patterns)
+* gate-edge reuse diagnostics
+* lever accessibility diagnostics (new)
+
+The batch harness is trusted; aggregated diagnostics are authoritative.
 
 ---
 
-### Instrumentation Added (NO BEHAVIOR CHANGE)
+## NEW IN REV O — LEVER ACCESSIBILITY DIAGNOSTICS
 
-The following diagnostic-only additions were implemented:
+### Lever Accessibility Diagnostic (V1)
 
-#### Graph Edge Identity
+A new diagnostic classifies lever placement relative to dungeon accessibility:
 
-* New helper: `graphEdgeId(roomA, roomB)`
-* Produces canonical, order-independent room-graph edge IDs
-* Used exclusively for diagnostics (no placement logic yet)
+* **Lever behind own gate** — opening *only its own gate* makes it reachable.
+* **Lever blocked by other door(s)** — reachable only if *other* doors are opened.
+* **Lever unreachable even if all doors open** — topology or carving failure (not observed).
 
-#### Gate Edge Reuse Diagnostic
+### Latest Batch Signal (1000 runs)
 
-* New diagnostic payload: `GateEdgeReuseDiagV1`
-* Emitted by `gateThenOptionalReward` on **successful placement**
-* Tracks:
+For `gateThenOptionalReward`:
 
-  * total doors placed
-  * unique graph edges used
-  * reuse of edges already occupied before this pattern
-  * reuse within the same pattern commit
+* **leverBehindOwnGate:** ~2% (rare self-deadlock)
+* **leverBlockedByOtherDoor:** ~31% (primary misalignment)
+* **leverUnreachableEvenIfAllDoorsOpen:** 0% (no topology failures)
 
-#### Plumbing
+**Interpretation:**
 
-* `PatternResult` and `PatternDiagnostics` extended to carry `gateEdgeReuse`
-* `runPatternsBestEffort()` forwards the diagnostic unchanged
-* No placement heuristics modified
+Reliability is perfect, but intent misalignment is measurable: levers are often placed in regions gated by unrelated doors.
 
-#### Batch Aggregation
-
-* `aggregateBatchRuns()` extended to compute `gateEdgeReuseAvg` per pattern
-* Reported metrics include:
-
-  * average doors placed
-  * average unique edges
-  * reuse frequency
-  * percent of runs exhibiting edge reuse
-
-This allows **quantitative measurement of stacked-gate frequency** across thousands of seeds.
+This is the first *clear, quantitative intent signal* for Milestone 5.
 
 ---
 
 ## CURRENT STATE SUMMARY
 
-* Milestone 4 is **fully closed and validated**
+* Milestone 4 remains fully closed and validated
 * Composition patterns are stable and expressive
-* Intent/placement misalignment is now **measured, not hypothesized**
-* No enforcement or bias has been introduced yet
-* The system remains deterministic and best-effort
+* Intent misalignment is now **measured**, not anecdotal
+* Lever accessibility diagnostics expose real pacing problems
+* System remains deterministic and best-effort
 
 ---
 
-## NEXT STEPS — MILESTONE 5 (PHASE 2.5 → PHASE 3)
+## NEXT STEPS — MILESTONE 5
 
-### Phase 2.5 — Soft Enforcement (NEXT)
+### Phase 2.5 — Soft Enforcement (current)
 
-**Goal:** Align gate placement with progression intent **without hard constraints**.
+**Immediate next actions:**
 
-Planned steps:
+1. **Reachability-aware lever placement**
 
-1. **Observe Batch Metrics**
+   * Restrict lever placement to tiles reachable from the entrance with doors closed.
+   * Expected effect: sharply reduce `leverBlockedByOtherDoor` without vetoes.
 
-   * Run 1k–5k seed batches
-   * Establish baseline gate-edge reuse rates
+2. **UI surfacing**
 
-2. **Introduce Candidate Scoring (NOT vetoes)**
+   * Display lever-access diagnostics alongside pattern diagnostics.
+   * Make misalignment visible during inspection, not just batch runs.
 
-   * Prefer unused graph edges
-   * Prefer monotonic depth progression
-   * Bias increases only on retries
+3. **Tuning pass (pressure only)**
 
-3. **Retry Escalation**
+   * Increase penalty for reusing occupied door edges.
+   * Cap attempts on occupied edges before considering them.
 
-   * Early attempts: local, cheap, permissive
-   * Later attempts: deeper, unused edges preferred
+### Phase 3 — Hard Policy (future)
 
-4. **No Hard Guarantees**
+After soft steering stabilizes:
 
-   * Never abort generation
-   * Never forbid reuse outright
-   * Preserve determinism
-
----
-
-## REFINED MENTAL MODEL
-
-* BSP creates space
-* Content expresses intent
-* **Progression intent lives at the graph level**
-* Patterns compose structure
-* Circuits encode logic
-* Signals compose logic
-* Runtime executes state
-* Diagnostics quantify structure
-* Batch harness turns intuition into data
-* **Search order shapes meaning**
-* **Gates are graph cuts, not tiles**
-* **Milestone 4 proved composition**
-* **Milestone 5 aligns intent with placement**
+* Hard veto: disallow new main-path gates on already-occupied edges (unless no alternatives).
+* Enforce minimum topoDepth for OPTIONAL_REWARD beyond depthN thresholds.
+* Add limited repair passes for failed compositions before skipping.
 
 ---
+
+## REMINDERS
+
+* Patterns must remain best-effort; failures are data, not fatal.
+* Option A geometry policy stands.
+* Diagnostics are the steering surface for Milestone 5.

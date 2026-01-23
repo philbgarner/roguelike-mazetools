@@ -76,26 +76,6 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
-<file path="src/graphEdgeId.ts">
-// src/graphEdgeId.ts
-//
-// Canonical graph-edge identity for room-graph edges.
-// A "gate edge" is defined at the ROOM GRAPH level (roomA <-> roomB),
-// not at the tile level.
-//
-// This module intentionally has no dependencies.
-
-export type GraphEdgeId = string;
-
-export function graphEdgeId(roomA: number, roomB: number): GraphEdgeId {
-  const a = roomA | 0;
-  const b = roomB | 0;
-  const lo = a < b ? a : b;
-  const hi = a < b ? b : a;
-  return `R${lo}-R${hi}`;
-}
-</file>
-
 <file path="public/vite.svg">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
 </file>
@@ -2770,6 +2750,26 @@ export const DEFAULT_COMPOSITION_POLICY_V1: CompositionLinkPolicyV1 = {
 };
 </file>
 
+<file path="src/graphEdgeId.ts">
+// src/graphEdgeId.ts
+//
+// Canonical graph-edge identity for room-graph edges.
+// A "gate edge" is defined at the ROOM GRAPH level (roomA <-> roomB),
+// not at the tile level.
+//
+// This module intentionally has no dependencies.
+
+export type GraphEdgeId = string;
+
+export function graphEdgeId(roomA: number, roomB: number): GraphEdgeId {
+  const a = roomA | 0;
+  const b = roomB | 0;
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  return `R${lo}-R${hi}`;
+}
+</file>
+
 <file path="src/main.tsx">
 // src/main.tsx
 import React from "react";
@@ -4669,6 +4669,26 @@ details[open] > .maze-summary {
 
 import type { DoorSiteStatsBundle } from "./doorSites";
 
+export type LeverBehindOwnGateDiagV1 = {
+  schemaVersion: 1;
+  gateDoorId: number; // the door id the lever controls (same id for this pattern)
+  leverId: number; // lever fixture id (same id for this pattern)
+  leverX: number;
+  leverY: number;
+
+  // Reachability of the lever from entrance with all doors closed:
+  reachableWithGateClosed: boolean;
+
+  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
+  reachableIfGateWereOpen: boolean;
+
+  // The actual diagnostic flag we care about:
+  isBehindOwnGate: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
 export type GateEdgeReuseDiagV1 = {
   schemaVersion: 1;
 
@@ -4698,6 +4718,7 @@ export type PatternDiag = {
   stats?: DoorSiteStatsBundle;
   reachability?: ReachabilityStats;
   gateEdgeReuse?: GateEdgeReuseDiagV1;
+  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
 };
 
 export type Point = { x: number; y: number };
@@ -4774,6 +4795,18 @@ export type BatchPatternSummary = {
 
     runsWithExistingReuse: number;
     pctRunsWithExistingReuse: number; // 0..1
+  };
+
+  // Optional: lever accessibility diagnostics for composition patterns
+  leverAccessAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    leverBehindOwnGateCount: number;
+    pctLeverBehindOwnGate: number; // 0..1
+
+    leverUnreachableEvenIfGateOpenCount: number;
+    pctLeverUnreachableEvenIfGateOpen: number; // 0..1
   };
 };
 
@@ -4857,6 +4890,9 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       gateReusedExistingSum: 0,
       gateReusedInternalSum: 0,
       gateRunsWithExistingReuse: 0,
+      leverAccessDiagCount: 0,
+      leverBehindOwnGateCount: 0,
+      leverUnreachableEvenIfGateOpenCount: 0,
     };
   }
 
@@ -4882,6 +4918,9 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       gateReusedExistingSum: number;
       gateReusedInternalSum: number;
       gateRunsWithExistingReuse: number;
+      leverAccessDiagCount: number;
+      leverBehindOwnGateCount: number;
+      leverUnreachableEvenIfGateOpenCount: number;
     }
   >();
 
@@ -4941,6 +4980,20 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
         if ((gr.reusedExistingCount | 0) > 0)
           next.gateRunsWithExistingReuse += 1;
+      }
+      const lb = d.leverBehindOwnGate;
+      if (lb) {
+        next.leverAccessDiagCount += 1;
+
+        if (lb.isBehindOwnGate) {
+          next.leverBehindOwnGateCount += 1;
+        }
+
+        // More serious: even "opening" ONLY its own gate doesn't make it reachable.
+        // This suggests it is behind some OTHER blocker (another door), or disconnected.
+        if (!lb.reachableIfGateWereOpen) {
+          next.leverUnreachableEvenIfGateOpenCount += 1;
+        }
       }
 
       byPattern.set(name, next);
@@ -5045,6 +5098,28 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
           runsWithExistingReuse: acc.gateRunsWithExistingReuse,
           pctRunsWithExistingReuse: round2(
             runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
+          ),
+        };
+      }
+
+      if (acc.leverAccessDiagCount > 0) {
+        const runsWithDiag = acc.leverAccessDiagCount;
+
+        out.leverAccessAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
+          pctLeverBehindOwnGate: round2(
+            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
+          ),
+
+          leverUnreachableEvenIfGateOpenCount:
+            acc.leverUnreachableEvenIfGateOpenCount,
+          pctLeverUnreachableEvenIfGateOpen: round2(
+            runsWithDiag
+              ? acc.leverUnreachableEvenIfGateOpenCount / runsWithDiag
+              : 0,
           ),
         };
       }
@@ -6188,13 +6263,21 @@ export function evaluateCircuits(
 // connector tile as FLOOR, but blocks it until revealed via featureType=9 +
 // runtime.secrets[secretId].revealed.
 
-import type { BspDungeonOutputs, ContentOutputs, CircuitDef } from "./mazeGen";
+import type {
+  DoorKind,
+  BspDungeonOutputs,
+  ContentOutputs,
+  CircuitDef,
+} from "./mazeGen";
 import { clamp255 } from "./mazeGen";
 import {
   findDoorSiteCandidatesAndStatsFromCorridors,
   type DoorSiteStatsBundle,
 } from "./doorSites";
-import type { GateEdgeReuseDiagV1 } from "./batchStats";
+import type {
+  GateEdgeReuseDiagV1,
+  LeverBehindOwnGateDiagV1,
+} from "./batchStats";
 import { graphEdgeId } from "./graphEdgeId";
 
 type Point = { x: number; y: number };
@@ -6415,6 +6498,7 @@ export type PatternResult =
       stats?: DoorSiteStatsBundle;
       reachability?: ReachabilityStats;
       gateEdgeReuse?: GateEdgeReuseDiagV1;
+      leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
     }
   | {
       ok: false;
@@ -6423,6 +6507,7 @@ export type PatternResult =
       stats?: DoorSiteStatsBundle;
       reachability?: ReachabilityStats;
       gateEdgeReuse?: GateEdgeReuseDiagV1;
+      leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
     };
 
 type PatternFn = () => PatternResult;
@@ -6436,6 +6521,7 @@ export type PatternDiagnostics = {
   stats?: DoorSiteStatsBundle;
   reachability?: ReachabilityStats;
   gateEdgeReuse?: GateEdgeReuseDiagV1;
+  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
 };
 
 export type PatternEntry =
@@ -6582,7 +6668,6 @@ export function applyGateThenOptionalRewardPattern(args: {
   const rewardTier = clamp255(args.options?.rewardLootTier ?? 2);
 
   // --- Gate-edge reuse diagnostics (no behavior change) ---
-  // Snapshot edges already occupied by doors BEFORE this pattern places anything.
   const existingDoorEdges = new Set<string>();
   for (const d of doors) existingDoorEdges.add(graphEdgeId(d.roomA, d.roomB));
 
@@ -6651,7 +6736,6 @@ export function applyGateThenOptionalRewardPattern(args: {
     else edgeToSites.set(k, [s]);
   }
 
-  // Reachability sanity (same strategy as other patterns)
   const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
   const start = entranceRoom ? findAnyFloorInRect(dungeon, entranceRoom) : null;
   if (!start) {
@@ -6664,29 +6748,79 @@ export function applyGateThenOptionalRewardPattern(args: {
     mainEdges.push(normEdge(mainPathRoomIds[i]!, mainPathRoomIds[i + 1]!));
   }
 
-  // Pre-filter: only consider main-path edges that have at least one off-main neighbor
-  // from either endpoint room. This eliminates "structural impossibility" edges that
-  // can never host an optional branch.
   const mainPathSet = new Set<number>(mainPathRoomIds);
   const isBranchableMainEdge = (e: RoomEdge): boolean => {
     const na = roomGraph.get(e.a);
-    if (na) {
-      for (const n of na) if (!mainPathSet.has(n)) return true;
-    }
+    if (na) for (const n of na) if (!mainPathSet.has(n)) return true;
     const nb = roomGraph.get(e.b);
-    if (nb) {
-      for (const n of nb) if (!mainPathSet.has(n)) return true;
-    }
+    if (nb) for (const n of nb) if (!mainPathSet.has(n)) return true;
     return false;
   };
 
   const branchableMainEdges = mainEdges.filter(isBranchableMainEdge);
-  shuffleInPlace(branchableMainEdges, rng);
 
-  // options.maxAttempts is repurposed as “how many distinct main edges to consider”
+  type MainEdgeScore = {
+    e: RoomEdge;
+    hasAnyUsableBranchSite: boolean;
+    usableBranchSiteCount: number;
+    isOccupiedByExistingDoor: boolean;
+    tie: number;
+  };
+
+  const scoreMainEdge = (e: RoomEdge): MainEdgeScore => {
+    const occupied = existingDoorEdges.has(graphEdgeId(e.a, e.b));
+    let count = 0;
+
+    const endpoints = [e.a, e.b] as const;
+    for (const anchor of endpoints) {
+      const nbrs = roomGraph.get(anchor);
+      if (!nbrs) continue;
+
+      for (const n of nbrs) {
+        if (mainPathSet.has(n)) continue;
+
+        const bk = edgeKey(anchor, n);
+        const sites = edgeToSites.get(bk);
+        if (!sites || !sites.length) continue;
+
+        for (const s of sites) {
+          const di = idxOf(dungeon.width, s.x, s.y);
+          if ((ft[di] | 0) !== 0) continue;
+          count++;
+          if (count >= 12) break;
+        }
+        if (count >= 12) break;
+      }
+      if (count >= 12) break;
+    }
+
+    return {
+      e,
+      hasAnyUsableBranchSite: count > 0,
+      usableBranchSiteCount: count,
+      isOccupiedByExistingDoor: occupied,
+      tie: rng.nextInt(0, 1_000_000_000),
+    };
+  };
+
+  const scored = branchableMainEdges.map(scoreMainEdge);
+  scored.sort((a, b) => {
+    if (a.hasAnyUsableBranchSite !== b.hasAnyUsableBranchSite) {
+      return a.hasAnyUsableBranchSite ? -1 : 1;
+    }
+    if (a.isOccupiedByExistingDoor !== b.isOccupiedByExistingDoor) {
+      return a.isOccupiedByExistingDoor ? 1 : -1;
+    }
+    if (a.usableBranchSiteCount !== b.usableBranchSiteCount) {
+      return b.usableBranchSiteCount - a.usableBranchSiteCount;
+    }
+    return a.tie - b.tie;
+  });
+
+  const branchableMainEdgesSorted = scored.map((s) => s.e);
+
   const maxMainEdges = Math.max(1, args.options?.maxAttempts ?? 80) | 0;
-
-  const mainEdgesToTry = branchableMainEdges.slice(
+  const mainEdgesToTry = branchableMainEdgesSorted.slice(
     0,
     Math.min(branchableMainEdges.length, MAX_MAIN_EDGES_TO_TRY, maxMainEdges),
   );
@@ -6704,7 +6838,6 @@ export function applyGateThenOptionalRewardPattern(args: {
   let mainEdgesWithBranches = 0;
   let mainEdgesWithUsableDoorSites = 0;
 
-  // Failure accounting (for a useful dominant reason)
   let failGateOccupied = 0;
   let failNoBranchNeighbors = 0;
   let failNoBranchDoorSites = 0;
@@ -6724,7 +6857,6 @@ export function applyGateThenOptionalRewardPattern(args: {
     const gateSitesAll = edgeToSites.get(gateKey) ?? [];
     if (!gateSitesAll.length) continue;
 
-    // Try a few different gate sites on this edge (cheap)
     const gateSites = gateSitesAll.slice();
     shuffleInPlace(gateSites, rng);
 
@@ -6736,7 +6868,9 @@ export function applyGateThenOptionalRewardPattern(args: {
       gateSites.length,
     );
 
-    for (let gs = 0; gs < maxGateSiteTries; gs++) {
+    let succeededOnThisEdge = false;
+
+    for (let gs = 0; gs < maxGateSiteTries && !succeededOnThisEdge; gs++) {
       const gateSite = gateSites[gs]!;
       const gateDi = idxOf(dungeon.width, gateSite.x, gateSite.y);
       if ((ft[gateDi] | 0) !== 0) {
@@ -6744,7 +6878,6 @@ export function applyGateThenOptionalRewardPattern(args: {
         continue;
       }
 
-      // Determine shallow/deep side by roomDistance
       const a = gateSite.roomA;
       const b = gateSite.roomB;
       const da = roomDistance.get(a) ?? 9999;
@@ -6753,353 +6886,377 @@ export function applyGateThenOptionalRewardPattern(args: {
       const shallowRoomId = da <= db ? a : b;
       const deepRoomId = da <= db ? b : a;
 
-      // Off-main neighbors: prefer branching off the deep side, but fall back
-      // to shallow side if deep has no off-main neighbors.
-      let branchAnchorRoomId = deepRoomId;
-      let excludeRoomId = shallowRoomId;
+      // Try BOTH endpoints: deep then shallow.
+      const anchorPlans = [
+        { anchor: deepRoomId, exclude: shallowRoomId },
+        { anchor: shallowRoomId, exclude: deepRoomId },
+      ];
 
-      let nbrs = Array.from(roomGraph.get(branchAnchorRoomId) ?? []);
-      let offMain = nbrs.filter(
-        (n) => n !== excludeRoomId && !mainPathSet.has(n),
-      );
+      const plans = anchorPlans
+        .map((p) => {
+          const nbrs = Array.from(roomGraph.get(p.anchor) ?? []);
+          const offMain = nbrs.filter(
+            (n) => n !== p.exclude && !mainPathSet.has(n),
+          );
+          return { ...p, offMain };
+        })
+        .filter((p) => p.offMain.length > 0);
 
-      if (!offMain.length) {
-        // Fallback: try branching off shallow side too.
-        branchAnchorRoomId = shallowRoomId;
-        excludeRoomId = deepRoomId;
-
-        nbrs = Array.from(roomGraph.get(branchAnchorRoomId) ?? []);
-        offMain = nbrs.filter(
-          (n) => n !== excludeRoomId && !mainPathSet.has(n),
-        );
-      }
-
-      if (!offMain.length) {
-        // count once per EDGE (not per gateSite)
+      if (!plans.length) {
         failNoBranchNeighbors++;
-        break; // move to next main edge; more gate sites won't change topology
+        break; // topology won't change with another gateSite on same edge
       }
 
       edgeHadBranches = true;
 
-      // Gate-site viability pre-check:
-      // If choosing this gateSite would eliminate *all* usable branch door sites
-      // (i.e., every candidate branch door site coincides with the gate tile or
-      // is currently occupied), skip this gateSite and try another on the same edge.
+      // Gate-site viability pre-check across BOTH anchors.
       let gateAllowsAnyBranch = false;
-      for (const br of offMain) {
-        const bk = edgeKey(branchAnchorRoomId, br);
-        const all = edgeToSites.get(bk) ?? [];
-        for (const s of all) {
-          if (s.x === gateSite.x && s.y === gateSite.y) continue;
-          const di = idxOf(dungeon.width, s.x, s.y);
-          if ((ft[di] | 0) !== 0) continue;
-          gateAllowsAnyBranch = true;
-          break;
+      for (const p of plans) {
+        for (const br of p.offMain) {
+          const bk = edgeKey(p.anchor, br);
+          const all = edgeToSites.get(bk) ?? [];
+          for (const s of all) {
+            if (s.x === gateSite.x && s.y === gateSite.y) continue;
+            const di = idxOf(dungeon.width, s.x, s.y);
+            if ((ft[di] | 0) !== 0) continue;
+            gateAllowsAnyBranch = true;
+            break;
+          }
+          if (gateAllowsAnyBranch) break;
         }
         if (gateAllowsAnyBranch) break;
       }
 
       if (!gateAllowsAnyBranch) {
         failGateEliminatesAllBranchSites++;
-        continue; // try next gateSite
+        continue;
       }
 
-      const offMainShuffled = offMain.slice();
-      shuffleInPlace(offMainShuffled, rng);
-
-      // Cap branch attempts per edge
-      const branchTryCount = Math.min(
-        MAX_BRANCH_TRIES_PER_MAIN_EDGE,
-        offMainShuffled.length,
-      );
-
-      for (let bi = 0; bi < branchTryCount; bi++) {
-        const branchRoomId = offMainShuffled[bi]!;
-        const branchKey = edgeKey(branchAnchorRoomId, branchRoomId);
-        const branchSitesAll = edgeToSites.get(branchKey) ?? [];
-        if (!branchSitesAll.length) {
-          failNoBranchDoorSites++;
-          continue;
+      // Small deterministic retry helper
+      const trySample = <T>(n: number, fn: () => T | null): T | null => {
+        for (let k = 0; k < n; k++) {
+          const v = fn();
+          if (v) return v;
         }
+        return null;
+      };
 
-        // Filter out the gate tile to prevent "same chokepoint" collisions.
-        // If filtering empties the set, treat it like no usable sites for this branch edge.
-        const branchSites = branchSitesAll.filter(
-          (s) => !(s.x === gateSite.x && s.y === gateSite.y),
+      // Attempt branches: deep-first (plans order)
+      for (const p of plans) {
+        const offMainShuffled = p.offMain.slice();
+        shuffleInPlace(offMainShuffled, rng);
+
+        const branchTryCount = Math.min(
+          MAX_BRANCH_TRIES_PER_MAIN_EDGE,
+          offMainShuffled.length,
         );
 
-        if (!branchSites.length) {
-          // Count how many collision candidates we eliminated for diagnostics.
-          // This is per-branch-edge attempt.
-          failBranchSameAsGate += branchSitesAll.length;
-          failNoBranchDoorSites++;
-          continue;
-        }
-
-        // A usable site exists on this branch edge => structurally usable in principle
-        edgeHadUsableDoorSite = true;
-
-        shuffleInPlace(branchSites, rng);
-
-        const maxBranchSiteTries = Math.min(
-          MAX_DOOR_SITE_TRIES_PER_BRANCH,
-          branchSites.length,
-        );
-
-        for (let si = 0; si < maxBranchSiteTries; si++) {
-          const branchSite = branchSites[si]!;
-
-          const branchDi = idxOf(dungeon.width, branchSite.x, branchSite.y);
-          if ((ft[branchDi] | 0) !== 0) {
-            failBranchOccupied++;
+        for (let bi = 0; bi < branchTryCount; bi++) {
+          const branchRoomId = offMainShuffled[bi]!;
+          const branchKey = edgeKey(p.anchor, branchRoomId);
+          const branchSitesAll = edgeToSites.get(branchKey) ?? [];
+          if (!branchSitesAll.length) {
+            failNoBranchDoorSites++;
             continue;
           }
 
-          const shallowRoom = rooms[shallowRoomId - 1] ?? entranceRoom;
-          const deepRoom = rooms[deepRoomId - 1];
-          const branchRoom = rooms[branchRoomId - 1];
-
-          if (!shallowRoom || !deepRoom || !branchRoom) {
-            // meta lookup failed (rare) — treat like occupancy/search failure
-            failGateOccupied++;
-            continue;
-          }
-
-          // ---- PREVIEW sample placements before commit ----
-          //
-          // Goal: don’t throw away a promising (gateSite, branchSite) because of
-          // one unlucky tile sample. Keep deterministic by using rng only.
-
-          // In endpoint-fallback cases, we want the “plate puzzle” to live on the
-          // same side that actually owns the branch (the anchor side).
-          const plateRoomId = branchAnchorRoomId;
-          const plateRoom = rooms[plateRoomId - 1];
-
-          if (!shallowRoom || !plateRoom || !branchRoom) {
-            // meta lookup failed (rare) — treat like occupancy/search failure
-            failGateOccupied++;
-            continue;
-          }
-
-          // Small deterministic retry helper
-          const trySample = <T>(n: number, fn: () => T | null): T | null => {
-            for (let k = 0; k < n; k++) {
-              const v = fn();
-              if (v) return v;
-            }
-            return null;
-          };
-
-          // Lever in shallow room (retry)
-          const leverP = trySample(6, () =>
-            sampleRoomFloorNoFeatures(rng, dungeon, shallowRoom, ft),
+          const branchSites = branchSitesAll.filter(
+            (s) => !(s.x === gateSite.x && s.y === gateSite.y),
           );
-          if (!leverP) {
-            failLever++;
+
+          if (!branchSites.length) {
+            failBranchSameAsGate += branchSitesAll.length;
+            failNoBranchDoorSites++;
             continue;
           }
 
-          // Plate + adjacent block in plateRoom (retry plate; adjacency depends on it)
-          let plateP: Point | null = null;
-          let blockP: Point | null = null;
+          edgeHadUsableDoorSite = true;
 
-          for (let k = 0; k < 10; k++) {
-            const p = sampleRoomFloorNoFeatures(rng, dungeon, plateRoom, ft);
-            if (!p) continue;
+          shuffleInPlace(branchSites, rng);
 
-            const adj = [
-              { x: p.x + 1, y: p.y },
-              { x: p.x - 1, y: p.y },
-              { x: p.x, y: p.y + 1 },
-              { x: p.x, y: p.y - 1 },
-            ].filter((q) => {
-              if (!inBounds(dungeon.width, dungeon.height, q.x, q.y))
-                return false;
-              const i = idxOf(dungeon.width, q.x, q.y);
-              return dungeon.masks.solid[i] === 0 && (ft[i] | 0) === 0;
-            });
+          const maxBranchSiteTries = Math.min(
+            MAX_DOOR_SITE_TRIES_PER_BRANCH,
+            branchSites.length,
+          );
 
-            if (!adj.length) {
-              // Plate spot exists, but no usable adjacent block tile near it.
-              // Count and retry a different plate tile.
-              failBlockAdj++;
+          for (let si = 0; si < maxBranchSiteTries; si++) {
+            const branchSite = branchSites[si]!;
+            const branchDi = idxOf(dungeon.width, branchSite.x, branchSite.y);
+            if ((ft[branchDi] | 0) !== 0) {
+              failBranchOccupied++;
               continue;
             }
 
-            plateP = p;
-            blockP = adj[rng.nextInt(0, adj.length - 1)]!;
-            break;
+            const shallowRoom = rooms[shallowRoomId - 1] ?? entranceRoom;
+            const branchRoom = rooms[branchRoomId - 1];
+            if (!shallowRoom || !branchRoom) {
+              failGateOccupied++;
+              continue;
+            }
+
+            // Plate puzzle lives on the anchor side that owns the branch
+            const plateRoomId = p.anchor;
+            const plateRoom = rooms[plateRoomId - 1];
+            if (!plateRoom) {
+              failGateOccupied++;
+              continue;
+            }
+
+            const leverP = trySample(6, () =>
+              sampleRoomFloorNoFeatures(rng, dungeon, shallowRoom, ft),
+            );
+            if (!leverP) {
+              failLever++;
+              continue;
+            }
+
+            let plateP: Point | null = null;
+            let blockP: Point | null = null;
+
+            for (let k = 0; k < 10; k++) {
+              const pp = sampleRoomFloorNoFeatures(rng, dungeon, plateRoom, ft);
+              if (!pp) continue;
+
+              const adj = [
+                { x: pp.x + 1, y: pp.y },
+                { x: pp.x - 1, y: pp.y },
+                { x: pp.x, y: pp.y + 1 },
+                { x: pp.x, y: pp.y - 1 },
+              ].filter((q) => {
+                if (!inBounds(dungeon.width, dungeon.height, q.x, q.y))
+                  return false;
+                const i = idxOf(dungeon.width, q.x, q.y);
+                return dungeon.masks.solid[i] === 0 && (ft[i] | 0) === 0;
+              });
+
+              if (!adj.length) {
+                failBlockAdj++;
+                continue;
+              }
+
+              plateP = pp;
+              blockP = adj[rng.nextInt(0, adj.length - 1)]!;
+              break;
+            }
+
+            if (!plateP) {
+              failPlate++;
+              continue;
+            }
+            if (!blockP) continue;
+
+            const chestP = trySample(6, () =>
+              sampleRoomFloorNoFeatures(rng, dungeon, branchRoom, ft),
+            );
+            if (!chestP) {
+              failChest++;
+              continue;
+            }
+
+            // ---- COMMIT ----
+            const gateId = allocId();
+            const branchId = allocId();
+            const blockId = allocId();
+            const chestId = allocId();
+
+            // 1) Gate door on main edge
+            ft[gateDi] = 4;
+            fid[gateDi] = gateId;
+            fparam[gateDi] = 2;
+
+            doors.push({
+              id: gateId,
+              x: gateSite.x,
+              y: gateSite.y,
+              roomA: gateSite.roomA,
+              roomB: gateSite.roomB,
+              kind: 2,
+              depth: 0,
+            });
+            noteDoorEdgePlacement(gateSite.roomA, gateSite.roomB);
+
+            // 2) Lever fixture
+            const gateLi = idxOf(dungeon.width, leverP.x, leverP.y);
+            ft[gateLi] = 6;
+            fid[gateLi] = gateId;
+            fparam[gateLi] = 0;
+
+            levers.push({
+              id: gateId,
+              x: leverP.x,
+              y: leverP.y,
+              roomId: shallowRoomId,
+            });
+
+            circuitsById.set(gateId, {
+              id: gateId,
+              logic: { type: "OR" },
+              behavior: { mode: "TOGGLE" },
+              triggers: [{ kind: "LEVER", refId: gateId }],
+              targets: [{ kind: "DOOR", refId: gateId, effect: "TOGGLE" }],
+            });
+
+            circuitRoles[gateId] = "MAIN_PATH_GATE";
+
+            // 3) Branch door fixture
+            ft[branchDi] = 4;
+            fid[branchDi] = branchId;
+            fparam[branchDi] = 0;
+
+            doors.push({
+              id: branchId,
+              x: branchSite.x,
+              y: branchSite.y,
+              roomA: branchSite.roomA,
+              roomB: branchSite.roomB,
+              kind: 0 as DoorKind,
+              depth: 0,
+            });
+            noteDoorEdgePlacement(branchSite.roomA, branchSite.roomB);
+
+            // 4) Plate fixture (id = branchId)
+            const pi = idxOf(dungeon.width, plateP.x, plateP.y);
+            ft[pi] = 7;
+            fid[pi] = branchId;
+            fparam[pi] = 0;
+
+            plates.push({
+              id: branchId,
+              x: plateP.x,
+              y: plateP.y,
+              roomId: plateRoomId,
+              mode: "momentary",
+              activatedByPlayer: false,
+              activatedByBlock: true,
+              activatedByBlockOrPlayer: false,
+              inverted: false,
+            });
+
+            // 5) Block fixture
+            const bi2 = idxOf(dungeon.width, blockP.x, blockP.y);
+            ft[bi2] = 8;
+            fid[bi2] = blockId;
+            fparam[bi2] = 0;
+
+            blocks.push({
+              id: blockId,
+              x: blockP.x,
+              y: blockP.y,
+              roomId: plateRoomId,
+              weightClass: 0,
+            });
+
+            // 6) Chest fixture
+            const ci = idxOf(dungeon.width, chestP.x, chestP.y);
+            ft[ci] = 2;
+            fid[ci] = chestId;
+            lootTier[ci] = rewardTier;
+
+            chests.push({
+              id: chestId,
+              x: chestP.x,
+              y: chestP.y,
+              roomId: branchRoomId,
+              tier: rewardTier,
+            });
+
+            // 7) Branch circuit: PLATE && SIGNAL(gate ACTIVE) -> OPEN(branch door)
+            circuitsById.set(branchId, {
+              id: branchId,
+              logic: { type: "AND" },
+              behavior: { mode: "MOMENTARY" },
+              triggers: [
+                { kind: "PLATE", refId: branchId },
+                { kind: "SIGNAL", refId: gateId, signal: { name: "ACTIVE" } },
+              ],
+              targets: [{ kind: "DOOR", refId: branchId, effect: "OPEN" }],
+            });
+
+            circuitRoles[branchId] = "OPTIONAL_REWARD";
+
+            // --- NEW: lever-behind-own-gate diagnostic ---
+            // We test whether the gate lever is reachable from the entrance when doors are closed.
+            // Then we test again with ONLY the gate door tile treated as open (passable).
+            const W = dungeon.width;
+
+            const leverI = idxOf(W, leverP.x, leverP.y);
+
+            // Reachability with doors closed (computeReachable treats doors as blocked)
+            const reachClosed = computeReachable(
+              dungeon,
+              ft,
+              fid,
+              start,
+              new Set(),
+            );
+            const reachableWithGateClosed = !!reachClosed[leverI];
+
+            // Reachability if we "open" only THIS gate door tile for analysis
+            const prevFt = ft[gateDi];
+            const prevFid = fid[gateDi];
+            const prevFparam = fparam[gateDi];
+
+            // Temporarily clear the door feature at the gate tile so BFS can pass through it
+            ft[gateDi] = 0;
+            fid[gateDi] = 0;
+            fparam[gateDi] = 0;
+
+            const reachIfGateOpen = computeReachable(
+              dungeon,
+              ft,
+              fid,
+              start,
+              new Set(),
+            );
+            const reachableIfGateWereOpen = !!reachIfGateOpen[leverI];
+
+            // Restore
+            ft[gateDi] = prevFt;
+            fid[gateDi] = prevFid;
+            fparam[gateDi] = prevFparam;
+
+            const leverBehindOwnGate: LeverBehindOwnGateDiagV1 = {
+              schemaVersion: 1,
+              gateDoorId: gateId,
+              leverId: gateId,
+              leverX: leverP.x,
+              leverY: leverP.y,
+              reachableWithGateClosed,
+              reachableIfGateWereOpen,
+              isBehindOwnGate:
+                !reachableWithGateClosed && reachableIfGateWereOpen,
+            };
+
+            // Include this edge in counters in the success report
+            const edgesWithBranchesNow =
+              mainEdgesWithBranches + (edgeHadBranches ? 1 : 0);
+            const edgesWithSitesNow =
+              mainEdgesWithUsableDoorSites + (edgeHadUsableDoorSite ? 1 : 0);
+
+            succeededOnThisEdge = true;
+
+            return {
+              ok: true,
+              didCarve: false,
+              stats: { doorSites: stats },
+              gateEdgeReuse,
+              leverBehindOwnGate,
+              // carry these in the payload if you’re aggregating them elsewhere
+              // (kept as any-compatible with your existing caller)
+              mainEdgesConsidered,
+              mainEdgesWithBranches: edgesWithBranchesNow,
+              mainEdgesWithUsableDoorSites: edgesWithSitesNow,
+            } as any;
           }
-
-          if (!plateP) {
-            // Couldn’t even find a plate tile in the room across retries
-            failPlate++;
-            continue;
-          }
-          if (!blockP) {
-            // We did find plate candidates, but adjacency kept failing.
-            // failBlockAdj already captured; continue to next candidate.
-            continue;
-          }
-
-          // Chest in branch room (retry)
-          const chestP = trySample(6, () =>
-            sampleRoomFloorNoFeatures(rng, dungeon, branchRoom, ft),
-          );
-          if (!chestP) {
-            failChest++;
-            continue;
-          }
-
-          // ---- COMMIT ----
-          const gateId = allocId();
-          const branchId = allocId();
-          const blockId = allocId();
-          const chestId = allocId();
-
-          // 1) Gate door on main edge
-          ft[gateDi] = 4;
-          fid[gateDi] = gateId;
-          fparam[gateDi] = 2; // lever-kind hint
-
-          doors.push({
-            id: gateId,
-            x: gateSite.x,
-            y: gateSite.y,
-            roomA: gateSite.roomA,
-            roomB: gateSite.roomB,
-            kind: 2,
-            depth: 0,
-          });
-          noteDoorEdgePlacement(gateSite.roomA, gateSite.roomB);
-
-          // 2) Lever fixture
-          const gateLi = idxOf(dungeon.width, leverP.x, leverP.y);
-          ft[gateLi] = 6;
-          fid[gateLi] = gateId;
-          fparam[gateLi] = 0;
-
-          levers.push({
-            id: gateId,
-            x: leverP.x,
-            y: leverP.y,
-            roomId: shallowRoomId,
-          });
-
-          circuitsById.set(gateId, {
-            id: gateId,
-            logic: { type: "OR" },
-            behavior: { mode: "TOGGLE" },
-            triggers: [{ kind: "LEVER", refId: gateId }],
-            targets: [{ kind: "DOOR", refId: gateId, effect: "TOGGLE" }],
-          });
-
-          circuitRoles[gateId] = "MAIN_PATH_GATE";
-
-          // 3) Branch door fixture
-          ft[branchDi] = 4;
-          fid[branchDi] = branchId;
-          fparam[branchDi] = 0;
-
-          doors.push({
-            id: branchId,
-            x: branchSite.x,
-            y: branchSite.y,
-            roomA: branchSite.roomA,
-            roomB: branchSite.roomB,
-            kind: 0 as any,
-            depth: 0,
-          });
-          noteDoorEdgePlacement(branchSite.roomA, branchSite.roomB);
-
-          // 4) Plate fixture (id = branchId)
-          const pi = idxOf(dungeon.width, plateP.x, plateP.y);
-          ft[pi] = 7;
-          fid[pi] = branchId;
-          fparam[pi] = 0;
-
-          plates.push({
-            id: branchId,
-            x: plateP.x,
-            y: plateP.y,
-            roomId: plateRoomId,
-            mode: "momentary",
-            activatedByPlayer: false,
-            activatedByBlock: true,
-            activatedByBlockOrPlayer: false,
-            inverted: false,
-          });
-
-          // 5) Block fixture
-          const bi2 = idxOf(dungeon.width, blockP.x, blockP.y);
-          ft[bi2] = 8;
-          fid[bi2] = blockId;
-          fparam[bi2] = 0;
-
-          blocks.push({
-            id: blockId,
-            x: blockP.x,
-            y: blockP.y,
-            roomId: plateRoomId,
-            weightClass: 0,
-          });
-
-          // 6) Chest fixture
-          const ci = idxOf(dungeon.width, chestP.x, chestP.y);
-          ft[ci] = 2;
-          fid[ci] = chestId;
-          lootTier[ci] = rewardTier;
-
-          chests.push({
-            id: chestId,
-            x: chestP.x,
-            y: chestP.y,
-            roomId: branchRoomId,
-            tier: rewardTier,
-          });
-
-          // 7) Branch circuit: PLATE && SIGNAL(gate ACTIVE) -> OPEN(branch door)
-          circuitsById.set(branchId, {
-            id: branchId,
-            logic: { type: "AND" },
-            behavior: { mode: "MOMENTARY" },
-            triggers: [
-              { kind: "PLATE", refId: branchId },
-              { kind: "SIGNAL", refId: gateId, signal: { name: "ACTIVE" } },
-            ],
-            targets: [{ kind: "DOOR", refId: branchId, effect: "OPEN" }],
-          });
-
-          circuitRoles[branchId] = "OPTIONAL_REWARD";
-
-          void computeReachable(dungeon, ft, fid, start, new Set());
-
-          // Update edge counters for success
-          if (edgeHadBranches) mainEdgesWithBranches++;
-          if (edgeHadUsableDoorSite) mainEdgesWithUsableDoorSites++;
-
-          return {
-            ok: true,
-            didCarve: false,
-            stats: { doorSites: stats },
-
-            // extra diagnostics fields (safe)
-            mainEdgesConsidered,
-            mainEdgesWithBranches,
-            mainEdgesWithUsableDoorSites,
-            gateEdgeReuse,
-          } as any;
         }
       }
     }
 
-    // Update edge counters for attempted edge (even if we didn’t succeed)
+    // Only count this edge once (and only if we didn’t return success)
     if (edgeHadBranches) mainEdgesWithBranches++;
     if (edgeHadUsableDoorSite) mainEdgesWithUsableDoorSites++;
   }
 
-  // Failure reason selection: structural truths first.
   let reason =
     "Failed: placement constraints prevented success despite candidates.";
 
@@ -7110,7 +7267,6 @@ export function applyGateThenOptionalRewardPattern(args: {
       "Failed: no usable branch door site exists on any considered main-path edge.";
   }
 
-  // Always append counters for batch forensics (even in structural buckets).
   reason +=
     ` (edgeConsidered=${mainEdgesConsidered}` +
     ` edgeWithBranches=${mainEdgesWithBranches}` +
@@ -7132,7 +7288,6 @@ export function applyGateThenOptionalRewardPattern(args: {
     !(mainEdgesWithBranches > 0 && mainEdgesWithUsableDoorSites === 0) &&
     !(mainEdgesConsidered > 0 && mainEdgesWithBranches === 0)
   ) {
-    // fall back to dominant local placement failures
     const max = Math.max(
       failGateOccupied,
       failNoBranchNeighbors,
@@ -7175,11 +7330,10 @@ export function applyGateThenOptionalRewardPattern(args: {
     didCarve: false,
     reason,
     stats: { doorSites: stats },
-
-    // extra diagnostics fields (safe)
     mainEdgesConsidered,
     mainEdgesWithBranches,
     mainEdgesWithUsableDoorSites,
+    circuitRoles,
   } as any;
 }
 
@@ -7229,6 +7383,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
         stats: res.stats,
         reachability: res.reachability,
         gateEdgeReuse: res.gateEdgeReuse,
+        leverBehindOwnGate: res.leverBehindOwnGate,
       });
       continue;
     }
@@ -7242,6 +7397,7 @@ export function runPatternsBestEffort(patterns: PatternEntry[]): {
       stats: res.stats,
       reachability: res.reachability,
       gateEdgeReuse: res.gateEdgeReuse,
+      leverBehindOwnGate: res.leverBehindOwnGate,
     });
   }
 
@@ -8244,7 +8400,7 @@ export function applyPlateOpensDoorPattern(args: {
       y: site.y,
       roomA: site.roomA,
       roomB: site.roomB,
-      kind: 0 as any, // “pattern door” (not a Milestone-2 locked/lever gate)
+      kind: 0 as DoorKind,
       depth: 0,
     });
 
@@ -10438,6 +10594,20 @@ import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
 
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; w: number; h: number };
+
+function writeCircuitRole(
+  circuitRoles: Record<number, PuzzleRole> | undefined,
+  circuitId: number,
+  role: PuzzleRole,
+) {
+  if (!circuitRoles) return;
+
+  // Best-effort: don’t overwrite an existing role silently.
+  // If you want “last writer wins”, replace this with direct assignment.
+  if (circuitRoles[circuitId] && circuitRoles[circuitId] !== role) return;
+
+  circuitRoles[circuitId] = role;
+}
 
 export type BspDungeonOptions = {
   width: number;
@@ -12894,11 +13064,11 @@ export function generateDungeonContent(
 <file path="src/CONTEXT.md">
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-21 (rev M)**
-**LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
-**CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Phase 2.5 — Soft Enforcement Instrumentation (DIAGNOSTIC-ONLY)**
-**PHASE STATUS:** **GRAPH-LEVEL INTENT MISALIGNMENTS INSTRUMENTED; NO PLACEMENT CHANGES YET**
+**CONTEXT VERSION:** **2026-01-21 (rev N)**  
+**LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**  
+**CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**  
+**CURRENT PHASE:** **Milestone 5 Kickoff — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**  
+**PHASE STATUS:** **PHASE 2.5 SOFT ENFORCEMENT ONLINE; RELIABILITY PATCHED VIA GATE-SITE + BRANCH-SITE VIABILITY (A1/A2)**
 
 ---
 
@@ -12909,6 +13079,14 @@ export function generateDungeonContent(
 * Batch harness is correct and trusted
 * Generation is deterministic and best-effort (never aborts)
 
+## POLICY ESCALATION PRINCIPLE
+
+A rule may only become “hard” if:
+
+* it has existed as a diagnostic,
+* then as a soft steering signal,
+* and has shown stable behavior under pressure.
+
 ---
 
 ## PROJECT OVERVIEW
@@ -12917,194 +13095,68 @@ This project is an experimental procedural dungeon generator built in TypeScript
 
 It is designed to evolve toward a JRPG / metroidvania-style dungeon system emphasizing:
 
-* backtracking
-* secrets
-* puzzles
-* progression gating
-* systemic reliability
-
-The system is intentionally layered so that:
-
-* geometry
-* gameplay intent
-* runtime puzzle logic
-
-are cleanly separated, enforced in code, and verified through runtime simulation and batch diagnostics.
+* backtracking + gating
+* “puzzle circuits” (levers, plates, blocks) that target doors/hazards/secrets
+* compositional progression grammar (teaching → gating → rewards → shortcuts)
+* deterministic best-effort generation (patterns may skip; the dungeon always generates)
 
 ---
 
-## HIGH-LEVEL ARCHITECTURE
+## MILESTONE ROADMAP (HIGH LEVEL)
 
-### STRUCTURAL DUNGEON GENERATION (BSP)
+### Milestone 1 — Geometry & Basic Metadata
+* BSP rooms/corridors, region labeling, distance fields, walkability.
 
-**Entry:** `generateBspDungeon()` in `mazeGen.ts`
+### Milestone 2 — Content Placement v1
+* Doors/keys/levers/plates/blocks/hazards placed as fixtures.
 
-Responsibilities:
+### Milestone 3 — Stateful Puzzle Execution
+* Runtime state model for fixtures (doors, keys, levers, plates, blocks, hazards, secrets).
+* Circuit evaluator (`evaluateCircuits.ts`) that computes activeness + applies targets deterministically.
+* SIGNAL triggers + topo-sort ordering for circuit chaining; cycle-tolerant best-effort behavior.
+* Circuit diagnostics UI.
 
-* BSP partitioning
-* Room carving
-* Corridor carving
-* Wall preservation
-* Distance-to-wall calculation
-* Region (room) identification
+### Milestone 4 — Puzzle Composition & Progression Grammar (CLOSED)
+* Role diagnostics schema + UI (read-only, batch-safe).
+* Composition patterns (role-aware), best-effort execution with authoritative diagnostics.
+* Reliability patching for composition patterns (pre-checks / retries) to reach near-100%.
 
-Outputs:
-
-* `solid`, `regionId`, `distanceToWall` masks
-* BSP metadata (rooms, corridors, depth, seed)
-
-This layer is **pure geometry** and contains no gameplay knowledge.
-
----
-
-### CONTENT GENERATION (Milestones 1–5)
-
-**Entry:** `generateDungeonContent()` in `mazeGen.ts`
-
-Responsibilities:
-
-* Place gameplay content on geometry
-* Encode progression intent declaratively
-* Express puzzle structure via patterns
-* Guarantee solvability by construction (best-effort)
-* Remain deterministic from seed/options
-
-This layer **does not execute puzzle logic**.
+### Milestone 5 — Intent Steering & Progression Policy (CURRENT)
+* “Soft enforcement” (pressure, not veto) → later “hard policy” (veto/repair).
+* Reduce stacked gates; improve placement intent and pacing; formalize progression policy.
 
 ---
 
-### RUNTIME / PUZZLE LOGIC (Milestone 3+)
+## DEFINITIONS — “PROGRESSION GRAMMAR” (WORDS BEFORE CODE)
 
-Core files:
+Progression grammar is the set of *repeatable, composable* “micro-structures” that shape the player’s experience:
 
-* `dungeonState.ts`
-* `evaluateCircuits.ts`
-* `walkability.ts`
-* `App.tsx` (debug UI + batch harness)
+* **Teach**: a simple interaction demonstrates a mechanic (lever/plate/hidden).
+* **Gate**: the mechanic is required to progress (main-path constraint).
+* **Reward**: optional content is locked behind meaningful logic (not free).
+* **Foreshadow**: the player sees a locked reward or shortcut before they can access it.
+* **Shortcut**: the player later unlocks a connection that reduces backtracking cost.
+* **Ramp**: complexity and chaining depth increase as dungeon depth increases.
 
-Responsibilities:
-
-* Hold mutable gameplay state
-* Evaluate circuits deterministically
-* Apply effects (doors, hazards, secrets)
-* Drive interactive simulation (debug harness)
-
----
-
-## IMPLEMENTED & VERIFIED (DO NOT RE-DISCUSS)
-
-### GEOMETRY MUTATION POLICY — OPTION A
-
-* Geometry-mutating patterns run before final distance usage
-* `distanceToWall` recomputed once if **any** pattern carved
-* Implemented via `runPatternsBestEffort()` → `didCarve`
-
-Stable and verified.
+In-engine, this grammar is expressed as:
+* **patterns** that place fixtures + circuits
+* **roles** assigned to circuits (MAIN_PATH_GATE, OPTIONAL_REWARD, SHORTCUT, FORESHADOW)
+* **diagnostics + thresholds** that score whether placements match intent
+* later: **policy** that steers/repairs/vetoes placements to enforce intent.
 
 ---
 
-### CONTENT MASKS & METADATA
+## MILESTONE 4 STATUS (COMPLETE STATE CHECK)
 
-Authoritative `featureType` values:
+Milestone 4 is considered “complete” when:
 
-* 0 none
-* 1 monster
-* 2 chest
-* 3 legacy secret door
-* 4 door
-* 5 key
-* 6 lever
-* 7 pressure plate
-* 8 push block
-* 9 hidden passage
-* 10 hazard
+* ✅ Circuit chaining exists (SIGNAL dependencies) and is deterministic + best-effort.
+* ✅ Authoritative diagnostics exist for circuits + roles (UI + batch safe).
+* ✅ At least one **composition pattern** exists that uses SIGNAL to compose two circuits.
+* ✅ Patterns are **best-effort** (skip, never abort) with reasons aggregated in batch.
+* ✅ Reliability is batch-verified at scale (near-100% or patched to reach it).
 
-Invariants:
-
-* featureType 9 MUST have non-zero featureId
-* `meta.secrets[]` is authoritative
-* Masks are diagnostic; metadata is authoritative
-
----
-
-### PUZZLE PATTERNS (MILESTONE 3)
-
-Stable patterns:
-
-1. **leverHiddenPocket** *(carving; reachability validated with multi-candidate retry)*
-2. **leverOpensDoor** *(non-carving)*
-3. **plateOpensDoor** *(non-carving)*
-
-All patterns are:
-
-* deterministic
-* best-effort
-* batch-aggregatable
-* diagnostics-emitting
-
----
-
-### BATCH VALIDATION HARNESS
-
-Capabilities:
-
-* Hundreds to thousands of seeds per run
-* Per-pattern aggregation
-* Success/failure rates
-* Failure histograms
-* Circuit topology metrics
-* JSON export
-
-Trusted and authoritative.
-
----
-
-## STRUCTURAL LANDMARK VISUALIZATION
-
-### Entrance Tile
-
-* Identified via `content.meta.entranceRoomId`
-* Center tile rendered **cyan**
-* Render-only; no gameplay impact
-
-### Exit Tile
-
-* Identified via `content.meta.farthestRoomId`
-* Center tile rendered **purple**
-* Render-only; no gameplay impact
-
----
-
-## MILESTONE STATUS
-
-### Milestone 3 — COMPLETE, STABLE
-
-* Runtime puzzle execution verified
-* Geometry mutation safe
-* Diagnostics trustworthy
-* No silent failures
-
----
-
-### Milestone 4 — PUZZLE COMPOSITION & PROGRESSION GRAMMAR
-
-Milestone 4 focused on **meaning, escalation, and structure**, not new mechanics.
-
-#### Phase 1 — Circuit Chaining
-
-**STATUS:** COMPLETE / CLOSED
-
-#### Phase 2 — Puzzle Roles & Difficulty Ramping
-
-**STATUS:** ROLE DIAGNOSTICS IMPLEMENTED
-**STATUS:** UI SURFACED
-**STATUS:** OBSERVATIONAL ONLY (BY DESIGN)
-
-#### Phase 3 — Composition Patterns
-
-**STATUS:** COMPLETE
-**STATUS:** RELIABILITY PATCHED
-**STATUS:** CLOSED
+As of rev N: **Milestone 4 is CLOSED**.
 
 ---
 
@@ -13115,78 +13167,85 @@ Milestone 4 focused on **meaning, escalation, and structure**, not new mechanics
 A two-circuit, role-aware composition:
 
 * **MAIN_PATH_GATE**
-
-  * Lever-toggle door on main path
+  * Lever-toggle door on a **main-path edge**.
 
 * **OPTIONAL_REWARD**
+  * Branch door to an off-main room, gated by: **`PLATE && SIGNAL(gate ACTIVE)`**
+  * Chest placed in the optional branch room.
 
-  * Branch door gated by `(PLATE && SIGNAL(gate ACTIVE))`
-  * Chest placed in optional branch
+Uses a SIGNAL dependency to express **logical composition** (branch reward depends on the main-path gate being active).
 
-Uses SIGNAL dependency to express logical composition.
+#### Reliability + intent steering (Phase 2.5 soft enforcement)
 
----
+* **Main-edge scoring (no veto):** prefer edges with usable branch-site supply and avoid already-occupied door edges when possible.
+* **Gate-site viability:** try multiple gate tiles and skip those that would eliminate all usable branch door sites.
+* **Branch-anchor fallback:** attempt branching off the deep side first, then shallow side if needed.
 
-## NEW IN REV M — GRAPH-LEVEL GATE REUSE INSTRUMENTATION
-
-### Motivation
-
-With Milestone 4 complete, composition reliability revealed a **semantic misalignment**:
-
-* Multiple doors can be placed along the **same room-graph edge**
-* This produces stacked or redundant gates
-* Tile-level validity is preserved, but **progression meaning is degraded**
-
-This is **not a bug** — it is an intent-modeling gap.
+This pattern now runs best-effort but is intended to become the first “policy-steered” composition primitive for Milestone 5.
 
 ---
 
-### Canonical Interpretation (LOCKED)
+## ROLE DIAGNOSTICS (V1)
 
-* **Doors** are mechanical actuators
-* **Gates** are graph separations
-* Progression intent operates at the **room-graph level**, not the tile level
+Role diagnostics are *observational first* (warnings only), intended to support later intent steering.
+
+### Roles
+* `MAIN_PATH_GATE`
+* `OPTIONAL_REWARD`
+* `SHORTCUT`
+* `FORESHADOW`
+
+### Key signals
+* **Anchor**: roomDepth / depthN + whether the anchor is on main path.
+* **TopoDepth**: longest SIGNAL prereq chain length per circuit (0..).
+* **Rule hits**: thresholds per role (e.g., “late trivial main gate”).
+
+### Thresholds (defaults)
+* `DEFAULT_ROLE_THRESHOLDS_V1` exists and is tuned for “early simple, mid more chained”.
 
 ---
 
-### Instrumentation Added (NO BEHAVIOR CHANGE)
+## PATTERN DIAGNOSTICS (AUTHORITATIVE)
 
-The following diagnostic-only additions were implemented:
+Patterns run best-effort and report a `PatternDiagnostics[]` entry each run:
 
-#### Graph Edge Identity
+* ok / reason
+* didCarve
+* stats (door sites)
+* reachability (for carving patterns)
+* (new) edge reuse diagnostics (gateEdgeReuse) for intent steering
 
-* New helper: `graphEdgeId(roomA, roomB)`
-* Produces canonical, order-independent room-graph edge IDs
-* Used exclusively for diagnostics (no placement logic yet)
+The batch harness is trusted; diagnostic aggregation is authoritative for reliability + tuning.
 
-#### Gate Edge Reuse Diagnostic
+---
 
-* New diagnostic payload: `GateEdgeReuseDiagV1`
-* Emitted by `gateThenOptionalReward` on **successful placement**
-* Tracks:
+## NEW IN REV N — SOFT ENFORCEMENT + GATE/BRANCH VIABILITY PATCHES
 
-  * total doors placed
-  * unique graph edges used
-  * reuse of edges already occupied before this pattern
-  * reuse within the same pattern commit
+### What changed
 
-#### Plumbing
+**gateThenOptionalReward reliability + intent pressure**
 
-* `PatternResult` and `PatternDiagnostics` extended to carry `gateEdgeReuse`
-* `runPatternsBestEffort()` forwards the diagnostic unchanged
-* No placement heuristics modified
+* **Soft candidate scoring (no vetoes):** main-path edges are **sorted** to prefer:
+  1) edges where a branch door site is *actually available* somewhere off either endpoint (cheap lookahead),
+  2) edges **not already occupied** by an existing door (reduces “stacked gates”),
+  3) edges with **more** usable branch-site supply (coarse count), then a deterministic RNG tie-break.
+* **Gate-site viability pre-check:** for a chosen main edge, we try multiple gate tiles and **skip** any gate tile that would eliminate *all* usable branch door sites across both anchors.
+* **Branch-anchor fallback:** if branching off the deeper side fails (no sites), we also try the shallow side (deep-first ordering preserved).
 
-#### Batch Aggregation
+**leverHiddenPocket reliability**
 
-* `aggregateBatchRuns()` extended to compute `gateEdgeReuseAvg` per pattern
-* Reported metrics include:
+* Retains the **candidate-retry** strategy (shuffle candidate connectors; validate reachability pre/post in preview; commit first valid).
 
-  * average doors placed
-  * average unique edges
-  * reuse frequency
-  * percent of runs exhibiting edge reuse
+### Latest batch signal (300-run quick sweep)
 
-This allows **quantitative measurement of stacked-gate frequency** across thousands of seeds.
+* **gateThenOptionalReward:** 300/300 ok (**100%**) with **0 failures**.
+* **Gate-edge reuse (diagnostic):**
+  * doorsPlacedAvg ≈ **2**
+  * reusedExistingCountAvg ≈ **0.53**
+  * ~**48%** of runs had **at least one** reuse of an existing door edge (intent pressure target for Milestone 5).
+* **leverHiddenPocket:** 300/300 ok; pre-reveal reachable = **0**; post-reveal unreachable = **0**; shortestPathPostAvg ≈ **77.6** tiles.
+
+> Interpretation: reliability is now “boringly stable” for the tested patterns, and we have a measurable signal (edge reuse) to steer next.
 
 ---
 
@@ -13194,61 +13253,54 @@ This allows **quantitative measurement of stacked-gate frequency** across thousa
 
 * Milestone 4 is **fully closed and validated**
 * Composition patterns are stable and expressive
-* Intent/placement misalignment is now **measured, not hypothesized**
-* No enforcement or bias has been introduced yet
-* The system remains deterministic and best-effort
+* Intent/placement misalignment is **measured** (gateEdgeReuse) and now under **soft pressure** (Phase 2.5 steering)
+* `gateThenOptionalReward` reliability is **100% in the latest 300-run sweep**
+* The system remains deterministic and best-effort (patterns may skip; generation never aborts)
 
 ---
 
 ## NEXT STEPS — MILESTONE 5 (PHASE 2.5 → PHASE 3)
 
-### Phase 2.5 — Soft Enforcement (NEXT)
+### Phase 2.5 (SOFT ENFORCEMENT / INTENT PRESSURE — best-effort)
 
-**Goal:** Align gate placement with progression intent **without hard constraints**.
+**Done (this rev):**
 
-Planned steps:
+1) **Edge-reuse instrumentation** for doors (gateEdgeReuse diag) + batch aggregation.
+2) **Soft steering applied** in `gateThenOptionalReward`:
+   * score/sort candidate main edges using branch-site supply + “avoid existing door edges”
+   * gate-site viability pre-check across both anchors
+   * shallow-side fallback when deep-side branch has no usable door sites
+   * Make sure lever is placed somewhere before the gated location the locked door would create (sometimes the lever would be inaccessible to the player).
+   * Create a diagnostic measure to track any lever placements that would be behind its own gate in dungeon creation.
+   
+3) **Reliability patch preserved** in `leverHiddenPocket` via candidate retries + preview reachability validation.
 
-1. **Observe Batch Metrics**
+**Next (still Phase 2.5):**
 
-   * Run 1k–5k seed batches
-   * Establish baseline gate-edge reuse rates
+* **Expose steering signal in UI**: show per-run `gateEdgeReuse` summary next to pattern diagnostics (counts + reused edgeIds).
+* **Tuning pass**: reduce stacked gates by increasing pressure against reusing existing edges (still no hard veto):
+  * strengthen scoring weight against `isOccupiedByExistingDoor`,
+  * optionally cap “tries” on occupied edges before considering unoccupied ones.
+* **Role coverage checks (warnings only):**
+  * ensure at least one MAIN_PATH_GATE exists,
+  * ensure at least one OPTIONAL_REWARD exists,
+  * report when roles cluster too early/late (hook into RoleDiagnostics thresholds).
 
-2. **Introduce Candidate Scoring (NOT vetoes)**
+### Phase 3 (HARD ENFORCEMENT / POLICY)
 
-   * Prefer unused graph edges
-   * Prefer monotonic depth progression
-   * Bias increases only on retries
+When we’re happy with soft pressure behavior:
 
-3. **Retry Escalation**
-
-   * Early attempts: local, cheap, permissive
-   * Later attempts: deeper, unused edges preferred
-
-4. **No Hard Guarantees**
-
-   * Never abort generation
-   * Never forbid reuse outright
-   * Preserve determinism
-
----
-
-## REFINED MENTAL MODEL
-
-* BSP creates space
-* Content expresses intent
-* **Progression intent lives at the graph level**
-* Patterns compose structure
-* Circuits encode logic
-* Signals compose logic
-* Runtime executes state
-* Diagnostics quantify structure
-* Batch harness turns intuition into data
-* **Search order shapes meaning**
-* **Gates are graph cuts, not tiles**
-* **Milestone 4 proved composition**
-* **Milestone 5 aligns intent with placement**
+* **Hard veto**: disallow placing a new main-path gate on an edge already occupied by a door (unless no alternative edges exist).
+* **Budgeted retries**: if the pattern fails for structural reasons, expand the candidate pool (relaxed door-site trimming / slightly larger search radius) before giving up.
+* **Optional reward quality**: require a minimum topoDepth for OPTIONAL_REWARD past a depthN threshold (enforced, not just diagnosed).
 
 ---
+
+## NOTES / REMINDERS
+
+* Patterns must remain best-effort; failures are data, not fatal.
+* Option A geometry policy stands: recompute distanceToWall after carving patterns.
+* Diagnostics are the primary steering surface for Milestone 5.
 </file>
 
 </files>

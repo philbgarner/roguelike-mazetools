@@ -38,6 +38,20 @@ import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; w: number; h: number };
 
+function writeCircuitRole(
+  circuitRoles: Record<number, PuzzleRole> | undefined,
+  circuitId: number,
+  role: PuzzleRole,
+) {
+  if (!circuitRoles) return;
+
+  // Best-effort: don’t overwrite an existing role silently.
+  // If you want “last writer wins”, replace this with direct assignment.
+  if (circuitRoles[circuitId] && circuitRoles[circuitId] !== role) return;
+
+  circuitRoles[circuitId] = role;
+}
+
 export type BspDungeonOptions = {
   width: number;
   height: number;
