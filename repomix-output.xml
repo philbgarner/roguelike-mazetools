@@ -4659,509 +4659,6 @@ details[open] > .maze-summary {
 }
 </file>
 
-<file path="src/batchStats.ts">
-// src/batchStats.ts
-//
-// Batch runner aggregation helpers.
-// This file is intentionally framework-agnostic (no React) so it can be reused
-// by UI panels, scripts, or future CLI harnesses.
-//
-
-import type { DoorSiteStatsBundle } from "./doorSites";
-
-export type LeverBehindOwnGateDiagV1 = {
-  schemaVersion: 1;
-  gateDoorId: number; // the door id the lever controls (same id for this pattern)
-  leverId: number; // lever fixture id (same id for this pattern)
-  leverX: number;
-  leverY: number;
-
-  // Reachability of the lever from entrance with all doors closed:
-  reachableWithGateClosed: boolean;
-
-  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
-  reachableIfGateWereOpen: boolean;
-
-  // The actual diagnostic flag we care about:
-  isBehindOwnGate: boolean;
-  reachableIfAllDoorsWereOpen: boolean;
-  blockedByOtherDoor: boolean;
-  unreachableEvenIfAllDoorsOpen: boolean;
-};
-
-export type GateEdgeReuseDiagV1 = {
-  schemaVersion: 1;
-
-  // Total doors placed by the pattern run (typically 0, 1, or 2)
-  doorsPlaced: number;
-
-  // Unique graph edges among those doors
-  uniqueEdgesPlaced: number;
-
-  // Count of doors whose edge was already occupied BEFORE this pattern committed
-  reusedExistingCount: number;
-
-  // Count of doors that reuse an edge already placed earlier in THIS pattern commit
-  // (should usually be 0; helpful as a sanity check)
-  reusedInternalCount: number;
-
-  // Small list of edgeIds that were reused (best-effort; keep short)
-  reusedEdgeIds: string[];
-};
-
-export type PatternDiag = {
-  name: string;
-  ok: boolean;
-  didCarve: boolean;
-  reason?: string;
-  ms?: number;
-  stats?: DoorSiteStatsBundle;
-  reachability?: ReachabilityStats;
-  gateEdgeReuse?: GateEdgeReuseDiagV1;
-  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
-};
-
-export type Point = { x: number; y: number };
-
-export type ReachabilityStats = {
-  start: Point;
-  connector: Point;
-  pocketCenter: Point;
-  goal: Point;
-  reachablePre: boolean;
-  reachablePost: boolean;
-  shortestPathPost: number | null;
-};
-
-export type CircuitBatchMetrics = {
-  schemaVersion: 1;
-
-  circuitCount: number;
-  signalEdgeCount: number;
-
-  maxTopoDepth: number;
-  avgTopoDepth: number;
-
-  circuitsWithSignalDeps: number;
-  pctWithSignalDeps: number; // 0..1
-
-  cycleGroupCount: number;
-  cycleCircuitCount: number;
-
-  blockedByCycleCount: number;
-
-  largestCycleSize: number;
-};
-
-export type BatchRunInput = {
-  seed: string;
-  seedUsed: number;
-  rooms: number;
-  corridors: number;
-  patternDiagnostics: PatternDiag[];
-  circuitMetrics: CircuitBatchMetrics | null;
-};
-
-export type BatchPatternSummary = {
-  name: string;
-  runs: number;
-  ok: number;
-  fail: number;
-  okRate: number; // 0..1
-  carved: number;
-  carvedRate: number; // 0..1
-  msTotal: number;
-  msAvg: number;
-  reasons: Record<string, number>;
-  topReasons: Array<[string, number]>;
-  doorSitesAvg?: Record<string, number>;
-  // Optional: reachability diagnostics (present when any run reported it)
-  reachabilityPreReachable?: number;
-  reachabilityPreReachableRate?: number; // 0..1
-  reachabilityPostUnreachable?: number;
-  reachabilityPostUnreachableRate?: number; // 0..1
-  shortestPathPostAvg?: number;
-
-  // Optional: graph-edge reuse diagnostics (present when any run reported it)
-  gateEdgeReuseAvg?: {
-    runsWithDiag: number;
-    pctRunsWithDiag: number; // 0..1
-
-    doorsPlacedAvg: number;
-    uniqueEdgesPlacedAvg: number;
-
-    reusedExistingCountAvg: number;
-    reusedInternalCountAvg: number;
-
-    runsWithExistingReuse: number;
-    pctRunsWithExistingReuse: number; // 0..1
-  };
-
-  // Optional: lever accessibility diagnostics for composition patterns
-  leverAccessAvg?: {
-    runsWithDiag: number;
-    pctRunsWithDiag: number; // 0..1
-
-    leverBehindOwnGateCount: number;
-    pctLeverBehindOwnGate: number; // 0..1
-
-    leverUnreachableEvenIfGateOpenCount: number;
-    pctLeverUnreachableEvenIfGateOpen: number; // 0..1
-  };
-};
-
-export type BatchSummary = {
-  runs: number;
-  roomsAvg: number;
-  corridorsAvg: number;
-  patterns: BatchPatternSummary[];
-
-  circuits?: {
-    runsWithMetrics: number;
-
-    circuitCountAvg: number;
-    signalEdgeCountAvg: number;
-
-    maxTopoDepthAvg: number;
-    avgTopoDepthAvg: number;
-
-    circuitsWithSignalDepsAvg: number;
-    pctWithSignalDepsAvg: number;
-
-    cycleGroupCountAvg: number;
-    cycleCircuitCountAvg: number;
-
-    blockedByCycleCountAvg: number;
-
-    largestCycleSizeAvg: number;
-  };
-};
-
-function safeNum(v: unknown): number {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
-export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
-  const totalRuns = runs.length;
-
-  let roomsSum = 0;
-  let corridorsSum = 0;
-  let circuitRuns = 0;
-
-  let circuitCountSum = 0;
-  let signalEdgeCountSum = 0;
-
-  let maxTopoDepthSum = 0;
-  let avgTopoDepthSum = 0;
-
-  let circuitsWithSignalDepsSum = 0;
-  let pctWithSignalDepsSum = 0;
-
-  let cycleGroupCountSum = 0;
-  let cycleCircuitCountSum = 0;
-
-  let blockedByCycleCountSum = 0;
-
-  let largestCycleSizeSum = 0;
-
-  function makeAcc() {
-    return {
-      runs: 0,
-      ok: 0,
-      fail: 0,
-      carved: 0,
-      msTotal: 0,
-      reasons: {} as Record<string, number>,
-      doorSitesSum: {} as Record<string, number>,
-      doorSitesCount: 0,
-      reachabilityCount: 0,
-      reachabilityPreReachable: 0,
-      reachabilityPostUnreachable: 0,
-      shortestPathPostSum: 0,
-      shortestPathPostCount: 0,
-      gateEdgeReuseCount: 0,
-      gateDoorsPlacedSum: 0,
-      gateUniqueEdgesSum: 0,
-      gateReusedExistingSum: 0,
-      gateReusedInternalSum: 0,
-      gateRunsWithExistingReuse: 0,
-      leverAccessDiagCount: 0,
-      leverBehindOwnGateCount: 0,
-      leverUnreachableEvenIfGateOpenCount: 0,
-    };
-  }
-
-  const byPattern = new Map<
-    string,
-    {
-      runs: number;
-      ok: number;
-      fail: number;
-      carved: number;
-      msTotal: number;
-      reasons: Record<string, number>;
-      doorSitesSum: Record<string, number>;
-      doorSitesCount: number;
-      reachabilityCount: number;
-      reachabilityPreReachable: number;
-      reachabilityPostUnreachable: number;
-      shortestPathPostSum: number;
-      shortestPathPostCount: number;
-      gateEdgeReuseCount: number;
-      gateDoorsPlacedSum: number;
-      gateUniqueEdgesSum: number;
-      gateReusedExistingSum: number;
-      gateReusedInternalSum: number;
-      gateRunsWithExistingReuse: number;
-      leverAccessDiagCount: number;
-      leverBehindOwnGateCount: number;
-      leverUnreachableEvenIfGateOpenCount: number;
-    }
-  >();
-
-  for (const r of runs) {
-    roomsSum += safeNum(r.rooms);
-    corridorsSum += safeNum(r.corridors);
-
-    for (const d of r.patternDiagnostics ?? []) {
-      const name = String(d.name ?? "unknown");
-      let next = byPattern.get(name);
-      if (!next) {
-        next = makeAcc();
-        byPattern.set(name, next);
-      }
-
-      next.runs += 1;
-      if (d.ok) next.ok += 1;
-      else next.fail += 1;
-
-      if (d.didCarve) next.carved += 1;
-
-      const ms = safeNum(d.ms);
-      if (ms > 0) next.msTotal += ms;
-
-      if (!d.ok) {
-        const reason = String(d.reason ?? "unknown");
-        next.reasons[reason] = (next.reasons[reason] ?? 0) + 1;
-      }
-
-      const ds = d.stats?.doorSites;
-      if (ds) {
-        next.doorSitesCount += 1;
-        for (const [k, v] of Object.entries(ds)) {
-          const n = safeNum(v);
-          next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
-        }
-      }
-      const rs = d.reachability;
-      if (rs) {
-        next.reachabilityCount += 1;
-        if (rs.reachablePre) next.reachabilityPreReachable += 1;
-        if (!rs.reachablePost) next.reachabilityPostUnreachable += 1;
-
-        const sp = rs.shortestPathPost;
-        if (typeof sp === "number" && Number.isFinite(sp) && sp >= 0) {
-          next.shortestPathPostSum += sp;
-          next.shortestPathPostCount += 1;
-        }
-      }
-
-      const gr = d.gateEdgeReuse;
-      if (gr) {
-        next.gateEdgeReuseCount += 1;
-        next.gateDoorsPlacedSum += safeNum(gr.doorsPlaced);
-        next.gateUniqueEdgesSum += safeNum(gr.uniqueEdgesPlaced);
-        next.gateReusedExistingSum += safeNum(gr.reusedExistingCount);
-        next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
-        if ((gr.reusedExistingCount | 0) > 0)
-          next.gateRunsWithExistingReuse += 1;
-      }
-      const lb = d.leverBehindOwnGate;
-      if (lb) {
-        next.leverAccessDiagCount += 1;
-
-        if (lb.isBehindOwnGate) {
-          next.leverBehindOwnGateCount += 1;
-        }
-
-        // More serious: even "opening" ONLY its own gate doesn't make it reachable.
-        // This suggests it is behind some OTHER blocker (another door), or disconnected.
-        if (!lb.reachableIfGateWereOpen) {
-          next.leverUnreachableEvenIfGateOpenCount += 1;
-        }
-      }
-
-      byPattern.set(name, next);
-    }
-
-    const cm = r.circuitMetrics;
-    if (cm) {
-      circuitRuns += 1;
-
-      circuitCountSum += safeNum(cm.circuitCount);
-      signalEdgeCountSum += safeNum(cm.signalEdgeCount);
-
-      maxTopoDepthSum += safeNum(cm.maxTopoDepth);
-      avgTopoDepthSum += safeNum(cm.avgTopoDepth);
-
-      circuitsWithSignalDepsSum += safeNum(cm.circuitsWithSignalDeps);
-      pctWithSignalDepsSum += safeNum(cm.pctWithSignalDeps);
-
-      cycleGroupCountSum += safeNum(cm.cycleGroupCount);
-      cycleCircuitCountSum += safeNum(cm.cycleCircuitCount);
-
-      blockedByCycleCountSum += safeNum(cm.blockedByCycleCount);
-
-      largestCycleSizeSum += safeNum(cm.largestCycleSize);
-    }
-  }
-
-  const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([name, acc]) => {
-      const okRate = acc.runs ? acc.ok / acc.runs : 0;
-      const carvedRate = acc.runs ? acc.carved / acc.runs : 0;
-      const msAvg = acc.runs ? acc.msTotal / acc.runs : 0;
-
-      const topReasons = Object.entries(acc.reasons)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-
-      let doorSitesAvg: Record<string, number> | undefined = undefined;
-      if (acc.doorSitesCount > 0) {
-        doorSitesAvg = {};
-        for (const [k, sum] of Object.entries(acc.doorSitesSum)) {
-          doorSitesAvg[k] = round2(sum / acc.doorSitesCount);
-        }
-      }
-
-      const hasReach = acc.reachabilityCount > 0;
-      const reachabilityPreReachableRate = hasReach
-        ? acc.reachabilityPreReachable / acc.reachabilityCount
-        : 0;
-      const reachabilityPostUnreachableRate = hasReach
-        ? acc.reachabilityPostUnreachable / acc.reachabilityCount
-        : 0;
-      const shortestPathPostAvg = acc.shortestPathPostCount
-        ? acc.shortestPathPostSum / acc.shortestPathPostCount
-        : 0;
-
-      const out: BatchPatternSummary = {
-        name,
-        runs: acc.runs,
-        ok: acc.ok,
-        fail: acc.fail,
-        okRate: round2(okRate),
-        carved: acc.carved,
-        carvedRate: round2(carvedRate),
-        msTotal: Math.round(acc.msTotal),
-        msAvg: round2(msAvg),
-        reasons: acc.reasons,
-        topReasons,
-        doorSitesAvg,
-      };
-
-      if (hasReach) {
-        out.reachabilityPreReachable = acc.reachabilityPreReachable;
-        out.reachabilityPreReachableRate = round2(reachabilityPreReachableRate);
-        out.reachabilityPostUnreachable = acc.reachabilityPostUnreachable;
-        out.reachabilityPostUnreachableRate = round2(
-          reachabilityPostUnreachableRate,
-        );
-        if (acc.shortestPathPostCount > 0) {
-          out.shortestPathPostAvg = round2(shortestPathPostAvg);
-        }
-      }
-
-      if (acc.gateEdgeReuseCount > 0) {
-        const runsWithDiag = acc.gateEdgeReuseCount;
-        const doorsPlacedAvg = acc.gateDoorsPlacedSum / runsWithDiag;
-        const uniqueEdgesPlacedAvg = acc.gateUniqueEdgesSum / runsWithDiag;
-        const reusedExistingCountAvg = acc.gateReusedExistingSum / runsWithDiag;
-        const reusedInternalCountAvg = acc.gateReusedInternalSum / runsWithDiag;
-
-        out.gateEdgeReuseAvg = {
-          runsWithDiag,
-          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
-
-          doorsPlacedAvg: round2(doorsPlacedAvg),
-          uniqueEdgesPlacedAvg: round2(uniqueEdgesPlacedAvg),
-
-          reusedExistingCountAvg: round2(reusedExistingCountAvg),
-          reusedInternalCountAvg: round2(reusedInternalCountAvg),
-
-          runsWithExistingReuse: acc.gateRunsWithExistingReuse,
-          pctRunsWithExistingReuse: round2(
-            runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
-          ),
-        };
-      }
-
-      if (acc.leverAccessDiagCount > 0) {
-        const runsWithDiag = acc.leverAccessDiagCount;
-
-        out.leverAccessAvg = {
-          runsWithDiag,
-          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
-
-          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
-          pctLeverBehindOwnGate: round2(
-            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
-          ),
-
-          leverUnreachableEvenIfGateOpenCount:
-            acc.leverUnreachableEvenIfGateOpenCount,
-          pctLeverUnreachableEvenIfGateOpen: round2(
-            runsWithDiag
-              ? acc.leverUnreachableEvenIfGateOpenCount / runsWithDiag
-              : 0,
-          ),
-        };
-      }
-
-      return out;
-    });
-
-  const circuits =
-    circuitRuns > 0
-      ? {
-          runsWithMetrics: circuitRuns,
-
-          circuitCountAvg: round2(circuitCountSum / circuitRuns),
-          signalEdgeCountAvg: round2(signalEdgeCountSum / circuitRuns),
-
-          maxTopoDepthAvg: round2(maxTopoDepthSum / circuitRuns),
-          avgTopoDepthAvg: round2(avgTopoDepthSum / circuitRuns),
-
-          circuitsWithSignalDepsAvg: round2(
-            circuitsWithSignalDepsSum / circuitRuns,
-          ),
-          pctWithSignalDepsAvg: round2(pctWithSignalDepsSum / circuitRuns),
-
-          cycleGroupCountAvg: round2(cycleGroupCountSum / circuitRuns),
-          cycleCircuitCountAvg: round2(cycleCircuitCountSum / circuitRuns),
-
-          blockedByCycleCountAvg: round2(blockedByCycleCountSum / circuitRuns),
-
-          largestCycleSizeAvg: round2(largestCycleSizeSum / circuitRuns),
-        }
-      : undefined;
-
-  return {
-    runs: totalRuns,
-    roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
-    corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
-    patterns,
-    circuits,
-  };
-}
-</file>
-
 <file path="src/dungeonState.ts">
 // src/dungeonState.ts
 //
@@ -5498,6 +4995,539 @@ export function ensureSecret(state: DungeonRuntimeState, id: number): void {
 
 export function ensurePlate(state: DungeonRuntimeState, id: number): void {
   if (!state.plates[id]) state.plates[id] = { pressed: false };
+}
+</file>
+
+<file path="src/batchStats.ts">
+// src/batchStats.ts
+//
+// Batch runner aggregation helpers.
+// This file is intentionally framework-agnostic (no React) so it can be reused
+// by UI panels, scripts, or future CLI harnesses.
+//
+
+import type { DoorSiteStatsBundle } from "./doorSites";
+
+export type LeverBehindOwnGateDiagV1 = {
+  schemaVersion: 1;
+  gateDoorId: number; // the door id the lever controls (same id for this pattern)
+  leverId: number; // lever fixture id (same id for this pattern)
+  leverX: number;
+  leverY: number;
+
+  // Reachability of the lever from entrance with all doors closed:
+  reachableWithGateClosed: boolean;
+
+  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
+  reachableIfGateWereOpen: boolean;
+
+  // The actual diagnostic flag we care about:
+  isBehindOwnGate: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
+export type GateEdgeReuseDiagV1 = {
+  schemaVersion: 1;
+
+  // Total doors placed by the pattern run (typically 0, 1, or 2)
+  doorsPlaced: number;
+
+  // Unique graph edges among those doors
+  uniqueEdgesPlaced: number;
+
+  // Count of doors whose edge was already occupied BEFORE this pattern committed
+  reusedExistingCount: number;
+
+  // Count of doors that reuse an edge already placed earlier in THIS pattern commit
+  // (should usually be 0; helpful as a sanity check)
+  reusedInternalCount: number;
+
+  // Small list of edgeIds that were reused (best-effort; keep short)
+  reusedEdgeIds: string[];
+};
+
+export type PatternDiag = {
+  name: string;
+  ok: boolean;
+  didCarve: boolean;
+  reason?: string;
+  ms?: number;
+  stats?: DoorSiteStatsBundle;
+  reachability?: ReachabilityStats;
+  gateEdgeReuse?: GateEdgeReuseDiagV1;
+  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
+};
+
+export type Point = { x: number; y: number };
+
+export type ReachabilityStats = {
+  start: Point;
+  connector: Point;
+  pocketCenter: Point;
+  goal: Point;
+  reachablePre: boolean;
+  reachablePost: boolean;
+  shortestPathPost: number | null;
+};
+
+export type CircuitBatchMetrics = {
+  schemaVersion: 1;
+
+  circuitCount: number;
+  signalEdgeCount: number;
+
+  maxTopoDepth: number;
+  avgTopoDepth: number;
+
+  circuitsWithSignalDeps: number;
+  pctWithSignalDeps: number; // 0..1
+
+  cycleGroupCount: number;
+  cycleCircuitCount: number;
+
+  blockedByCycleCount: number;
+
+  largestCycleSize: number;
+};
+
+export type BatchRunInput = {
+  seed: string;
+  seedUsed: number;
+  rooms: number;
+  corridors: number;
+  patternDiagnostics: PatternDiag[];
+  circuitMetrics: CircuitBatchMetrics | null;
+};
+
+export type BatchPatternSummary = {
+  name: string;
+  runs: number;
+  ok: number;
+  fail: number;
+  okRate: number; // 0..1
+  carved: number;
+  carvedRate: number; // 0..1
+  msTotal: number;
+  msAvg: number;
+  reasons: Record<string, number>;
+  topReasons: Array<[string, number]>;
+  doorSitesAvg?: Record<string, number>;
+  // Optional: reachability diagnostics (present when any run reported it)
+  reachabilityPreReachable?: number;
+  reachabilityPreReachableRate?: number; // 0..1
+  reachabilityPostUnreachable?: number;
+  reachabilityPostUnreachableRate?: number; // 0..1
+  shortestPathPostAvg?: number;
+
+  // Optional: graph-edge reuse diagnostics (present when any run reported it)
+  gateEdgeReuseAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    doorsPlacedAvg: number;
+    uniqueEdgesPlacedAvg: number;
+
+    reusedExistingCountAvg: number;
+    reusedInternalCountAvg: number;
+
+    runsWithExistingReuse: number;
+    pctRunsWithExistingReuse: number; // 0..1
+  };
+
+  leverAccessAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    // A) Lever is behind *its own* gate (opening only that gate makes it reachable)
+    leverBehindOwnGateCount: number;
+    pctLeverBehindOwnGate: number; // 0..1
+
+    // B) Lever becomes reachable if ALL doors are opened, but NOT if only its own gate is opened
+    // => blocked by some other door(s)
+    leverBlockedByOtherDoorCount: number;
+    pctLeverBlockedByOtherDoor: number; // 0..1
+
+    // C) Lever is unreachable even if all doors are opened
+    // => topology/disconnect/walls/hidden etc.
+    leverUnreachableEvenIfAllDoorsOpenCount: number;
+    pctLeverUnreachableEvenIfAllDoorsOpen: number; // 0..1
+
+    // (Optional but useful) Old signal: unreachable even when only gate is opened (other doors still closed)
+    leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+    pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
+  };
+};
+
+export type BatchSummary = {
+  runs: number;
+  roomsAvg: number;
+  corridorsAvg: number;
+  patterns: BatchPatternSummary[];
+
+  circuits?: {
+    runsWithMetrics: number;
+
+    circuitCountAvg: number;
+    signalEdgeCountAvg: number;
+
+    maxTopoDepthAvg: number;
+    avgTopoDepthAvg: number;
+
+    circuitsWithSignalDepsAvg: number;
+    pctWithSignalDepsAvg: number;
+
+    cycleGroupCountAvg: number;
+    cycleCircuitCountAvg: number;
+
+    blockedByCycleCountAvg: number;
+
+    largestCycleSizeAvg: number;
+  };
+};
+
+function safeNum(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
+  const totalRuns = runs.length;
+
+  let roomsSum = 0;
+  let corridorsSum = 0;
+  let circuitRuns = 0;
+
+  let circuitCountSum = 0;
+  let signalEdgeCountSum = 0;
+
+  let maxTopoDepthSum = 0;
+  let avgTopoDepthSum = 0;
+
+  let circuitsWithSignalDepsSum = 0;
+  let pctWithSignalDepsSum = 0;
+
+  let cycleGroupCountSum = 0;
+  let cycleCircuitCountSum = 0;
+
+  let blockedByCycleCountSum = 0;
+
+  let largestCycleSizeSum = 0;
+
+  function makeAcc() {
+    return {
+      runs: 0,
+      ok: 0,
+      fail: 0,
+      carved: 0,
+      msTotal: 0,
+      reasons: {} as Record<string, number>,
+      doorSitesSum: {} as Record<string, number>,
+      doorSitesCount: 0,
+      reachabilityCount: 0,
+      reachabilityPreReachable: 0,
+      reachabilityPostUnreachable: 0,
+      shortestPathPostSum: 0,
+      shortestPathPostCount: 0,
+      gateEdgeReuseCount: 0,
+      gateDoorsPlacedSum: 0,
+      gateUniqueEdgesSum: 0,
+      gateReusedExistingSum: 0,
+      gateReusedInternalSum: 0,
+      gateRunsWithExistingReuse: 0,
+      leverAccessDiagCount: 0,
+      leverBehindOwnGateCount: 0,
+      leverBlockedByOtherDoorCount: 0,
+      leverUnreachableEvenIfAllDoorsOpenCount: 0,
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
+    };
+  }
+
+  const byPattern = new Map<
+    string,
+    {
+      runs: number;
+      ok: number;
+      fail: number;
+      carved: number;
+      msTotal: number;
+      reasons: Record<string, number>;
+      doorSitesSum: Record<string, number>;
+      doorSitesCount: number;
+      reachabilityCount: number;
+      reachabilityPreReachable: number;
+      reachabilityPostUnreachable: number;
+      shortestPathPostSum: number;
+      shortestPathPostCount: number;
+      gateEdgeReuseCount: number;
+      gateDoorsPlacedSum: number;
+      gateUniqueEdgesSum: number;
+      gateReusedExistingSum: number;
+      gateReusedInternalSum: number;
+      gateRunsWithExistingReuse: number;
+      leverAccessDiagCount: number;
+      leverBehindOwnGateCount: number;
+      leverBlockedByOtherDoorCount: number;
+      leverUnreachableEvenIfAllDoorsOpenCount: number;
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+    }
+  >();
+
+  for (const r of runs) {
+    roomsSum += safeNum(r.rooms);
+    corridorsSum += safeNum(r.corridors);
+
+    for (const d of r.patternDiagnostics ?? []) {
+      const name = String(d.name ?? "unknown");
+      let next = byPattern.get(name);
+      if (!next) {
+        next = makeAcc();
+        byPattern.set(name, next);
+      }
+
+      next.runs += 1;
+      if (d.ok) next.ok += 1;
+      else next.fail += 1;
+
+      if (d.didCarve) next.carved += 1;
+
+      const ms = safeNum(d.ms);
+      if (ms > 0) next.msTotal += ms;
+
+      if (!d.ok) {
+        const reason = String(d.reason ?? "unknown");
+        next.reasons[reason] = (next.reasons[reason] ?? 0) + 1;
+      }
+
+      const ds = d.stats?.doorSites;
+      if (ds) {
+        next.doorSitesCount += 1;
+        for (const [k, v] of Object.entries(ds)) {
+          const n = safeNum(v);
+          next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
+        }
+      }
+      const rs = d.reachability;
+      if (rs) {
+        next.reachabilityCount += 1;
+        if (rs.reachablePre) next.reachabilityPreReachable += 1;
+        if (!rs.reachablePost) next.reachabilityPostUnreachable += 1;
+
+        const sp = rs.shortestPathPost;
+        if (typeof sp === "number" && Number.isFinite(sp) && sp >= 0) {
+          next.shortestPathPostSum += sp;
+          next.shortestPathPostCount += 1;
+        }
+      }
+
+      const gr = d.gateEdgeReuse;
+      if (gr) {
+        next.gateEdgeReuseCount += 1;
+        next.gateDoorsPlacedSum += safeNum(gr.doorsPlaced);
+        next.gateUniqueEdgesSum += safeNum(gr.uniqueEdgesPlaced);
+        next.gateReusedExistingSum += safeNum(gr.reusedExistingCount);
+        next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
+        if ((gr.reusedExistingCount | 0) > 0)
+          next.gateRunsWithExistingReuse += 1;
+      }
+      const lb = d.leverBehindOwnGate;
+      if (lb) {
+        next.leverAccessDiagCount += 1;
+
+        if (lb.isBehindOwnGate) next.leverBehindOwnGateCount += 1;
+
+        if (lb.blockedByOtherDoor) next.leverBlockedByOtherDoorCount += 1;
+
+        if (lb.unreachableEvenIfAllDoorsOpen)
+          next.leverUnreachableEvenIfAllDoorsOpenCount += 1;
+
+        // Keep the old diagnostic bucket (but renamed to reflect what it really means)
+        if (!lb.reachableIfGateWereOpen)
+          next.leverUnreachableWithGateOpenButOtherDoorsClosedCount += 1;
+      }
+
+      byPattern.set(name, next);
+    }
+
+    const cm = r.circuitMetrics;
+    if (cm) {
+      circuitRuns += 1;
+
+      circuitCountSum += safeNum(cm.circuitCount);
+      signalEdgeCountSum += safeNum(cm.signalEdgeCount);
+
+      maxTopoDepthSum += safeNum(cm.maxTopoDepth);
+      avgTopoDepthSum += safeNum(cm.avgTopoDepth);
+
+      circuitsWithSignalDepsSum += safeNum(cm.circuitsWithSignalDeps);
+      pctWithSignalDepsSum += safeNum(cm.pctWithSignalDeps);
+
+      cycleGroupCountSum += safeNum(cm.cycleGroupCount);
+      cycleCircuitCountSum += safeNum(cm.cycleCircuitCount);
+
+      blockedByCycleCountSum += safeNum(cm.blockedByCycleCount);
+
+      largestCycleSizeSum += safeNum(cm.largestCycleSize);
+    }
+  }
+
+  const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, acc]) => {
+      const okRate = acc.runs ? acc.ok / acc.runs : 0;
+      const carvedRate = acc.runs ? acc.carved / acc.runs : 0;
+      const msAvg = acc.runs ? acc.msTotal / acc.runs : 0;
+
+      const topReasons = Object.entries(acc.reasons)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+      let doorSitesAvg: Record<string, number> | undefined = undefined;
+      if (acc.doorSitesCount > 0) {
+        doorSitesAvg = {};
+        for (const [k, sum] of Object.entries(acc.doorSitesSum)) {
+          doorSitesAvg[k] = round2(sum / acc.doorSitesCount);
+        }
+      }
+
+      const hasReach = acc.reachabilityCount > 0;
+      const reachabilityPreReachableRate = hasReach
+        ? acc.reachabilityPreReachable / acc.reachabilityCount
+        : 0;
+      const reachabilityPostUnreachableRate = hasReach
+        ? acc.reachabilityPostUnreachable / acc.reachabilityCount
+        : 0;
+      const shortestPathPostAvg = acc.shortestPathPostCount
+        ? acc.shortestPathPostSum / acc.shortestPathPostCount
+        : 0;
+
+      const out: BatchPatternSummary = {
+        name,
+        runs: acc.runs,
+        ok: acc.ok,
+        fail: acc.fail,
+        okRate: round2(okRate),
+        carved: acc.carved,
+        carvedRate: round2(carvedRate),
+        msTotal: Math.round(acc.msTotal),
+        msAvg: round2(msAvg),
+        reasons: acc.reasons,
+        topReasons,
+        doorSitesAvg,
+      };
+
+      if (hasReach) {
+        out.reachabilityPreReachable = acc.reachabilityPreReachable;
+        out.reachabilityPreReachableRate = round2(reachabilityPreReachableRate);
+        out.reachabilityPostUnreachable = acc.reachabilityPostUnreachable;
+        out.reachabilityPostUnreachableRate = round2(
+          reachabilityPostUnreachableRate,
+        );
+        if (acc.shortestPathPostCount > 0) {
+          out.shortestPathPostAvg = round2(shortestPathPostAvg);
+        }
+      }
+
+      if (acc.gateEdgeReuseCount > 0) {
+        const runsWithDiag = acc.gateEdgeReuseCount;
+        const doorsPlacedAvg = acc.gateDoorsPlacedSum / runsWithDiag;
+        const uniqueEdgesPlacedAvg = acc.gateUniqueEdgesSum / runsWithDiag;
+        const reusedExistingCountAvg = acc.gateReusedExistingSum / runsWithDiag;
+        const reusedInternalCountAvg = acc.gateReusedInternalSum / runsWithDiag;
+
+        out.gateEdgeReuseAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          doorsPlacedAvg: round2(doorsPlacedAvg),
+          uniqueEdgesPlacedAvg: round2(uniqueEdgesPlacedAvg),
+
+          reusedExistingCountAvg: round2(reusedExistingCountAvg),
+          reusedInternalCountAvg: round2(reusedInternalCountAvg),
+
+          runsWithExistingReuse: acc.gateRunsWithExistingReuse,
+          pctRunsWithExistingReuse: round2(
+            runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
+          ),
+        };
+      }
+
+      if (acc.leverAccessDiagCount > 0) {
+        const runsWithDiag = acc.leverAccessDiagCount;
+
+        out.leverAccessAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
+          pctLeverBehindOwnGate: round2(
+            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
+          ),
+
+          leverBlockedByOtherDoorCount: acc.leverBlockedByOtherDoorCount,
+          pctLeverBlockedByOtherDoor: round2(
+            runsWithDiag ? acc.leverBlockedByOtherDoorCount / runsWithDiag : 0,
+          ),
+
+          leverUnreachableEvenIfAllDoorsOpenCount:
+            acc.leverUnreachableEvenIfAllDoorsOpenCount,
+          pctLeverUnreachableEvenIfAllDoorsOpen: round2(
+            runsWithDiag
+              ? acc.leverUnreachableEvenIfAllDoorsOpenCount / runsWithDiag
+              : 0,
+          ),
+
+          leverUnreachableWithGateOpenButOtherDoorsClosedCount:
+            acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount,
+          pctLeverUnreachableWithGateOpenButOtherDoorsClosed: round2(
+            runsWithDiag
+              ? acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount /
+                  runsWithDiag
+              : 0,
+          ),
+        };
+      }
+
+      return out;
+    });
+
+  const circuits =
+    circuitRuns > 0
+      ? {
+          runsWithMetrics: circuitRuns,
+
+          circuitCountAvg: round2(circuitCountSum / circuitRuns),
+          signalEdgeCountAvg: round2(signalEdgeCountSum / circuitRuns),
+
+          maxTopoDepthAvg: round2(maxTopoDepthSum / circuitRuns),
+          avgTopoDepthAvg: round2(avgTopoDepthSum / circuitRuns),
+
+          circuitsWithSignalDepsAvg: round2(
+            circuitsWithSignalDepsSum / circuitRuns,
+          ),
+          pctWithSignalDepsAvg: round2(pctWithSignalDepsSum / circuitRuns),
+
+          cycleGroupCountAvg: round2(cycleGroupCountSum / circuitRuns),
+          cycleCircuitCountAvg: round2(cycleCircuitCountSum / circuitRuns),
+
+          blockedByCycleCountAvg: round2(blockedByCycleCountSum / circuitRuns),
+
+          largestCycleSizeAvg: round2(largestCycleSizeSum / circuitRuns),
+        }
+      : undefined;
+
+  return {
+    runs: totalRuns,
+    roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
+    corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
+    patterns,
+    circuits,
+  };
 }
 </file>
 
@@ -6354,6 +6384,10 @@ export type CircuitRoleRecordV1 = {
   blockedByCycle: boolean;
 };
 
+export type IntroGatePatternOptions = {
+  maxAttempts?: number;
+};
+
 export type RoleRuleHitV1 = {
   ruleId: RoleRuleId;
   role: PuzzleRole | null;
@@ -6575,6 +6609,48 @@ export type GateThenOptionalRewardPatternOptions = {
   rewardLootTier?: number; // default 2
 };
 
+// Returns roomId (1-based) if point is in a room; otherwise 0.
+//
+// Preference order:
+// 1) dungeon.masks.regionId (if present and non-zero at p)
+// 2) rectangle containment against dungeon.meta.rooms[]
+//
+// Safe for corridors: will return 0.
+export function whichRoomIdForPoint(
+  dungeon: {
+    width: number;
+    height: number;
+    masks?: { regionId?: Uint8Array };
+    meta?: { rooms?: Array<{ x: number; y: number; w: number; h: number }> };
+  },
+  x: number,
+  y: number,
+): number {
+  const W = dungeon.width | 0;
+  const H = dungeon.height | 0;
+
+  if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+
+  // 1) Prefer regionId mask if available
+  const rid = dungeon.masks?.regionId;
+  if (rid && rid.length === W * H) {
+    const v = rid[y * W + x] | 0;
+    if (v !== 0) return v; // already a 1..N roomId
+  }
+
+  // 2) Fallback: room rectangle containment
+  const rooms = dungeon.meta?.rooms ?? [];
+  for (let i = 0; i < rooms.length; i++) {
+    const r = rooms[i]!;
+    // inclusive bounds: [x, x+w) and [y, y+h)
+    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
+      return (i + 1) | 0; // roomId is 1-based
+    }
+  }
+
+  return 0;
+}
+
 function edgeKey(a: number, b: number) {
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
@@ -6604,6 +6680,217 @@ function pickBranchNeighborOffMainPath(
   );
   if (!candidates.length) return null;
   return candidates[rng.nextInt(0, candidates.length - 1)]!;
+}
+
+export function applyIntroGatePattern(args: {
+  rng: PatternRng;
+  dungeon: BspDungeonOutputs;
+  rooms: BspDungeonOutputs["meta"]["rooms"];
+
+  entranceRoomId: number;
+  roomGraph: Map<number, Set<number>>;
+  roomDistance: Map<number, number>;
+  mainPathRoomIds: number[];
+
+  featureType: Uint8Array;
+  featureId: Uint8Array;
+  featureParam: Uint8Array;
+
+  doors: ContentOutputs["meta"]["doors"];
+  levers: ContentOutputs["meta"]["levers"];
+
+  circuitsById: Map<number, CircuitDef>;
+  circuitRoles: Record<number, PuzzleRole>;
+
+  allocId: () => number;
+  options?: IntroGatePatternOptions;
+}): PatternResult {
+  const {
+    rng,
+    dungeon,
+    rooms,
+    entranceRoomId,
+    roomDistance,
+    mainPathRoomIds,
+    featureType: ft,
+    featureId: fid,
+    featureParam: fparam,
+    doors,
+    levers,
+    circuitsById,
+    circuitRoles,
+    allocId,
+  } = args;
+
+  const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
+
+  const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
+    dungeon,
+    ft,
+    {
+      minDistToWall: 1,
+      preferCorridor: true,
+      trimEnds: 2,
+      duplicateBias: 1,
+      maxRadius: 10,
+    },
+  );
+
+  if (!candidates.length) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Intro gate: No valid corridor door sites.",
+      stats: { doorSites: stats },
+    };
+  }
+
+  const edgeToSites = new Map<string, typeof candidates>();
+  for (const s of candidates) {
+    const k = edgeKey(s.roomA, s.roomB);
+    const arr = edgeToSites.get(k);
+    if (arr) arr.push(s);
+    else edgeToSites.set(k, [s]);
+  }
+
+  const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
+  const start = entranceRoom ? findAnyFloorInRect(dungeon, entranceRoom) : null;
+  if (!start) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Intro gate: No entrance tile.",
+    };
+  }
+
+  // Reachability with doors closed (soft enforcement surface)
+  const reachClosed0 = computeReachable(dungeon, ft, fid, start, new Set());
+
+  const mainEdges: RoomEdge[] = [];
+  for (let i = 0; i < mainPathRoomIds.length - 1; i++) {
+    mainEdges.push(normEdge(mainPathRoomIds[i]!, mainPathRoomIds[i + 1]!));
+  }
+
+  // Prefer shallow edges, but still randomize within a small prefix
+  mainEdges.sort((a, b) => {
+    const da = Math.max(roomDistance.get(a.a) ?? 0, roomDistance.get(a.b) ?? 0);
+    const db = Math.max(roomDistance.get(b.a) ?? 0, roomDistance.get(b.b) ?? 0);
+    return da - db;
+  });
+
+  const prefix = Math.min(mainEdges.length, 4);
+  for (let i = prefix - 1; i > 0; i--) {
+    const j = rng.nextInt(0, i);
+    [mainEdges[i], mainEdges[j]] = [mainEdges[j], mainEdges[i]];
+  }
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const edge = mainEdges.length
+      ? mainEdges[rng.nextInt(0, Math.max(0, mainEdges.length - 1))]!
+      : null;
+    if (!edge) break;
+
+    const sites = edgeToSites.get(edgeKey(edge.a, edge.b));
+    if (!sites || sites.length === 0) continue;
+
+    const site = sites[rng.nextInt(0, sites.length - 1)]!;
+    const doorId = allocId();
+
+    const di = idxOf(dungeon.width, site.x, site.y);
+    if ((ft[di] | 0) !== 0) continue;
+
+    // Place door (lever door)
+    ft[di] = 4;
+    fid[di] = doorId;
+    fparam[di] = 2;
+
+    const depth =
+      Math.max(
+        roomDistance.get(site.roomA) ?? 0,
+        roomDistance.get(site.roomB) ?? 0,
+      ) | 0;
+
+    doors.push({
+      id: doorId,
+      x: site.x,
+      y: site.y,
+      roomA: site.roomA,
+      roomB: site.roomB,
+      kind: 2,
+      depth,
+    });
+
+    const roomA = rooms[site.roomA - 1] ?? entranceRoom;
+    const roomB = rooms[site.roomB - 1] ?? entranceRoom;
+
+    // Soft enforcement: lever must be reachable with doors closed
+    const leverP =
+      sampleReachableRoomFloorNoFeatures(
+        rng,
+        dungeon,
+        roomA,
+        ft,
+        reachClosed0,
+        140,
+      ) ??
+      sampleReachableRoomFloorNoFeatures(
+        rng,
+        dungeon,
+        roomB,
+        ft,
+        reachClosed0,
+        140,
+      ) ??
+      (entranceRoom
+        ? sampleReachableRoomFloorNoFeatures(
+            rng,
+            dungeon,
+            entranceRoom,
+            ft,
+            reachClosed0,
+            180,
+          )
+        : null);
+
+    if (!leverP) {
+      // rollback door
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      continue;
+    }
+
+    const li = idxOf(dungeon.width, leverP.x, leverP.y);
+    ft[li] = 6;
+    fid[li] = doorId;
+    fparam[li] = 0;
+
+    const leverRoomId =
+      whichRoomIdForPoint(dungeon, leverP.x, leverP.y) || entranceRoomId;
+    levers.push({ id: doorId, x: leverP.x, y: leverP.y, roomId: leverRoomId });
+
+    circuitsById.set(doorId, {
+      id: doorId,
+      logic: { type: "OR" },
+      behavior: { mode: "TOGGLE" },
+      triggers: [{ kind: "LEVER", refId: doorId }],
+      targets: [{ kind: "DOOR", refId: doorId, effect: "TOGGLE" }],
+      outputs: [{ kind: "SIGNAL", id: doorId, name: "INTRO_GATE_ACTIVE" }],
+    });
+
+    circuitRoles[doorId] = "MAIN_PATH_GATE";
+
+    return { ok: true, didCarve: false, stats: { doorSites: stats } };
+  }
+
+  return {
+    ok: false,
+    didCarve: false,
+    reason:
+      "Intro gate: No viable main-path door+reachable lever placement found.",
+    stats: { doorSites: stats },
+  };
 }
 
 /**
@@ -6741,6 +7028,8 @@ export function applyGateThenOptionalRewardPattern(args: {
   if (!start) {
     return { ok: false, didCarve: false, reason: "No entrance tile." };
   }
+
+  const reachClosed0 = computeReachable(dungeon, ft, fid, start, new Set());
 
   // --- Main-edge outer loop setup ---
   const mainEdges: RoomEdge[] = [];
@@ -6965,7 +7254,7 @@ export function applyGateThenOptionalRewardPattern(args: {
           );
 
           if (!branchSites.length) {
-            failBranchSameAsGate += branchSitesAll.length;
+            failBranchSameAsGate += 1;
             failNoBranchDoorSites++;
             continue;
           }
@@ -7002,10 +7291,18 @@ export function applyGateThenOptionalRewardPattern(args: {
               continue;
             }
 
-            const leverP = trySample(6, () =>
-              sampleRoomFloorNoFeatures(rng, dungeon, shallowRoom, ft),
+            const leverP = trySample(8, () =>
+              sampleReachableRoomFloorNoFeatures(
+                rng,
+                dungeon,
+                shallowRoom,
+                ft,
+                reachClosed0,
+              ),
             );
             if (!leverP) {
+              // No reachable lever tile in shallowRoom (with current doors closed).
+              // This is exactly the “blocked by other door” scenario — skip this attempt.
               failLever++;
               continue;
             }
@@ -7181,7 +7478,7 @@ export function applyGateThenOptionalRewardPattern(args: {
 
             const leverI = idxOf(W, leverP.x, leverP.y);
 
-            // Reachability with doors closed (computeReachable treats doors as blocked)
+            // A) Reachability with doors closed (baseline)
             const reachClosed = computeReachable(
               dungeon,
               ft,
@@ -7191,29 +7488,74 @@ export function applyGateThenOptionalRewardPattern(args: {
             );
             const reachableWithGateClosed = !!reachClosed[leverI];
 
-            // Reachability if we "open" only THIS gate door tile for analysis
-            const prevFt = ft[gateDi];
-            const prevFid = fid[gateDi];
-            const prevFparam = fparam[gateDi];
+            // B) Reachability if ONLY the gate door tile were open
+            const prevGateFt = ft[gateDi];
+            const prevGateFid = fid[gateDi];
+            const prevGateFparam = fparam[gateDi];
 
-            // Temporarily clear the door feature at the gate tile so BFS can pass through it
+            // Temporarily clear just the gate door tile
             ft[gateDi] = 0;
             fid[gateDi] = 0;
             fparam[gateDi] = 0;
 
-            const reachIfGateOpen = computeReachable(
+            const reachGateOpenOnly = computeReachable(
               dungeon,
               ft,
               fid,
               start,
               new Set(),
             );
-            const reachableIfGateWereOpen = !!reachIfGateOpen[leverI];
+            const reachableIfGateWereOpen = !!reachGateOpenOnly[leverI];
 
-            // Restore
-            ft[gateDi] = prevFt;
-            fid[gateDi] = prevFid;
-            fparam[gateDi] = prevFparam;
+            // Restore gate door tile
+            ft[gateDi] = prevGateFt;
+            fid[gateDi] = prevGateFid;
+            fparam[gateDi] = prevGateFparam;
+
+            // C) Reachability if ALL doors were open
+            const clearedDoors: Array<{
+              i: number;
+              ft: number;
+              fid: number;
+              fparam: number;
+            }> = [];
+            for (let i = 0; i < ft.length; i++) {
+              // Door featureType is 4 in this file (see: ft[gateDi]=4 and computeReachable)
+              if ((ft[i] | 0) === 4 && (fid[i] | 0) !== 0) {
+                clearedDoors.push({
+                  i,
+                  ft: ft[i]!,
+                  fid: fid[i]!,
+                  fparam: fparam[i]!,
+                });
+                ft[i] = 0;
+                fid[i] = 0;
+                fparam[i] = 0;
+              }
+            }
+
+            const reachAllDoorsOpen = computeReachable(
+              dungeon,
+              ft,
+              fid,
+              start,
+              new Set(),
+            );
+            const reachableIfAllDoorsWereOpen = !!reachAllDoorsOpen[leverI];
+
+            // Restore all doors
+            for (const d of clearedDoors) {
+              ft[d.i] = d.ft;
+              fid[d.i] = d.fid;
+              fparam[d.i] = d.fparam;
+            }
+
+            // Derived flags
+            const isBehindOwnGate =
+              !reachableWithGateClosed && reachableIfGateWereOpen;
+            const blockedByOtherDoor =
+              reachableIfAllDoorsWereOpen && !reachableIfGateWereOpen;
+            const unreachableEvenIfAllDoorsOpen = !reachableIfAllDoorsWereOpen;
 
             const leverBehindOwnGate: LeverBehindOwnGateDiagV1 = {
               schemaVersion: 1,
@@ -7221,10 +7563,17 @@ export function applyGateThenOptionalRewardPattern(args: {
               leverId: gateId,
               leverX: leverP.x,
               leverY: leverP.y,
+
               reachableWithGateClosed,
               reachableIfGateWereOpen,
-              isBehindOwnGate:
-                !reachableWithGateClosed && reachableIfGateWereOpen,
+
+              // NEW fields
+              reachableIfAllDoorsWereOpen,
+              blockedByOtherDoor,
+              unreachableEvenIfAllDoorsOpen,
+
+              // Existing semantic
+              isBehindOwnGate,
             };
 
             // Include this edge in counters in the success report
@@ -7587,10 +7936,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
       continue;
     }
 
-    // Allocate ids (preview uses them; we only commit if validation passes)
-    const secretId = allocId();
-    const leverId = secretId; // keep ids aligned for simpler circuit wiring
-
     // --- Preview validation on copies before commit ---
     const solid2 = solid.slice();
     const ft2 = ft.slice();
@@ -7605,6 +7950,32 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     );
 
     if (!didCarve) continue;
+
+    // if preview passes:
+    const secretId = allocId();
+
+    const leverId = secretId; // keep aligned
+
+    // remove previewId + the first revealed set entirely
+
+    // after you pick secretId:
+    const revealedPost = new Set<number>([secretId]);
+
+    const reachPre = computeReachable(
+      { width: W, height: H, masks: { solid: solid2 } } as any,
+      ft2,
+      fid2,
+      start,
+      new Set(),
+    );
+
+    const reachPost = computeReachable(
+      { width: W, height: H, masks: { solid: solid2 } } as any,
+      ft2,
+      fid2,
+      start,
+      revealedPost,
+    );
 
     // Place hidden passage fixture at connector
     const cI = idxOf(W, picked.cx, picked.cy);
@@ -7624,24 +7995,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
     const goalI = idxOf(W, goal.x, goal.y);
 
-    const reachPre = computeReachable(
-      { width: W, height: H, masks: { solid: solid2 } } as any,
-      ft2,
-      fid2,
-      start,
-      new Set(),
-    );
-
-    const revealed = new Set<number>([secretId]);
-
-    const reachPost = computeReachable(
-      { width: W, height: H, masks: { solid: solid2 } } as any,
-      ft2,
-      fid2,
-      start,
-      revealed,
-    );
-
     const reachability: ReachabilityStats = {
       start,
       connector: { x: picked.cx, y: picked.cy },
@@ -7655,7 +8008,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
             ft2,
             fid2,
             start,
-            revealed,
+            revealedPost,
             goal,
           )
         : null,
@@ -7697,6 +8050,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
       x: picked.cx,
       y: picked.cy,
       roomId: 0,
+      kind: "hidden_passage" as const,
     });
     levers.push({
       id: leverId,
@@ -8100,6 +8454,32 @@ export function findNearestRoomId(
   }
 
   return 0;
+}
+
+function sampleReachableRoomFloorNoFeatures(
+  rng: PatternRng,
+  dungeon: BspDungeonOutputs,
+  room: BspDungeonOutputs["meta"]["rooms"][number],
+  featureType: Uint8Array,
+  reachable: Uint8Array,
+  tries = 120,
+): Point | null {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  for (let k = 0; k < tries; k++) {
+    const x = rng.nextInt(room.x + 1, room.x + room.w - 2);
+    const y = rng.nextInt(room.y + 1, room.y + room.h - 2);
+    if (!inBounds(W, H, x, y)) continue;
+
+    const i = idxOf(W, x, y);
+    if (!reachable[i]) continue; // <-- key filter
+    if (dungeon.masks.solid[i] !== 0) continue;
+    if ((featureType[i] | 0) !== 0) continue;
+    return { x, y };
+  }
+
+  return null;
 }
 
 function sampleRoomFloorNoFeatures(
@@ -8975,6 +9355,8 @@ const App: React.FC = () => {
   const [leverOpensDoorCount, setLeverOpensDoorCount] = useState(2);
   const [includePlateOpensDoor, setIncludePlateOpensDoor] = useState(false);
   const [plateOpensDoorCount, setPlateOpensDoorCount] = useState(2);
+  const [includeIntroGate, setIncludeIntroGate] = useState(true);
+  const [introGateCount, setIntroGateCount] = useState(1);
 
   const [patternMaxAttempts, setPatternMaxAttempts] = useState(60);
 
@@ -9178,7 +9560,6 @@ const App: React.FC = () => {
       includePlateOpensDoor,
       plateOpensDoorCount,
       patternMaxAttempts,
-      leverDoorCount: 1,
       // Phase 3 (composition)
       includePhase3Compositions: true,
       gateThenOptionalRewardCount: 1, // start with 1 for clean signals/topo metrics
@@ -9675,7 +10056,6 @@ const App: React.FC = () => {
           includePlateOpensDoor,
           plateOpensDoorCount,
           patternMaxAttempts,
-          leverDoorCount: 1,
 
           // Phase 3 (composition)
           includePhase3Compositions: true,
@@ -9986,6 +10366,42 @@ const App: React.FC = () => {
 
         <details open>
           <summary className="maze-summary">Content / Puzzles</summary>
+
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={includeLeverHiddenPocket}
+              onChange={(e) => setIncludeLeverHiddenPocket(e.target.checked)}
+            />
+            <span>Include Lever → Hidden Pocket</span>
+          </label>
+
+          <div style={{ height: 8 }} />
+
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={includeIntroGate}
+              onChange={(e) => setIncludeIntroGate(e.target.checked)}
+            />
+            <span>Include Intro Gate (lever → door)</span>
+          </label>
+
+          <div className="row" style={{ gap: 8, marginTop: 6 }}>
+            <span style={{ minWidth: 140, opacity: 0.8 }}>
+              Intro gate count
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={12}
+              value={introGateCount}
+              onChange={(e) => setIntroGateCount(e.target.valueAsNumber)}
+              style={{ width: 80 }}
+            />
+          </div>
+
+          <div style={{ height: 12 }} />
 
           <div className="maze-grid">
             <label className="maze-checkbox">
@@ -10579,14 +10995,13 @@ import {
   runPatternsBestEffort,
   applyLeverOpensDoorPattern,
   applyGateThenOptionalRewardPattern,
+  applyIntroGatePattern,
 } from "./puzzlePatterns";
 import type {
   PatternDiagnostics,
   PatternEntry,
   PuzzleRole,
 } from "./puzzlePatterns";
-
-import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
 
 // -----------------------------
 // Types
@@ -11514,7 +11929,7 @@ export type FeatureType =
   // Milestone 3 (stateful puzzles)
   | 7 // pressure plate (floor tile)
   | 8 // pushable block (floor tile; entity)
-  | 9 // hidden passage (wall tile; illusion/breakable)
+  | 9 // hidden passage (FLOOR tile that blocks until revealed via meta.secrets[id].revealed)
   | 10; // hazard (floor tile; hard-block for now)
 
 export type DoorKind =
@@ -11582,7 +11997,9 @@ export type CircuitTargetRef = {
 };
 export type CircuitOutputDef = {
   name: string; // e.g. "SOLVED"
+  id: number;
   mode?: "LEVEL" | "PULSE"; // default "LEVEL"
+  kind?: string;
 };
 
 export type CircuitDef = {
@@ -11610,13 +12027,7 @@ export type ContentOptions = {
   secretRoomChance?: number;
   maxLootTier?: number;
 
-  // Milestone 2 gating knobs
-  lockedDoorCount?: number; // best-effort (default based on path length)
-  leverDoorCount?: number; // best-effort (default based on path length)
-  gateMinDepth?: number; // avoid placing gates too close to entrance
-
   // Milestone 3 toggles
-  includePuzzleFixture?: boolean;
   includeLeverHiddenPocket?: boolean;
   leverHiddenPocketSize?: number; // odd >= 3 (default 3)
   includeAsciiOverlay?: boolean;
@@ -11626,16 +12037,16 @@ export type ContentOptions = {
   includePlateOpensDoor?: boolean;
   plateOpensDoorCount?: number; // “N times”
 
+  // Milestone 5: foundational intro composition (replaces Milestone 2 baseline gates)
+  includeIntroGate?: boolean;
+  introGateCount?: number; // “N times”
+
   // Optional: budget for each pattern’s internal search (passed to pattern options)
-  patternMaxAttempts?: number; // default 60
+  patternMaxAttempts?: number;
 
-  // -----------------------------
   // Milestone 4 — Phase 3 (composition)
-  // -----------------------------
   includePhase3Compositions?: boolean;
-
-  // MAIN_PATH_GATE -> OPTIONAL_REWARD (signal-gated)
-  gateThenOptionalRewardCount?: number; // default 0
+  gateThenOptionalRewardCount?: number;
 };
 
 export type ContentOutputs = {
@@ -11704,7 +12115,13 @@ export type ContentOutputs = {
       roomId: number;
       tier: number;
     }>;
-    secrets: Array<{ id: number; x: number; y: number; roomId: number }>;
+    secrets: Array<{
+      id: number;
+      x: number;
+      y: number;
+      roomId: number;
+      kind: string;
+    }>;
 
     // Milestone 2: circuits
     doors: Array<{
@@ -12153,13 +12570,14 @@ export function generateDungeonContent(
   opts?: Partial<ContentOptions>,
 ): ContentOutputs {
   const options: Required<ContentOptions> = {
-    seed: opts?.seed ?? dungeon.meta.seedUsed + 1337,
+    seed: opts?.seed ?? 0,
+
     entranceMode: opts?.entranceMode ?? "bottom",
 
-    minClearanceToWall: opts?.minClearanceToWall ?? 2,
-    monstersPerRoomMin: opts?.monstersPerRoomMin ?? 1,
-    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 3,
-    monsterRoomChance: opts?.monsterRoomChance ?? 0.75,
+    minClearanceToWall: opts?.minClearanceToWall ?? 1,
+    monstersPerRoomMin: opts?.monstersPerRoomMin ?? 0,
+    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 2,
+    monsterRoomChance: opts?.monsterRoomChance ?? 0.35,
 
     chestsTargetCount:
       opts?.chestsTargetCount ??
@@ -12168,13 +12586,7 @@ export function generateDungeonContent(
 
     maxLootTier: opts?.maxLootTier ?? 5,
 
-    // Milestone 2 gating knobs (derived defaults computed later, after mainPathRoomIds exists)
-    lockedDoorCount: opts?.lockedDoorCount ?? 0,
-    leverDoorCount: opts?.leverDoorCount ?? 0,
-    gateMinDepth: opts?.gateMinDepth ?? 2,
-
     // Milestone 3
-    includePuzzleFixture: opts?.includePuzzleFixture ?? true,
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
     includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
     leverHiddenPocketSize: opts?.leverHiddenPocketSize ?? 3,
@@ -12185,13 +12597,15 @@ export function generateDungeonContent(
     includePlateOpensDoor: opts?.includePlateOpensDoor ?? false,
     plateOpensDoorCount: opts?.plateOpensDoorCount ?? 1,
 
+    // Milestone 5
+    includeIntroGate: opts?.includeIntroGate ?? false,
+    introGateCount: opts?.introGateCount ?? 1,
+
     patternMaxAttempts: opts?.patternMaxAttempts ?? 60,
 
-    // -----------------------------
     // Milestone 4 — Phase 3 (composition)
-    // -----------------------------
     includePhase3Compositions: opts?.includePhase3Compositions ?? false,
-    gateThenOptionalRewardCount: opts?.gateThenOptionalRewardCount ?? 0,
+    gateThenOptionalRewardCount: opts?.gateThenOptionalRewardCount ?? 1,
   };
 
   const seedUsed = hashSeedToUint32(options.seed);
@@ -12387,336 +12801,14 @@ export function generateDungeonContent(
     featureType[idx] = 3;
     featureId[idx] = id;
 
-    secrets.push({ id, x: wallP.x, y: wallP.y, roomId });
+    secrets.push({ id, x: wallP.x, y: wallP.y, roomId, kind: "secret_door" });
   }
 
   // -----------------------------
-  // Milestone 2: Doors + Keys + Levers (circuits)
+  // IMPORTANT (Milestone 5 policy):
+  // No baseline puzzle fixtures are placed here anymore.
+  // Doors/keys/levers/plates/blocks/hazards/hidden are pattern-driven only.
   // -----------------------------
-
-  // ------------------------------------------------------------
-  // Door-site budgeting for optional patterns
-  // ------------------------------------------------------------
-  // Some optional patterns (Lever→Door, Plate→Door) place *new doors* on
-  // corridor tiles that separate two rooms (a “door site”).
-  //
-  // Milestone 2 gate doors also consume these corridor door sites. If we place
-  // too many gates, patterns can fail simply because there are no remaining
-  // viable corridor door sites.
-  //
-  // Policy:
-  // - Count available corridor door sites after room/chest/monster/secret placement.
-  // - Reserve enough sites for enabled patterns (counts).
-  // - Clamp Milestone 2 desiredLocked/desiredLever so we don’t exceed the budget.
-  function countCorridorDoorSites(
-    dungeon: BspDungeonOutputs,
-    featureType: Uint8Array,
-  ): number {
-    const W = dungeon.width;
-    const { candidates } = findDoorSiteCandidatesAndStatsFromCorridors(
-      dungeon,
-      featureType,
-      {
-        maxRadius: 10,
-        minDistToWall: 1,
-        preferCorridor: true,
-        trimEnds: 2,
-        duplicateBias: 1,
-      },
-    );
-    const seen = new Set<number>();
-    for (const c of candidates) {
-      seen.add(keyXY(W, c.x, c.y));
-    }
-    return seen.size;
-  }
-
-  const gateMinDepth = options.gateMinDepth;
-
-  // mainPathRoomIds MUST already be computed above this point.
-  const mainPathLen = mainPathRoomIds.length;
-
-  let desiredLocked =
-    opts?.lockedDoorCount !== undefined
-      ? opts.lockedDoorCount
-      : Math.max(1, Math.floor(mainPathLen / 5));
-
-  let desiredLever =
-    opts?.leverDoorCount !== undefined
-      ? opts.leverDoorCount
-      : Math.max(0, Math.floor(mainPathLen / 7));
-  // We place gates on edges along the main path: (room[i] -> room[i+1]).
-  // Avoid edges too close to entrance, and avoid reusing the same edge twice.
-  type PathEdge = { a: number; b: number; depth: number };
-  const pathEdges: PathEdge[] = [];
-  for (let i = 0; i < mainPathRoomIds.length - 1; i++) {
-    const a = mainPathRoomIds[i];
-    const b = mainPathRoomIds[i + 1];
-    const depth = Math.max(depthForRoom(a), depthForRoom(b));
-    pathEdges.push({ a, b, depth });
-  }
-
-  const eligibleEdges = pathEdges.filter((e) => e.depth >= gateMinDepth);
-  // Shuffle edges
-  for (let i = eligibleEdges.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [eligibleEdges[i], eligibleEdges[j]] = [eligibleEdges[j], eligibleEdges[i]];
-  }
-
-  // Budget Milestone 2 gates so optional patterns still have corridor door sites.
-  const reservedForPatterns =
-    (options.includePlateOpensDoor ? options.plateOpensDoorCount | 0 : 0) +
-    (options.includeLeverOpensDoor ? options.leverOpensDoorCount | 0 : 0);
-
-  if (reservedForPatterns > 0) {
-    const totalDoorSites = countCorridorDoorSites(dungeon, featureType);
-    const maxGatesByEdges = eligibleEdges.length;
-    const maxGatesBySites = Math.max(0, totalDoorSites - reservedForPatterns);
-    const maxGateDoors = Math.min(maxGatesByEdges, maxGatesBySites);
-
-    // Clamp requested gate counts to the budget (prefer keeping locked doors over lever doors).
-    if (desiredLocked > maxGateDoors) {
-      desiredLocked = maxGateDoors;
-      desiredLever = 0;
-    } else {
-      desiredLever = Math.min(desiredLever, maxGateDoors - desiredLocked);
-    }
-  }
-
-  const desiredLockedClamped = Math.max(0, desiredLocked | 0);
-  const desiredLeverClamped = Math.max(0, desiredLever | 0);
-
-  function pickKeyOrLeverRoom(maxDepthAllowed: number): number | null {
-    // Prefer side rooms, but any reachable room <= depth works (backtracking allowed)
-    const candidates = Array.from(roomGraph.keys()).filter((rid) => {
-      if (rid === entranceRoomId) return false;
-      const d = depthForRoom(rid);
-      if (d > maxDepthAllowed) return false;
-      return roomDistance.has(rid);
-    });
-
-    const sideFirst = candidates.filter(
-      (rid) => (roomDegree.get(rid) ?? 0) <= 1,
-    );
-    const pool = sideFirst.length > 0 ? sideFirst : candidates;
-    if (pool.length === 0) return null;
-    return pickRandom(rng, pool);
-  }
-
-  function placeKeyInRoom(roomId: number, circuitId: number) {
-    const room = rooms[roomId - 1];
-    if (!room) return;
-
-    const p = sampleRoomFloorPoint(
-      dungeon,
-      room,
-      rng,
-      Math.max(1, options.minClearanceToWall),
-    );
-    if (!p) return;
-
-    const idx = keyXY(W, p.x, p.y);
-    if (featureType[idx] !== 0) return;
-
-    featureType[idx] = 5; // key
-    featureId[idx] = clamp255(circuitId);
-
-    keys.push({ id: circuitId, x: p.x, y: p.y, roomId });
-  }
-
-  function placeLeverInRoom(roomId: number, circuitId: number) {
-    const room = rooms[roomId - 1];
-    if (!room) return;
-
-    const p = sampleRoomFloorPoint(
-      dungeon,
-      room,
-      rng,
-      Math.max(1, options.minClearanceToWall),
-    );
-    if (!p) return;
-
-    const idx = keyXY(W, p.x, p.y);
-    if (featureType[idx] !== 0) return;
-
-    featureType[idx] = 6; // lever
-    featureId[idx] = clamp255(circuitId);
-
-    levers.push({ id: circuitId, x: p.x, y: p.y, roomId });
-  }
-
-  function placeDoorOnEdge(edge: PathEdge, kind: DoorKind): boolean {
-    const corr = findCorridorConnectingRooms(dungeon, edge.a, edge.b);
-    if (!corr) return false;
-
-    const doorP = pickDoorTileOnCorridor(dungeon, corr);
-    if (!doorP) return false;
-
-    const idx = keyXY(W, doorP.x, doorP.y);
-    if (featureType[idx] !== 0) return false;
-
-    const circuitId = clamp255(nextId++);
-
-    featureType[idx] = 4; // door
-    featureId[idx] = circuitId;
-    featureParam[idx] = kind; // 1 locked, 2 lever
-
-    doors.push({
-      id: circuitId,
-      x: doorP.x,
-      y: doorP.y,
-      roomA: edge.a,
-      roomB: edge.b,
-      kind,
-      depth: edge.depth,
-    });
-
-    // Place corresponding key/lever in an allowed room <= door depth
-    const keyRoom = pickKeyOrLeverRoom(edge.depth);
-    if (keyRoom == null) return true; // still keep door; worst-case it's "future content"
-
-    if (kind === 1) placeKeyInRoom(keyRoom, circuitId);
-    if (kind === 2) placeLeverInRoom(keyRoom, circuitId);
-
-    return true;
-  }
-
-  // Place locked doors
-  let placedLocked = 0;
-  for (const e of eligibleEdges) {
-    if (placedLocked >= desiredLockedClamped) break;
-    if (placeDoorOnEdge(e, 1)) placedLocked++;
-  }
-
-  // Place lever doors
-  let placedLever = 0;
-  for (let i = placedLocked; i < eligibleEdges.length; i++) {
-    if (placedLever >= desiredLeverClamped) break;
-    if (placeDoorOnEdge(eligibleEdges[i], 2)) placedLever++;
-  }
-
-  // -----------------------------
-  // Milestone 3: Simple plate + block + door fixture
-  //
-  // NOTE: Plates are “derived” at runtime from block occupancy (see dungeonState.ts/App.tsx).
-  // This just ensures there’s something to interact with right away.
-  // -----------------------------
-
-  // Small bitfield for featureParam on plates (debug / future use)
-  // bit0: modeToggle (1=toggle, 0=momentary)
-  // bit1: activatedByPlayer
-  // bit2: activatedByBlock
-  // bit3: inverted
-  function encodePlateParam(o: {
-    mode: "momentary" | "toggle";
-    activatedByPlayer: boolean;
-    activatedByBlock: boolean;
-    inverted: boolean;
-  }): number {
-    let p = 0;
-    if (o.mode === "toggle") p |= 1 << 0;
-    if (o.activatedByPlayer) p |= 1 << 1;
-    if (o.activatedByBlock) p |= 1 << 2;
-    if (o.inverted) p |= 1 << 3;
-    return p & 0xff;
-  }
-
-  let fixtureDoorId = 0;
-  let fixturePlateCircuitId = 0;
-  let fixtureHiddenId = 0;
-  let fixtureHazardId = 0;
-  let fixtureHazardLeverId = 0;
-
-  if (options.includePuzzleFixture && rooms.length > 0) {
-    // (A) Place an “extra” door ...
-    // (B) Place a pressure plate + adjacent push block ...
-
-    // (C) Place a hidden passage tile in the farthest room (featureType 9) and register it as a "secret".
-    // This is revealable via circuits (HIDDEN target kind).
-    {
-      const hiddenRoomId = farthestRoomId || entranceRoomId;
-      const hiddenRoom = rooms[hiddenRoomId - 1] ?? rooms[0];
-      const p = sampleRoomFloorPoint(
-        dungeon,
-        hiddenRoom,
-        rng,
-        Math.max(1, options.minClearanceToWall),
-      );
-      if (p) {
-        const hi = keyXY(W, p.x, p.y);
-        if (featureType[hi] === 0) {
-          fixtureHiddenId = clamp255(nextId++);
-          featureType[hi] = 9; // hidden passage
-          featureId[hi] = fixtureHiddenId;
-          featureParam[hi] = 0;
-
-          secrets.push({
-            id: fixtureHiddenId,
-            x: p.x,
-            y: p.y,
-            roomId: hiddenRoomId,
-          });
-        }
-      }
-    }
-
-    // (D) Place a single hazard tile and a lever to toggle it.
-    {
-      const hzRoomId = entranceRoomId;
-      const hzRoom = rooms[hzRoomId - 1] ?? rooms[0];
-
-      // hazard tile
-      const hp = sampleRoomFloorPoint(
-        dungeon,
-        hzRoom,
-        rng,
-        Math.max(1, options.minClearanceToWall),
-      );
-      if (hp) {
-        const hi = keyXY(W, hp.x, hp.y);
-        if (featureType[hi] === 0) {
-          fixtureHazardId = clamp255(nextId++);
-          featureType[hi] = 10; // hazard
-          featureId[hi] = fixtureHazardId;
-          featureParam[hi] = 0;
-          hazardType[hi] = 1; // lava (debug-friendly)
-
-          hazards.push({
-            id: fixtureHazardId,
-            x: hp.x,
-            y: hp.y,
-            roomId: hzRoomId,
-            hazardType: 1,
-            activeInitial: false,
-          });
-        }
-      }
-
-      // lever tile (try a different point so it doesn't collide)
-      const lp = sampleRoomFloorPoint(
-        dungeon,
-        hzRoom,
-        rng,
-        Math.max(1, options.minClearanceToWall),
-      );
-      if (lp) {
-        const li = keyXY(W, lp.x, lp.y);
-        if (featureType[li] === 0) {
-          fixtureHazardLeverId = clamp255(nextId++);
-          featureType[li] = 6; // lever
-          featureId[li] = fixtureHazardLeverId;
-          featureParam[li] = 0;
-
-          levers.push({
-            id: fixtureHazardLeverId,
-            x: lp.x,
-            y: lp.y,
-            roomId: hzRoomId,
-          });
-        }
-      }
-    }
-  }
 
   // ------------------------------------
   // Phase 1: Build meta.circuits (from Milestone 2 gates)
@@ -12771,19 +12863,11 @@ export function generateDungeonContent(
     }
   }
 
-  // Milestone 3 fixture circuit: plate toggles the extra door.
-  if (fixturePlateCircuitId !== 0 && fixtureDoorId !== 0) {
-    const c = ensureCircuit(fixturePlateCircuitId);
-    c.logic = { type: "OR" };
-    c.behavior = { mode: "TOGGLE" };
-    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
-    c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
-  }
-
   // ------------------------------------
   // Milestone 3: Optional puzzle patterns
   // ------------------------------------
 
+  // Adapt our RNG to the PatternRng interface expected by puzzlePatterns.ts
   // Adapt our RNG to the PatternRng interface expected by puzzlePatterns.ts
   const patternRng = {
     nextFloat: () => rng(),
@@ -12794,6 +12878,42 @@ export function generateDungeonContent(
   };
 
   const patterns: PatternEntry[] = [];
+
+  // Milestone 5: Intro gate (replaces Milestone 2 baseline gates)
+  if (options.includeIntroGate) {
+    const n = Math.max(0, options.introGateCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push({
+        name: "introGate",
+        run: () =>
+          applyIntroGatePattern({
+            rng: patternRng,
+            dungeon,
+            rooms,
+
+            // topology context
+            entranceRoomId,
+            roomGraph,
+            roomDistance,
+            mainPathRoomIds,
+
+            // masks
+            featureType,
+            featureId,
+            featureParam,
+
+            // meta
+            doors,
+            levers,
+            circuitsById,
+            circuitRoles,
+
+            allocId: () => clamp255(nextId++),
+            options: { maxAttempts: options.patternMaxAttempts },
+          }),
+      });
+    }
+  }
 
   if (options.includeLeverHiddenPocket) {
     patterns.push({
@@ -12813,7 +12933,7 @@ export function generateDungeonContent(
           allocId: () => clamp255(nextId++),
           options: {
             pocketSize: options.leverHiddenPocketSize,
-            maxAttempts: options.patternMaxAttempts, // NEW
+            maxAttempts: options.patternMaxAttempts,
           },
         }),
     });
@@ -12897,7 +13017,7 @@ export function generateDungeonContent(
             blocks,
             chests,
             circuitsById,
-            circuitRoles: circuitRoles, // IMPORTANT (write roles here)
+            circuitRoles,
 
             allocId: () => clamp255(nextId++),
             options: { maxAttempts: options.patternMaxAttempts },
@@ -12908,27 +13028,8 @@ export function generateDungeonContent(
 
   const { didCarve, diagnostics } = runPatternsBestEffort(patterns);
 
-  // Option A: if any patterns carved geometry, distanceToWall is now stale.
   if (didCarve) {
     recomputeDungeonDistanceToWall(dungeon);
-  }
-
-  // Milestone 3 fixture circuit: plate reveals the hidden passage tile (featureType 9).
-  if (fixturePlateCircuitId !== 0 && fixtureHiddenId !== 0) {
-    const c = ensureCircuit(clamp255(fixtureHiddenId));
-    c.logic = { type: "OR" };
-    c.behavior = { mode: "PERSISTENT" };
-    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
-    c.targets = [{ kind: "HIDDEN", refId: fixtureHiddenId, effect: "REVEAL" }];
-  }
-
-  // Milestone 3 fixture circuit: lever toggles the hazard (consequence-only).
-  if (fixtureHazardLeverId !== 0 && fixtureHazardId !== 0) {
-    const c = ensureCircuit(clamp255(fixtureHazardLeverId));
-    c.logic = { type: "OR" };
-    c.behavior = { mode: "TOGGLE" };
-    c.triggers = [{ kind: "LEVER", refId: fixtureHazardLeverId }];
-    c.targets = [{ kind: "HAZARD", refId: fixtureHazardId, effect: "TOGGLE" }];
   }
 
   const circuits = Array.from(circuitsById.values()).sort(
@@ -12984,7 +13085,7 @@ export function generateDungeonContent(
   for (let i = 0; i < W * H; i++) {
     if (featureType[i] === 9 && featureId[i] === 0) {
       throw new Error(
-        `generateDungeonContent(): featureType 9 (hidden passage) missing featureId at tile index ${i}`,
+        `generateDungeonContent(): hidden passage at idx=${i} is on a wall tile (solid=255)`,
       );
     }
   }
@@ -13062,13 +13163,15 @@ export function generateDungeonContent(
 </file>
 
 <file path="src/CONTEXT.md">
+---
+
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-21 (rev N)**  
-**LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**  
-**CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**  
-**CURRENT PHASE:** **Milestone 5 Kickoff — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**  
-**PHASE STATUS:** **PHASE 2.5 SOFT ENFORCEMENT ONLINE; RELIABILITY PATCHED VIA GATE-SITE + BRANCH-SITE VIABILITY (A1/A2)**
+**CONTEXT VERSION:** **2026-01-23 (rev P)**
+**LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
+**CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
+**CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
+**PHASE STATUS:** **SOFT ENFORCEMENT DEEPENED: REACHABILITY-AWARE PLACEMENT + MISALIGNMENT DIAGNOSTICS EXPANDED**
 
 ---
 
@@ -13079,13 +13182,17 @@ export function generateDungeonContent(
 * Batch harness is correct and trusted
 * Generation is deterministic and best-effort (never aborts)
 
+---
+
 ## POLICY ESCALATION PRINCIPLE
 
-A rule may only become “hard” if:
+A rule may only become **hard** if:
 
-* it has existed as a diagnostic,
-* then as a soft steering signal,
-* and has shown stable behavior under pressure.
+1. it first exists as a **diagnostic**,
+2. then as a **soft steering signal**,
+3. and demonstrates **stable, predictable behavior under pressure**.
+
+Milestone 5 proceeds strictly in this order.
 
 ---
 
@@ -13096,211 +13203,285 @@ This project is an experimental procedural dungeon generator built in TypeScript
 It is designed to evolve toward a JRPG / metroidvania-style dungeon system emphasizing:
 
 * backtracking + gating
-* “puzzle circuits” (levers, plates, blocks) that target doors/hazards/secrets
-* compositional progression grammar (teaching → gating → rewards → shortcuts)
-* deterministic best-effort generation (patterns may skip; the dungeon always generates)
+* stateful puzzle circuits (levers, plates, blocks, secrets)
+* compositional progression grammar (teach → gate → reward → shortcut)
+* deterministic best-effort generation (patterns may skip; dungeons always generate)
 
 ---
 
 ## MILESTONE ROADMAP (HIGH LEVEL)
 
 ### Milestone 1 — Geometry & Basic Metadata
+
 * BSP rooms/corridors, region labeling, distance fields, walkability.
 
 ### Milestone 2 — Content Placement v1
+
 * Doors/keys/levers/plates/blocks/hazards placed as fixtures.
 
 ### Milestone 3 — Stateful Puzzle Execution
+
 * Runtime state model for fixtures (doors, keys, levers, plates, blocks, hazards, secrets).
-* Circuit evaluator (`evaluateCircuits.ts`) that computes activeness + applies targets deterministically.
+* Deterministic circuit evaluator (`evaluateCircuits.ts`).
 * SIGNAL triggers + topo-sort ordering for circuit chaining; cycle-tolerant best-effort behavior.
 * Circuit diagnostics UI.
 
 ### Milestone 4 — Puzzle Composition & Progression Grammar (CLOSED)
+
 * Role diagnostics schema + UI (read-only, batch-safe).
-* Composition patterns (role-aware), best-effort execution with authoritative diagnostics.
-* Reliability patching for composition patterns (pre-checks / retries) to reach near-100%.
+* Role-aware composition patterns using SIGNAL dependencies.
+* Best-effort execution with authoritative diagnostics.
+* Reliability patching to reach near-100% batch stability.
 
 ### Milestone 5 — Intent Steering & Progression Policy (CURRENT)
-* “Soft enforcement” (pressure, not veto) → later “hard policy” (veto/repair).
-* Reduce stacked gates; improve placement intent and pacing; formalize progression policy.
+
+* Soft enforcement (pressure, not veto).
+* Measure and reduce intent misalignment (stacked gates, inaccessible levers, pacing issues).
+* Transition validated rules into hard policy only after proof.
 
 ---
 
-## DEFINITIONS — “PROGRESSION GRAMMAR” (WORDS BEFORE CODE)
+## DEFINITIONS — PROGRESSION GRAMMAR (WORDS BEFORE CODE)
 
-Progression grammar is the set of *repeatable, composable* “micro-structures” that shape the player’s experience:
+Progression grammar is the set of repeatable, composable micro-structures that shape player experience:
 
-* **Teach**: a simple interaction demonstrates a mechanic (lever/plate/hidden).
-* **Gate**: the mechanic is required to progress (main-path constraint).
-* **Reward**: optional content is locked behind meaningful logic (not free).
-* **Foreshadow**: the player sees a locked reward or shortcut before they can access it.
-* **Shortcut**: the player later unlocks a connection that reduces backtracking cost.
-* **Ramp**: complexity and chaining depth increase as dungeon depth increases.
+* **Teach** — demonstrate a mechanic safely.
+* **Gate** — require a mechanic for progress.
+* **Reward** — optional content locked behind meaningful logic.
+* **Foreshadow** — visible but inaccessible content.
+* **Shortcut** — later unlock reduces backtracking cost.
+* **Ramp** — complexity increases with dungeon depth.
 
-In-engine, this grammar is expressed as:
-* **patterns** that place fixtures + circuits
-* **roles** assigned to circuits (MAIN_PATH_GATE, OPTIONAL_REWARD, SHORTCUT, FORESHADOW)
-* **diagnostics + thresholds** that score whether placements match intent
-* later: **policy** that steers/repairs/vetoes placements to enforce intent.
+In-engine, grammar is expressed via:
 
----
-
-## MILESTONE 4 STATUS (COMPLETE STATE CHECK)
-
-Milestone 4 is considered “complete” when:
-
-* ✅ Circuit chaining exists (SIGNAL dependencies) and is deterministic + best-effort.
-* ✅ Authoritative diagnostics exist for circuits + roles (UI + batch safe).
-* ✅ At least one **composition pattern** exists that uses SIGNAL to compose two circuits.
-* ✅ Patterns are **best-effort** (skip, never abort) with reasons aggregated in batch.
-* ✅ Reliability is batch-verified at scale (near-100% or patched to reach it).
-
-As of rev N: **Milestone 4 is CLOSED**.
+* patterns that place fixtures + circuits
+* roles assigned to circuits
+* diagnostics and thresholds that score intent alignment
+* later: policy that steers, repairs, or vetoes placements
 
 ---
 
-## PHASE 3 — COMPOSITION PATTERN
+## MILESTONE 4 STATUS — COMPLETE
+
+Milestone 4 is considered complete when:
+
+* Circuit chaining via SIGNAL exists and is deterministic
+* Diagnostics exist for circuits and roles (UI + batch)
+* At least one multi-circuit composition pattern exists
+* Patterns are best-effort with batch-aggregated failure reasons
+* Reliability is batch-verified and stable
+
+**As of rev P: Milestone 4 remains CLOSED.**
+
+---
+
+## PHASE 3 COMPOSITION PATTERN (FOUNDATIONAL)
 
 ### `gateThenOptionalReward`
 
 A two-circuit, role-aware composition:
 
 * **MAIN_PATH_GATE**
-  * Lever-toggle door on a **main-path edge**.
+
+  * Lever-toggle door placed on a main-path edge.
 
 * **OPTIONAL_REWARD**
-  * Branch door to an off-main room, gated by: **`PLATE && SIGNAL(gate ACTIVE)`**
+
+  * Branch door to an off-main room.
+  * Gated by: `PLATE && SIGNAL(gate ACTIVE)`.
   * Chest placed in the optional branch room.
 
-Uses a SIGNAL dependency to express **logical composition** (branch reward depends on the main-path gate being active).
-
-#### Reliability + intent steering (Phase 2.5 soft enforcement)
-
-* **Main-edge scoring (no veto):** prefer edges with usable branch-site supply and avoid already-occupied door edges when possible.
-* **Gate-site viability:** try multiple gate tiles and skip those that would eliminate all usable branch door sites.
-* **Branch-anchor fallback:** attempt branching off the deep side first, then shallow side if needed.
-
-This pattern now runs best-effort but is intended to become the first “policy-steered” composition primitive for Milestone 5.
-
----
-
-## ROLE DIAGNOSTICS (V1)
-
-Role diagnostics are *observational first* (warnings only), intended to support later intent steering.
-
-### Roles
-* `MAIN_PATH_GATE`
-* `OPTIONAL_REWARD`
-* `SHORTCUT`
-* `FORESHADOW`
-
-### Key signals
-* **Anchor**: roomDepth / depthN + whether the anchor is on main path.
-* **TopoDepth**: longest SIGNAL prereq chain length per circuit (0..).
-* **Rule hits**: thresholds per role (e.g., “late trivial main gate”).
-
-### Thresholds (defaults)
-* `DEFAULT_ROLE_THRESHOLDS_V1` exists and is tuned for “early simple, mid more chained”.
+This pattern expresses **logical composition**: the reward circuit depends on the main-path gate’s activation.
 
 ---
 
 ## PATTERN DIAGNOSTICS (AUTHORITATIVE)
 
-Patterns run best-effort and report a `PatternDiagnostics[]` entry each run:
+Patterns execute best-effort and emit diagnostics per run:
 
-* ok / reason
+* ok / fail + reason
 * didCarve
-* stats (door sites)
-* reachability (for carving patterns)
-* (new) edge reuse diagnostics (gateEdgeReuse) for intent steering
+* door-site statistics
+* reachability stats (for carving patterns)
+* gate-edge reuse diagnostics
+* lever accessibility diagnostics (expanded)
 
-The batch harness is trusted; diagnostic aggregation is authoritative for reliability + tuning.
-
----
-
-## NEW IN REV N — SOFT ENFORCEMENT + GATE/BRANCH VIABILITY PATCHES
-
-### What changed
-
-**gateThenOptionalReward reliability + intent pressure**
-
-* **Soft candidate scoring (no vetoes):** main-path edges are **sorted** to prefer:
-  1) edges where a branch door site is *actually available* somewhere off either endpoint (cheap lookahead),
-  2) edges **not already occupied** by an existing door (reduces “stacked gates”),
-  3) edges with **more** usable branch-site supply (coarse count), then a deterministic RNG tie-break.
-* **Gate-site viability pre-check:** for a chosen main edge, we try multiple gate tiles and **skip** any gate tile that would eliminate *all* usable branch door sites across both anchors.
-* **Branch-anchor fallback:** if branching off the deeper side fails (no sites), we also try the shallow side (deep-first ordering preserved).
-
-**leverHiddenPocket reliability**
-
-* Retains the **candidate-retry** strategy (shuffle candidate connectors; validate reachability pre/post in preview; commit first valid).
-
-### Latest batch signal (300-run quick sweep)
-
-* **gateThenOptionalReward:** 300/300 ok (**100%**) with **0 failures**.
-* **Gate-edge reuse (diagnostic):**
-  * doorsPlacedAvg ≈ **2**
-  * reusedExistingCountAvg ≈ **0.53**
-  * ~**48%** of runs had **at least one** reuse of an existing door edge (intent pressure target for Milestone 5).
-* **leverHiddenPocket:** 300/300 ok; pre-reveal reachable = **0**; post-reveal unreachable = **0**; shortestPathPostAvg ≈ **77.6** tiles.
-
-> Interpretation: reliability is now “boringly stable” for the tested patterns, and we have a measurable signal (edge reuse) to steer next.
+The batch harness is trusted; aggregated diagnostics are authoritative.
 
 ---
 
-## CURRENT STATE SUMMARY
+## NEW IN REV P — PHASE 2.5 SOFT ENFORCEMENT IMPROVEMENTS
 
-* Milestone 4 is **fully closed and validated**
-* Composition patterns are stable and expressive
-* Intent/placement misalignment is **measured** (gateEdgeReuse) and now under **soft pressure** (Phase 2.5 steering)
-* `gateThenOptionalReward` reliability is **100% in the latest 300-run sweep**
-* The system remains deterministic and best-effort (patterns may skip; generation never aborts)
+### 1) Reachability-aware lever placement (soft enforcement, not veto)
 
----
+**Change:** Gate lever placement now prefers tiles **reachable from the entrance with doors closed** (a “closed-world reachability mask” computed once per pattern attempt, then used as a filter). This moves lever placement from “any tile in shallow room” to “reachable tile in shallow room.”
 
-## NEXT STEPS — MILESTONE 5 (PHASE 2.5 → PHASE 3)
+**Intent target:** reduce **leverBlockedByOtherDoor** (lever ends up behind unrelated gates), while keeping generation best-effort.
 
-### Phase 2.5 (SOFT ENFORCEMENT / INTENT PRESSURE — best-effort)
-
-**Done (this rev):**
-
-1) **Edge-reuse instrumentation** for doors (gateEdgeReuse diag) + batch aggregation.
-2) **Soft steering applied** in `gateThenOptionalReward`:
-   * score/sort candidate main edges using branch-site supply + “avoid existing door edges”
-   * gate-site viability pre-check across both anchors
-   * shallow-side fallback when deep-side branch has no usable door sites
-   * Make sure lever is placed somewhere before the gated location the locked door would create (sometimes the lever would be inaccessible to the player).
-   * Create a diagnostic measure to track any lever placements that would be behind its own gate in dungeon creation.
-   
-3) **Reliability patch preserved** in `leverHiddenPocket` via candidate retries + preview reachability validation.
-
-**Next (still Phase 2.5):**
-
-* **Expose steering signal in UI**: show per-run `gateEdgeReuse` summary next to pattern diagnostics (counts + reused edgeIds).
-* **Tuning pass**: reduce stacked gates by increasing pressure against reusing existing edges (still no hard veto):
-  * strengthen scoring weight against `isOccupiedByExistingDoor`,
-  * optionally cap “tries” on occupied edges before considering unoccupied ones.
-* **Role coverage checks (warnings only):**
-  * ensure at least one MAIN_PATH_GATE exists,
-  * ensure at least one OPTIONAL_REWARD exists,
-  * report when roles cluster too early/late (hook into RoleDiagnostics thresholds).
-
-### Phase 3 (HARD ENFORCEMENT / POLICY)
-
-When we’re happy with soft pressure behavior:
-
-* **Hard veto**: disallow placing a new main-path gate on an edge already occupied by a door (unless no alternative edges exist).
-* **Budgeted retries**: if the pattern fails for structural reasons, expand the candidate pool (relaxed door-site trimming / slightly larger search radius) before giving up.
-* **Optional reward quality**: require a minimum topoDepth for OPTIONAL_REWARD past a depthN threshold (enforced, not just diagnosed).
+This is the first concrete “pressure lever” in Milestone 5: **steer placement** rather than **reject dungeons**.
 
 ---
 
-## NOTES / REMINDERS
+### 2) Expanded Lever Accessibility Diagnostic (V1 → extended fields)
+
+The lever diagnostic now distinguishes:
+
+* **reachableWithGateClosed** (baseline)
+* **reachableIfGateWereOpen** (only this gate’s door tile treated as passable)
+* **reachableIfAllDoorsWereOpen** (all door tiles treated as passable)
+
+Derived classifications:
+
+* **isBehindOwnGate** — not reachable with gate closed, but reachable if its own gate were open (self-deadlock)
+* **blockedByOtherDoor** — reachable if all doors open, but not reachable if only its own gate open (misalignment due to unrelated gates)
+* **unreachableEvenIfAllDoorsOpen** — topology/carving failure signal (should be near 0)
+
+**Milestone 5 value:** this converts “it feels wrong” into a measurable, inspectable, batch-aggregatable signal.
+
+---
+
+### 3) Gate-site viability pre-check + edge scoring + attempt caps (rare degeneracy protection)
+
+`gateThenOptionalReward` now includes stronger *local viability* checks and bounded search:
+
+* Hard caps to avoid edge-budget burn:
+
+  * max main edges tried
+  * max gate-site tries per edge
+  * max branch tries per edge
+  * max branch site tries per branch
+* “Gate-site viability” pre-check: before committing a specific gate site, verify it does not eliminate **all** usable branch door sites (across the relevant anchors).
+* Main-edge scoring prefers:
+
+  * edges that have **any usable branch door site**
+  * edges with **higher usable branch site count**
+  * edges **not already occupied** by existing doors (soft preference, not a hard ban)
+
+**Milestone 5 value:** improves stability and reduces wasted attempts without changing best-effort semantics.
+
+---
+
+### 4) Carving pattern robustness: retry connector candidates (hidden pocket)
+
+The carving pattern `applyLeverRevealsHiddenPocketPattern` was upgraded to avoid fragile single-shot failure:
+
+* Collect candidate connector sites
+* Shuffle deterministically
+* Try up to `maxAttempts` candidates
+* Preview-validate on copies:
+
+  * unreachable pre-reveal
+  * reachable post-reveal
+* Only commit on first candidate that validates
+
+This converts a “rare failure mode” into a “rare skip with clear reason,” and makes success more consistent under batch runs.
+
+---
+
+## CURRENT STATE SUMMARY (REV P)
+
+* Milestone 4 remains fully closed and validated.
+* Phase 2.5 soft enforcement is now **actionable**:
+
+  * misalignment is measured (lever accessibility diagnostics)
+  * and at least one placement decision is now reachability-aware (lever placement)
+* Composition remains deterministic and best-effort.
+* Reliability protections improved via bounded search + local viability checks.
+
+---
+
+## WHERE WE ARE IN MILESTONE 5
+
+### Phase 2.5 — Soft Enforcement (CURRENT, ACTIVE)
+
+**We now have:**
+
+1. **Measured misalignment**
+
+   * lever accessibility classification (including “blocked by other door”)
+2. **First steering intervention**
+
+   * reachability-aware gate lever placement (closed-world reachability filter)
+3. **Search stability**
+
+   * capped loops, scored edge selection, and gate-site viability pre-check
+
+**We are still intentionally in “pressure-only” territory:** no hard vetoes, no generator aborts.
+
+---
+
+## NEXT STEPS — MILESTONE 5
+
+### Immediate (Phase 2.5 continuation)
+
+1. **Re-run the definitive batch (1000+ seeds) and record new rates**
+
+   * Specifically track:
+
+     * `blockedByOtherDoor` rate **before vs after** reachability-aware lever placement
+     * `isBehindOwnGate` rate (should remain rare)
+     * `unreachableEvenIfAllDoorsOpen` (should remain ~0)
+   * Add a short “latest batch signal” section with exact percentages.
+
+2. **Surface the extended lever diagnostics in the UI**
+
+   * Show:
+
+     * lever reachability flags
+     * derived classification label
+     * ideally tie it to the pattern instance that placed it
+   * Goal: misalignment visible during single-seed inspection, not only in batch.
+
+3. **Add *soft* steering to other “player-critical” placements**
+
+   * Plate placement in the “plate room” should consider reachability *at the intended time* (still soft).
+   * Optional reward chest placement is less critical, but can be scored for “late triviality.”
+
+4. **Introduce a small “pressure score” per candidate (no veto)**
+
+   * Example: when multiple candidate placements exist, prefer ones with:
+
+     * reachable levers (doors closed)
+     * non-occupied edges
+     * higher branch-site availability
+   * Still: if none satisfy, skip pattern rather than forcing.
+
+---
+
+### Near-term (Phase 2.5 → Phase 3 readiness criteria)
+
+Phase 3 is allowed only after we can demonstrate:
+
+* the steering interventions predictably improve metrics under batch
+* the interventions do not create new failure clusters
+* the system remains deterministic and best-effort
+
+---
+
+### Phase 3 — Hard Policy (FUTURE, DO NOT ACTIVATE YET)
+
+Once soft steering is proven stable:
+
+* Hard veto candidates (only when safe):
+
+  * prohibit placing a new main-path gate on an already-occupied edge **unless** no alternatives exist
+* Hard minimums:
+
+  * enforce minimum topoDepth thresholds for certain roles *after* observing stable distributions
+* Minimal repair passes:
+
+  * limited local re-tries within a pattern before skipping (still never abort the full dungeon)
+
+---
+
+## REMINDERS
 
 * Patterns must remain best-effort; failures are data, not fatal.
-* Option A geometry policy stands: recompute distanceToWall after carving patterns.
-* Diagnostics are the primary steering surface for Milestone 5.
+* Option A geometry policy stands.
+* Diagnostics are the steering surface for Milestone 5.
+* Escalation only after measured stability.
+
+---
 </file>
 
 </files>

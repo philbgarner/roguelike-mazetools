@@ -22,14 +22,13 @@ import {
   runPatternsBestEffort,
   applyLeverOpensDoorPattern,
   applyGateThenOptionalRewardPattern,
+  applyIntroGatePattern,
 } from "./puzzlePatterns";
 import type {
   PatternDiagnostics,
   PatternEntry,
   PuzzleRole,
 } from "./puzzlePatterns";
-
-import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
 
 // -----------------------------
 // Types
@@ -957,7 +956,7 @@ export type FeatureType =
   // Milestone 3 (stateful puzzles)
   | 7 // pressure plate (floor tile)
   | 8 // pushable block (floor tile; entity)
-  | 9 // hidden passage (wall tile; illusion/breakable)
+  | 9 // hidden passage (FLOOR tile that blocks until revealed via meta.secrets[id].revealed)
   | 10; // hazard (floor tile; hard-block for now)
 
 export type DoorKind =
@@ -1025,7 +1024,9 @@ export type CircuitTargetRef = {
 };
 export type CircuitOutputDef = {
   name: string; // e.g. "SOLVED"
+  id: number;
   mode?: "LEVEL" | "PULSE"; // default "LEVEL"
+  kind?: string;
 };
 
 export type CircuitDef = {
@@ -1053,13 +1054,7 @@ export type ContentOptions = {
   secretRoomChance?: number;
   maxLootTier?: number;
 
-  // Milestone 2 gating knobs
-  lockedDoorCount?: number; // best-effort (default based on path length)
-  leverDoorCount?: number; // best-effort (default based on path length)
-  gateMinDepth?: number; // avoid placing gates too close to entrance
-
   // Milestone 3 toggles
-  includePuzzleFixture?: boolean;
   includeLeverHiddenPocket?: boolean;
   leverHiddenPocketSize?: number; // odd >= 3 (default 3)
   includeAsciiOverlay?: boolean;
@@ -1069,16 +1064,16 @@ export type ContentOptions = {
   includePlateOpensDoor?: boolean;
   plateOpensDoorCount?: number; // “N times”
 
+  // Milestone 5: foundational intro composition (replaces Milestone 2 baseline gates)
+  includeIntroGate?: boolean;
+  introGateCount?: number; // “N times”
+
   // Optional: budget for each pattern’s internal search (passed to pattern options)
-  patternMaxAttempts?: number; // default 60
+  patternMaxAttempts?: number;
 
-  // -----------------------------
   // Milestone 4 — Phase 3 (composition)
-  // -----------------------------
   includePhase3Compositions?: boolean;
-
-  // MAIN_PATH_GATE -> OPTIONAL_REWARD (signal-gated)
-  gateThenOptionalRewardCount?: number; // default 0
+  gateThenOptionalRewardCount?: number;
 };
 
 export type ContentOutputs = {
@@ -1147,7 +1142,13 @@ export type ContentOutputs = {
       roomId: number;
       tier: number;
     }>;
-    secrets: Array<{ id: number; x: number; y: number; roomId: number }>;
+    secrets: Array<{
+      id: number;
+      x: number;
+      y: number;
+      roomId: number;
+      kind: string;
+    }>;
 
     // Milestone 2: circuits
     doors: Array<{
@@ -1596,13 +1597,14 @@ export function generateDungeonContent(
   opts?: Partial<ContentOptions>,
 ): ContentOutputs {
   const options: Required<ContentOptions> = {
-    seed: opts?.seed ?? dungeon.meta.seedUsed + 1337,
+    seed: opts?.seed ?? 0,
+
     entranceMode: opts?.entranceMode ?? "bottom",
 
-    minClearanceToWall: opts?.minClearanceToWall ?? 2,
-    monstersPerRoomMin: opts?.monstersPerRoomMin ?? 1,
-    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 3,
-    monsterRoomChance: opts?.monsterRoomChance ?? 0.75,
+    minClearanceToWall: opts?.minClearanceToWall ?? 1,
+    monstersPerRoomMin: opts?.monstersPerRoomMin ?? 0,
+    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 2,
+    monsterRoomChance: opts?.monsterRoomChance ?? 0.35,
 
     chestsTargetCount:
       opts?.chestsTargetCount ??
@@ -1611,13 +1613,7 @@ export function generateDungeonContent(
 
     maxLootTier: opts?.maxLootTier ?? 5,
 
-    // Milestone 2 gating knobs (derived defaults computed later, after mainPathRoomIds exists)
-    lockedDoorCount: opts?.lockedDoorCount ?? 0,
-    leverDoorCount: opts?.leverDoorCount ?? 0,
-    gateMinDepth: opts?.gateMinDepth ?? 2,
-
     // Milestone 3
-    includePuzzleFixture: opts?.includePuzzleFixture ?? true,
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
     includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
     leverHiddenPocketSize: opts?.leverHiddenPocketSize ?? 3,
@@ -1628,14 +1624,18 @@ export function generateDungeonContent(
     includePlateOpensDoor: opts?.includePlateOpensDoor ?? false,
     plateOpensDoorCount: opts?.plateOpensDoorCount ?? 1,
 
+    // Milestone 5
+    includeIntroGate: opts?.includeIntroGate ?? false,
+    introGateCount: opts?.introGateCount ?? (opts?.includeIntroGate ? 1 : 0), // If we don't include an intro gate, then assume zero default.
+
     patternMaxAttempts: opts?.patternMaxAttempts ?? 60,
 
-    // -----------------------------
     // Milestone 4 — Phase 3 (composition)
-    // -----------------------------
     includePhase3Compositions: opts?.includePhase3Compositions ?? false,
-    gateThenOptionalRewardCount: opts?.gateThenOptionalRewardCount ?? 0,
+    gateThenOptionalRewardCount: opts?.gateThenOptionalRewardCount ?? 1,
   };
+
+  console.log("generating dungeon content", options);
 
   const seedUsed = hashSeedToUint32(options.seed);
   const rng = mulberry32(seedUsed);
@@ -1830,336 +1830,14 @@ export function generateDungeonContent(
     featureType[idx] = 3;
     featureId[idx] = id;
 
-    secrets.push({ id, x: wallP.x, y: wallP.y, roomId });
+    secrets.push({ id, x: wallP.x, y: wallP.y, roomId, kind: "secret_door" });
   }
 
   // -----------------------------
-  // Milestone 2: Doors + Keys + Levers (circuits)
+  // IMPORTANT (Milestone 5 policy):
+  // No baseline puzzle fixtures are placed here anymore.
+  // Doors/keys/levers/plates/blocks/hazards/hidden are pattern-driven only.
   // -----------------------------
-
-  // ------------------------------------------------------------
-  // Door-site budgeting for optional patterns
-  // ------------------------------------------------------------
-  // Some optional patterns (Lever→Door, Plate→Door) place *new doors* on
-  // corridor tiles that separate two rooms (a “door site”).
-  //
-  // Milestone 2 gate doors also consume these corridor door sites. If we place
-  // too many gates, patterns can fail simply because there are no remaining
-  // viable corridor door sites.
-  //
-  // Policy:
-  // - Count available corridor door sites after room/chest/monster/secret placement.
-  // - Reserve enough sites for enabled patterns (counts).
-  // - Clamp Milestone 2 desiredLocked/desiredLever so we don’t exceed the budget.
-  function countCorridorDoorSites(
-    dungeon: BspDungeonOutputs,
-    featureType: Uint8Array,
-  ): number {
-    const W = dungeon.width;
-    const { candidates } = findDoorSiteCandidatesAndStatsFromCorridors(
-      dungeon,
-      featureType,
-      {
-        maxRadius: 10,
-        minDistToWall: 1,
-        preferCorridor: true,
-        trimEnds: 2,
-        duplicateBias: 1,
-      },
-    );
-    const seen = new Set<number>();
-    for (const c of candidates) {
-      seen.add(keyXY(W, c.x, c.y));
-    }
-    return seen.size;
-  }
-
-  const gateMinDepth = options.gateMinDepth;
-
-  // mainPathRoomIds MUST already be computed above this point.
-  const mainPathLen = mainPathRoomIds.length;
-
-  let desiredLocked =
-    opts?.lockedDoorCount !== undefined
-      ? opts.lockedDoorCount
-      : Math.max(1, Math.floor(mainPathLen / 5));
-
-  let desiredLever =
-    opts?.leverDoorCount !== undefined
-      ? opts.leverDoorCount
-      : Math.max(0, Math.floor(mainPathLen / 7));
-  // We place gates on edges along the main path: (room[i] -> room[i+1]).
-  // Avoid edges too close to entrance, and avoid reusing the same edge twice.
-  type PathEdge = { a: number; b: number; depth: number };
-  const pathEdges: PathEdge[] = [];
-  for (let i = 0; i < mainPathRoomIds.length - 1; i++) {
-    const a = mainPathRoomIds[i];
-    const b = mainPathRoomIds[i + 1];
-    const depth = Math.max(depthForRoom(a), depthForRoom(b));
-    pathEdges.push({ a, b, depth });
-  }
-
-  const eligibleEdges = pathEdges.filter((e) => e.depth >= gateMinDepth);
-  // Shuffle edges
-  for (let i = eligibleEdges.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [eligibleEdges[i], eligibleEdges[j]] = [eligibleEdges[j], eligibleEdges[i]];
-  }
-
-  // Budget Milestone 2 gates so optional patterns still have corridor door sites.
-  const reservedForPatterns =
-    (options.includePlateOpensDoor ? options.plateOpensDoorCount | 0 : 0) +
-    (options.includeLeverOpensDoor ? options.leverOpensDoorCount | 0 : 0);
-
-  if (reservedForPatterns > 0) {
-    const totalDoorSites = countCorridorDoorSites(dungeon, featureType);
-    const maxGatesByEdges = eligibleEdges.length;
-    const maxGatesBySites = Math.max(0, totalDoorSites - reservedForPatterns);
-    const maxGateDoors = Math.min(maxGatesByEdges, maxGatesBySites);
-
-    // Clamp requested gate counts to the budget (prefer keeping locked doors over lever doors).
-    if (desiredLocked > maxGateDoors) {
-      desiredLocked = maxGateDoors;
-      desiredLever = 0;
-    } else {
-      desiredLever = Math.min(desiredLever, maxGateDoors - desiredLocked);
-    }
-  }
-
-  const desiredLockedClamped = Math.max(0, desiredLocked | 0);
-  const desiredLeverClamped = Math.max(0, desiredLever | 0);
-
-  function pickKeyOrLeverRoom(maxDepthAllowed: number): number | null {
-    // Prefer side rooms, but any reachable room <= depth works (backtracking allowed)
-    const candidates = Array.from(roomGraph.keys()).filter((rid) => {
-      if (rid === entranceRoomId) return false;
-      const d = depthForRoom(rid);
-      if (d > maxDepthAllowed) return false;
-      return roomDistance.has(rid);
-    });
-
-    const sideFirst = candidates.filter(
-      (rid) => (roomDegree.get(rid) ?? 0) <= 1,
-    );
-    const pool = sideFirst.length > 0 ? sideFirst : candidates;
-    if (pool.length === 0) return null;
-    return pickRandom(rng, pool);
-  }
-
-  function placeKeyInRoom(roomId: number, circuitId: number) {
-    const room = rooms[roomId - 1];
-    if (!room) return;
-
-    const p = sampleRoomFloorPoint(
-      dungeon,
-      room,
-      rng,
-      Math.max(1, options.minClearanceToWall),
-    );
-    if (!p) return;
-
-    const idx = keyXY(W, p.x, p.y);
-    if (featureType[idx] !== 0) return;
-
-    featureType[idx] = 5; // key
-    featureId[idx] = clamp255(circuitId);
-
-    keys.push({ id: circuitId, x: p.x, y: p.y, roomId });
-  }
-
-  function placeLeverInRoom(roomId: number, circuitId: number) {
-    const room = rooms[roomId - 1];
-    if (!room) return;
-
-    const p = sampleRoomFloorPoint(
-      dungeon,
-      room,
-      rng,
-      Math.max(1, options.minClearanceToWall),
-    );
-    if (!p) return;
-
-    const idx = keyXY(W, p.x, p.y);
-    if (featureType[idx] !== 0) return;
-
-    featureType[idx] = 6; // lever
-    featureId[idx] = clamp255(circuitId);
-
-    levers.push({ id: circuitId, x: p.x, y: p.y, roomId });
-  }
-
-  function placeDoorOnEdge(edge: PathEdge, kind: DoorKind): boolean {
-    const corr = findCorridorConnectingRooms(dungeon, edge.a, edge.b);
-    if (!corr) return false;
-
-    const doorP = pickDoorTileOnCorridor(dungeon, corr);
-    if (!doorP) return false;
-
-    const idx = keyXY(W, doorP.x, doorP.y);
-    if (featureType[idx] !== 0) return false;
-
-    const circuitId = clamp255(nextId++);
-
-    featureType[idx] = 4; // door
-    featureId[idx] = circuitId;
-    featureParam[idx] = kind; // 1 locked, 2 lever
-
-    doors.push({
-      id: circuitId,
-      x: doorP.x,
-      y: doorP.y,
-      roomA: edge.a,
-      roomB: edge.b,
-      kind,
-      depth: edge.depth,
-    });
-
-    // Place corresponding key/lever in an allowed room <= door depth
-    const keyRoom = pickKeyOrLeverRoom(edge.depth);
-    if (keyRoom == null) return true; // still keep door; worst-case it's "future content"
-
-    if (kind === 1) placeKeyInRoom(keyRoom, circuitId);
-    if (kind === 2) placeLeverInRoom(keyRoom, circuitId);
-
-    return true;
-  }
-
-  // Place locked doors
-  let placedLocked = 0;
-  for (const e of eligibleEdges) {
-    if (placedLocked >= desiredLockedClamped) break;
-    if (placeDoorOnEdge(e, 1)) placedLocked++;
-  }
-
-  // Place lever doors
-  let placedLever = 0;
-  for (let i = placedLocked; i < eligibleEdges.length; i++) {
-    if (placedLever >= desiredLeverClamped) break;
-    if (placeDoorOnEdge(eligibleEdges[i], 2)) placedLever++;
-  }
-
-  // -----------------------------
-  // Milestone 3: Simple plate + block + door fixture
-  //
-  // NOTE: Plates are “derived” at runtime from block occupancy (see dungeonState.ts/App.tsx).
-  // This just ensures there’s something to interact with right away.
-  // -----------------------------
-
-  // Small bitfield for featureParam on plates (debug / future use)
-  // bit0: modeToggle (1=toggle, 0=momentary)
-  // bit1: activatedByPlayer
-  // bit2: activatedByBlock
-  // bit3: inverted
-  function encodePlateParam(o: {
-    mode: "momentary" | "toggle";
-    activatedByPlayer: boolean;
-    activatedByBlock: boolean;
-    inverted: boolean;
-  }): number {
-    let p = 0;
-    if (o.mode === "toggle") p |= 1 << 0;
-    if (o.activatedByPlayer) p |= 1 << 1;
-    if (o.activatedByBlock) p |= 1 << 2;
-    if (o.inverted) p |= 1 << 3;
-    return p & 0xff;
-  }
-
-  let fixtureDoorId = 0;
-  let fixturePlateCircuitId = 0;
-  let fixtureHiddenId = 0;
-  let fixtureHazardId = 0;
-  let fixtureHazardLeverId = 0;
-
-  if (options.includePuzzleFixture && rooms.length > 0) {
-    // (A) Place an “extra” door ...
-    // (B) Place a pressure plate + adjacent push block ...
-
-    // (C) Place a hidden passage tile in the farthest room (featureType 9) and register it as a "secret".
-    // This is revealable via circuits (HIDDEN target kind).
-    {
-      const hiddenRoomId = farthestRoomId || entranceRoomId;
-      const hiddenRoom = rooms[hiddenRoomId - 1] ?? rooms[0];
-      const p = sampleRoomFloorPoint(
-        dungeon,
-        hiddenRoom,
-        rng,
-        Math.max(1, options.minClearanceToWall),
-      );
-      if (p) {
-        const hi = keyXY(W, p.x, p.y);
-        if (featureType[hi] === 0) {
-          fixtureHiddenId = clamp255(nextId++);
-          featureType[hi] = 9; // hidden passage
-          featureId[hi] = fixtureHiddenId;
-          featureParam[hi] = 0;
-
-          secrets.push({
-            id: fixtureHiddenId,
-            x: p.x,
-            y: p.y,
-            roomId: hiddenRoomId,
-          });
-        }
-      }
-    }
-
-    // (D) Place a single hazard tile and a lever to toggle it.
-    {
-      const hzRoomId = entranceRoomId;
-      const hzRoom = rooms[hzRoomId - 1] ?? rooms[0];
-
-      // hazard tile
-      const hp = sampleRoomFloorPoint(
-        dungeon,
-        hzRoom,
-        rng,
-        Math.max(1, options.minClearanceToWall),
-      );
-      if (hp) {
-        const hi = keyXY(W, hp.x, hp.y);
-        if (featureType[hi] === 0) {
-          fixtureHazardId = clamp255(nextId++);
-          featureType[hi] = 10; // hazard
-          featureId[hi] = fixtureHazardId;
-          featureParam[hi] = 0;
-          hazardType[hi] = 1; // lava (debug-friendly)
-
-          hazards.push({
-            id: fixtureHazardId,
-            x: hp.x,
-            y: hp.y,
-            roomId: hzRoomId,
-            hazardType: 1,
-            activeInitial: false,
-          });
-        }
-      }
-
-      // lever tile (try a different point so it doesn't collide)
-      const lp = sampleRoomFloorPoint(
-        dungeon,
-        hzRoom,
-        rng,
-        Math.max(1, options.minClearanceToWall),
-      );
-      if (lp) {
-        const li = keyXY(W, lp.x, lp.y);
-        if (featureType[li] === 0) {
-          fixtureHazardLeverId = clamp255(nextId++);
-          featureType[li] = 6; // lever
-          featureId[li] = fixtureHazardLeverId;
-          featureParam[li] = 0;
-
-          levers.push({
-            id: fixtureHazardLeverId,
-            x: lp.x,
-            y: lp.y,
-            roomId: hzRoomId,
-          });
-        }
-      }
-    }
-  }
 
   // ------------------------------------
   // Phase 1: Build meta.circuits (from Milestone 2 gates)
@@ -2214,19 +1892,11 @@ export function generateDungeonContent(
     }
   }
 
-  // Milestone 3 fixture circuit: plate toggles the extra door.
-  if (fixturePlateCircuitId !== 0 && fixtureDoorId !== 0) {
-    const c = ensureCircuit(fixturePlateCircuitId);
-    c.logic = { type: "OR" };
-    c.behavior = { mode: "TOGGLE" };
-    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
-    c.targets = [{ kind: "DOOR", refId: fixtureDoorId, effect: "TOGGLE" }];
-  }
-
   // ------------------------------------
   // Milestone 3: Optional puzzle patterns
   // ------------------------------------
 
+  // Adapt our RNG to the PatternRng interface expected by puzzlePatterns.ts
   // Adapt our RNG to the PatternRng interface expected by puzzlePatterns.ts
   const patternRng = {
     nextFloat: () => rng(),
@@ -2237,6 +1907,42 @@ export function generateDungeonContent(
   };
 
   const patterns: PatternEntry[] = [];
+
+  // Milestone 5: Intro gate (replaces Milestone 2 baseline gates)
+  if (options.includeIntroGate) {
+    const n = Math.max(0, options.introGateCount | 0);
+    for (let k = 0; k < n; k++) {
+      patterns.push({
+        name: "introGate",
+        run: () =>
+          applyIntroGatePattern({
+            rng: patternRng,
+            dungeon,
+            rooms,
+
+            // topology context
+            entranceRoomId,
+            roomGraph,
+            roomDistance,
+            mainPathRoomIds,
+
+            // masks
+            featureType,
+            featureId,
+            featureParam,
+
+            // meta
+            doors,
+            levers,
+            circuitsById,
+            circuitRoles,
+
+            allocId: () => clamp255(nextId++),
+            options: { maxAttempts: options.patternMaxAttempts },
+          }),
+      });
+    }
+  }
 
   if (options.includeLeverHiddenPocket) {
     patterns.push({
@@ -2256,7 +1962,7 @@ export function generateDungeonContent(
           allocId: () => clamp255(nextId++),
           options: {
             pocketSize: options.leverHiddenPocketSize,
-            maxAttempts: options.patternMaxAttempts, // NEW
+            maxAttempts: options.patternMaxAttempts,
           },
         }),
     });
@@ -2340,7 +2046,7 @@ export function generateDungeonContent(
             blocks,
             chests,
             circuitsById,
-            circuitRoles: circuitRoles, // IMPORTANT (write roles here)
+            circuitRoles,
 
             allocId: () => clamp255(nextId++),
             options: { maxAttempts: options.patternMaxAttempts },
@@ -2351,27 +2057,8 @@ export function generateDungeonContent(
 
   const { didCarve, diagnostics } = runPatternsBestEffort(patterns);
 
-  // Option A: if any patterns carved geometry, distanceToWall is now stale.
   if (didCarve) {
     recomputeDungeonDistanceToWall(dungeon);
-  }
-
-  // Milestone 3 fixture circuit: plate reveals the hidden passage tile (featureType 9).
-  if (fixturePlateCircuitId !== 0 && fixtureHiddenId !== 0) {
-    const c = ensureCircuit(clamp255(fixtureHiddenId));
-    c.logic = { type: "OR" };
-    c.behavior = { mode: "PERSISTENT" };
-    c.triggers = [{ kind: "PLATE", refId: fixturePlateCircuitId }];
-    c.targets = [{ kind: "HIDDEN", refId: fixtureHiddenId, effect: "REVEAL" }];
-  }
-
-  // Milestone 3 fixture circuit: lever toggles the hazard (consequence-only).
-  if (fixtureHazardLeverId !== 0 && fixtureHazardId !== 0) {
-    const c = ensureCircuit(clamp255(fixtureHazardLeverId));
-    c.logic = { type: "OR" };
-    c.behavior = { mode: "TOGGLE" };
-    c.triggers = [{ kind: "LEVER", refId: fixtureHazardLeverId }];
-    c.targets = [{ kind: "HAZARD", refId: fixtureHazardId, effect: "TOGGLE" }];
   }
 
   const circuits = Array.from(circuitsById.values()).sort(
@@ -2427,7 +2114,7 @@ export function generateDungeonContent(
   for (let i = 0; i < W * H; i++) {
     if (featureType[i] === 9 && featureId[i] === 0) {
       throw new Error(
-        `generateDungeonContent(): featureType 9 (hidden passage) missing featureId at tile index ${i}`,
+        `generateDungeonContent(): hidden passage at idx=${i} is on a wall tile (solid=255)`,
       );
     }
   }

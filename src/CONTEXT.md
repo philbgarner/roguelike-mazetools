@@ -1,10 +1,12 @@
+---
+
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-22 (rev O)**
+**CONTEXT VERSION:** **2026-01-23 (rev Q)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Milestone 5 Kickoff — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **PHASE 2.5 SOFT ENFORCEMENT ONLINE; RELIABILITY + INTENT MISALIGNMENT NOW MEASURED**
+**CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
+**PHASE STATUS:** **BASELINE VALIDATED; CLEAN SOFT-PATCH IDENTIFIED AND SELECTED**
 
 ---
 
@@ -74,26 +76,6 @@ It is designed to evolve toward a JRPG / metroidvania-style dungeon system empha
 
 ---
 
-## DEFINITIONS — PROGRESSION GRAMMAR (WORDS BEFORE CODE)
-
-Progression grammar is the set of repeatable, composable micro-structures that shape player experience:
-
-* **Teach** — demonstrate a mechanic safely.
-* **Gate** — require a mechanic for progress.
-* **Reward** — optional content locked behind meaningful logic.
-* **Foreshadow** — visible but inaccessible content.
-* **Shortcut** — later unlock reduces backtracking cost.
-* **Ramp** — complexity increases with dungeon depth.
-
-In-engine, grammar is expressed via:
-
-* patterns that place fixtures + circuits
-* roles assigned to circuits
-* diagnostics and thresholds that score intent alignment
-* later: policy that steers, repairs, or vetoes placements
-
----
-
 ## MILESTONE 4 STATUS — COMPLETE
 
 Milestone 4 is considered complete when:
@@ -104,7 +86,7 @@ Milestone 4 is considered complete when:
 * Patterns are best-effort with batch-aggregated failure reasons
 * Reliability is batch-verified and stable
 
-**As of rev O: Milestone 4 remains CLOSED.**
+**As of rev Q: Milestone 4 remains CLOSED.**
 
 ---
 
@@ -137,76 +119,133 @@ Patterns execute best-effort and emit diagnostics per run:
 * door-site statistics
 * reachability stats (for carving patterns)
 * gate-edge reuse diagnostics
-* lever accessibility diagnostics (new)
+* lever accessibility diagnostics (expanded)
 
 The batch harness is trusted; aggregated diagnostics are authoritative.
 
 ---
 
-## NEW IN REV O — LEVER ACCESSIBILITY DIAGNOSTICS
+## BASELINE MEASUREMENT — DEFAULT CIRCUITS ONLY (NEW IN REV Q)
 
-### Lever Accessibility Diagnostic (V1)
+A clean-room batch was run with **only default circuits enabled** (no additional lever/plate/hidden-pocket patterns):
 
-A new diagnostic classifies lever placement relative to dungeon accessibility:
+**Batch size:** 1000 runs
+**Pattern:** `gateThenOptionalReward`
+**Reliability:** 100% (1000 / 1000 ok)
 
-* **Lever behind own gate** — opening *only its own gate* makes it reachable.
-* **Lever blocked by other door(s)** — reachable only if *other* doors are opened.
-* **Lever unreachable even if all doors open** — topology or carving failure (not observed).
+### Lever Accessibility (Baseline)
 
-### Latest Batch Signal (1000 runs)
+* **leverBlockedByOtherDoor:** **0.6%** (6 / 1000)
+* **leverBehindOwnGate:** **7.1%** (71 / 1000)
+* **leverUnreachableEvenIfAllDoorsOpen:** **0%**
 
-For `gateThenOptionalReward`:
+### Interpretation
 
-* **leverBehindOwnGate:** ~2% (rare self-deadlock)
-* **leverBlockedByOtherDoor:** ~31% (primary misalignment)
-* **leverUnreachableEvenIfAllDoorsOpen:** 0% (no topology failures)
+* The previously observed ~30% `blockedByOtherDoor` rate is **interaction-driven**, not intrinsic to the pattern.
+* With no other doors present, cross-gate blocking collapses to near-zero.
+* The dominant remaining failure mode is **leverBehindOwnGate**, which is intrinsic to the current placement order:
 
-**Interpretation:**
+  * lever reachability is computed **before** the gate door is committed,
+  * the gate door can then cut off the lever’s only access path.
 
-Reliability is perfect, but intent misalignment is measurable: levers are often placed in regions gated by unrelated doors.
-
-This is the first *clear, quantitative intent signal* for Milestone 5.
+This establishes a **clear, isolated intent defect** in the pattern itself.
 
 ---
 
-## CURRENT STATE SUMMARY
+## CLEAN PATCH DECISION (NEW IN REV Q)
 
-* Milestone 4 remains fully closed and validated
-* Composition patterns are stable and expressive
-* Intent misalignment is now **measured**, not anecdotal
-* Lever accessibility diagnostics expose real pacing problems
-* System remains deterministic and best-effort
+A **clean soft-enforcement patch** has been selected:
+
+> **Change lever placement reachability evaluation to occur *after* preview placement of the gate door.**
+
+### Rationale
+
+* Eliminates `leverBehindOwnGate` without introducing vetoes.
+* Preserves deterministic, best-effort behavior.
+* Keeps steering local to the pattern (no global policy).
+* Maintains the diagnostic-first → soft-enforcement escalation principle.
+
+This patch upgrades lever reachability from:
+
+> “reachable in the pre-door world”
+> to
+> “reachable in the intended closed-world state.”
+
+---
+
+## CURRENT STATE SUMMARY (REV Q)
+
+* Milestone 4 remains fully closed and validated.
+* Phase 2.5 soft enforcement has progressed from **measurement → diagnosis → targeted fix**.
+* A clean baseline confirms which misalignments are intrinsic vs interaction-driven.
+* A minimal, principled soft patch has been identified and selected.
+* No hard rules or vetoes have been introduced.
+
+---
+
+## WHERE WE ARE IN MILESTONE 5
+
+### Phase 2.5 — Soft Enforcement (CURRENT, ACTIVE)
+
+**We now have:**
+
+1. **Clear diagnostic separation**
+
+   * intrinsic misalignment (`leverBehindOwnGate`)
+   * interaction misalignment (`blockedByOtherDoor`)
+2. **A validated baseline**
+
+   * default-circuit runs establish expected “floor” behavior
+3. **A selected clean patch**
+
+   * lever reachability evaluated with gate door previewed
+
+We are still intentionally in **pressure-only territory**.
 
 ---
 
 ## NEXT STEPS — MILESTONE 5
 
-### Phase 2.5 — Soft Enforcement (current)
+### Immediate (Phase 2.5 continuation)
 
-**Immediate next actions:**
+1. **Implement the clean patch**
 
-1. **Reachability-aware lever placement**
+   * Preview-place the gate door before lever sampling.
+   * Recompute closed-world reachability with the gate present.
+   * Sample lever only from that reachable set.
 
-   * Restrict lever placement to tiles reachable from the entrance with doors closed.
-   * Expected effect: sharply reduce `leverBlockedByOtherDoor` without vetoes.
+2. **Re-run the definitive batch (1000+ seeds)**
 
-2. **UI surfacing**
+   * Compare:
 
-   * Display lever-access diagnostics alongside pattern diagnostics.
-   * Make misalignment visible during inspection, not just batch runs.
+     * `leverBehindOwnGate` **before vs after**
+     * ensure `blockedByOtherDoor` remains low in baseline
+     * confirm no new failure clusters appear
 
-3. **Tuning pass (pressure only)**
+3. **Record post-patch metrics**
 
-   * Increase penalty for reusing occupied door edges.
-   * Cap attempts on occupied edges before considering them.
+   * Add a “post-clean-patch signal” section alongside the baseline.
 
-### Phase 3 — Hard Policy (future)
+4. **UI surfacing (optional but recommended)**
 
-After soft steering stabilizes:
+   * Make the lever classification visible per pattern instance for inspection.
 
-* Hard veto: disallow new main-path gates on already-occupied edges (unless no alternatives).
-* Enforce minimum topoDepth for OPTIONAL_REWARD beyond depthN thresholds.
-* Add limited repair passes for failed compositions before skipping.
+---
+
+### Phase 2.5 → Phase 3 Readiness Criteria
+
+Phase 3 may only begin once:
+
+* the clean patch predictably drives `leverBehindOwnGate` toward ~0%
+* no regressions appear under mixed-pattern pressure
+* determinism and best-effort semantics are preserved
+
+---
+
+### Phase 3 — Hard Policy (FUTURE, DO NOT ACTIVATE YET)
+
+* Potential hard rules will only be considered after soft steering proves stable.
+* No hard vetoes are currently justified.
 
 ---
 
@@ -215,3 +254,6 @@ After soft steering stabilizes:
 * Patterns must remain best-effort; failures are data, not fatal.
 * Option A geometry policy stands.
 * Diagnostics are the steering surface for Milestone 5.
+* Escalation only after measured stability.
+
+---

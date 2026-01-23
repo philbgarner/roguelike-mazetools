@@ -111,6 +111,10 @@ export type CircuitRoleRecordV1 = {
   blockedByCycle: boolean;
 };
 
+export type IntroGatePatternOptions = {
+  maxAttempts?: number;
+};
+
 export type RoleRuleHitV1 = {
   ruleId: RoleRuleId;
   role: PuzzleRole | null;
@@ -332,6 +336,48 @@ export type GateThenOptionalRewardPatternOptions = {
   rewardLootTier?: number; // default 2
 };
 
+// Returns roomId (1-based) if point is in a room; otherwise 0.
+//
+// Preference order:
+// 1) dungeon.masks.regionId (if present and non-zero at p)
+// 2) rectangle containment against dungeon.meta.rooms[]
+//
+// Safe for corridors: will return 0.
+export function whichRoomIdForPoint(
+  dungeon: {
+    width: number;
+    height: number;
+    masks?: { regionId?: Uint8Array };
+    meta?: { rooms?: Array<{ x: number; y: number; w: number; h: number }> };
+  },
+  x: number,
+  y: number,
+): number {
+  const W = dungeon.width | 0;
+  const H = dungeon.height | 0;
+
+  if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+
+  // 1) Prefer regionId mask if available
+  const rid = dungeon.masks?.regionId;
+  if (rid && rid.length === W * H) {
+    const v = rid[y * W + x] | 0;
+    if (v !== 0) return v; // already a 1..N roomId
+  }
+
+  // 2) Fallback: room rectangle containment
+  const rooms = dungeon.meta?.rooms ?? [];
+  for (let i = 0; i < rooms.length; i++) {
+    const r = rooms[i]!;
+    // inclusive bounds: [x, x+w) and [y, y+h)
+    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
+      return (i + 1) | 0; // roomId is 1-based
+    }
+  }
+
+  return 0;
+}
+
 function edgeKey(a: number, b: number) {
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
@@ -361,6 +407,217 @@ function pickBranchNeighborOffMainPath(
   );
   if (!candidates.length) return null;
   return candidates[rng.nextInt(0, candidates.length - 1)]!;
+}
+
+export function applyIntroGatePattern(args: {
+  rng: PatternRng;
+  dungeon: BspDungeonOutputs;
+  rooms: BspDungeonOutputs["meta"]["rooms"];
+
+  entranceRoomId: number;
+  roomGraph: Map<number, Set<number>>;
+  roomDistance: Map<number, number>;
+  mainPathRoomIds: number[];
+
+  featureType: Uint8Array;
+  featureId: Uint8Array;
+  featureParam: Uint8Array;
+
+  doors: ContentOutputs["meta"]["doors"];
+  levers: ContentOutputs["meta"]["levers"];
+
+  circuitsById: Map<number, CircuitDef>;
+  circuitRoles: Record<number, PuzzleRole>;
+
+  allocId: () => number;
+  options?: IntroGatePatternOptions;
+}): PatternResult {
+  const {
+    rng,
+    dungeon,
+    rooms,
+    entranceRoomId,
+    roomDistance,
+    mainPathRoomIds,
+    featureType: ft,
+    featureId: fid,
+    featureParam: fparam,
+    doors,
+    levers,
+    circuitsById,
+    circuitRoles,
+    allocId,
+  } = args;
+
+  const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
+
+  const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
+    dungeon,
+    ft,
+    {
+      minDistToWall: 1,
+      preferCorridor: true,
+      trimEnds: 2,
+      duplicateBias: 1,
+      maxRadius: 10,
+    },
+  );
+
+  if (!candidates.length) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Intro gate: No valid corridor door sites.",
+      stats: { doorSites: stats },
+    };
+  }
+
+  const edgeToSites = new Map<string, typeof candidates>();
+  for (const s of candidates) {
+    const k = edgeKey(s.roomA, s.roomB);
+    const arr = edgeToSites.get(k);
+    if (arr) arr.push(s);
+    else edgeToSites.set(k, [s]);
+  }
+
+  const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
+  const start = entranceRoom ? findAnyFloorInRect(dungeon, entranceRoom) : null;
+  if (!start) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "Intro gate: No entrance tile.",
+    };
+  }
+
+  // Reachability with doors closed (soft enforcement surface)
+  const reachClosed0 = computeReachable(dungeon, ft, fid, start, new Set());
+
+  const mainEdges: RoomEdge[] = [];
+  for (let i = 0; i < mainPathRoomIds.length - 1; i++) {
+    mainEdges.push(normEdge(mainPathRoomIds[i]!, mainPathRoomIds[i + 1]!));
+  }
+
+  // Prefer shallow edges, but still randomize within a small prefix
+  mainEdges.sort((a, b) => {
+    const da = Math.max(roomDistance.get(a.a) ?? 0, roomDistance.get(a.b) ?? 0);
+    const db = Math.max(roomDistance.get(b.a) ?? 0, roomDistance.get(b.b) ?? 0);
+    return da - db;
+  });
+
+  const prefix = Math.min(mainEdges.length, 4);
+  for (let i = prefix - 1; i > 0; i--) {
+    const j = rng.nextInt(0, i);
+    [mainEdges[i], mainEdges[j]] = [mainEdges[j], mainEdges[i]];
+  }
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const edge = mainEdges.length
+      ? mainEdges[rng.nextInt(0, Math.max(0, mainEdges.length - 1))]!
+      : null;
+    if (!edge) break;
+
+    const sites = edgeToSites.get(edgeKey(edge.a, edge.b));
+    if (!sites || sites.length === 0) continue;
+
+    const site = sites[rng.nextInt(0, sites.length - 1)]!;
+    const doorId = allocId();
+
+    const di = idxOf(dungeon.width, site.x, site.y);
+    if ((ft[di] | 0) !== 0) continue;
+
+    // Place door (lever door)
+    ft[di] = 4;
+    fid[di] = doorId;
+    fparam[di] = 2;
+
+    const depth =
+      Math.max(
+        roomDistance.get(site.roomA) ?? 0,
+        roomDistance.get(site.roomB) ?? 0,
+      ) | 0;
+
+    doors.push({
+      id: doorId,
+      x: site.x,
+      y: site.y,
+      roomA: site.roomA,
+      roomB: site.roomB,
+      kind: 2,
+      depth,
+    });
+
+    const roomA = rooms[site.roomA - 1] ?? entranceRoom;
+    const roomB = rooms[site.roomB - 1] ?? entranceRoom;
+
+    // Soft enforcement: lever must be reachable with doors closed
+    const leverP =
+      sampleReachableRoomFloorNoFeatures(
+        rng,
+        dungeon,
+        roomA,
+        ft,
+        reachClosed0,
+        140,
+      ) ??
+      sampleReachableRoomFloorNoFeatures(
+        rng,
+        dungeon,
+        roomB,
+        ft,
+        reachClosed0,
+        140,
+      ) ??
+      (entranceRoom
+        ? sampleReachableRoomFloorNoFeatures(
+            rng,
+            dungeon,
+            entranceRoom,
+            ft,
+            reachClosed0,
+            180,
+          )
+        : null);
+
+    if (!leverP) {
+      // rollback door
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      continue;
+    }
+
+    const li = idxOf(dungeon.width, leverP.x, leverP.y);
+    ft[li] = 6;
+    fid[li] = doorId;
+    fparam[li] = 0;
+
+    const leverRoomId =
+      whichRoomIdForPoint(dungeon, leverP.x, leverP.y) || entranceRoomId;
+    levers.push({ id: doorId, x: leverP.x, y: leverP.y, roomId: leverRoomId });
+
+    circuitsById.set(doorId, {
+      id: doorId,
+      logic: { type: "OR" },
+      behavior: { mode: "TOGGLE" },
+      triggers: [{ kind: "LEVER", refId: doorId }],
+      targets: [{ kind: "DOOR", refId: doorId, effect: "TOGGLE" }],
+      outputs: [{ kind: "SIGNAL", id: doorId, name: "INTRO_GATE_ACTIVE" }],
+    });
+
+    circuitRoles[doorId] = "MAIN_PATH_GATE";
+
+    return { ok: true, didCarve: false, stats: { doorSites: stats } };
+  }
+
+  return {
+    ok: false,
+    didCarve: false,
+    reason:
+      "Intro gate: No viable main-path door+reachable lever placement found.",
+    stats: { doorSites: stats },
+  };
 }
 
 /**
@@ -724,7 +981,7 @@ export function applyGateThenOptionalRewardPattern(args: {
           );
 
           if (!branchSites.length) {
-            failBranchSameAsGate += branchSitesAll.length;
+            failBranchSameAsGate += 1;
             failNoBranchDoorSites++;
             continue;
           }
@@ -1406,10 +1663,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
       continue;
     }
 
-    // Allocate ids (preview uses them; we only commit if validation passes)
-    const secretId = allocId();
-    const leverId = secretId; // keep ids aligned for simpler circuit wiring
-
     // --- Preview validation on copies before commit ---
     const solid2 = solid.slice();
     const ft2 = ft.slice();
@@ -1424,6 +1677,32 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     );
 
     if (!didCarve) continue;
+
+    // if preview passes:
+    const secretId = allocId();
+
+    const leverId = secretId; // keep aligned
+
+    // remove previewId + the first revealed set entirely
+
+    // after you pick secretId:
+    const revealedPost = new Set<number>([secretId]);
+
+    const reachPre = computeReachable(
+      { width: W, height: H, masks: { solid: solid2 } } as any,
+      ft2,
+      fid2,
+      start,
+      new Set(),
+    );
+
+    const reachPost = computeReachable(
+      { width: W, height: H, masks: { solid: solid2 } } as any,
+      ft2,
+      fid2,
+      start,
+      revealedPost,
+    );
 
     // Place hidden passage fixture at connector
     const cI = idxOf(W, picked.cx, picked.cy);
@@ -1443,24 +1722,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
     const goalI = idxOf(W, goal.x, goal.y);
 
-    const reachPre = computeReachable(
-      { width: W, height: H, masks: { solid: solid2 } } as any,
-      ft2,
-      fid2,
-      start,
-      new Set(),
-    );
-
-    const revealed = new Set<number>([secretId]);
-
-    const reachPost = computeReachable(
-      { width: W, height: H, masks: { solid: solid2 } } as any,
-      ft2,
-      fid2,
-      start,
-      revealed,
-    );
-
     const reachability: ReachabilityStats = {
       start,
       connector: { x: picked.cx, y: picked.cy },
@@ -1474,7 +1735,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
             ft2,
             fid2,
             start,
-            revealed,
+            revealedPost,
             goal,
           )
         : null,
@@ -1516,6 +1777,7 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
       x: picked.cx,
       y: picked.cy,
       roomId: 0,
+      kind: "hidden_passage" as const,
     });
     levers.push({
       id: leverId,

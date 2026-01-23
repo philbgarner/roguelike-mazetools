@@ -470,6 +470,8 @@ const App: React.FC = () => {
   const [leverOpensDoorCount, setLeverOpensDoorCount] = useState(2);
   const [includePlateOpensDoor, setIncludePlateOpensDoor] = useState(false);
   const [plateOpensDoorCount, setPlateOpensDoorCount] = useState(2);
+  const [includeIntroGate, setIncludeIntroGate] = useState(true);
+  const [introGateCount, setIntroGateCount] = useState(1);
 
   const [patternMaxAttempts, setPatternMaxAttempts] = useState(60);
 
@@ -673,13 +675,12 @@ const App: React.FC = () => {
       includePlateOpensDoor,
       plateOpensDoorCount,
       patternMaxAttempts,
-      leverDoorCount: 1,
+      includeIntroGate,
       // Phase 3 (composition)
-      includePhase3Compositions: true,
+      includePhase3Compositions: false,
       gateThenOptionalRewardCount: 1, // start with 1 for clean signals/topo metrics
     });
 
-    console.log("includePhase3Compositions:", true);
     console.log(
       "patternDiagnostics len:",
       content.meta.patternDiagnostics?.length,
@@ -775,6 +776,7 @@ const App: React.FC = () => {
     opts,
     showStateOverlay,
     includeLeverHiddenPocket,
+    includeIntroGate,
     leverHiddenPocketSize,
     includePlateOpensDoor,
     plateOpensDoorCount,
@@ -1170,8 +1172,7 @@ const App: React.FC = () => {
           includePlateOpensDoor,
           plateOpensDoorCount,
           patternMaxAttempts,
-          leverDoorCount: 1,
-
+          includeIntroGate,
           // Phase 3 (composition)
           includePhase3Compositions: true,
           gateThenOptionalRewardCount: 1,
@@ -1229,6 +1230,7 @@ const App: React.FC = () => {
     includePlateOpensDoor,
     plateOpensDoorCount,
     patternMaxAttempts,
+    includeIntroGate,
   ]);
 
   const copyBatchJson = React.useCallback(async () => {
@@ -1481,6 +1483,42 @@ const App: React.FC = () => {
 
         <details open>
           <summary className="maze-summary">Content / Puzzles</summary>
+
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={includeLeverHiddenPocket}
+              onChange={(e) => setIncludeLeverHiddenPocket(e.target.checked)}
+            />
+            <span>Include Lever → Hidden Pocket</span>
+          </label>
+
+          <div style={{ height: 8 }} />
+
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={includeIntroGate}
+              onChange={(e) => setIncludeIntroGate(e.target.checked)}
+            />
+            <span>Include Intro Gate (lever → door)</span>
+          </label>
+
+          <div className="row" style={{ gap: 8, marginTop: 6 }}>
+            <span style={{ minWidth: 140, opacity: 0.8 }}>
+              Intro gate count
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={12}
+              value={introGateCount}
+              onChange={(e) => setIntroGateCount(e.target.valueAsNumber)}
+              style={{ width: 80 }}
+            />
+          </div>
+
+          <div style={{ height: 12 }} />
 
           <div className="maze-grid">
             <label className="maze-checkbox">
