@@ -9560,12 +9560,12 @@ const App: React.FC = () => {
       includePlateOpensDoor,
       plateOpensDoorCount,
       patternMaxAttempts,
+      includeIntroGate,
       // Phase 3 (composition)
-      includePhase3Compositions: true,
+      includePhase3Compositions: false,
       gateThenOptionalRewardCount: 1, // start with 1 for clean signals/topo metrics
     });
 
-    console.log("includePhase3Compositions:", true);
     console.log(
       "patternDiagnostics len:",
       content.meta.patternDiagnostics?.length,
@@ -9661,6 +9661,7 @@ const App: React.FC = () => {
     opts,
     showStateOverlay,
     includeLeverHiddenPocket,
+    includeIntroGate,
     leverHiddenPocketSize,
     includePlateOpensDoor,
     plateOpensDoorCount,
@@ -10056,7 +10057,7 @@ const App: React.FC = () => {
           includePlateOpensDoor,
           plateOpensDoorCount,
           patternMaxAttempts,
-
+          includeIntroGate,
           // Phase 3 (composition)
           includePhase3Compositions: true,
           gateThenOptionalRewardCount: 1,
@@ -10114,6 +10115,7 @@ const App: React.FC = () => {
     includePlateOpensDoor,
     plateOpensDoorCount,
     patternMaxAttempts,
+    includeIntroGate,
   ]);
 
   const copyBatchJson = React.useCallback(async () => {
@@ -12599,7 +12601,7 @@ export function generateDungeonContent(
 
     // Milestone 5
     includeIntroGate: opts?.includeIntroGate ?? false,
-    introGateCount: opts?.introGateCount ?? 1,
+    introGateCount: opts?.introGateCount ?? (opts?.includeIntroGate ? 1 : 0), // If we don't include an intro gate, then assume zero default.
 
     patternMaxAttempts: opts?.patternMaxAttempts ?? 60,
 
@@ -12607,6 +12609,8 @@ export function generateDungeonContent(
     includePhase3Compositions: opts?.includePhase3Compositions ?? false,
     gateThenOptionalRewardCount: opts?.gateThenOptionalRewardCount ?? 1,
   };
+
+  console.log("generating dungeon content", options);
 
   const seedUsed = hashSeedToUint32(options.seed);
   const rng = mulberry32(seedUsed);
@@ -13167,11 +13171,11 @@ export function generateDungeonContent(
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-23 (rev P)**
+**CONTEXT VERSION:** **2026-01-23 (rev S)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **SOFT ENFORCEMENT DEEPENED: REACHABILITY-AWARE PLACEMENT + MISALIGNMENT DIAGNOSTICS EXPANDED**
+**PHASE STATUS:** **BASELINE VALIDATED; CLEAN SOFT-PATCH IDENTIFIED; WIZARD FLOW LOCKED**
 
 ---
 
@@ -13209,276 +13213,276 @@ It is designed to evolve toward a JRPG / metroidvania-style dungeon system empha
 
 ---
 
-## MILESTONE ROADMAP (HIGH LEVEL)
-
-### Milestone 1 — Geometry & Basic Metadata
-
-* BSP rooms/corridors, region labeling, distance fields, walkability.
-
-### Milestone 2 — Content Placement v1
-
-* Doors/keys/levers/plates/blocks/hazards placed as fixtures.
-
-### Milestone 3 — Stateful Puzzle Execution
-
-* Runtime state model for fixtures (doors, keys, levers, plates, blocks, hazards, secrets).
-* Deterministic circuit evaluator (`evaluateCircuits.ts`).
-* SIGNAL triggers + topo-sort ordering for circuit chaining; cycle-tolerant best-effort behavior.
-* Circuit diagnostics UI.
-
-### Milestone 4 — Puzzle Composition & Progression Grammar (CLOSED)
-
-* Role diagnostics schema + UI (read-only, batch-safe).
-* Role-aware composition patterns using SIGNAL dependencies.
-* Best-effort execution with authoritative diagnostics.
-* Reliability patching to reach near-100% batch stability.
-
-### Milestone 5 — Intent Steering & Progression Policy (CURRENT)
-
-* Soft enforcement (pressure, not veto).
-* Measure and reduce intent misalignment (stacked gates, inaccessible levers, pacing issues).
-* Transition validated rules into hard policy only after proof.
-
----
-
-## DEFINITIONS — PROGRESSION GRAMMAR (WORDS BEFORE CODE)
-
-Progression grammar is the set of repeatable, composable micro-structures that shape player experience:
-
-* **Teach** — demonstrate a mechanic safely.
-* **Gate** — require a mechanic for progress.
-* **Reward** — optional content locked behind meaningful logic.
-* **Foreshadow** — visible but inaccessible content.
-* **Shortcut** — later unlock reduces backtracking cost.
-* **Ramp** — complexity increases with dungeon depth.
-
-In-engine, grammar is expressed via:
-
-* patterns that place fixtures + circuits
-* roles assigned to circuits
-* diagnostics and thresholds that score intent alignment
-* later: policy that steers, repairs, or vetoes placements
-
----
-
 ## MILESTONE 4 STATUS — COMPLETE
 
-Milestone 4 is considered complete when:
+**Milestone 4 remains CLOSED and VALIDATED.**
 
-* Circuit chaining via SIGNAL exists and is deterministic
-* Diagnostics exist for circuits and roles (UI + batch)
-* At least one multi-circuit composition pattern exists
-* Patterns are best-effort with batch-aggregated failure reasons
-* Reliability is batch-verified and stable
-
-**As of rev P: Milestone 4 remains CLOSED.**
+All composition logic, diagnostics, and reliability guarantees remain unchanged by the UI refactor described below.
 
 ---
 
-## PHASE 3 COMPOSITION PATTERN (FOUNDATIONAL)
+## UI ARCHITECTURE REFACTOR (REV S)
 
-### `gateThenOptionalReward`
+### Motivation
 
-A two-circuit, role-aware composition:
+`App.tsx` currently mixes:
 
-* **MAIN_PATH_GATE**
+* configuration
+* execution
+* batch analysis
+* live inspection
 
-  * Lever-toggle door placed on a main-path edge.
+This allows invalid state combinations and obscures user intent.
 
-* **OPTIONAL_REWARD**
-
-  * Branch door to an off-main room.
-  * Gated by: `PLATE && SIGNAL(gate ACTIVE)`.
-  * Chest placed in the optional branch room.
-
-This pattern expresses **logical composition**: the reward circuit depends on the main-path gate’s activation.
+The UI will be refactored into a **linear wizard** that mirrors the generator pipeline and enforces invariants by construction.
 
 ---
 
-## PATTERN DIAGNOSTICS (AUTHORITATIVE)
+## WIZARD-BASED WORLD CREATION FLOW (LOCKED)
 
-Patterns execute best-effort and emit diagnostics per run:
+### Step 1 — World Seed & Dimensions
 
-* ok / fail + reason
-* didCarve
-* door-site statistics
-* reachability stats (for carving patterns)
-* gate-edge reuse diagnostics
-* lever accessibility diagnostics (expanded)
+* Seed (manual or randomize)
+* World width / height
+* Deterministic seed preview (display only)
 
-The batch harness is trusted; aggregated diagnostics are authoritative.
+**No generation occurs.**
 
 ---
 
-## NEW IN REV P — PHASE 2.5 SOFT ENFORCEMENT IMPROVEMENTS
+### Step 2 — BSP Geometry Settings
 
-### 1) Reachability-aware lever placement (soft enforcement, not veto)
+* BSP depth / split rules
+* Room size bounds
+* Corridor constraints
 
-**Change:** Gate lever placement now prefers tiles **reachable from the entrance with doors closed** (a “closed-world reachability mask” computed once per pattern attempt, then used as a filter). This moves lever placement from “any tile in shallow room” to “reachable tile in shallow room.”
-
-**Intent target:** reduce **leverBlockedByOtherDoor** (lever ends up behind unrelated gates), while keeping generation best-effort.
-
-This is the first concrete “pressure lever” in Milestone 5: **steer placement** rather than **reject dungeons**.
+Defines **geometry only**. No content or puzzles implied.
 
 ---
 
-### 2) Expanded Lever Accessibility Diagnostic (V1 → extended fields)
+### Step 3 — Generation Mode Selection
 
-The lever diagnostic now distinguishes:
+User selects exactly one:
 
-* **reachableWithGateClosed** (baseline)
-* **reachableIfGateWereOpen** (only this gate’s door tile treated as passable)
-* **reachableIfAllDoorsWereOpen** (all door tiles treated as passable)
+* **Single Seed Generation**
 
-Derived classifications:
+  * Produces an inspectable dungeon
+* **Batch Run**
 
-* **isBehindOwnGate** — not reachable with gate closed, but reachable if its own gate were open (self-deadlock)
-* **blockedByOtherDoor** — reachable if all doors open, but not reachable if only its own gate open (misalignment due to unrelated gates)
-* **unreachableEvenIfAllDoorsOpen** — topology/carving failure signal (should be near 0)
+  * N runs
+  * Aggregated diagnostics only
+  * No interactive map
 
-**Milestone 5 value:** this converts “it feels wrong” into a measurable, inspectable, batch-aggregatable signal.
-
----
-
-### 3) Gate-site viability pre-check + edge scoring + attempt caps (rare degeneracy protection)
-
-`gateThenOptionalReward` now includes stronger *local viability* checks and bounded search:
-
-* Hard caps to avoid edge-budget burn:
-
-  * max main edges tried
-  * max gate-site tries per edge
-  * max branch tries per edge
-  * max branch site tries per branch
-* “Gate-site viability” pre-check: before committing a specific gate site, verify it does not eliminate **all** usable branch door sites (across the relevant anchors).
-* Main-edge scoring prefers:
-
-  * edges that have **any usable branch door site**
-  * edges with **higher usable branch site count**
-  * edges **not already occupied** by existing doors (soft preference, not a hard ban)
-
-**Milestone 5 value:** improves stability and reduces wasted attempts without changing best-effort semantics.
+This choice defines the execution contract.
 
 ---
 
-### 4) Carving pattern robustness: retry connector candidates (hidden pocket)
+### Step 4A — Content Strategy (Single Seed Only)
 
-The carving pattern `applyLeverRevealsHiddenPocketPattern` was upgraded to avoid fragile single-shot failure:
+Only shown if **Single Seed** was selected.
 
-* Collect candidate connector sites
-* Shuffle deterministically
-* Try up to `maxAttempts` candidates
-* Preview-validate on copies:
+User chooses:
 
-  * unreachable pre-reveal
-  * reachable post-reveal
-* Only commit on first candidate that validates
+* **Atomic Content Only**
 
-This converts a “rare failure mode” into a “rare skip with clear reason,” and makes success more consistent under batch runs.
+  * Fixtures placed without composition patterns
+* **Run Composition Patterns**
 
----
+  * Enables patterns such as `gateThenOptionalReward`
+  * Full diagnostics active
 
-## CURRENT STATE SUMMARY (REV P)
-
-* Milestone 4 remains fully closed and validated.
-* Phase 2.5 soft enforcement is now **actionable**:
-
-  * misalignment is measured (lever accessibility diagnostics)
-  * and at least one placement decision is now reachability-aware (lever placement)
-* Composition remains deterministic and best-effort.
-* Reliability protections improved via bounded search + local viability checks.
+This step makes **intent explicit**; no silent defaults.
 
 ---
 
-## WHERE WE ARE IN MILESTONE 5
+### Step 4B — Batch Parameters (Batch Only)
 
-### Phase 2.5 — Soft Enforcement (CURRENT, ACTIVE)
+Only shown if **Batch Run** was selected.
 
-**We now have:**
+* Run count
+* Reporting scope (summary only)
 
-1. **Measured misalignment**
-
-   * lever accessibility classification (including “blocked by other door”)
-2. **First steering intervention**
-
-   * reachability-aware gate lever placement (closed-world reachability filter)
-3. **Search stability**
-
-   * capped loops, scored edge selection, and gate-site viability pre-check
-
-**We are still intentionally in “pressure-only” territory:** no hard vetoes, no generator aborts.
+No map or per-seed inspection will be available.
 
 ---
 
-## NEXT STEPS — MILESTONE 5
+### Step 5 — Run Summary & Confirmation (NEW, MANDATORY)
 
-### Immediate (Phase 2.5 continuation)
+A **read-only confirmation step** shown before execution.
 
-1. **Re-run the definitive batch (1000+ seeds) and record new rates**
+Displays:
 
-   * Specifically track:
+* Seed + dimensions
+* BSP settings
+* Generation mode (single vs batch)
+* Content strategy (atomic vs patterns)
+* Explicit statement of guarantees:
 
-     * `blockedByOtherDoor` rate **before vs after** reachability-aware lever placement
-     * `isBehindOwnGate` rate (should remain rare)
-     * `unreachableEvenIfAllDoorsOpen` (should remain ~0)
-   * Add a short “latest batch signal” section with exact percentages.
+  * deterministic
+  * best-effort
+  * patterns may skip
+  * failures are diagnostics, not fatal
 
-2. **Surface the extended lever diagnostics in the UI**
+**Execution may only begin from this step.**
 
-   * Show:
-
-     * lever reachability flags
-     * derived classification label
-     * ideally tie it to the pattern instance that placed it
-   * Goal: misalignment visible during single-seed inspection, not only in batch.
-
-3. **Add *soft* steering to other “player-critical” placements**
-
-   * Plate placement in the “plate room” should consider reachability *at the intended time* (still soft).
-   * Optional reward chest placement is less critical, but can be scored for “late triviality.”
-
-4. **Introduce a small “pressure score” per candidate (no veto)**
-
-   * Example: when multiple candidate placements exist, prefer ones with:
-
-     * reachable levers (doors closed)
-     * non-occupied edges
-     * higher branch-site availability
-   * Still: if none satisfy, skip pattern rather than forcing.
+This step defines the **run contract** and prevents accidental or ambiguous runs.
 
 ---
 
-### Near-term (Phase 2.5 → Phase 3 readiness criteria)
+### Step 6 — Dungeon Creation (Execution Phase)
 
-Phase 3 is allowed only after we can demonstrate:
+* Generation runs to completion
+* Status and progress only
+* No map or inspection UI visible
 
-* the steering interventions predictably improve metrics under batch
-* the interventions do not create new failure clusters
-* the system remains deterministic and best-effort
+Option A geometry recomputation occurs internally as required.
 
 ---
 
-### Phase 3 — Hard Policy (FUTURE, DO NOT ACTIVATE YET)
+### Step 7 — Interactive Dungeon Inspection (POST-GENERATION ONLY)
 
-Once soft steering is proven stable:
+Only after successful completion:
 
-* Hard veto candidates (only when safe):
+* Interactive map renders
+* Layer toggles activate
+* Circuit, role, and pattern diagnostics panels unlock
+* Inspection tools become available
 
-  * prohibit placing a new main-path gate on an already-occupied edge **unless** no alternatives exist
-* Hard minimums:
+This enforces a strict boundary between:
 
-  * enforce minimum topoDepth thresholds for certain roles *after* observing stable distributions
-* Minimal repair passes:
+> configuration → execution → inspection
 
-  * limited local re-tries within a pattern before skipping (still never abort the full dungeon)
+---
+
+## INVALIDATION MATRIX (AUTHORITATIVE)
+
+The wizard enforces **deterministic invalidation**. Any upstream change invalidates all downstream state.
+
+### Step 1 Changes — Seed / Width / Height
+
+Invalidates:
+
+* BSP geometry
+* Content placement
+* Pattern execution
+* Diagnostics
+* Generated dungeon artifact
+
+**Effect:** user is returned to Step 1; all later steps reset.
+
+---
+
+### Step 2 Changes — BSP Geometry Settings
+
+Invalidates:
+
+* Content placement
+* Pattern execution
+* Diagnostics
+* Generated dungeon artifact
+
+**Effect:** Step 2 is re-entered; Steps 3+ cleared.
+
+---
+
+### Step 3 Changes — Generation Mode
+
+Invalidates:
+
+* Content strategy selection
+* Batch parameters
+* Any generated results
+
+**Effect:** downstream branch is reset (single vs batch).
+
+---
+
+### Step 4 Changes — Content Strategy or Batch Parameters
+
+Invalidates:
+
+* Generated dungeon artifact
+* All diagnostics
+
+**Does NOT invalidate:**
+
+* Seed
+* BSP geometry
+* Mode selection
+
+---
+
+### Step 5 (Run Summary)
+
+* No editable fields
+* No invalidation
+* Sole purpose is confirmation
+
+---
+
+### Post-Execution Changes
+
+* Any change to **any prior step** invalidates the entire generated dungeon and diagnostics.
+* Map and inspection UI are immediately torn down.
+
+---
+
+## APP.TSX ROLE AFTER REFACTOR
+
+`App.tsx` becomes a **thin orchestration shell**:
+
+* Owns wizard routing
+* Owns invalidation logic
+* Chooses between:
+
+  * Wizard UI
+  * Execution view
+  * Inspection shell
+
+All logic-heavy behavior is pushed into dedicated components.
+
+---
+
+## UI COLOR PALETTE (UNCHANGED)
+
+The canonical 16-color palette defined in **rev R** remains authoritative for all UI and CSS.
+
+---
+
+## CURRENT STATE SUMMARY (REV S)
+
+* Milestone 4 remains closed.
+* Milestone 5 Phase 2.5 soft enforcement continues uninterrupted.
+* Clean lever reachability patch remains queued.
+* Wizard flow is now invariant-safe and generator-aligned.
+* UI refactor is architectural only; generator semantics unchanged.
+
+---
+
+## NEXT STEPS (UNCHANGED PRIORITY)
+
+### Generator
+
+1. Implement clean lever reachability preview patch
+2. Run post-patch batch
+3. Record comparative diagnostics
+
+### UI
+
+1. Decompose `App.tsx` per wizard plan
+2. Implement invalidation matrix exactly as specified
+3. Add Run Summary / Confirm gate
+4. Defer map rendering until post-execution
+5. Use react framer motion to animate wizard components
+6. Add mouse interactivity to elements on the map like doors levers, etc, showing circuit connections.
 
 ---
 
 ## REMINDERS
 
-* Patterns must remain best-effort; failures are data, not fatal.
-* Option A geometry policy stands.
-* Diagnostics are the steering surface for Milestone 5.
+* UI must not introduce hidden policy.
+* Intent must be explicit before execution.
+* Diagnostics remain authoritative.
 * Escalation only after measured stability.
 
 ---
