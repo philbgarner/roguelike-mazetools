@@ -1,2087 +1,737 @@
 // src/App.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  generateBspDungeon,
-  generateDungeonContent,
-  imageDataToPngDataUrl,
-} from "./mazeGen";
-import {
-  initDungeonRuntimeState,
-  collectKey,
-  toggleLever,
-  resetRuntimeState,
-  derivePlatesFromBlocks,
-  tryPushBlock,
-  type DungeonRuntimeState,
-} from "./dungeonState";
-
-import CircuitDiagnosticsSection from "./debug/CircuitDiagnosticsSection";
-import RoleDiagnosticsSection from "./debug/RoleDiagnosticsSection";
-
-import type {
-  CircuitDiagFilters,
-  CircuitDiagSort,
-  CircuitGlobalMetricsVM,
-} from "./debug/circuitDiagnosticsVM";
-import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
-
-import { evaluateCircuits, type CircuitEvalResult } from "./evaluateCircuits";
-import {
-  analyzeRoleDiagnosticsV1,
-  type RoleDiagnosticsV1,
-} from "./roleDiagnostics";
-
-import {
-  aggregateBatchRuns,
-  type BatchRunInput,
-  type BatchSummary,
-} from "./batchStats";
-
+import React, { useEffect, useMemo, useReducer } from "react";
 import "./styles.css";
 
-type Layer =
-  | "solid"
-  | "regionId"
-  | "distanceToWall"
-  | "content"
-  | "featureType"
-  | "featureId"
-  | "featureParam"
-  | "danger"
-  | "lootTier"
-  | "hazardType";
+import { AnimatePresence, motion } from "framer-motion";
 
-function clampInt(v: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, v));
-}
+import SingleInspectView from "./inspect/SingleInspectView";
+import BatchResultsView from "./inspect/BatchResultsView";
 
-function downloadDataUrl(filename: string, dataUrl: string) {
-  const a = document.createElement("a");
-  a.href = dataUrl;
-  a.download = filename;
-  a.click();
-}
+import {
+  wizardReducer,
+  initialWizardState,
+  deriveRunContract,
+  DEFAULT_BSP,
+  DEFAULT_PATTERN,
+  DEFAULT_BATCH,
+  type WizardState,
+  type WizardAction,
+  type WorldConfig,
+  type BspConfig,
+  type PatternConfig,
+  type BatchConfig,
+} from "./wizard/wizardReducer";
 
-function drawToCanvas(
-  canvas: HTMLCanvasElement | null,
-  imageData: ImageData | null,
-) {
-  if (!canvas || !imageData) return;
-  canvas.width = imageData.width;
-  canvas.height = imageData.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.putImageData(imageData, 0, 0);
-}
+import { generateBspDungeon, generateDungeonContent } from "./mazeGen";
+import {
+  initDungeonRuntimeState,
+  derivePlatesFromBlocks,
+} from "./dungeonState";
+import { evaluateCircuits } from "./evaluateCircuits";
+import { aggregateBatchRuns, type BatchRunInput } from "./batchStats";
+import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
 
-function idxOf(W: number, x: number, y: number) {
-  return y * W + x;
-}
+// --- Thin Shell Router --------------------------------------------------------
 
-function featureName(ft: number) {
-  switch (ft) {
-    case 1:
-      return "Monster Spawn";
-    case 2:
-      return "Chest";
-    case 3:
-      return "Secret Door";
-    case 4:
-      return "Door";
-    case 5:
-      return "Key";
-    case 6:
-      return "Lever";
-    case 7:
-      return "Pressure Plate";
-    case 8:
-      return "Push Block";
-    case 9:
-      return "Hidden Passage";
-    case 10:
-      return "Hazard";
-    default:
-      return "None";
-  }
-}
+const screenMotion = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.18 } },
+  exit: { opacity: 0, y: -8, transition: { duration: 0.14 } },
+};
 
-function doorKindName(param: number) {
-  // Matches Milestone 2 plan:
-  // 1 = locked door, 2 = lever-controlled door
-  switch (param) {
-    case 1:
-      return "Locked";
-    case 2:
-      return "Lever";
-    default:
-      return "Unknown";
-  }
-}
-
-/**
- * Shared door-state derivation used by:
- * - content composite rendering (door color overlay)
- * - tooltips
- *
- * IMPORTANT: door "locked" is derived from runtime key/lever state.
- */
-function readDoorState(
-  runtime: DungeonRuntimeState,
-  doorId: number,
-): { isOpen: boolean; isLocked: boolean; kind: number } {
-  const door = runtime.doors?.[doorId];
-  if (!door) return { isOpen: false, isLocked: false, kind: 0 };
-
-  // Your DoorKind is numeric: 1 locked, 2 lever.
-  const kind = (door.kind as any) | 0;
-
-  // Derive gated state by matching “circuit id” (doorId) convention.
-  const hasKey = !!runtime.keys?.[doorId]?.collected;
-  const leverOn = !!runtime.levers?.[doorId]?.toggled;
-
-  const isLocked = kind === 1 ? !hasKey : kind === 2 ? !leverOn : false;
-
-  const isOpen = !!(door.isOpen || (door as any).forcedOpen);
-
-  return { kind, isOpen, isLocked };
-}
-
-function makeContentCompositeImageData(
-  dungeon: ReturnType<typeof generateBspDungeon>,
-  content: ReturnType<typeof generateDungeonContent>,
-  runtime: DungeonRuntimeState | null,
-  showStateOverlay: boolean,
-  selectedBlockId: number | null,
-): ImageData {
-  const W = dungeon.width;
-  const H = dungeon.height;
-
-  const solid = dungeon.masks.solid; // 255
-  const regionId = dungeon.masks.regionId; // 0 corridors, 1..255 roomswall, 0 floor
-  const ft = content.masks.featureType; // 0..n
-  const fid = content.masks.featureId;
-  const hzType = content.masks.hazardType;
-
-  const img = new ImageData(W, H);
-  const data = img.data;
-
-  // Exit marker bounds (derived from regionId occupancy, then mark center tile).
-  // Exit room is currently defined as the farthest room from the entrance.
-  const exitRoomId = (content.meta.farthestRoomId ?? 0) | 0;
-  let xMin = 1e9,
-    yMin = 1e9,
-    xMax = -1,
-    yMax = -1;
-  let exitFound = false;
-
-  // Entrance marker bounds (derived from regionId; corridors are 0)
-  const entranceRoomId = (content.meta.entranceRoomId ?? 0) | 0;
-  let eMinX = 1e9,
-    eMinY = 1e9,
-    eMaxX = -1,
-    eMaxY = -1;
-  let eFound = false;
-
-  // Runtime blocks overlay (blocks move; masks do not)
-  const blockOcc = new Uint8Array(W * H);
-  const selectedOcc = new Uint8Array(W * H);
-  if (runtime) {
-    for (const [idStr, b] of Object.entries(runtime.blocks ?? {})) {
-      const id = Number(idStr);
-      const bi = idxOf(W, b.x, b.y);
-      if (bi >= 0 && bi < blockOcc.length) blockOcc[bi] = 1;
-      if (selectedBlockId != null && id === selectedBlockId) {
-        if (bi >= 0 && bi < selectedOcc.length) selectedOcc[bi] = 1;
-      }
-    }
-  }
-
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = idxOf(W, x, y);
-      const o = i * 4;
-      // Track exit-room bounds while we already traverse the grid.
-      if (exitRoomId > 0 && regionId[i] === exitRoomId) {
-        exitFound = true;
-        if (x < xMin) xMin = x;
-        if (y < yMin) yMin = y;
-        if (x > xMax) xMax = x;
-        if (y > yMax) yMax = y;
-      }
-
-      // Track entrance-room bounds while we already traverse the grid
-      if (entranceRoomId > 0 && regionId[i] === entranceRoomId) {
-        eFound = true;
-        if (x < eMinX) eMinX = x;
-        if (y < eMinY) eMinY = y;
-        if (x > eMaxX) eMaxX = x;
-        if (y > eMaxY) eMaxY = y;
-      }
-
-      const isWall = solid[i] === 255;
-
-      // Base: walls dark, floors light
-      let r = isWall ? 25 : 235;
-      let g = isWall ? 25 : 235;
-      let b = isWall ? 25 : 235;
-      const a = 255;
-
-      // Overlay by feature type
-      const t = ft[i] | 0;
-      if (t !== 0) {
-        // Slightly darken base first so overlay pops
-        r = Math.max(0, r - 40);
-        g = Math.max(0, g - 40);
-        b = Math.max(0, b - 40);
-
-        if (t === 1) {
-          // monster
-          r = 220;
-          g = 60;
-          b = 60;
-        } else if (t === 2) {
-          // chest
-          r = 70;
-          g = 200;
-          b = 90;
-        } else if (t === 3 || t === 4) {
-          // secret door OR door
-          // Default (no runtime overlay): brown
-          r = 150;
-          g = 105;
-          b = 60;
-
-          // Milestone 3 overlay for doors only (featureType == 4)
-          if (t === 4 && showStateOverlay && runtime) {
-            const doorId = fid[i] | 0;
-            const { isOpen, isLocked } = readDoorState(runtime, doorId);
-
-            if (isOpen) {
-              // OPEN door: lighter tan
-              r = 205;
-              g = 170;
-              b = 120;
-            } else if (isLocked) {
-              // CLOSED + LOCKED: darker brown
-              r = 105;
-              g = 70;
-              b = 40;
-            } else {
-              // CLOSED but not locked
-              r = 145;
-              g = 95;
-              b = 55;
-            }
-          }
-
-          // Optional: make secret doors distinct when overlay is enabled
-          if (t === 3 && showStateOverlay) {
-            r = 135;
-            g = 90;
-            b = 50;
-          }
-        } else if (t === 7) {
-          // pressure plate (milestone 3)
-          // neutral stone-grey
-          r = 150;
-          g = 150;
-          b = 150;
-          // stone-grey; brighten when pressed (derived)
-          r = 150;
-          g = 150;
-          b = 150;
-          if (runtime && showStateOverlay) {
-            const plateId = fid[i] | 0;
-            const pressed = !!runtime.plates?.[plateId]?.pressed;
-            if (pressed) {
-              r = 205;
-              g = 205;
-              b = 205;
-            }
-          }
-        } else if (t === 9) {
-          // hidden passage (featureType 9)
-          // unrevealed: dark “masonry” (wall-ish), revealed: pale teal (floor-ish)
-          const secretId = fid[i] | 0;
-
-          // IMPORTANT: revealed-ness should reflect runtime even if showStateOverlay is off.
-          // showStateOverlay can still govern OTHER overlays, but not whether the tile exists.
-          const revealed = !!(runtime && runtime.secrets?.[secretId]?.revealed);
-
-          if (revealed) {
-            r = 150;
-            g = 210;
-            b = 210;
-          } else {
-            r = 55;
-            g = 55;
-            b = 60;
-          }
-        } else if (t === 10) {
-          // hazard (featureType 10) — consequence-only (walkable), but visually clear
-          const ht = hzType[i] | 0;
-
-          // Base by hazardType
-          if (ht === 1) {
-            // lava
-            r = 220;
-            g = 90;
-            b = 35;
-          } else if (ht === 2) {
-            // poison gas
-            r = 90;
-            g = 220;
-            b = 90;
-          } else if (ht === 3) {
-            // water
-            r = 80;
-            g = 140;
-            b = 230;
-          } else if (ht === 4) {
-            // spikes
-            r = 180;
-            g = 180;
-            b = 180;
-          } else {
-            // unknown hazard
-            r = 230;
-            g = 80;
-            b = 200;
-          }
-
-          // Overlay enabled/disabled state
-          if (runtime && showStateOverlay) {
-            const hazardId = fid[i] | 0;
-            const enabled = !!runtime.hazards?.[hazardId]?.enabled;
-
-            if (!enabled) {
-              // muted when disabled
-              r = Math.round(r * 0.55);
-              g = Math.round(g * 0.55);
-              b = Math.round(b * 0.55);
-            }
-          }
-        } else {
-          // key / lever / unknown future
-          r = 230;
-          g = 200;
-          b = 70;
-        }
-
-        // Draw blocks on top (they move)
-        if (runtime && blockOcc[i]) {
-          // warm “wood” tone
-          r = 140;
-          g = 105;
-          b = 60;
-          if (selectedOcc[i]) {
-            // highlight selected
-            r = 210;
-            g = 170;
-            b = 90;
-          }
-        }
-
-        // Keep walls visible if a feature is on a wall (secret doors are walls)
-        if (isWall) {
-          const br = 25,
-            bg = 25,
-            bb = 25;
-          r = Math.round(br * 0.4 + r * 0.6);
-          g = Math.round(bg * 0.4 + g * 0.6);
-          b = Math.round(bb * 0.4 + b * 0.6);
-        }
-      }
-
-      data[o + 0] = r;
-      data[o + 1] = g;
-      data[o + 2] = b;
-      data[o + 3] = a;
-    }
-  }
-
-  // Entrance marker: cyan pixel at the center of the entrance room
-  if (eFound) {
-    const cx = Math.floor((eMinX + eMaxX) / 2);
-    const cy = Math.floor((eMinY + eMaxY) / 2);
-    const ci = idxOf(W, cx, cy);
-    if (ci >= 0 && ci < solid.length && solid[ci] !== 255) {
-      const co = ci * 4;
-      data[co + 0] = 0; // R
-      data[co + 1] = 255; // G
-      data[co + 2] = 255; // B
-      data[co + 3] = 255; // A
-    }
-  }
-
-  // Exit marker: purple pixel at the center of the farthest room.
-  if (exitFound) {
-    const cx = Math.floor((xMin + xMax) / 2);
-    const cy = Math.floor((yMin + yMax) / 2);
-    const ci = idxOf(W, cx, cy);
-    if (ci >= 0 && ci < solid.length && solid[ci] !== 255) {
-      const co = ci * 4;
-      data[co + 0] = 128; // R
-      data[co + 1] = 0; // G
-      data[co + 2] = 128; // B
-      data[co + 3] = 255; // A
-    }
-  }
-
-  return img;
-}
-
-const App: React.FC = () => {
-  // --- Inputs ---
-  const [width, setWidth] = useState(96);
-  const [height, setHeight] = useState(64);
-  const [seed, setSeed] = useState("seed-1234");
-
-  const [selectedCircuitId, setSelectedCircuitId] = useState<string | null>(
-    null,
+export default function App() {
+  const [state, dispatch] = useReducer(
+    wizardReducer,
+    undefined,
+    initialWizardState,
   );
 
-  const [circuitDiagnostics, setCircuitDiagnostics] = useState<
-    CircuitEvalResult["diagnostics"] | null
-  >(null);
-
-  const [selectedCircuitIndex, setSelectedCircuitIndex] = useState<
-    number | null
-  >(null);
-
-  const [circuitDiagFilters, setCircuitDiagFilters] =
-    useState<CircuitDiagFilters>({
-      search: "",
-      onlySignal: false,
-      onlyCycles: false,
-      hideDepth0: false,
-    });
-
-  const [circuitDiagSort, setCircuitDiagSort] = useState<CircuitDiagSort>({
-    kind: "evalOrder",
-    dir: "asc",
-  });
-
-  // --- Content / Puzzle options ---
-  const [includeLeverHiddenPocket, setIncludeLeverHiddenPocket] =
-    useState(false);
-  const [leverHiddenPocketSize, setLeverHiddenPocketSize] = useState(5); // odd >= 3
-  const [includeLeverOpensDoor, setIncludeLeverOpensDoor] = useState(false);
-  const [leverOpensDoorCount, setLeverOpensDoorCount] = useState(2);
-  const [includePlateOpensDoor, setIncludePlateOpensDoor] = useState(false);
-  const [plateOpensDoorCount, setPlateOpensDoorCount] = useState(2);
-  const [includeIntroGate, setIncludeIntroGate] = useState(true);
-  const [introGateCount, setIntroGateCount] = useState(1);
-
-  const [patternMaxAttempts, setPatternMaxAttempts] = useState(60);
-
-  const [maxDepth, setMaxDepth] = useState(9);
-  const [minLeafSize, setMinLeafSize] = useState(16);
-  const [maxLeafSize, setMaxLeafSize] = useState(26);
-  const [splitPadding, setSplitPadding] = useState(1);
-
-  const [roomPadding, setRoomPadding] = useState(2);
-  const [minRoomSize, setMinRoomSize] = useState(6);
-  const [maxRoomSize, setMaxRoomSize] = useState(18);
-  const [roomFillLeafChance, setRoomFillLeafChance] = useState(0.08);
-
-  const [corridorWidth, setCorridorWidth] = useState(1);
-  const [keepOuterWalls, setKeepOuterWalls] = useState(true);
-
-  const [layer, setLayer] = useState<Layer>("content");
-  const [scale, setScale] = useState(6);
-
-  // --- Output ---
-  const [ascii, setAscii] = useState<string>("");
-
-  const [content, setContent] = useState<ReturnType<
-    typeof generateDungeonContent
-  > | null>(null);
-  const [runtime, setRuntime] = useState<DungeonRuntimeState | null>(null);
-  const [circuitDebug, setCircuitDebug] = useState<CircuitEvalResult["debug"]>(
-    {},
-  );
-
-  const [showStateOverlay, setShowStateOverlay] = useState(true);
-
-  // --- Batch runner ---
-  const [batchRuns, setBatchRuns] = useState(300);
-  const [batchSeedPrefix, setBatchSeedPrefix] = useState("batch-seed");
-  const [batchStartIndex, setBatchStartIndex] = useState(0);
-  const [batchRunning, setBatchRunning] = useState(false);
-  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
-  const [batchSummary, setBatchSummary] = useState<BatchSummary | null>(null);
-  const [batchJson, setBatchJson] = useState<string>("");
-  const [batchError, setBatchError] = useState<string>("");
-
-  const [imageDataByLayer, setImageDataByLayer] = useState<{
-    solid: ImageData | null;
-    regionId: ImageData | null;
-    distanceToWall: ImageData | null;
-
-    content: ImageData | null;
-
-    featureType: ImageData | null;
-    featureId: ImageData | null;
-    featureParam: ImageData | null;
-    danger: ImageData | null;
-    lootTier: ImageData | null;
-
-    hazardType: ImageData | null;
-  }>({
-    solid: null,
-    regionId: null,
-    distanceToWall: null,
-
-    content: null,
-
-    featureType: null,
-    featureId: null,
-    featureParam: null,
-    danger: null,
-    lootTier: null,
-
-    hazardType: null,
-  });
-
-  const [meta, setMeta] = useState<{
-    seedUsed: number;
-    rooms: number;
-    corridors: number;
-    bspDepth: number;
-
-    entranceRoomId: number;
-    farthestRoomId: number;
-    mainPathRooms: number;
-
-    monsters: number;
-    chests: number;
-    secrets: number;
-
-    doors: number;
-    keys: number;
-    levers: number;
-    plates: number;
-    blocks: number;
-
-    // Pattern diagnostics summary
-    patternsRun: number;
-    patternsOk: number;
-    patternsFail: number;
-    patternsCarved: number;
-    patternsMsTotal: number;
-  } | null>(null);
-
-  // Keep latest generator outputs around for tooltip lookups
-  const dungeonRef = useRef<ReturnType<typeof generateBspDungeon> | null>(null);
-  const contentRef = useRef<ReturnType<typeof generateDungeonContent> | null>(
-    null,
-  );
-
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const canvasPanelRef = useRef<HTMLDivElement | null>(null);
-
-  // Hover tooltip state
-  const hoverTimerRef = useRef<number | null>(null);
-  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
-  const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
-  const [tooltip, setTooltip] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    screenX: number;
-    screenY: number;
-    lines: string[];
-    featureType: number;
-    featureId: number;
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    screenX: 0,
-    screenY: 0,
-    lines: [],
-    featureType: 0,
-    featureId: 0,
-  });
-
-  const opts = useMemo(
-    () => ({
-      width,
-      height,
-      seed,
-      maxDepth,
-      minLeafSize,
-      maxLeafSize,
-      splitPadding,
-      roomPadding,
-      minRoomSize,
-      maxRoomSize,
-      roomFillLeafChance,
-      corridorWidth,
-      keepOuterWalls,
-    }),
-    [
-      width,
-      height,
-      seed,
-      maxDepth,
-      minLeafSize,
-      maxLeafSize,
-      splitPadding,
-      roomPadding,
-      minRoomSize,
-      maxRoomSize,
-      roomFillLeafChance,
-      corridorWidth,
-      keepOuterWalls,
-    ],
-  );
-
-  const applyRuntime = React.useCallback((next: DungeonRuntimeState) => {
-    const content = contentRef.current;
-    if (!content) {
-      setRuntime(next);
-      return;
-    }
-    // DERIVED: plates come from block occupancy
-    const derived = derivePlatesFromBlocks(next, content);
-    const res = evaluateCircuits(derived, content.meta.circuits);
-    setRuntime(res.next);
-    setCircuitDebug(res.debug);
-    setCircuitDiagnostics(res.diagnostics ?? null);
-  }, []);
-
-  const regenerateRuntimeFromContent = React.useCallback(() => {
-    const content = contentRef.current;
-    if (!content) return;
-    const initialRuntime = initDungeonRuntimeState(content);
-    const derived = derivePlatesFromBlocks(initialRuntime, content);
-    const evalOut = evaluateCircuits(derived, content.meta.circuits);
-    setRuntime(evalOut.next);
-    setCircuitDebug(evalOut.debug);
-
-    setRuntime(evalOut.next);
-    setCircuitDebug(evalOut.debug);
-  }, []);
-
-  const generate = React.useCallback(() => {
-    const out = generateBspDungeon(opts);
-    const content = generateDungeonContent(out, {
-      includeLeverHiddenPocket,
-      leverHiddenPocketSize,
-      includeLeverOpensDoor,
-      leverOpensDoorCount,
-      includePlateOpensDoor,
-      plateOpensDoorCount,
-      patternMaxAttempts,
-      includeIntroGate,
-      // Phase 3 (composition)
-      includePhase3Compositions: false,
-      gateThenOptionalRewardCount: 1, // start with 1 for clean signals/topo metrics
-    });
-
-    console.log(
-      "patternDiagnostics len:",
-      content.meta.patternDiagnostics?.length,
-    );
-    console.log(
-      "patternDiagnostics names:",
-      content.meta.patternDiagnostics?.map((d) => d.name),
-    );
-    console.log("circuits len:", content.meta.circuits.length);
-
-    // Pattern diagnostics summary
-    const diags = content.meta.patternDiagnostics ?? [];
-    let patternsRun = diags.length;
-    let patternsOk = 0;
-    let patternsFail = 0;
-    let patternsCarved = 0;
-    let patternsMsTotal = 0;
-    for (const d of diags) {
-      if (d.ok) patternsOk++;
-      else patternsFail++;
-      if (d.didCarve) patternsCarved++;
-      if (typeof d.ms === "number" && Number.isFinite(d.ms))
-        patternsMsTotal += d.ms;
-    }
-
-    const initialRuntime = initDungeonRuntimeState(content);
-    const derived = derivePlatesFromBlocks(initialRuntime, content);
-    const evalOut = evaluateCircuits(derived, content.meta.circuits);
-    setRuntime(evalOut.next);
-    setCircuitDebug(evalOut.debug);
-    setCircuitDiagnostics(evalOut.diagnostics ?? null);
-    setSelectedCircuitIndex(null); // optional: reset selection on regen
-
-    setSelectedBlockId(null);
-
-    const composite = makeContentCompositeImageData(
-      out,
-      content,
-      evalOut.next,
-      showStateOverlay,
-      null,
-    );
-
-    dungeonRef.current = out;
-    contentRef.current = content;
-
-    setContent(content);
-    setAscii(content.debug.ascii);
-
-    setImageDataByLayer({
-      solid: out.debug.imageData.solid,
-      regionId: out.debug.imageData.regionId,
-      distanceToWall: out.debug.imageData.distanceToWall,
-
-      content: composite,
-
-      featureType: content.debug.imageData.featureType,
-      featureId: content.debug.imageData.featureId,
-      featureParam: content.debug.imageData.featureParam,
-      danger: content.debug.imageData.danger,
-      lootTier: content.debug.imageData.lootTier,
-
-      hazardType: content.debug.imageData.hazardType,
-    });
-
-    setMeta({
-      seedUsed: out.meta.seedUsed,
-      rooms: out.meta.rooms.length,
-      corridors: out.meta.corridors.length,
-      bspDepth: out.meta.bspDepth,
-
-      entranceRoomId: content.meta.entranceRoomId,
-      farthestRoomId: content.meta.farthestRoomId,
-      mainPathRooms: content.meta.mainPathRoomIds.length,
-
-      monsters: content.meta.monsters.length,
-      chests: content.meta.chests.length,
-      secrets: content.meta.secrets.length,
-
-      doors: content.meta.doors.length,
-      keys: content.meta.keys.length,
-      levers: content.meta.levers.length,
-      plates: content.meta.plates.length,
-      blocks: content.meta.blocks.length,
-
-      patternsRun,
-      patternsOk,
-      patternsFail,
-      patternsCarved,
-      patternsMsTotal: Math.round(patternsMsTotal),
-    });
-  }, [
-    opts,
-    showStateOverlay,
-    includeLeverHiddenPocket,
-    includeIntroGate,
-    leverHiddenPocketSize,
-    includePlateOpensDoor,
-    plateOpensDoorCount,
-    patternMaxAttempts,
-  ]);
-
-  // initial generation
-  useEffect(() => {
-    generate();
-  }, [generate]);
-
-  // recompute composite when runtime overlay changes
-  useEffect(() => {
-    const dungeon = dungeonRef.current;
-    const content = contentRef.current;
-    if (!dungeon || !content) return;
-
-    const composite = makeContentCompositeImageData(
-      dungeon,
-      content,
-      runtime,
-      showStateOverlay,
-      selectedBlockId,
-    );
-
-    setImageDataByLayer((prev) => ({
-      ...prev,
-      content: composite,
-    }));
-  }, [runtime, showStateOverlay, selectedBlockId]);
-
-  // Keyboard push: select a block (click), then WASD/Arrows to push
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (selectedBlockId == null) return;
-      const dungeon = dungeonRef.current;
-      const content = contentRef.current;
-      const r = runtime;
-      if (!dungeon || !content || !r) return;
-
-      let dx = 0;
-      let dy = 0;
-      switch (e.key) {
-        case "ArrowUp":
-        case "w":
-        case "W":
-          dy = -1;
-          break;
-        case "ArrowDown":
-        case "s":
-        case "S":
-          dy = 1;
-          break;
-        case "ArrowLeft":
-        case "a":
-        case "A":
-          dx = -1;
-          break;
-        case "ArrowRight":
-        case "d":
-        case "D":
-          dx = 1;
-          break;
-        case "Escape":
-          setSelectedBlockId(null);
-          return;
-      }
-
-      if (dx !== 0 || dy !== 0) {
-        e.preventDefault();
-        const res = tryPushBlock(r, dungeon, content, selectedBlockId, dx, dy);
-        if (res.ok) applyRuntime(res.next);
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown, { passive: false } as any);
-    return () => window.removeEventListener("keydown", onKeyDown as any);
-  }, [runtime, selectedBlockId, applyRuntime]);
-
-  // redraw canvas whenever layer changes or new images arrive
-  useEffect(() => {
-    const img = imageDataByLayer[layer];
-    drawToCanvas(canvasRef.current, img);
-  }, [layer, imageDataByLayer]);
-
-  const currentImageData = imageDataByLayer[layer];
-
-  // Set displayed size via inline px (reliable across browsers)
-  const canvasStyle: React.CSSProperties = {
-    width: currentImageData ? currentImageData.width * scale : 0,
-    height: currentImageData ? currentImageData.height * scale : 0,
-  };
-
-  function clearHoverTimer() {
-    if (hoverTimerRef.current != null) {
-      window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-  }
-
-  function hideTooltip() {
-    clearHoverTimer();
-    lastHoverCellRef.current = null;
-    setTooltip((t) => ({ ...t, visible: false }));
-  }
-
-  function buildTooltipLines(x: number, y: number): string[] {
-    const dungeon = dungeonRef.current;
-    const content = contentRef.current;
-    if (!dungeon || !content) return [];
-
-    const W = dungeon.width;
-    const H = dungeon.height;
-    if (x < 0 || y < 0 || x >= W || y >= H) return [];
-
-    const i = idxOf(W, x, y);
-
-    const solid = dungeon.masks.solid[i];
-    const regionId = dungeon.masks.regionId[i];
-    const dist = dungeon.masks.distanceToWall[i];
-
-    let ft = content.masks.featureType[i];
-    let fid = content.masks.featureId[i];
-    const fparam = content.masks.featureParam[i];
-    // If a runtime block is at this cell, treat it as the active feature for tooltip purposes
-    if (runtime?.blocks) {
-      for (const [idStr, b] of Object.entries(runtime.blocks)) {
-        const id = Number(idStr);
-        if (b.x === x && b.y === y) {
-          ft = 8;
-          fid = id;
-          break;
-        }
-      }
-    }
-
-    const dng = content.masks.danger[i];
-    const tier = content.masks.lootTier[i];
-    const hz = content.masks.hazardType[i];
-
-    const lines: string[] = [];
-    lines.push(`Cell: (${x}, ${y})`);
-    lines.push(`Terrain: ${solid === 255 ? "Wall" : "Floor"}`);
-    lines.push(`regionId: ${regionId}`);
-    lines.push(`distanceToWall: ${dist}`);
-
-    lines.push(`featureType: ${ft} (${featureName(ft)})`);
-    lines.push(`featureId: ${fid}`);
-
-    if (ft === 4) {
-      lines.push(`featureParam: ${fparam} (Door: ${doorKindName(fparam)})`);
-    } else if (fparam !== 0) {
-      lines.push(`featureParam: ${fparam}`);
-    }
-
-    if (ft === 4 && runtime && showStateOverlay && fid !== 0) {
-      const { isOpen, isLocked } = readDoorState(runtime, fid);
-      lines.push(
-        `Door state: ${isOpen ? "OPEN" : "CLOSED"}${isLocked ? " (LOCKED)" : ""}`,
-      );
-    }
-
-    if (ft === 1) lines.push(`danger: ${dng}`);
-    if (ft === 2) lines.push(`lootTier: ${tier}`);
-    if (ft === 10) lines.push(`hazardType: ${hz}`);
-
-    // Plate details (Milestone 3)
-    if (ft === 7 && fid !== 0) {
-      const plate = content.meta.plates.find((p) => p.id === fid);
-      if (plate) {
-        lines.push(`Plate mode: ${plate.mode}`);
-        lines.push(
-          `Plate triggers: player=${plate.activatedByPlayer ? "Y" : "N"}, block=${plate.activatedByBlock ? "Y" : "N"}`,
-        );
-        if (plate.inverted) lines.push(`Plate: inverted`);
-        if (runtime && showStateOverlay) {
-          lines.push(
-            `Plate pressed (derived): ${runtime.plates?.[fid]?.pressed ? "YES" : "NO"}`,
-          );
-        }
-      } else {
-        lines.push(`Plate: id ${fid}`);
-      }
-    }
-
-    if (ft === 8 && fid !== 0) {
-      const b = runtime?.blocks?.[fid];
-      if (b) {
-        lines.push(`Block: id ${fid}`);
-        lines.push(`Block pos: (${b.x}, ${b.y})`);
-        lines.push(`Block weightClass: ${b.weightClass ?? 0}`);
-        lines.push("Click: select block");
-        lines.push("WASD / Arrows: push selected");
-        lines.push("Esc: clear selection");
-      } else {
-        lines.push(`Block: id ${fid}`);
-      }
-    }
-
-    // relationship hints
-    if (ft === 5 && fid !== 0) lines.push(`Hint: key unlocks circuit ${fid}`);
-    if (ft === 6 && fid !== 0)
-      lines.push(`Hint: lever controls circuit ${fid}`);
-    if (ft === 4 && fid !== 0) lines.push(`Circuit: door id ${fid}`);
-    if (ft === 7 && fid !== 0) lines.push(`Circuit: plate id ${fid}`);
-
-    // interaction hint
-    if (ft === 5) lines.push("Click: collect key");
-    if (ft === 6) lines.push("Click: toggle lever");
-    if (ft === 7) lines.push("Click: toggle plate (debug)");
-    if (ft === 4) lines.push("Click: toggle door (debug)");
-
-    return lines;
-  }
-
-  function getCellFromMouseEvent(e: React.MouseEvent): {
-    x: number;
-    y: number;
-    screenX: number;
-    screenY: number;
-  } | null {
-    const img = currentImageData;
-    if (!img) return null;
-
-    const panel = canvasPanelRef.current;
-    if (!panel) return null;
-
-    const rect = panel.getBoundingClientRect();
-
-    // Mouse coords relative to the *displayed* canvas area inside the panel
-    const localX = e.clientX - rect.left - 12; // panel padding is 12px (matches CSS)
-    const localY = e.clientY - rect.top - 12;
-
-    if (localX < 0 || localY < 0) return null;
-
-    const x = Math.floor(localX / scale);
-    const y = Math.floor(localY / scale);
-
-    if (x < 0 || y < 0 || x >= img.width || y >= img.height) return null;
-
-    return { x, y, screenX: e.clientX, screenY: e.clientY };
-  }
-
-  function onCanvasMouseMove(e: React.MouseEvent) {
-    const cell = getCellFromMouseEvent(e);
-    if (!cell) {
-      hideTooltip();
-      return;
-    }
-
-    setTooltip((t) => ({
-      ...t,
-      x: cell.x,
-      y: cell.y,
-      screenX: cell.screenX,
-      screenY: cell.screenY,
-    }));
-
-    const last = lastHoverCellRef.current;
-    if (last && last.x === cell.x && last.y === cell.y) return;
-
-    lastHoverCellRef.current = { x: cell.x, y: cell.y };
-    clearHoverTimer();
-    setTooltip((t) => ({ ...t, visible: false }));
-
-    hoverTimerRef.current = window.setTimeout(() => {
-      const dungeon = dungeonRef.current;
-      const content = contentRef.current;
-      if (!dungeon || !content) return;
-
-      const i = idxOf(dungeon.width, cell.x, cell.y);
-      const ft = content.masks.featureType[i] | 0;
-      const fid = content.masks.featureId[i] | 0;
-
-      const lines = buildTooltipLines(cell.x, cell.y);
-
-      setTooltip((t) => ({
-        ...t,
-        visible: true,
-        x: cell.x,
-        y: cell.y,
-        screenX: cell.screenX,
-        screenY: cell.screenY,
-        lines,
-        featureType: ft,
-        featureId: fid,
-      }));
-    }, 350);
-  }
-
-  function onCanvasMouseLeave() {
-    hideTooltip();
-  }
-
-  function onCanvasClick(e: React.MouseEvent) {
-    const dungeon = dungeonRef.current;
-    const content = contentRef.current;
-    if (!dungeon || !content) return;
-    if (!runtime) return;
-
-    const cell = getCellFromMouseEvent(e);
-    if (!cell) return;
-
-    const i = idxOf(dungeon.width, cell.x, cell.y);
-    const ft = content.masks.featureType[i] | 0;
-    const fid = content.masks.featureId[i] | 0;
-
-    // If you clicked a runtime block, select it (blocks move; masks don't)
-    if (runtime?.blocks) {
-      for (const [idStr, b] of Object.entries(runtime.blocks)) {
-        const id = Number(idStr);
-        if (b.x === cell.x && b.y === cell.y) {
-          setSelectedBlockId(id);
-          return;
-        }
-      }
-    }
-
-    if (fid === 0) return;
-
-    // Click interactions are purely debug/runtime-driving for Milestone 3 overlay testing.
-    if (ft === 5) {
-      // Key
-      const next = collectKey(runtime, fid);
-      applyRuntime(next);
-      return;
-    }
-
-    if (ft === 6) {
-      // Lever
-      const next = toggleLever(runtime, fid);
-      applyRuntime(next);
-      return;
-    }
-
-    if (ft === 4) {
-      // Door (debug convenience): toggle door state directly.
-      // If you have a dedicated dungeonState helper later, swap it in here.
-      const next = structuredClone(runtime) as DungeonRuntimeState;
-      const door = next.doors?.[fid];
-      if (door) {
-        (door as any).isOpen = !(door as any).isOpen;
-        // clearing forcedOpen is usually sensible when manually toggling
-        if ("forcedOpen" in (door as any)) (door as any).forcedOpen = false;
-        applyRuntime(next);
-      }
-      return;
-    }
-  }
-
-  const imgForDownload = imageDataByLayer[layer];
-
-  // Lightweight circuit debug rendering
-  const circuitDebugKeys = useMemo(() => {
-    try {
-      return Object.keys(circuitDebug ?? {});
-    } catch {
-      return [];
-    }
-  }, [circuitDebug]);
-
-  const runBatch = React.useCallback(async () => {
-    if (batchRunning) return;
-
-    const total = Math.max(0, Math.min(20000, batchRuns | 0));
-    if (!Number.isFinite(total) || total <= 0) {
-      setBatchError("Batch runs must be > 0");
-      return;
-    }
-
-    setBatchError("");
-    setBatchRunning(true);
-    setBatchProgress({ done: 0, total });
-    setBatchSummary(null);
-    setBatchJson("");
-
-    const runs: BatchRunInput[] = [];
-
-    // Yield so the UI paints the running state before we start heavy work.
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
-
-    const updateEvery = Math.max(1, Math.floor(total / 50)); // ~50 updates max
-
-    try {
-      for (let i = 0; i < total; i++) {
-        const seedStr = `${batchSeedPrefix}-${batchStartIndex + i}`;
-        const out = generateBspDungeon({ ...opts, seed: seedStr });
-        const content = generateDungeonContent(out, {
-          includeLeverHiddenPocket,
-          leverHiddenPocketSize,
-          includeLeverOpensDoor,
-          leverOpensDoorCount,
-          includePlateOpensDoor,
-          plateOpensDoorCount,
-          patternMaxAttempts,
-          includeIntroGate,
-          // Phase 3 (composition)
-          includePhase3Compositions: true,
-          gateThenOptionalRewardCount: 1,
-        });
-
-        // Build an initial runtime state and derive plate presses from blocks
-        let rt0 = initDungeonRuntimeState(content);
-        rt0 = derivePlatesFromBlocks(rt0, content);
-
-        // One deterministic evaluation tick to produce diagnostics/metrics
-        const eval0 = evaluateCircuits(rt0, content.meta.circuits);
-        const diag0 = eval0.diagnostics ?? null;
-        const metrics0 = computeGlobalCircuitMetrics(diag0);
-
-        // Map VM metrics -> batch schema (schemaVersion pinned here)
-        const circuitMetrics = metrics0
-          ? ({
-              schemaVersion: 1,
-              ...metrics0,
-            } as any)
-          : null;
-
-        runs.push({
-          seed: seedStr,
-          seedUsed: out.meta.seedUsed,
-          rooms: out.meta.rooms.length,
-          corridors: out.meta.corridors.length,
-          patternDiagnostics: content.meta.patternDiagnostics ?? [],
-          circuitMetrics,
-        });
-
-        if (i % updateEvery === 0 || i === total - 1) {
-          setBatchProgress({ done: i + 1, total });
-          // Yield occasionally to keep the UI responsive.
-          await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        }
-      }
-
-      const summary = aggregateBatchRuns(runs);
-      setBatchSummary(summary);
-      setBatchJson(JSON.stringify(summary, null, 2));
-    } catch (err: any) {
-      setBatchError(err?.message ? String(err.message) : String(err));
-    } finally {
-      setBatchRunning(false);
-    }
-  }, [
-    batchRunning,
-    batchRuns,
-    batchSeedPrefix,
-    batchStartIndex,
-    opts,
-    includeLeverHiddenPocket,
-    leverHiddenPocketSize,
-    includePlateOpensDoor,
-    plateOpensDoorCount,
-    patternMaxAttempts,
-    includeIntroGate,
-  ]);
-
-  const copyBatchJson = React.useCallback(async () => {
-    try {
-      if (!batchJson) return;
-      await navigator.clipboard.writeText(batchJson);
-    } catch {
-      // ignore
-    }
-  }, [batchJson]);
-
-  const roleDiagnostics: RoleDiagnosticsV1 | null = useMemo(() => {
-    if (!content?.meta) return null;
-    if (!circuitDiagnostics) return null;
-
-    try {
-      return analyzeRoleDiagnosticsV1({
-        meta: content.meta,
-        circuitEval: circuitDiagnostics,
-        // thresholds omitted => DEFAULT_ROLE_THRESHOLDS_V1 (observational)
-      });
-    } catch {
-      return null;
-    }
-  }, [content, circuitDiagnostics]);
+  // Step 5 wants a read-only preview; we compute a "would-be contract" even if
+  // state.contract isn't derived yet.
+  const previewContract = useMemo(() => {
+    return state.contract ?? deriveRunContract(state);
+  }, [state]);
+
+  // Derive a stable "screen key" for transitions.
+  // - Step drives the main switch.
+  // - Step 4 includes mode to avoid weird reuse when switching branches.
+  const screenKey = useMemo(() => {
+    if (state.step <= 5)
+      return `wizard-${state.step}-${state.mode?.mode ?? "none"}`;
+    if (state.step === 6) return "exec";
+    // Step 7: key by kind so switching single/batch feels correct.
+    return `inspect-${state.result?.kind ?? "none"}`;
+  }, [state.step, state.mode?.mode, state.result?.kind]);
 
   return (
     <div className="maze-app">
-      {/* Left: Controls */}
-      <div className="maze-controls">
-        <div className="maze-header-row">
-          <h2 className="maze-title">Maze / Dungeon Preview</h2>
-        </div>
-
-        <div className="maze-controls-row">
-          <button className="maze-btn" onClick={generate}>
-            Generate
-          </button>
-
-          <button
-            className="maze-btn"
-            onClick={regenerateRuntimeFromContent}
-            disabled={!content}
-            title="Reset runtime state from current generated content"
-          >
-            Reset Runtime
-          </button>
-
-          <button
-            className="maze-btn"
-            onClick={() => {
-              const img = imgForDownload;
-              if (!img) return;
-              const dataUrl = imageDataToPngDataUrl(img);
-              downloadDataUrl(`dungeon-${layer}.png`, dataUrl);
-            }}
-            disabled={!imgForDownload}
-            title="Download current layer as PNG"
-          >
-            Download PNG
-          </button>
-        </div>
-
-        <div className="maze-grid">
-          <label className="maze-field">
-            <span>Width</span>
-            <input
-              type="number"
-              value={width}
-              min={16}
-              max={512}
-              onChange={(e) =>
-                setWidth(clampInt(Number(e.target.value || 0), 16, 512))
-              }
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div key={screenKey} {...screenMotion} style={{ width: "100%" }}>
+          {state.step <= 5 ? (
+            <Wizard
+              state={state}
+              dispatch={dispatch}
+              previewContract={previewContract}
             />
-          </label>
+          ) : state.step === 6 ? (
+            <ExecutionView state={state} dispatch={dispatch} />
+          ) : (
+            <InspectionRouter state={state} dispatch={dispatch} />
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
 
-          <label className="maze-field">
-            <span>Height</span>
-            <input
-              type="number"
-              value={height}
-              min={16}
-              max={512}
-              onChange={(e) =>
-                setHeight(clampInt(Number(e.target.value || 0), 16, 512))
-              }
-            />
-          </label>
+// --- Step 1–5 Wizard (single step visible at a time + Framer Motion) ----------
 
-          <label className="maze-field maze-field--seed">
-            <span>Seed</span>
-            <div className="maze-seed-row">
-              <input value={seed} onChange={(e) => setSeed(e.target.value)} />
-              <button
-                onClick={() =>
-                  setSeed(`seed-${Math.random().toString(16).slice(2)}`)
-                }
-                title="Randomize seed string"
-              >
-                🎲
-              </button>
-            </div>
-          </label>
-        </div>
+function Wizard(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+  previewContract: any;
+}) {
+  const { state, dispatch, previewContract } = props;
 
-        <details>
-          <summary className="maze-summary">BSP</summary>
+  const canStep2 = !!state.world;
+  const canStep3 = !!state.world && !!state.bsp;
+  const canStep4 = !!state.world && !!state.bsp && !!state.mode;
+  const canStep5 = canStep4;
 
-          <div className="maze-grid">
-            <label className="maze-field">
-              <span>Max Depth</span>
-              <input
-                type="number"
-                value={maxDepth}
-                min={1}
-                max={20}
-                onChange={(e) =>
-                  setMaxDepth(clampInt(Number(e.target.value || 0), 1, 40))
-                }
-              />
-            </label>
+  const go = (step: 1 | 2 | 3 | 4 | 5) => dispatch({ type: "SET_STEP", step });
 
-            <label className="maze-field">
-              <span>Min Leaf Size</span>
-              <input
-                type="number"
-                value={minLeafSize}
-                min={4}
-                max={128}
-                onChange={(e) =>
-                  setMinLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
-                }
-              />
-            </label>
+  // Render ONLY one step panel at a time.
+  return (
+    <div className="maze-controls" style={{ width: 520, maxWidth: "100%" }}>
+      <h2 className="maze-title">World Creation Wizard (rev S)</h2>
 
-            <label className="maze-field">
-              <span>Max Leaf Size</span>
-              <input
-                type="number"
-                value={maxLeafSize}
-                min={4}
-                max={256}
-                onChange={(e) =>
-                  setMaxLeafSize(clampInt(Number(e.target.value || 0), 4, 256))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Split Padding</span>
-              <input
-                type="number"
-                value={splitPadding}
-                min={0}
-                max={8}
-                onChange={(e) =>
-                  setSplitPadding(clampInt(Number(e.target.value || 0), 0, 32))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Room Padding</span>
-              <input
-                type="number"
-                value={roomPadding}
-                min={0}
-                max={8}
-                onChange={(e) =>
-                  setRoomPadding(clampInt(Number(e.target.value || 0), 0, 32))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Min Room Size</span>
-              <input
-                type="number"
-                value={minRoomSize}
-                min={2}
-                max={128}
-                onChange={(e) =>
-                  setMinRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Max Room Size</span>
-              <input
-                type="number"
-                value={maxRoomSize}
-                min={2}
-                max={256}
-                onChange={(e) =>
-                  setMaxRoomSize(clampInt(Number(e.target.value || 0), 2, 256))
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Room Fill Chance</span>
-              <input
-                type="number"
-                step={0.01}
-                value={roomFillLeafChance}
-                min={0}
-                max={1}
-                onChange={(e) =>
-                  setRoomFillLeafChance(
-                    Math.max(0, Math.min(1, Number(e.target.value || 0))),
-                  )
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Corridor Width</span>
-              <input
-                type="number"
-                value={corridorWidth}
-                min={1}
-                max={8}
-                onChange={(e) =>
-                  setCorridorWidth(clampInt(Number(e.target.value || 0), 1, 32))
-                }
-              />
-            </label>
-
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
-                checked={keepOuterWalls}
-                onChange={(e) => setKeepOuterWalls(e.target.checked)}
-              />
-              <span>Keep outer walls</span>
-            </label>
-
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
-                checked={showStateOverlay}
-                onChange={(e) => setShowStateOverlay(e.target.checked)}
-              />
-              <span>Show state overlay</span>
-            </label>
-          </div>
-        </details>
-
-        <details open>
-          <summary className="maze-summary">Content / Puzzles</summary>
-
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={includeLeverHiddenPocket}
-              onChange={(e) => setIncludeLeverHiddenPocket(e.target.checked)}
-            />
-            <span>Include Lever → Hidden Pocket</span>
-          </label>
-
-          <div style={{ height: 8 }} />
-
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={includeIntroGate}
-              onChange={(e) => setIncludeIntroGate(e.target.checked)}
-            />
-            <span>Include Intro Gate (lever → door)</span>
-          </label>
-
-          <div className="row" style={{ gap: 8, marginTop: 6 }}>
-            <span style={{ minWidth: 140, opacity: 0.8 }}>
-              Intro gate count
-            </span>
-            <input
-              type="number"
-              min={0}
-              max={12}
-              value={introGateCount}
-              onChange={(e) => setIntroGateCount(e.target.valueAsNumber)}
-              style={{ width: 80 }}
-            />
-          </div>
-
-          <div style={{ height: 12 }} />
-
-          <div className="maze-grid">
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
-                checked={includeLeverHiddenPocket}
-                onChange={(e) => setIncludeLeverHiddenPocket(e.target.checked)}
-              />
-              <span>Include Lever → Hidden Pocket</span>
-            </label>
-
-            <div style={{ height: 8 }} />
-
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
-                checked={includeLeverOpensDoor}
-                onChange={(e) => setIncludeLeverOpensDoor(e.target.checked)}
-              />
-              <span>Include Lever → Door (TOGGLE)</span>
-            </label>
-
-            <label className="maze-field">
-              <span>Lever→Door count (N)</span>
-              <input
-                type="number"
-                min={0}
-                max={30}
-                value={leverOpensDoorCount}
-                disabled={!includeLeverOpensDoor}
-                onChange={(e) =>
-                  setLeverOpensDoorCount(
-                    clampInt(Number(e.target.value || 0), 0, 999),
-                  )
-                }
-              />
-            </label>
-
-            <div style={{ height: 8 }} />
-
-            <label className="maze-checkbox">
-              <input
-                type="checkbox"
-                checked={includePlateOpensDoor}
-                onChange={(e) => setIncludePlateOpensDoor(e.target.checked)}
-              />
-              <span>Include Plate(+Block) → Door (MOMENTARY)</span>
-            </label>
-
-            <label className="maze-field">
-              <span>Plate→Door count (N)</span>
-              <input
-                type="number"
-                min={0}
-                max={30}
-                value={plateOpensDoorCount}
-                disabled={!includePlateOpensDoor}
-                onChange={(e) =>
-                  setPlateOpensDoorCount(
-                    clampInt(Number(e.target.value || 0), 0, 999),
-                  )
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Pattern maxAttempts</span>
-              <input
-                type="number"
-                min={5}
-                max={500}
-                value={patternMaxAttempts}
-                onChange={(e) =>
-                  setPatternMaxAttempts(
-                    clampInt(Number(e.target.value || 0), 5, 5000),
-                  )
-                }
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Pocket size (odd ≥ 3)</span>
-              <input
-                type="number"
-                min={3}
-                max={21}
-                step={2}
-                value={leverHiddenPocketSize}
-                disabled={!includeLeverHiddenPocket}
-                onChange={(e) =>
-                  setLeverHiddenPocketSize(
-                    clampInt(Number(e.target.value || 0), 3, 51),
-                  )
-                }
-              />
-            </label>
-          </div>
-        </details>
-
-        <details open>
-          <summary className="maze-summary">Batch Runner</summary>
-
-          <div className="maze-grid">
-            <label className="maze-field">
-              <span>Runs (N)</span>
-              <input
-                type="number"
-                min={1}
-                max={20000}
-                value={batchRuns}
-                disabled={batchRunning}
-                onChange={(e) =>
-                  setBatchRuns(clampInt(Number(e.target.value || 0), 1, 20000))
-                }
-              />
-            </label>
-
-            <label className="maze-field maze-field--seed">
-              <span>Seed prefix</span>
-              <input
-                value={batchSeedPrefix}
-                disabled={batchRunning}
-                onChange={(e) => setBatchSeedPrefix(e.target.value)}
-              />
-            </label>
-
-            <label className="maze-field">
-              <span>Start index</span>
-              <input
-                type="number"
-                value={batchStartIndex}
-                disabled={batchRunning}
-                onChange={(e) =>
-                  setBatchStartIndex(Number(e.target.value || 0))
-                }
-              />
-            </label>
-
-            <div className="maze-controls-row" style={{ gridColumn: "1 / -1" }}>
-              <button
-                className="maze-btn"
-                onClick={runBatch}
-                disabled={batchRunning}
-              >
-                {batchRunning
-                  ? `Running… (${batchProgress.done}/${batchProgress.total})`
-                  : "Run batch"}
-              </button>
-
-              {batchJson && (
-                <button className="maze-btn" onClick={copyBatchJson}>
-                  Copy JSON
-                </button>
-              )}
-            </div>
-
-            {batchError && (
-              <div style={{ gridColumn: "1 / -1", color: "#b00020" }}>
-                <b>Batch error</b>: {batchError}
-              </div>
-            )}
-
-            {batchSummary && (
-              <div style={{ gridColumn: "1 / -1" }}>
-                <div style={{ marginTop: 8 }}>
-                  <b>Runs</b>: {batchSummary.runs} | <b>Rooms avg</b>:{" "}
-                  {batchSummary.roomsAvg.toFixed(1)} | <b>Corridors avg</b>:{" "}
-                  {batchSummary.corridorsAvg.toFixed(1)}
-                </div>
-
-                <div style={{ marginTop: 8 }}>
-                  <b>Pattern success</b>
-                </div>
-
-                <div className="maze-stats" style={{ marginTop: 6 }}>
-                  <div className="maze-stats-grid">
-                    {batchSummary.patterns.map((p) => (
-                      <div key={p.name} style={{ gridColumn: "1 / -1" }}>
-                        <b>{p.name}</b>: {p.ok}/{p.runs} OK (
-                        {Math.round(p.okRate * 100)}%)
-                        {p.fail > 0 && p.topReasons.length > 0 && (
-                          <span>
-                            {" "}
-                            — top fails:{" "}
-                            {p.topReasons
-                              .slice(0, 3)
-                              .map(([r, c]) => `${r} (${c})`)
-                              .join(", ")}
-                          </span>
-                        )}
-                        {(p as any).doorSitesAvg && (
-                          <div
-                            style={{
-                              marginTop: 2,
-                              fontFamily: "monospace",
-                              fontSize: 12,
-                            }}
-                          >
-                            doorSitesAvg: tilesUnique=
-                            {(p as any).doorSitesAvg.tilesUnique ?? "?"},{" "}
-                            corridorsTotal=
-                            {(p as any).doorSitesAvg.corridorsTotal ?? "?"},
-                            validPairs=
-                            {(p as any).doorSitesAvg
-                              .corridorsWithValidRoomPair ?? "?"}
-                            , anyCandidate=
-                            {(p as any).doorSitesAvg
-                              .corridorsWithAnyCandidate ?? "?"}
-                            , yielded=
-                            {(p as any).doorSitesAvg.corridorsYieldedTile ??
-                              "?"}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {batchJson && (
-                  <div style={{ marginTop: 10 }}>
-                    <textarea
-                      readOnly
-                      value={batchJson}
-                      rows={10}
-                      style={{ width: "100%", fontFamily: "monospace" }}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </details>
-
-        <details open>
-          <summary className="maze-summary">Stats</summary>
-          <div className="maze-stats">
-            {meta ? (
-              <div className="maze-stats-grid">
-                <div>
-                  <b>Seed used</b>: {meta.seedUsed}
-                </div>
-                <div>
-                  <b>BSP depth</b>: {meta.bspDepth}
-                </div>
-                <div>
-                  <b>Rooms</b>: {meta.rooms}
-                </div>
-                <div>
-                  <b>Corridors</b>: {meta.corridors}
-                </div>
-
-                <div style={{ height: 8 }} />
-
-                <div>
-                  <b>Entrance room</b>: {meta.entranceRoomId}
-                </div>
-                <div>
-                  <b>Farthest room</b>: {meta.farthestRoomId}
-                </div>
-                <div>
-                  <b>Main path rooms</b>: {meta.mainPathRooms}
-                </div>
-                <div>
-                  <b>Monsters</b>: {meta.monsters}
-                </div>
-                <div>
-                  <b>Chests</b>: {meta.chests}
-                </div>
-                <div>
-                  <b>Secrets</b>: {meta.secrets}
-                </div>
-
-                <div style={{ height: 8 }} />
-
-                <div>
-                  <b>Patterns</b>: {meta.patternsOk}/{meta.patternsRun} OK
-                  {meta.patternsFail ? ` · ${meta.patternsFail} fail` : ""}
-                </div>
-                <div>
-                  <b>Carved</b>: {meta.patternsCarved}
-                  {meta.patternsMsTotal
-                    ? ` · ${meta.patternsMsTotal}ms total`
-                    : ""}
-                </div>
-
-                <div style={{ height: 8 }} />
-
-                <div>
-                  <b>Doors</b>: {meta.doors}
-                </div>
-                <div>
-                  <b>Keys</b>: {meta.keys}
-                </div>
-                <div>
-                  <b>Levers</b>: {meta.levers}
-                </div>
-                <div>
-                  <b>Plates</b>: {meta.plates}
-                </div>
-              </div>
-            ) : (
-              <div>Generating…</div>
-            )}
-          </div>
-        </details>
-
-        <details>
-          <summary className="maze-summary">ASCII preview</summary>
-          <pre className="maze-ascii-pre">{ascii}</pre>
-        </details>
-
-        {content && (
-          <div className="panel">
-            <div className="panelTitle">Pattern Diagnostics</div>
-
-            {content.meta.patternDiagnostics?.length ? (
-              <div className="mono" style={{ fontSize: 12, lineHeight: 1.35 }}>
-                {content.meta.patternDiagnostics.slice(0, 60).map((d, i) => (
-                  <div key={i}>
-                    {d.name}: {d.ok ? "OK" : "FAIL"}
-                    {d.didCarve ? " (carved)" : ""}
-                    {typeof d.ms === "number" ? ` · ${d.ms}ms` : ""}
-                    {d.reason ? ` · ${d.reason}` : ""}
-                  </div>
-                ))}
-                {content.meta.patternDiagnostics.length > 60 ? (
-                  <div className="muted">
-                    (showing first 60 of{" "}
-                    {content.meta.patternDiagnostics.length})
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="muted">No pattern diagnostics.</div>
-            )}
-
-            <div style={{ height: 12 }} />
-
-            <div className="panelTitle">Circuits</div>
-
-            {content.meta.circuits.length === 0 ? (
-              <div className="muted">No circuits.</div>
-            ) : (
-              <div className="circuitsList">
-                {content.meta.circuits.map((c) => (
-                  <div key={c.id} className="circuitCard">
-                    <div className="circuitHeader">
-                      <span className="mono">#{c.id}</span>{" "}
-                      <span className="muted">
-                        {c.logic.type}
-                        {c.logic.type === "THRESHOLD"
-                          ? `(${c.logic.threshold})`
-                          : ""}
-                        {" · "}
-                        {c.behavior.mode}
-                      </span>
-                    </div>
-
-                    <div className="circuitRow">
-                      <div className="circuitLabel">Triggers</div>
-                      <div className="circuitItems mono">
-                        {c.triggers.map((t, i) => (
-                          <span key={i}>
-                            {t.kind}:{t.refId}
-                            {i < c.triggers.length - 1 ? ", " : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="circuitRow">
-                      <div className="circuitLabel">Targets</div>
-                      <div className="circuitItems mono">
-                        {c.targets.map((t, i) => (
-                          <span key={i}>
-                            {t.kind}:{t.refId}→{t.effect}
-                            {i < c.targets.length - 1 ? ", " : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ height: 12 }} />
-
-            <CircuitDiagnosticsSection
-              title="Circuit Diagnostics"
-              circuits={content.meta.circuits}
-              diagnostics={circuitDiagnostics}
-              selectedCircuitIndex={selectedCircuitIndex}
-              onSelectCircuitIndex={setSelectedCircuitIndex}
-              filters={circuitDiagFilters}
-              onChangeFilters={setCircuitDiagFilters}
-              sort={circuitDiagSort}
-              onChangeSort={setCircuitDiagSort}
-              allowJumpLinks={true}
-              showRawJson={false}
-            />
-
-            <div style={{ height: 12 }} />
-
-            <RoleDiagnosticsSection
-              title="Role Diagnostics"
-              circuits={content.meta.circuits}
-              diagnostics={roleDiagnostics}
-              selectedCircuitIndex={selectedCircuitIndex}
-              onSelectCircuitIndex={setSelectedCircuitIndex}
-              showRawJson={false}
-            />
-          </div>
-        )}
+      <div style={{ opacity: 0.8, marginBottom: 8 }}>
+        Step <b>{state.step}</b> / 5
       </div>
 
-      {/* Right: Preview */}
-      <div className="maze-preview">
-        <div className="maze-preview-toolbar">
-          <div className="maze-tabs">
-            <button
-              onClick={() => setLayer("content")}
-              className={`maze-tab ${layer === "content" ? "maze-tab--active" : ""}`}
-            >
-              content
-            </button>
-
-            <button
-              onClick={() => setLayer("solid")}
-              className={`maze-tab ${layer === "solid" ? "maze-tab--active" : ""}`}
-            >
-              solid
-            </button>
-
-            <button
-              onClick={() => setLayer("regionId")}
-              className={`maze-tab ${layer === "regionId" ? "maze-tab--active" : ""}`}
-            >
-              regionId
-            </button>
-
-            <button
-              onClick={() => setLayer("distanceToWall")}
-              className={`maze-tab ${layer === "distanceToWall" ? "maze-tab--active" : ""}`}
-            >
-              distanceToWall
-            </button>
-
-            <button
-              onClick={() => setLayer("featureType")}
-              className={`maze-tab ${layer === "featureType" ? "maze-tab--active" : ""}`}
-            >
-              featureType
-            </button>
-
-            <button
-              onClick={() => setLayer("featureParam")}
-              className={`maze-tab ${layer === "featureParam" ? "maze-tab--active" : ""}`}
-            >
-              featureParam
-            </button>
-
-            <button
-              onClick={() => setLayer("danger")}
-              className={`maze-tab ${layer === "danger" ? "maze-tab--active" : ""}`}
-            >
-              danger
-            </button>
-
-            <button
-              onClick={() => setLayer("lootTier")}
-              className={`maze-tab ${layer === "lootTier" ? "maze-tab--active" : ""}`}
-            >
-              lootTier
-            </button>
-
-            <button
-              onClick={() => setLayer("featureId")}
-              className={`maze-tab ${layer === "featureId" ? "maze-tab--active" : ""}`}
-            >
-              featureId
-            </button>
-
-            <button
-              onClick={() => setLayer("hazardType")}
-              className={`maze-tab ${layer === "hazardType" ? "maze-tab--active" : ""}`}
-            >
-              hazardType
-            </button>
-          </div>
-
-          <label className="maze-scale">
-            <span>Scale</span>
-            <input
-              type="range"
-              min={1}
-              max={16}
-              value={scale}
-              onChange={(e) =>
-                setScale(clampInt(Number(e.target.value || 0), 1, 32))
-              }
-            />
-            <span className="maze-scale-value">{scale}×</span>
-          </label>
+      {!!state.error && (
+        <div style={{ padding: 8, border: "1px solid #b33", marginBottom: 8 }}>
+          <b>Execution error:</b> {state.error}
         </div>
+      )}
 
-        <div
-          ref={canvasPanelRef}
-          className="maze-canvas-panel"
-          onMouseMove={onCanvasMouseMove}
-          onMouseLeave={onCanvasMouseLeave}
-          onClick={onCanvasClick}
-          title="Hover for tooltip. Click keys/levers/doors to update runtime."
+      <WizardStepper
+        step={state.step}
+        canStep2={canStep2}
+        canStep3={canStep3}
+        canStep4={canStep4}
+        canStep5={canStep5}
+        onGo={go}
+      />
+
+      <div style={{ height: 10 }} />
+
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={`wiz-step-${state.step}-${state.mode?.mode ?? "none"}`}
+          initial={{ opacity: 0, x: 10 }}
+          animate={{ opacity: 1, x: 0, transition: { duration: 0.16 } }}
+          exit={{ opacity: 0, x: -10, transition: { duration: 0.12 } }}
         >
-          <canvas ref={canvasRef} className="maze-canvas" style={canvasStyle} />
+          {state.step === 1 && (
+            <Section title="Step 1 — World Seed & Dimensions">
+              <Row>
+                <label style={{ width: 140 }}>Seed</label>
+                <input
+                  value={state.world?.seed ?? "demo-seed"}
+                  onChange={(e) =>
+                    dispatch({
+                      type: "SET_WORLD",
+                      world: {
+                        seed: e.target.value,
+                        width: state.world?.width ?? 64,
+                        height: state.world?.height ?? 48,
+                      },
+                    })
+                  }
+                  style={{ flex: 1 }}
+                />
+              </Row>
 
-          {tooltip.visible && (
-            <div
-              className="maze-tooltip"
-              style={{
-                left: tooltip.screenX + 14,
-                top: tooltip.screenY + 14,
-              }}
-            >
-              {tooltip.lines.map((ln, i) => (
-                <div key={i} className="maze-tooltip-line">
-                  {ln}
-                </div>
-              ))}
-            </div>
+              <Row>
+                <label style={{ width: 140 }}>Width</label>
+                <input
+                  type="number"
+                  value={state.world?.width ?? 64}
+                  onChange={(e) =>
+                    dispatch({
+                      type: "SET_WORLD",
+                      world: {
+                        seed: state.world?.seed ?? "demo-seed",
+                        width: Number(e.target.value),
+                        height: state.world?.height ?? 48,
+                      },
+                    })
+                  }
+                />
+                <div style={{ width: 12 }} />
+                <label style={{ width: 60 }}>Height</label>
+                <input
+                  type="number"
+                  value={state.world?.height ?? 48}
+                  onChange={(e) =>
+                    dispatch({
+                      type: "SET_WORLD",
+                      world: {
+                        seed: state.world?.seed ?? "demo-seed",
+                        width: state.world?.width ?? 64,
+                        height: Number(e.target.value),
+                      },
+                    })
+                  }
+                />
+              </Row>
+
+              <Row>
+                <button
+                  onClick={() => {
+                    const w: WorldConfig = state.world ?? {
+                      seed: "demo-seed",
+                      width: 64,
+                      height: 48,
+                    };
+                    dispatch({ type: "SET_WORLD", world: w });
+                    dispatch({ type: "SET_STEP", step: 2 });
+                  }}
+                >
+                  Next → Step 2
+                </button>
+              </Row>
+            </Section>
           )}
-        </div>
 
-        <div className="maze-legend">
-          <div>
-            <b>Layer</b>: {layer}
-          </div>
-          <div>
-            <b>Legend</b>:{" "}
-            {layer === "content"
-              ? "Walls/floors base + overlay: red=monsters, green=chests, brown=doors, yellow=keys/levers/other"
-              : layer === "solid"
-                ? "white=wall, black=floor"
-                : layer === "regionId"
-                  ? "grayscale room id (0=not room)"
-                  : layer === "distanceToWall"
-                    ? "grayscale Manhattan distance (0=wall)"
-                    : layer === "featureType"
-                      ? "0=none, 1=monster, 2=chest, 3=secretDoor, 4=door, 5=key, 6=lever, 7=pressurePlate, 8=pushBlock, 9=hiddenPassage, 10=hazard"
-                      : layer === "featureParam"
-                        ? "door kind / feature subtype (e.g. 1=locked door, 2=lever door)"
-                        : layer === "danger"
-                          ? "monster danger/level (0..255)"
-                          : layer === "lootTier"
-                            ? "chest tier (1..N)"
-                            : layer === "hazardType"
-                              ? "hazard kind (0=none, 1=lava, 2=poison gas, 3=water, 4=spikes)"
-                              : "feature instance/circuit id (1..255)"}
-          </div>
-        </div>
+          {state.step === 2 && (
+            <Section title="Step 2 — BSP Geometry Settings">
+              <Row>
+                <button onClick={() => dispatch({ type: "SET_STEP", step: 1 })}>
+                  ← Back
+                </button>
+                <div style={{ flex: 1 }} />
+                <button
+                  disabled={!canStep2}
+                  onClick={() => {
+                    const bsp: BspConfig = state.bsp ?? DEFAULT_BSP;
+                    dispatch({ type: "SET_BSP", bsp });
+                    dispatch({ type: "SET_STEP", step: 3 });
+                  }}
+                >
+                  Use defaults + Next → Step 3
+                </button>
+              </Row>
+
+              <Row style={{ opacity: 0.8 }}>
+                (Replace this placeholder with your full BSP form later.)
+              </Row>
+            </Section>
+          )}
+
+          {state.step === 3 && (
+            <Section title="Step 3 — Generation Mode Selection">
+              <Row>
+                <button onClick={() => dispatch({ type: "SET_STEP", step: 2 })}>
+                  ← Back
+                </button>
+              </Row>
+
+              <Row>
+                <button
+                  disabled={!canStep3}
+                  onClick={() => {
+                    dispatch({
+                      type: "SET_MODE_SINGLE",
+                      contentStrategy: "patterns",
+                    });
+                    dispatch({ type: "SET_STEP", step: 4 });
+                  }}
+                >
+                  Single Seed
+                </button>
+
+                <div style={{ width: 12 }} />
+
+                <button
+                  disabled={!canStep3}
+                  onClick={() => {
+                    dispatch({ type: "SET_MODE_BATCH" });
+                    dispatch({ type: "SET_STEP", step: 4 });
+                  }}
+                >
+                  Batch Run
+                </button>
+              </Row>
+            </Section>
+          )}
+
+          {state.step === 4 && (
+            <Section title="Step 4 — Content Strategy / Batch Params">
+              <Row>
+                <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
+                  ← Back
+                </button>
+              </Row>
+
+              {!state.mode ? (
+                <div style={{ opacity: 0.8 }}>Select a mode in Step 3.</div>
+              ) : state.mode.mode === "single" ? (
+                <>
+                  <Row>
+                    <button
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_SINGLE_CONTENT_STRATEGY",
+                          contentStrategy: "atomic",
+                        })
+                      }
+                    >
+                      Atomic Content Only
+                    </button>
+                    <div style={{ width: 12 }} />
+                    <button
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_SINGLE_CONTENT_STRATEGY",
+                          contentStrategy: "patterns",
+                        })
+                      }
+                    >
+                      Run Composition Patterns
+                    </button>
+                  </Row>
+
+                  <Row style={{ opacity: 0.8 }}>
+                    Current: <b>{state.mode.contentStrategy}</b>
+                  </Row>
+
+                  <Row>
+                    <button
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_PATTERN",
+                          patch: {
+                            ...DEFAULT_PATTERN,
+                          } as Partial<PatternConfig>,
+                        })
+                      }
+                    >
+                      Reset Pattern Defaults
+                    </button>
+                  </Row>
+                </>
+              ) : (
+                <>
+                  <Row>
+                    <button
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_BATCH",
+                          batch: DEFAULT_BATCH as BatchConfig,
+                        })
+                      }
+                    >
+                      Use default batch params
+                    </button>
+                  </Row>
+                  <Row style={{ opacity: 0.8 }}>
+                    Current runs: <b>{state.mode.batch.runs}</b> (prefix:{" "}
+                    {state.mode.batch.seedPrefix})
+                  </Row>
+                </>
+              )}
+
+              <Row>
+                <button
+                  disabled={!canStep4}
+                  onClick={() => dispatch({ type: "DERIVE_CONTRACT" })}
+                >
+                  Next → Step 5 (Run Summary)
+                </button>
+              </Row>
+            </Section>
+          )}
+
+          {state.step === 5 && (
+            <Section title="Step 5 — Run Summary & Confirmation (MANDATORY)">
+              <Row>
+                <button onClick={() => dispatch({ type: "SET_STEP", step: 4 })}>
+                  ← Back
+                </button>
+                <div style={{ flex: 1 }} />
+                <button onClick={() => dispatch({ type: "RESET_ALL" })}>
+                  Reset
+                </button>
+              </Row>
+
+              {!previewContract ? (
+                <div style={{ opacity: 0.8 }}>
+                  Incomplete configuration (Steps 1–4).
+                </div>
+              ) : (
+                <>
+                  <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
+                    {JSON.stringify(previewContract, null, 2)}
+                  </pre>
+
+                  <Row>
+                    <button
+                      disabled={!canStep5}
+                      onClick={() => {
+                        dispatch({ type: "DERIVE_CONTRACT" });
+                        dispatch({ type: "EXEC_START" });
+                      }}
+                    >
+                      Run
+                    </button>
+                  </Row>
+                </>
+              )}
+            </Section>
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      <div style={{ opacity: 0.75, marginTop: 12 }}>
+        This wizard currently uses placeholder panels. Next step is replacing
+        the defaults-only BSP step and the batch params step with full forms.
       </div>
     </div>
   );
-};
+}
 
-export default App;
+function WizardStepper(props: {
+  step: number;
+  canStep2: boolean;
+  canStep3: boolean;
+  canStep4: boolean;
+  canStep5: boolean;
+  onGo: (s: 1 | 2 | 3 | 4 | 5) => void;
+}) {
+  const { step, canStep2, canStep3, canStep4, canStep5, onGo } = props;
+
+  const Btn = (p: {
+    n: 1 | 2 | 3 | 4 | 5;
+    enabled: boolean;
+    label: string;
+  }) => (
+    <button
+      onClick={() => enabledGo(p.n, p.enabled)}
+      disabled={!p.enabled}
+      style={{
+        opacity: step === p.n ? 1 : 0.85,
+        fontWeight: step === p.n ? 700 : 500,
+      }}
+    >
+      {p.label}
+    </button>
+  );
+
+  const enabledGo = (n: 1 | 2 | 3 | 4 | 5, enabled: boolean) => {
+    if (!enabled) return;
+    onGo(n);
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <Btn n={1} enabled={true} label="1 World" />
+      <Btn n={2} enabled={canStep2} label="2 BSP" />
+      <Btn n={3} enabled={canStep3} label="3 Mode" />
+      <Btn n={4} enabled={canStep4} label="4 Options" />
+      <Btn n={5} enabled={canStep5} label="5 Confirm" />
+    </div>
+  );
+}
+
+// --- Step 6 Execution View ----------------------------------------------------
+
+function ExecutionView(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      const contract = state.contract;
+      if (!contract) {
+        dispatch({
+          type: "EXEC_ERROR",
+          error:
+            "Missing contract (Step 5 must derive contract before execution).",
+        });
+        return;
+      }
+
+      try {
+        if (contract.mode === "single") {
+          dispatch({
+            type: "EXEC_PROGRESS",
+            progress: { kind: "single", status: "running" },
+          });
+
+          const opts = {
+            width: contract.world.width,
+            height: contract.world.height,
+            seed: contract.world.seed,
+            ...contract.bsp,
+          };
+
+          const dungeon = generateBspDungeon(opts);
+
+          const p = contract.pattern;
+          const contentOpts =
+            contract.contentStrategy === "atomic"
+              ? {
+                  includeLeverHiddenPocket: false,
+                  leverHiddenPocketSize: p.leverHiddenPocketSize,
+                  includeLeverOpensDoor: false,
+                  leverOpensDoorCount: p.leverOpensDoorCount,
+                  includePlateOpensDoor: false,
+                  plateOpensDoorCount: p.plateOpensDoorCount,
+                  includeIntroGate: false,
+                  patternMaxAttempts: p.patternMaxAttempts,
+                  includePhase3Compositions: false,
+                  gateThenOptionalRewardCount: 0,
+                }
+              : {
+                  includeLeverHiddenPocket: p.includeLeverHiddenPocket,
+                  leverHiddenPocketSize: p.leverHiddenPocketSize,
+                  includeLeverOpensDoor: p.includeLeverOpensDoor,
+                  leverOpensDoorCount: p.leverOpensDoorCount,
+                  includePlateOpensDoor: p.includePlateOpensDoor,
+                  plateOpensDoorCount: p.plateOpensDoorCount,
+                  includeIntroGate: p.includeIntroGate,
+                  patternMaxAttempts: p.patternMaxAttempts,
+                  includePhase3Compositions: p.includePhase3Compositions,
+                  gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
+                };
+
+          const content = generateDungeonContent(dungeon, contentOpts);
+
+          let rt0 = initDungeonRuntimeState(content);
+          rt0 = derivePlatesFromBlocks(rt0, content);
+
+          const eval0 = evaluateCircuits(rt0, content.meta.circuits);
+
+          if (cancelled) return;
+
+          dispatch({
+            type: "EXEC_DONE",
+            result: {
+              kind: "single",
+              seed: String(contract.world.seed),
+              seedUsed: String(dungeon.meta?.seedUsed ?? ""),
+              dungeon,
+              content,
+              runtime0: rt0,
+              circuitEval0: eval0,
+              circuitDebug0: (eval0 as any).debug ?? null,
+            },
+          });
+        } else {
+          const total = contract.batch.runs;
+          dispatch({
+            type: "EXEC_PROGRESS",
+            progress: { kind: "batch", done: 0, total },
+          });
+
+          const runs: BatchRunInput[] = [];
+
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+          const updateEvery = Math.max(1, Math.floor(total / 50));
+
+          for (let i = 0; i < total; i++) {
+            if (cancelled) return;
+
+            const seedStr = `${contract.batch.seedPrefix}-${contract.batch.startIndex + i}`;
+
+            const opts = {
+              width: contract.world.width,
+              height: contract.world.height,
+              seed: seedStr,
+              ...contract.bsp,
+            };
+
+            const dungeon = generateBspDungeon(opts);
+
+            const p = contract.pattern;
+            const content = generateDungeonContent(dungeon, {
+              includeLeverHiddenPocket: p.includeLeverHiddenPocket,
+              leverHiddenPocketSize: p.leverHiddenPocketSize,
+              includeLeverOpensDoor: p.includeLeverOpensDoor,
+              leverOpensDoorCount: p.leverOpensDoorCount,
+              includePlateOpensDoor: p.includePlateOpensDoor,
+              plateOpensDoorCount: p.plateOpensDoorCount,
+              includeIntroGate: p.includeIntroGate,
+              patternMaxAttempts: p.patternMaxAttempts,
+              includePhase3Compositions: p.includePhase3Compositions,
+              gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
+            });
+
+            let rt0 = initDungeonRuntimeState(content);
+            rt0 = derivePlatesFromBlocks(rt0, content);
+
+            const eval0 = evaluateCircuits(rt0, content.meta.circuits);
+            const diag0 = (eval0 as any).diagnostics ?? null;
+            const metrics0 = computeGlobalCircuitMetrics(diag0);
+
+            const circuitMetrics = metrics0
+              ? ({ schemaVersion: 1, ...metrics0 } as any)
+              : null;
+
+            runs.push({
+              seed: seedStr,
+              seedUsed: dungeon.meta.seedUsed,
+              rooms: dungeon.meta.rooms.length,
+              corridors: dungeon.meta.corridors.length,
+              patternDiagnostics: content.meta.patternDiagnostics ?? [],
+              circuitMetrics,
+            });
+
+            if (i % updateEvery === 0 || i === total - 1) {
+              dispatch({
+                type: "EXEC_PROGRESS",
+                progress: { kind: "batch", done: i + 1, total },
+              });
+              await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            }
+          }
+
+          const summary = aggregateBatchRuns(runs);
+          const json = JSON.stringify(summary, null, 2);
+
+          if (cancelled) return;
+
+          dispatch({
+            type: "EXEC_DONE",
+            result: { kind: "batch", summary, summaryJson: json },
+          });
+        }
+      } catch (err: any) {
+        if (cancelled) return;
+        dispatch({
+          type: "EXEC_ERROR",
+          error: err?.message ? String(err.message) : String(err),
+        });
+      }
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [state.contract, dispatch]);
+
+  return (
+    <div className="maze-controls" style={{ width: 520, maxWidth: "100%" }}>
+      <h2 className="maze-title">Step 6 — Execution</h2>
+
+      <div style={{ opacity: 0.85, marginBottom: 8 }}>
+        Running… (configuration is locked; no inspection UI mounted)
+      </div>
+
+      <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
+        {JSON.stringify(state.progress, null, 2)}
+      </pre>
+
+      <div style={{ opacity: 0.75 }}>
+        Any upstream change invalidates the run and will tear down inspection.
+      </div>
+    </div>
+  );
+}
+
+// --- Step 7 Inspection Router (REAL wrappers) --------------------------------
+
+function InspectionRouter(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+
+  if (!state.result) {
+    return (
+      <div className="maze-controls" style={{ width: 720, maxWidth: "100%" }}>
+        <h2 className="maze-title">Step 7 — Inspection</h2>
+        <div style={{ opacity: 0.85 }}>No result (should not happen).</div>
+        <button onClick={() => dispatch({ type: "RESET_ALL" })}>
+          Back to Wizard
+        </button>
+      </div>
+    );
+  }
+
+  if (state.result.kind === "batch") {
+    return (
+      <BatchResultsView
+        onBack={() => dispatch({ type: "RESET_ALL" })}
+        payload={{
+          summary: state.result.summary,
+          summaryJson: state.result.summaryJson,
+          runs:
+            state.contract && state.contract.mode === "batch"
+              ? state.contract.batch.runs
+              : undefined,
+          seedPrefix:
+            state.contract && state.contract.mode === "batch"
+              ? state.contract.batch.seedPrefix
+              : undefined,
+        }}
+      />
+    );
+  }
+
+  // single
+  return (
+    <SingleInspectView
+      onBack={() => dispatch({ type: "RESET_ALL" })}
+      payload={{
+        dungeon: state.result.dungeon,
+        content: state.result.content,
+        runtime0: state.result.runtime0,
+        seed: state.result.seed,
+        seedUsed: state.result.seedUsed,
+        circuitDiagnostics0: state.result.circuitEval0?.diagnostics ?? null,
+        circuitDebug0: state.result.circuitDebug0 ?? null,
+      }}
+    />
+  );
+}
+
+// --- Small layout helpers -----------------------------------------------------
+
+function Section(props: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,0.12)",
+        padding: 12,
+        marginBottom: 12,
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>{props.title}</div>
+      {props.children}
+    </div>
+  );
+}
+
+function Row(props: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      {...props}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        marginBottom: 8,
+        ...(props.style ?? {}),
+      }}
+    />
+  );
+}
