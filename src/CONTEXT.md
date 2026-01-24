@@ -1,21 +1,19 @@
----
-
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-23 (rev T)**
+**CONTEXT VERSION:** **2026-01-24 (rev U)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **UI REFACTOR UNDERWAY: THIN-SHELL ROUTING + STEP-ISOLATED WIZARD ANIMATIONS; INSPECTION ADAPTER HARDENED (ENTRANCE/EXIT + BLOCK PUSH + RESET FIXES)**
+**CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST‑EFFORT)**
+**PHASE STATUS:** **WIZARD UI REFACTOR NEARING COMPLETION; EXECUTION + INSPECTION ADAPTERS ALIGNED WITH GENERATOR CONTRACTS**
 
 ---
 
-## SAFE ASSUMPTIONS (DO NOT RE-DISCUSS)
+## SAFE ASSUMPTIONS (DO NOT RE‑DISCUSS)
 
-* Geometry mutation uses **Option A** (distance field recomputed post-patterns)
+* Geometry mutation uses **Option A** (distance field recomputed post‑patterns)
 * Pattern diagnostics are authoritative
 * Batch harness is correct and trusted
-* Generation is deterministic and best-effort (never aborts)
+* Generation is deterministic and best‑effort (never aborts)
 
 ---
 
@@ -33,14 +31,14 @@ Milestone 5 proceeds strictly in this order.
 
 ## PROJECT OVERVIEW
 
-This project is an experimental procedural dungeon generator built in TypeScript with a React-based debug, inspection, and batch-validation harness.
+This project is an experimental procedural dungeon generator built in TypeScript with a React‑based debug, inspection, and batch‑validation harness.
 
-It is designed to evolve toward a JRPG / metroidvania-style dungeon system emphasizing:
+It is designed to evolve toward a JRPG / metroidvania‑style dungeon system emphasizing:
 
 * backtracking + gating
 * stateful puzzle circuits (levers, plates, blocks, secrets)
 * compositional progression grammar (teach → gate → reward → shortcut)
-* deterministic best-effort generation (patterns may skip; dungeons always generate)
+* deterministic best‑effort generation (patterns may skip; dungeons always generate)
 
 ---
 
@@ -52,38 +50,40 @@ All composition logic, diagnostics, and reliability guarantees remain unchanged 
 
 ---
 
-## UI ARCHITECTURE REFACTOR (REV S → REV T)
+## UI ARCHITECTURE REFACTOR (REV S → REV U)
 
 ### Motivation
 
-`App.tsx` historically mixed:
+The legacy `App.tsx` mixed:
 
 * configuration
 * execution
 * batch analysis
 * live inspection
 
-This allows invalid state combinations and obscures user intent.
+This allowed invalid state combinations and obscured user intent.
 
 The UI is being refactored into a **linear wizard** that mirrors the generator pipeline and enforces invariants by construction.
 
 ---
 
-## WIZARD-BASED WORLD CREATION FLOW (LOCKED)
+## WIZARD‑BASED WORLD CREATION FLOW (LOCKED)
 
 ### Step 1 — World Seed & Dimensions
 
 * Seed (manual or randomize)
 * World width / height
 * Deterministic seed preview (display only)
-  **No generation occurs.**
+
+**No generation occurs.**
 
 ### Step 2 — BSP Geometry Settings
 
 * BSP depth / split rules
 * Room size bounds
 * Corridor constraints
-  Defines **geometry only**. No content or puzzles implied.
+
+Defines **geometry only**. No content or puzzles implied.
 
 ### Step 3 — Generation Mode Selection
 
@@ -92,168 +92,137 @@ User selects exactly one:
 * **Single Seed Generation** → produces an inspectable dungeon
 * **Batch Run** → N runs, aggregated diagnostics only, no interactive map
 
-### Step 4A — Content Strategy (Single Seed Only)
+### Step 4A — Content Strategy (Single Only)
 
-* **Atomic Content Only** (fixtures placed without composition patterns)
-* **Run Composition Patterns** (enables patterns such as `gateThenOptionalReward`)
-  Intent is explicit; no silent defaults.
+* **Atomic Content Only**
+* **Run Composition Patterns**
+
+Intent is explicit; no silent defaults.
 
 ### Step 4B — Batch Parameters (Batch Only)
 
 * Run count
-* Reporting scope (summary only)
-  No map or per-seed inspection available.
+* Seed prefix + start index
+* Summary‑only output (no per‑seed inspection)
 
 ### Step 5 — Run Summary & Confirmation (MANDATORY)
 
-Read-only confirmation gate showing:
+Read‑only confirmation gate showing:
 
 * seed + dimensions
 * BSP settings
 * mode (single vs batch)
-* content strategy (atomic vs patterns)
-* explicit guarantees (deterministic / best-effort / patterns may skip / diagnostics non-fatal)
-  **Execution may only begin from this step.**
+* content strategy
+* explicit guarantees (deterministic / best‑effort / patterns may skip / diagnostics non‑fatal)
+
+**Execution may only begin from this step.**
 
 ### Step 6 — Dungeon Creation (Execution Phase)
 
 * generation runs to completion
-* status/progress only
-* no map or inspection UI visible
+* progress/status only
+* no map or inspection UI mounted
 
-### Step 7 — Interactive Dungeon Inspection (POST-GENERATION ONLY)
+### Step 7 — Post‑Generation Inspection
 
-Only after completion:
+* **Single:** interactive map + diagnostics
+* **Batch:** summary‑only results view
 
-* map renders
-* layer toggles active
-* circuit + role + pattern diagnostics visible
-* inspection tools available
-  Strict boundary: **configuration → execution → inspection**
+Strict boundary: **configuration → execution → inspection**.
 
 ---
 
 ## INVALIDATION MATRIX (AUTHORITATIVE)
 
-The wizard enforces deterministic invalidation: upstream changes clear downstream state.
+* **Step 1 changes** invalidate everything downstream
+* **Step 2 changes** invalidate content, patterns, diagnostics
+* **Step 3 changes** reset single/batch branch
+* **Step 4 changes** invalidate generated artifacts only
+* **Step 5** is read‑only
+* **Any post‑execution change** immediately tears down inspection
 
-### Step 1 Changes — Seed / Width / Height
-
-Invalidates: BSP geometry, content placement, patterns, diagnostics, generated artifact
-**Effect:** return to Step 1; Steps 2+ cleared.
-
-### Step 2 Changes — BSP Geometry Settings
-
-Invalidates: content placement, patterns, diagnostics, generated artifact
-**Effect:** Step 2 re-entered; Steps 3+ cleared.
-
-### Step 3 Changes — Generation Mode
-
-Invalidates: content strategy selection / batch params, any generated results
-**Effect:** downstream branch reset (single vs batch).
-
-### Step 4 Changes — Content Strategy or Batch Parameters
-
-Invalidates: generated artifact + all diagnostics
-Does NOT invalidate: world seed/dims, BSP, mode selection
-
-### Step 5 (Run Summary)
-
-Read-only; no invalidation; confirmation gate only
-
-### Post-Execution Changes
-
-Any change to any prior step invalidates the entire generated dungeon and diagnostics; inspection UI is torn down immediately.
+This matrix is now **fully enforced in the wizard reducer and routing logic**.
 
 ---
 
-## IMPLEMENTATION PROGRESS RECORDED (REV T)
+## IMPLEMENTATION PROGRESS (REV U)
 
-### Diagnostics UI: Role Diagnostics surfaced (new section)
+### Wizard UI
 
-* `src/debug/RoleDiagnosticsSection.tsx` added as a **read-only, batch-safe** UI section for `RoleDiagnosticsV1` output.
-* Integrates with the existing circuit selection model (`selectedCircuitIndex`) so circuit + role views stay aligned.
-* Provides summary metrics + per-circuit detail inspection, without any runtime mutation.
+* Step‑isolated wizard implemented with Framer Motion transitions
+* Each step mounted exclusively (no stacked panels)
+* Panels centered and expanded (≈90% width, ≈75% height)
+* BSP, pattern, and batch parameter forms fully restored
+* Deterministic invalidation enforced by reducer guards
 
-### Inspection shell adapter: interaction correctness fixes
+### Execution Adapter (Step 6)
 
-The inspection shell adapter (Step 7) was hardened to match real repo semantics:
+* Execution split cleanly from configuration and inspection
+* Runtime normalization added for legacy content outputs:
 
-* **Entrance/Exit markers** are derived from **entry/exit room ids**, not `dungeon.meta.entranceTile/exitTile`.
+  * `content.meta.plates`
+  * `content.meta.circuits`
+* Execution now matches **repo‑accurate contracts**:
 
-  * Entrance room id: `content.meta.entranceRoomId`
-  * Exit room id: `content.meta.farthestRoomId`
-  * Marker pixels: center of the region bounds for those rooms, only if not solid.
-* **Block pushing** fixed to match `tryPushBlock(state, dungeon, content, blockId, dx, dy)`:
+  * `derivePlatesFromBlocks` treated as state‑returning
+  * `evaluateCircuits(runtime, circuits)` signature honored
+  * `computeGlobalCircuitMetrics(diagnostics)` input corrected
 
-  * click-to-push now computes `(dx,dy)` from current block location and requires cardinal adjacency
-  * keyboard push uses the same signature
-* **Hard reset** corrected to match `resetRuntimeState(state, content)` (or equivalently re-init runtime from content).
+### Inspection Adapters (Step 7)
 
-  * Previous call-site bug was `resetRuntimeState(runtime)` which cannot resolve.
+* **SingleInspectView** converted to payload‑based adapter
 
-### Wizard shell integration (in progress)
+  * clean separation between inspection shell and routing
+  * no hidden mutation or implicit execution
+* **BatchResultsView** aligned to summary‑only payload contract
 
-* Routing plan is implemented as a “thin shell” approach:
+  * no map rendering
+  * copy / download JSON utilities preserved
 
-  * Wizard steps (1–5) → execution (6) → inspection (7)
-* **Only one wizard step is visible at a time** (no stacked panels).
-* **Framer Motion transitions** used to animate step-to-step and screen-to-screen transitions.
-* Step 7 routes to:
+### Type Safety & Contracts
 
-  * **Single inspection view** (map + diagnostics)
-  * **Batch results view** (summary only; no map)
-
-> Note: Some of the wizard refactor work exists as refactor code paths / new components and may not be fully represented in the repomix snapshot depending on what was packed. This CONTEXT captures the intended architecture + the latest implemented fixes and UI surfaces discussed above.
+* RunContract discriminated union respected (`single` vs `batch`)
+* All wizard → execution → inspection boundaries now type‑checked
+* Accidental cross‑mode access (e.g. `contract.batch` in single mode) eliminated
 
 ---
 
-## CURRENT STATE SUMMARY (REV T)
+## CURRENT STATE SUMMARY
 
-* Milestone 4 remains closed and validated.
-* Milestone 5 Phase 2.5 soft enforcement continues uninterrupted (generator semantics unchanged).
-* Clean lever reachability preview patch remains queued (generator-side).
-* UI refactor is underway:
-
-  * step-isolated wizard flow + framer-motion transitions
-  * inspection shell adapter hardened for correctness (entrance/exit derivation, block push signature, hard reset signature)
-  * role diagnostics UI section added and integrated for Step-7 inspection.
+* Milestone 4 remains closed and untouched
+* Milestone 5 Phase 2.5 soft enforcement continues unchanged at the generator layer
+* Wizard refactor is functionally complete and structurally sound
+* Execution and inspection paths are now **contract‑accurate and deterministic**
 
 ---
 
 ## NEXT STEPS (PRIORITY ORDER)
 
+### UI (Finish & Stabilize)
+
+1. Light polish pass on wizard UX:
+
+   * inline validation hints
+   * clearer invalidation messaging
+2. Optional: expose additional execution metadata in Step 5 summary
+3. Add keyboard / accessibility affordances (non‑policy)
+
 ### Generator (Milestone 5 Phase 2.5)
 
-1. Implement the **clean lever reachability preview** patch (reachability-aware placement signal).
-2. Run a post-patch batch (1000+ seeds) and capture diffs vs baseline.
-3. Record comparative diagnostics and confirm “stable under pressure” behavior (escalation gating).
+1. Implement **clean lever reachability preview** signal
+2. Run 1000+ seed batch comparison vs baseline
+3. Record stability metrics and misalignment deltas
 
-### UI (Wizard refactor completion)
+### Milestone 5 Roadmap
 
-1. Finish decomposing `App.tsx` into real wizard step components (Step1–Step5):
-
-   * Step 2 full BSP form (replace defaults-only placeholder)
-   * Step 4 batch params + pattern config forms
-2. Ensure invalidation matrix UX is explicit (clear downstream state immediately + visible “invalidated” messaging).
-3. Ensure Step 6 execution screen remains **inspection-free** (no map mount until Step 7).
-4. Ensure Step 7 uses the inspection adapter exclusively:
-
-   * single: interactive map + diagnostics
-   * batch: summary-only results view
-5. Add richer map interactivity (non-policy):
-
-   * doors/levers/keys/blocks hover metadata
-   * circuit connection highlights (selected circuit ↔ targets)
-   * selection affordances + clear “tool modes” (inspect vs interact)
+* **Phase 3:** Stronger soft steering (intent pressure weighting)
+* **Phase 4:** Candidate hard rules (only after proven stability)
 
 ---
 
 ## REMINDERS
 
-* UI must not introduce hidden policy.
-* Intent must be explicit before execution.
-* Diagnostics remain authoritative.
-* Escalation only after measured stability.
-
----
+* UI must not introduce hidden policy
+* Intent must be explicit before execution
+* Diagnostics remain authoritative
+* Escalation only after measured stability

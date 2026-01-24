@@ -58,12 +58,37 @@ input {
     font-family: inherit;
 }
 
+/* ---------- App Layout Modes ---------- */
+
 .maze-app {
-    display: grid;
+    display: flex;
     grid-template-columns: 420px 1fr;
     gap: 14px;
     padding: 14px;
-    min-height: 100vh;
+    overflow-y: auto;
+    max-height: 90vh;
+}
+
+/* Wizard + Execution: single centered large panel */
+.maze-app.maze-app--centered {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+/* When centered, reuse maze-controls styling but make it MUCH larger */
+.maze-app.maze-app--centered .maze-controls {
+    width: min(90vw, 1400px);
+    height: min(78vh, 980px);
+    max-width: 1400px;
+    max-height: 980px;
+    overflow: auto;
+}
+
+/* Optional: slightly larger title for wizard panels */
+.maze-app.maze-app--centered .maze-title {
+    font-size: 18px;
 }
 
 /* ---------- Left: Controls ---------- */
@@ -79,6 +104,7 @@ input {
     box-shadow: var(--shadow);
     padding: 14px;
     overflow: auto;
+    max-width: 50vw;
 }
 
 .maze-header-row {
@@ -419,6 +445,7 @@ details[open] > .maze-summary {
     padding: 12px; /* MUST remain 12px unless you change getCellFromMouseEvent */
     overflow: auto;
     background: rgba(0, 0, 0, 0.18);
+    width: 100%;
 }
 
 .maze-canvas {
