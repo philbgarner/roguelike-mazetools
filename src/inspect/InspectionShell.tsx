@@ -14,7 +14,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { imageDataToPngDataUrl } from "../mazeGen";
-
+import DungeonRenderView from "../rendering/DungeonRenderView";
 import type { DungeonRuntimeState } from "../dungeonState";
 import {
   collectKey,
@@ -41,6 +41,8 @@ import type { RoleDiagnosticsV1 } from "../roleDiagnostics";
 import { analyzeRoleDiagnosticsV1 } from "../roleDiagnostics";
 
 // ----------------------------- Types -----------------------------------------
+
+type InspectPane = "content" | "render";
 
 export type Layer =
   | "solid"
@@ -586,6 +588,13 @@ export function InspectionShell(props: InspectionShellProps) {
   const [layer, setLayer] = useState<Layer>("content");
   const [scale, setScale] = useState(6);
 
+  const [pane, setPane] = useState<InspectPane>("content");
+  // For Render pane camera focus (cell coords)
+  const [focusCell, setFocusCell] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
+
   const [selectedCircuitIndex, setSelectedCircuitIndex] = useState<
     number | null
   >(null);
@@ -943,6 +952,9 @@ export function InspectionShell(props: InspectionShellProps) {
       return;
     }
 
+    // keep render-camera focus in sync with hover
+    setFocusCell({ x, y });
+
     const last = lastHoverCellRef.current;
     if (last && last.x === x && last.y === y) return;
 
@@ -968,6 +980,7 @@ export function InspectionShell(props: InspectionShellProps) {
     const x = c.x;
     const y = c.y;
     if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return;
+    setFocusCell({ x, y });
 
     const w = dungeon.width;
     const i = y * w + x;
@@ -1132,6 +1145,17 @@ export function InspectionShell(props: InspectionShellProps) {
               }
             />
           </label>
+
+          <label className="maze-field">
+            <span>Pane</span>
+            <select
+              value={pane}
+              onChange={(e) => setPane(e.target.value as InspectPane)}
+            >
+              <option value="content">content</option>
+              <option value="render">render</option>
+            </select>
+          </label>
         </div>
 
         {selectedBlockId != null && (
@@ -1205,117 +1229,154 @@ export function InspectionShell(props: InspectionShellProps) {
           )}
 
           {/* Tooltip anchored to hovered cell */}
-          {tooltip.visible && (
-            <div className="maze-tooltip" style={getTooltipStyle()}>
-              {tooltip.lines.map((ln, idx) => (
-                <div key={idx} className="maze-tooltip-line">
-                  {ln}
-                </div>
-              ))}
-            </div>
-          )}
 
-          {layer === "content" && (
-            <div className="maze-legend">
-              <div className="maze-legend-title">Legend (content)</div>
-              <div className="maze-legend-grid">
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.wall) }}
-                  />
-                  <span>Wall</span>
+          {pane === "content" ? (
+            <>
+              <canvas
+                ref={canvasRef}
+                className="maze-canvas"
+                style={canvasStyle}
+                onMouseMove={onMouseMove}
+                onMouseLeave={onMouseLeave}
+                onClick={onClick}
+              />
+              {tooltip.visible && (
+                <div
+                  className="maze-hover-rect"
+                  style={{
+                    left: tooltip.x * scale,
+                    top: tooltip.y * scale,
+                    width: scale,
+                    height: scale,
+                  }}
+                />
+              )}
+              {tooltip.visible && (
+                <div className="maze-tooltip" style={getTooltipStyle()}>
+                  {tooltip.lines.map((ln, idx) => (
+                    <div key={idx} className="maze-tooltip-line">
+                      {ln}
+                    </div>
+                  ))}
                 </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.floor) }}
-                  />
-                  <span>Floor</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.entrance) }}
-                  />
-                  <span>Entrance</span>
-                </div>
+              )}
+              {layer === "content" && (
+                <div className="maze-legend">
+                  <div className="maze-legend-title">Legend (content)</div>
+                  <div className="maze-legend-grid">
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.wall) }}
+                      />
+                      <span>Wall</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.floor) }}
+                      />
+                      <span>Floor</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.entrance) }}
+                      />
+                      <span>Entrance</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.exit) }}
-                  />
-                  <span>Exit</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.doorClosed) }}
-                  />
-                  <span>Door (closed)</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.doorOpen) }}
-                  />
-                  <span>Door (open)</span>
-                </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.exit) }}
+                      />
+                      <span>Exit</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.doorClosed) }}
+                      />
+                      <span>Door (closed)</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.doorOpen) }}
+                      />
+                      <span>Door (open)</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.key) }}
-                  />
-                  <span>Key</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.lever) }}
-                  />
-                  <span>Lever</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.plate) }}
-                  />
-                  <span>Plate</span>
-                </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.key) }}
+                      />
+                      <span>Key</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.lever) }}
+                      />
+                      <span>Lever</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.plate) }}
+                      />
+                      <span>Plate</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.block) }}
-                  />
-                  <span>Block</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.secret) }}
-                  />
-                  <span>Secret</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.hazard) }}
-                  />
-                  <span>Hazard</span>
-                </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.block) }}
+                      />
+                      <span>Block</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.secret) }}
+                      />
+                      <span>Secret</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.hazard) }}
+                      />
+                      <span>Hazard</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.loot) }}
-                  />
-                  <span>Loot</span>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.loot) }}
+                      />
+                      <span>Loot</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              )}{" "}
+            </>
+          ) : (
+            <DungeonRenderView
+              bsp={dungeon}
+              content={content}
+              focusX={focusCell.x}
+              focusY={focusCell.y}
+              atlasUrl={"/tileset.png"}
+              atlasCols={16}
+              atlasRows={16}
+              wallTile={1}
+              floorTile={0}
+              zoom={32}
+              flipAtlasY={true}
+            />
           )}
         </div>
       </div>
