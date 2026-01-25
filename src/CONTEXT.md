@@ -27,6 +27,14 @@ A rule may only become **hard** if:
 
 Milestone 5 proceeds strictly in this order.
 
+## Explicit Non-Goals
+
+UI does not influence generator decisions
+
+Inspection does not simulate future behavior
+
+No heuristic inference beyond diagnostics
+
 ---
 
 ## PROJECT OVERVIEW
@@ -228,6 +236,10 @@ This ensures **what the user sees is what the generator actually produced**.
    * inline validation hints
    * clearer invalidation messaging
    * onclick in canvas cell should toggle levers and update states in linked entities.
+   * onclick in canvas cell should toggle levers at runtime only, to visualize trigger → target relationships in the generated dungeon
+     * non-persisted
+     * non-diagnostic-mutating
+     * inspection-only (no generator feedback)
 2. Optional: expose additional execution metadata in Step 5 summary
 3. Keyboard + accessibility affordances (non‑policy)
 

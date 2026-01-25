@@ -973,8 +973,8 @@ export function InspectionShell(props: InspectionShellProps) {
     const ft = content.masks.featureType[i] | 0;
     const fid = content.masks.featureId[i] | 0;
 
-    // Block selection / push
-    if (ft === 7 && fid) {
+    // Block selection / push (FeatureType 8)
+    if (ft === 8 && fid) {
       setSelectedBlockId((prev) => (prev === fid ? null : fid));
       return;
     }
@@ -1014,15 +1014,15 @@ export function InspectionShell(props: InspectionShellProps) {
       return;
     }
 
-    // Lever toggle
-    if (ft === 5 && fid) {
+    // Lever toggle (FeatureType 6) — runtime-only inspection affordance
+    if (ft === 6 && fid) {
       const next = toggleLever(runtime, fid);
-      applyRuntime(next);
+      applyRuntime(next); // derive plates -> evaluate circuits -> update runtime/diagnostics
       return;
     }
 
-    // Collect key
-    if (ft === 4 && fid) {
+    // Collect key (FeatureType 5)
+    if (ft === 5 && fid) {
       const next = collectKey(runtime, fid);
       applyRuntime(next);
       return;
