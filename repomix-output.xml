@@ -41,6 +41,8 @@ The content is organized as follows:
 
 <directory_structure>
 public/
+  textures/
+    codepage437.png
   vite.svg
 src/
   debug/
@@ -57,7 +59,10 @@ src/
     InspectionShell.tsx
     SingleInspectView.tsx
   rendering/
-    CONTEXT.md
+    DungeonRenderView.tsx
+    RENDERING-CONTEXT.md
+    tiles.ts
+    tileShader.ts
   wizard/
     wizardReducer.ts
     WizardScreen.tsx
@@ -2782,6 +2787,554 @@ export function BatchResultsView(props: BatchResultsViewProps) {
 }
 
 export default BatchResultsView;
+</file>
+
+<file path="src/rendering/DungeonRenderView.tsx">
+// src/rendering/DungeonRenderView.tsx
+import React, { useMemo } from "react";
+import * as THREE from "three";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import { buildCharMask, maskToTileTextureR8 } from "./tiles";
+import { tileFrag, tileVert } from "./tileShader";
+
+type Props = {
+  bsp: BspDungeonOutputs;
+  content: ContentOutputs;
+
+  // camera focus in cell coords
+  focusX: number;
+  focusY: number;
+
+  // tileset atlas image URL (PNG) and layout
+  atlasUrl: string;
+  atlasCols: number;
+  atlasRows: number;
+
+  // which tiles to use for floor/wall; everything else comes from char mask
+  wallTile: number;
+  floorTile: number;
+
+  // controls how many cells fit on screen; higher zoom = closer
+  zoom?: number;
+
+  // if your atlas origin is top-left, set true
+  flipAtlasY?: boolean;
+};
+
+function OrthoRig({
+  focusX,
+  focusY,
+  zoom = 32,
+}: {
+  focusX: number;
+  focusY: number;
+  zoom?: number;
+}) {
+  const { camera } = useThree();
+
+  useFrame(() => {
+    const cam = camera as THREE.OrthographicCamera;
+    cam.zoom = zoom;
+
+    // Center on the selected cell center
+    cam.position.set(focusX + 0.5, focusY + 0.5, 10);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(focusX + 0.5, focusY + 0.5, 0);
+    cam.updateProjectionMatrix();
+  });
+
+  return null;
+}
+
+function PlaneScene({
+  bsp,
+  content,
+  atlasUrl,
+  atlasCols,
+  atlasRows,
+  wallTile,
+  floorTile,
+  flipAtlasY,
+}: Omit<Props, "focusX" | "focusY" | "zoom">) {
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const atlas = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    const t = loader.load(atlasUrl);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    return t;
+  }, [atlasUrl]);
+
+  const charTex = useMemo(() => {
+    const mask = buildCharMask(bsp, content, { wallTile, floorTile });
+    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
+  }, [bsp, content, W, H, wallTile, floorTile]);
+
+  const mat = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      vertexShader: tileVert,
+      fragmentShader: tileFrag,
+      uniforms: {
+        uSolid: { value: bsp.textures.solid },
+        uChar: { value: charTex },
+        uAtlas: { value: atlas },
+        uGridSize: { value: new THREE.Vector2(W, H) },
+        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
+        uWallTile: { value: wallTile },
+        uFloorTile: { value: floorTile },
+        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
+      },
+      depthTest: false,
+      depthWrite: false,
+      transparent: false,
+    });
+  }, [
+    bsp.textures.solid,
+    charTex,
+    atlas,
+    W,
+    H,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+  ]);
+
+  return (
+    <mesh position={[W / 2, H / 2, 0]}>
+      {/* 1 unit = 1 cell */}
+      <planeGeometry args={[W, H, 1, 1]} />
+      <primitive object={mat} attach="material" />
+    </mesh>
+  );
+}
+
+export default function DungeonRenderView(props: Props) {
+  const { bsp, content, focusX, focusY, zoom } = props;
+
+  return (
+    <div style={{ width: "100%", height: "100%" }}>
+      <Canvas
+        orthographic
+        camera={{
+          position: [0, 0, 10],
+          zoom: zoom ?? 32,
+          near: 0.1,
+          far: 1000,
+        }}
+        gl={{ antialias: false, alpha: false }}
+      >
+        <OrthoRig focusX={focusX} focusY={focusY} zoom={zoom} />
+        <PlaneScene {...props} />
+      </Canvas>
+    </div>
+  );
+}
+</file>
+
+<file path="src/rendering/RENDERING-CONTEXT.md">
+---
+
+# RENDERING-CONTEXT.md
+
+## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
+
+**CONTEXT VERSION:** **2026-01-24 (rev A)**
+**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
+**STATUS:** **BOOTSTRAP PLAN LOCKED; INTEGRATION PATCH IDENTIFIED (pane toggle + focus cell)**
+
+---
+
+## GOAL
+
+Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
+
+The result is a first-pass “GPU view” of the dungeon that can later grow into:
+
+* animated sprites
+* richer shading / lighting
+* overlays and debug visualizations
+* true runtime-driven visual state
+
+---
+
+## NON-GOALS (FOR NOW)
+
+* No new generation controls (Step 7 remains inspection-only).
+* No batch rendering mode.
+* No 3D meshes for rooms/walls; it is a **single-plane tileset renderer**.
+* No full sprite animation system yet (we will start with static tile indices).
+* No complicated scene graph; just one plane + camera + shader.
+
+---
+
+## RENDER VIEW CONTRACT
+
+### Location
+
+The render component lives **inside `InspectionShell`** as an alternate view alongside the current content/canvas inspection view.
+
+### View Mode
+
+`InspectionShell` provides a local toggle:
+
+* `pane = "content"` → existing 2D canvas inspection (layer selection, tooltip, legend, click-to-interact runtime controls)
+* `pane = "render"` → new R3F render pipeline
+
+### Inputs
+
+Render view consumes the same single-seed data already present in Step 7:
+
+* `dungeon: BspDungeonOutputs`
+* `content: ContentOutputs`
+* `runtime: DungeonRuntimeState` (optional initially, but intended to drive door open/closed, key collected, block moved, etc.)
+
+### Focus / Camera
+
+Camera is orthographic and should remain centered over the plane at a cell coordinate:
+
+* Render view accepts `focusX, focusY` in **cell coordinates**
+* `InspectionShell` maintains a local `focusCell` state
+
+  * updated via hover/click in content pane
+  * used as the camera focus in render pane
+
+---
+
+## DATA MODEL (TEXTURES)
+
+### Generator textures (existing)
+
+We will leverage generator `DataTexture`s already produced by the dungeon pipeline, such as:
+
+* `solid` (wall/floor)
+* content masks (`featureType`, `featureId`, `hazardType`, etc.) if needed
+
+### Character / tile-index texture (new)
+
+We introduce a dedicated R8 `DataTexture` (unsigned byte) that encodes **which tile index to draw** at each cell:
+
+* `charTex[x,y] = 0` → “none” (shader draws base floor/wall)
+* `charTex[x,y] = N` → draw tile index N from the atlas
+
+This is the first “render pipeline bridge” between procedural content masks/runtime state and GPU shading.
+
+### Tileset atlas (external image)
+
+The shader samples from a single atlas texture:
+
+* `atlasCols`, `atlasRows` specify its grid layout
+* nearest filtering only (pixel-art correctness)
+
+---
+
+## SHADER RESPONSIBILITIES
+
+The fragment shader determines what tile to draw for each cell:
+
+1. Determine cell coordinates from UV (grid space)
+2. Sample `solid` at that cell to decide wall vs floor base
+3. Sample `charTex` to override base tile when non-zero
+4. Convert tile index → atlas UV
+5. Sample atlas texture and output color
+
+Filtering must be `NearestFilter` on all textures (atlas + data textures) to preserve crisp pixels.
+
+---
+
+## UI INTEGRATION NOTES (SESSION FINDINGS)
+
+### What we discovered
+
+Your current `InspectionShell.tsx` attempts to conditionally show a render view but the condition is wrong:
+
+* the JSX was switching on `layer === "content"` instead of `pane`
+* the render branch referenced undefined variables (`bsp`, `hoverX`, `selectedX`, etc.)
+* the canvas was always rendered, meaning render view would be stacked awkwardly in the DOM
+
+### What we did (this session)
+
+We defined a correct integration approach:
+
+1. **Use `pane`** to switch between content and render views (not `layer`)
+2. Add a `focusCell` state `{x,y}` in `InspectionShell`
+3. Update `focusCell` on hover/click in content pane
+4. When `pane === "render"`:
+
+   * hide the 2D canvas entirely
+   * show `<DungeonRenderView bsp={dungeon} ... focusX={focusCell.x} focusY={focusCell.y} />`
+
+This keeps Step 7’s contract intact (inspection-only, local view state).
+
+---
+
+## DEPENDENCIES
+
+To implement the R3F renderer:
+
+* `three`
+* `@react-three/fiber`
+
+(Optionally later: `@react-three/drei`)
+
+---
+
+## NEXT STEPS (IMMEDIATE)
+
+1. **Land the `pane` toggle + focusCell wiring** in `InspectionShell.tsx`
+
+   * `pane` selector in UI
+   * conditional render: canvas vs `<DungeonRenderView />`
+   * no undefined variables
+
+2. **Add initial rendering module**
+
+   * `src/rendering/DungeonRenderView.tsx`
+   * `src/rendering/tileShader.ts`
+   * `src/rendering/tiles.ts` (build `charTex`)
+
+3. **First pixel milestone**
+
+   * render floor vs wall tiles from `solid`
+   * overlay a simple `charTex` mapping (door/key/lever/plate/block/hazard)
+   * verify crisp nearest sampling and correct orientation (atlas flip if needed)
+
+---
+
+## NEXT STEPS (AFTER FIRST PIXEL)
+
+4. **Runtime-driven visuals**
+
+   * door tile varies open/closed based on `runtime.doors[doorId]`
+   * key disappears / changes if collected
+   * blocks drawn from runtime position (not just static mask)
+   * hazard overlays by `hazardType`
+
+5. **Selection + inspection parity**
+
+   * click-to-select in render pane (raycast plane → cell)
+   * sync selection/focus between panes
+   * optional hover tooltip overlay in render pane (UI layer, not shader)
+
+6. **Debug overlays**
+
+   * shader uniform toggles for viewing raw masks (solid/featureType/hazardType)
+   * visualize region boundaries, distance fields, danger/loot ramps
+
+---
+
+## LARGER PLAN (RENDERING ROADMAP)
+
+### Phase R1 — Tileset plane renderer (this work)
+
+* single plane, orthographic camera
+* data-texture-driven tile selection
+* atlas sampling
+
+### Phase R2 — Runtime + interaction parity
+
+* render responds to runtime mutations (doors/levers/blocks/keys)
+* click/hover behavior matches canvas inspection semantics
+
+### Phase R3 — Sprites and animation
+
+* sprite layers (player/monsters)
+* per-entity animation frames / state
+* optional lighting/post effects
+
+### Phase R4 — Advanced GPU composition
+
+* multi-layer composition: base map + overlays + entities
+* instanced sprites or texture arrays
+* hybrid UI overlays for debugging / diagnostics
+
+---
+
+## DEFINITIONS
+
+* **Cell**: integer grid tile coordinate (x,y)
+* **Atlas tile index**: integer ID selecting a tile within the atlas grid
+* **R8 DataTexture**: unsigned byte texture encoding per-cell indices
+* **Focus cell**: the cell coordinate the camera is centered on in render pane
+
+---
+</file>
+
+<file path="src/rendering/tiles.ts">
+// src/rendering/tiles.ts
+import * as THREE from "three";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+
+export type TileBuildParams = {
+  wallTile: number;
+  floorTile: number;
+
+  // Example mappings (adjust to your atlas)
+  doorTile?: number;
+  keyTile?: number;
+  leverTile?: number;
+  plateTile?: number;
+  blockTile?: number;
+  chestTile?: number;
+  monsterTile?: number;
+};
+
+export function buildCharMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: TileBuildParams,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const out = new Uint8Array(W * H);
+  const solid = bsp.masks.solid;
+  const ft = content.masks.featureType;
+
+  for (let i = 0; i < out.length; i++) {
+    if (solid[i] === 255) {
+      out[i] = 0; // shader will choose wall tile
+      continue;
+    }
+
+    const featureType = ft[i];
+
+    // Very first-pass mapping. Update these numbers once you lock featureType enums.
+    // Common ones in your project: doors/keys/levers/plates/blocks/chests/monsters/hazards.
+    let t = 0;
+
+    switch (featureType) {
+      case 1: // door (example)
+        t = params.doorTile ?? 0;
+        break;
+      case 2: // key (example)
+        t = params.keyTile ?? 0;
+        break;
+      case 3: // lever (example)
+        t = params.leverTile ?? 0;
+        break;
+      case 4: // plate (example)
+        t = params.plateTile ?? 0;
+        break;
+      case 5: // block (example)
+        t = params.blockTile ?? 0;
+        break;
+      case 6: // chest (example)
+        t = params.chestTile ?? 0;
+        break;
+      case 7: // monster (example)
+        t = params.monsterTile ?? 0;
+        break;
+      default:
+        t = 0;
+        break;
+    }
+
+    out[i] = t & 0xff;
+  }
+
+  return out;
+}
+
+export function maskToTileTextureR8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  return tex;
+}
+</file>
+
+<file path="src/rendering/tileShader.ts">
+// src/rendering/tileShader.ts
+export const tileVert = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+export const tileFrag = /* glsl */ `
+precision highp float;
+
+uniform sampler2D uSolid;   // R8 normalized
+uniform sampler2D uChar;    // R8 normalized
+uniform sampler2D uAtlas;   // RGBA tileset
+
+uniform vec2 uGridSize;     // (W, H)
+uniform vec2 uAtlasGrid;    // (cols, rows)
+uniform float uWallTile;    // tile index
+uniform float uFloorTile;   // tile index
+uniform float uFlipAtlasY;  // 0 or 1
+
+varying vec2 vUv;
+
+float sampleR8(sampler2D tex, vec2 uv) {
+  return texture2D(tex, uv).r; // 0..1
+}
+
+void main() {
+  // Which cell are we in?
+  vec2 gridUv = vUv * uGridSize;
+  vec2 cell = floor(gridUv);
+  vec2 local = fract(gridUv);
+
+  // Sample at cell center in texture space
+  vec2 texUv = (cell + vec2(0.5)) / uGridSize;
+
+  float solid = sampleR8(uSolid, texUv); // 0..1
+  float chN  = sampleR8(uChar, texUv);   // 0..1
+
+  float isWall = step(0.5, solid);
+
+  // Decode R8 -> 0..255 tile index
+  float ch = floor(chN * 255.0 + 0.5);
+
+  float tile = mix(uFloorTile, uWallTile, isWall);
+  tile = mix(tile, ch, step(0.5, ch)); // if ch >= 1 use ch
+
+  float cols = uAtlasGrid.x;
+  float rows = uAtlasGrid.y;
+
+  float tx = mod(tile, cols);
+  float ty = floor(tile / cols);
+
+  // atlas UV inside the tile
+  vec2 atlasUv = (vec2(tx, ty) + local) / vec2(cols, rows);
+
+  if (uFlipAtlasY > 0.5) {
+    atlasUv.y = 1.0 - atlasUv.y;
+  }
+
+  vec4 c = texture2D(uAtlas, atlasUv);
+  gl_FragColor = c;
+}
+`;
 </file>
 
 <file path="src/wizard/WizardScreen.tsx">
@@ -5858,9 +6411,12 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "framer-motion": "^12.29.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "react-dom": "^19.2.3",
+    "three": "^0.182.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.8",
@@ -5868,6 +6424,345 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
   }
+}
+</file>
+
+<file path="src/dungeonState.ts">
+// src/dungeonState.ts
+//
+// Milestone 3 — Phase 2
+// Runtime puzzle state model + action helpers.
+//
+// This layer is intentionally independent from generation.
+// It is initialized from ContentOutputs.meta and then mutated by runtime actions.
+
+import type {
+  BspDungeonOutputs,
+  ContentOutputs,
+  DoorKind,
+  HazardType,
+  CircuitDef,
+} from "./mazeGen";
+import { isTileWalkable } from "./walkability";
+
+export type DoorRuntimeState = {
+  kind: DoorKind;
+  isOpen: boolean;
+  forcedOpen?: boolean;
+};
+
+export type KeyRuntimeState = {
+  collected: boolean;
+};
+
+export type LeverRuntimeState = {
+  toggled: boolean;
+};
+
+export type PlateRuntimeState = {
+  pressed: boolean;
+};
+
+export type BlockRuntimeState = {
+  x: number;
+  y: number;
+  weightClass: number; // 0..3
+};
+
+export type HazardRuntimeState = {
+  hazardType: HazardType;
+  enabled: boolean;
+};
+
+export type SecretRuntimeState = {
+  revealed: boolean;
+};
+
+export type CircuitRuntimeState = {
+  // “Active” is the output of behavior mode after evaluation.
+  active: boolean;
+  // For edge detection on satisfiable (raw) signal:
+  // used by TOGGLE mode and for “toggle target” effects.
+  lastSatisfied: boolean;
+  // Debug info: helpful to show in UI.
+  lastSatisfiedCount: number;
+};
+
+export type DungeonRuntimeState = {
+  doors: Record<number, DoorRuntimeState>;
+  keys: Record<number, KeyRuntimeState>;
+  levers: Record<number, LeverRuntimeState>;
+  plates: Record<number, PlateRuntimeState>;
+  blocks: Record<number, BlockRuntimeState>;
+  hazards: Record<number, HazardRuntimeState>;
+  secrets: Record<number, SecretRuntimeState>;
+  circuits: Record<number, CircuitRuntimeState>;
+};
+
+function cloneState<S>(s: S): S {
+  // runtime state is shallow objects + maps, so structuredClone is ideal if available
+  // but we keep it simple and explicit.
+  return JSON.parse(JSON.stringify(s)) as S;
+}
+
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+export function initDungeonRuntimeState(
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const doors: Record<number, DoorRuntimeState> = {};
+  const keys: Record<number, KeyRuntimeState> = {};
+  const levers: Record<number, LeverRuntimeState> = {};
+  const plates: Record<number, PlateRuntimeState> = {};
+  const blocks: Record<number, BlockRuntimeState> = {};
+  const hazards: Record<number, HazardRuntimeState> = {};
+  const secrets: Record<number, SecretRuntimeState> = {};
+  const circuits: Record<number, CircuitRuntimeState> = {};
+
+  // Doors
+  for (const d of content.meta.doors) {
+    doors[d.id] = { kind: d.kind, isOpen: false };
+  }
+
+  // Keys
+  for (const k of content.meta.keys) {
+    keys[k.id] = { collected: false };
+  }
+
+  // Levers
+  for (const l of content.meta.levers) {
+    levers[l.id] = { toggled: false };
+  }
+
+  // Plates
+  for (const p of content.meta.plates) {
+    plates[p.id] = { pressed: false };
+  }
+
+  // Blocks
+  for (const b of content.meta.blocks) {
+    blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
+  }
+
+  // Hazards
+  for (const h of content.meta.hazards) {
+    hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
+  }
+
+  // Secrets
+  for (const s of content.meta.secrets) {
+    secrets[s.id] = { revealed: false };
+  }
+
+  // Circuits (runtime debug state only)
+  for (const c of content.meta.circuits) {
+    circuits[c.id] = {
+      active: false,
+      lastSatisfied: false,
+      lastSatisfiedCount: 0,
+    };
+  }
+
+  return {
+    doors,
+    keys,
+    levers,
+    plates,
+    blocks,
+    hazards,
+    secrets,
+    circuits,
+  };
+}
+
+// ----------------- Basic actions -----------------
+
+export function collectKey(
+  state: DungeonRuntimeState,
+  keyCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.keys[keyCircuitId]) next.keys[keyCircuitId] = { collected: false };
+  next.keys[keyCircuitId].collected = true;
+  return next;
+}
+
+export function toggleLever(
+  state: DungeonRuntimeState,
+  leverCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.levers[leverCircuitId])
+    next.levers[leverCircuitId] = { toggled: false };
+  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
+  return next;
+}
+
+// Plates are now DERIVED — keep these for compatibility/testing, but App.tsx no longer calls them.
+export function setPlatePressed(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+  pressed: boolean,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId])
+    next.plates[plateCircuitId] = { pressed: false };
+  next.plates[plateCircuitId].pressed = pressed;
+  return next;
+}
+
+export function togglePlate(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId])
+    next.plates[plateCircuitId] = { pressed: false };
+  next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
+  return next;
+}
+
+export function resetRuntimeState(
+  _state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  // Re-init from current content meta
+  return initDungeonRuntimeState(content);
+}
+
+// ----------------- Derived state -----------------
+
+/**
+ * DERIVED PLATES:
+ * Plate.pressed is computed from block occupancy (and plate config), not directly mutated.
+ *
+ * This should be called any time blocks move (and once after init).
+ */
+export function derivePlatesFromBlocks(
+  state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+
+  // Precompute a quick occupancy set for blocks
+  const occupied = new Set<number>();
+  for (const b of Object.values(next.blocks)) {
+    occupied.add(idxOf(content.width, b.x, b.y));
+  }
+
+  for (const p of content.meta.plates) {
+    if (!next.plates[p.id]) next.plates[p.id] = { pressed: false };
+
+    const onBlock = occupied.has(idxOf(content.width, p.x, p.y));
+    let pressed = false;
+
+    // For now we only have blocks in the prototype, but we respect the plate flags:
+    if (p.activatedByBlock && onBlock) pressed = true;
+
+    // (Player activation can be added later)
+    if (p.inverted) pressed = !pressed;
+
+    next.plates[p.id].pressed = pressed;
+  }
+
+  return next;
+}
+
+// ----------------- Block push (prototype) -----------------
+
+export type PushResult =
+  | { ok: true; next: DungeonRuntimeState }
+  | { ok: false; next: DungeonRuntimeState; error: string };
+
+function hasBlockAt(
+  state: DungeonRuntimeState,
+  x: number,
+  y: number,
+  ignoreBlockId?: number,
+): boolean {
+  for (const [idStr, b] of Object.entries(state.blocks)) {
+    const id = Number(idStr);
+    if (ignoreBlockId != null && id === ignoreBlockId) continue;
+    if (b.x === x && b.y === y) return true;
+  }
+  return false;
+}
+
+/**
+ * Attempt to push a specific block by (dx,dy).
+ * - checks bounds/walls
+ * - blocks cannot overlap
+ * - doors block movement unless currently open
+ */
+export function tryPushBlock(
+  state: DungeonRuntimeState,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  blockId: number,
+  dx: number,
+  dy: number,
+): PushResult {
+  const b = state.blocks[blockId];
+  if (!b) return { ok: false, next: state, error: `Unknown block ${blockId}` };
+  if ((dx | 0) === 0 && (dy | 0) === 0)
+    return { ok: false, next: state, error: "No movement" };
+  if (Math.abs(dx) + Math.abs(dy) !== 1)
+    return {
+      ok: false,
+      next: state,
+      error: "Only cardinal pushes are supported",
+    };
+
+  const nx = b.x + dx;
+  const ny = b.y + dy;
+
+  const okWalk = isTileWalkable(dungeon, content, nx, ny, {
+    isDoorOpen: (doorId) => {
+      const door = state.doors?.[doorId];
+      return !!(door?.isOpen || (door as any)?.forcedOpen);
+    },
+    isSecretRevealed: (secretId) => !!state.secrets?.[secretId]?.revealed,
+  });
+
+  if (!okWalk) {
+    return { ok: false, next: state, error: "Blocked" };
+  }
+
+  if (hasBlockAt(state, nx, ny, blockId)) {
+    return { ok: false, next: state, error: "Another block is in the way" };
+  }
+
+  const next = cloneState(state);
+  next.blocks[blockId] = { ...next.blocks[blockId], x: nx, y: ny };
+  return { ok: true, next };
+}
+
+// ----------------- Target application helpers -----------------
+
+export function ensureDoor(
+  state: DungeonRuntimeState,
+  id: number,
+  kind: DoorKind,
+): void {
+  if (!state.doors[id]) state.doors[id] = { kind, isOpen: false };
+}
+
+export function ensureHazard(
+  state: DungeonRuntimeState,
+  id: number,
+  hazardType: HazardType,
+): void {
+  if (!state.hazards[id]) state.hazards[id] = { hazardType, enabled: false };
+}
+
+export function ensureSecret(state: DungeonRuntimeState, id: number): void {
+  if (!state.secrets[id]) state.secrets[id] = { revealed: false };
+}
+
+export function ensurePlate(state: DungeonRuntimeState, id: number): void {
+  if (!state.plates[id]) state.plates[id] = { pressed: false };
 }
 </file>
 
@@ -5888,7 +6783,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { imageDataToPngDataUrl } from "../mazeGen";
-
+import DungeonRenderView from "../rendering/DungeonRenderView";
 import type { DungeonRuntimeState } from "../dungeonState";
 import {
   collectKey,
@@ -5915,6 +6810,8 @@ import type { RoleDiagnosticsV1 } from "../roleDiagnostics";
 import { analyzeRoleDiagnosticsV1 } from "../roleDiagnostics";
 
 // ----------------------------- Types -----------------------------------------
+
+type InspectPane = "content" | "render";
 
 export type Layer =
   | "solid"
@@ -6460,6 +7357,13 @@ export function InspectionShell(props: InspectionShellProps) {
   const [layer, setLayer] = useState<Layer>("content");
   const [scale, setScale] = useState(6);
 
+  const [pane, setPane] = useState<InspectPane>("content");
+  // For Render pane camera focus (cell coords)
+  const [focusCell, setFocusCell] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
+
   const [selectedCircuitIndex, setSelectedCircuitIndex] = useState<
     number | null
   >(null);
@@ -6817,6 +7721,9 @@ export function InspectionShell(props: InspectionShellProps) {
       return;
     }
 
+    // keep render-camera focus in sync with hover
+    setFocusCell({ x, y });
+
     const last = lastHoverCellRef.current;
     if (last && last.x === x && last.y === y) return;
 
@@ -6842,6 +7749,7 @@ export function InspectionShell(props: InspectionShellProps) {
     const x = c.x;
     const y = c.y;
     if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return;
+    setFocusCell({ x, y });
 
     const w = dungeon.width;
     const i = y * w + x;
@@ -7006,6 +7914,17 @@ export function InspectionShell(props: InspectionShellProps) {
               }
             />
           </label>
+
+          <label className="maze-field">
+            <span>Pane</span>
+            <select
+              value={pane}
+              onChange={(e) => setPane(e.target.value as InspectPane)}
+            >
+              <option value="content">content</option>
+              <option value="render">render</option>
+            </select>
+          </label>
         </div>
 
         {selectedBlockId != null && (
@@ -7056,14 +7975,14 @@ export function InspectionShell(props: InspectionShellProps) {
       {/* Right: Canvas */}
       <div className="maze-canvas-panel" ref={canvasPanelRef}>
         <div className="maze-canvas-wrap" ref={canvasWrapRef}>
-          <canvas
+          {/*<canvas
             ref={canvasRef}
             className="maze-canvas"
             style={canvasStyle}
             onMouseMove={onMouseMove}
             onMouseLeave={onMouseLeave}
             onClick={onClick}
-          />
+          />*/}
 
           {/* Blinking hover rect */}
           {tooltip.visible && (
@@ -7079,117 +7998,154 @@ export function InspectionShell(props: InspectionShellProps) {
           )}
 
           {/* Tooltip anchored to hovered cell */}
-          {tooltip.visible && (
-            <div className="maze-tooltip" style={getTooltipStyle()}>
-              {tooltip.lines.map((ln, idx) => (
-                <div key={idx} className="maze-tooltip-line">
-                  {ln}
-                </div>
-              ))}
-            </div>
-          )}
 
-          {layer === "content" && (
-            <div className="maze-legend">
-              <div className="maze-legend-title">Legend (content)</div>
-              <div className="maze-legend-grid">
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.wall) }}
-                  />
-                  <span>Wall</span>
+          {pane === "content" ? (
+            <>
+              <canvas
+                ref={canvasRef}
+                className="maze-canvas"
+                style={canvasStyle}
+                onMouseMove={onMouseMove}
+                onMouseLeave={onMouseLeave}
+                onClick={onClick}
+              />
+              {tooltip.visible && (
+                <div
+                  className="maze-hover-rect"
+                  style={{
+                    left: tooltip.x * scale,
+                    top: tooltip.y * scale,
+                    width: scale,
+                    height: scale,
+                  }}
+                />
+              )}
+              {tooltip.visible && (
+                <div className="maze-tooltip" style={getTooltipStyle()}>
+                  {tooltip.lines.map((ln, idx) => (
+                    <div key={idx} className="maze-tooltip-line">
+                      {ln}
+                    </div>
+                  ))}
                 </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.floor) }}
-                  />
-                  <span>Floor</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.entrance) }}
-                  />
-                  <span>Entrance</span>
-                </div>
+              )}
+              {layer === "content" && (
+                <div className="maze-legend">
+                  <div className="maze-legend-title">Legend (content)</div>
+                  <div className="maze-legend-grid">
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.wall) }}
+                      />
+                      <span>Wall</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.floor) }}
+                      />
+                      <span>Floor</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.entrance) }}
+                      />
+                      <span>Entrance</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.exit) }}
-                  />
-                  <span>Exit</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.doorClosed) }}
-                  />
-                  <span>Door (closed)</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.doorOpen) }}
-                  />
-                  <span>Door (open)</span>
-                </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.exit) }}
+                      />
+                      <span>Exit</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.doorClosed) }}
+                      />
+                      <span>Door (closed)</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.doorOpen) }}
+                      />
+                      <span>Door (open)</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.key) }}
-                  />
-                  <span>Key</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.lever) }}
-                  />
-                  <span>Lever</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.plate) }}
-                  />
-                  <span>Plate</span>
-                </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.key) }}
+                      />
+                      <span>Key</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.lever) }}
+                      />
+                      <span>Lever</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.plate) }}
+                      />
+                      <span>Plate</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.block) }}
-                  />
-                  <span>Block</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.secret) }}
-                  />
-                  <span>Secret</span>
-                </div>
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.hazard) }}
-                  />
-                  <span>Hazard</span>
-                </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.block) }}
+                      />
+                      <span>Block</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.secret) }}
+                      />
+                      <span>Secret</span>
+                    </div>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.hazard) }}
+                      />
+                      <span>Hazard</span>
+                    </div>
 
-                <div className="maze-legend-item">
-                  <span
-                    className="maze-legend-swatch"
-                    style={{ background: palToCss(PAL.loot) }}
-                  />
-                  <span>Loot</span>
+                    <div className="maze-legend-item">
+                      <span
+                        className="maze-legend-swatch"
+                        style={{ background: palToCss(PAL.loot) }}
+                      />
+                      <span>Loot</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              )}{" "}
+            </>
+          ) : (
+            <DungeonRenderView
+              bsp={dungeon}
+              content={content}
+              focusX={focusCell.x}
+              focusY={focusCell.y}
+              atlasUrl={"/tileset.png"}
+              atlasCols={16}
+              atlasRows={16}
+              wallTile={1}
+              floorTile={0}
+              zoom={32}
+              flipAtlasY={true}
+            />
           )}
         </div>
       </div>
@@ -7198,345 +8154,6 @@ export function InspectionShell(props: InspectionShellProps) {
 }
 
 export default InspectionShell;
-</file>
-
-<file path="src/dungeonState.ts">
-// src/dungeonState.ts
-//
-// Milestone 3 — Phase 2
-// Runtime puzzle state model + action helpers.
-//
-// This layer is intentionally independent from generation.
-// It is initialized from ContentOutputs.meta and then mutated by runtime actions.
-
-import type {
-  BspDungeonOutputs,
-  ContentOutputs,
-  DoorKind,
-  HazardType,
-  CircuitDef,
-} from "./mazeGen";
-import { isTileWalkable } from "./walkability";
-
-export type DoorRuntimeState = {
-  kind: DoorKind;
-  isOpen: boolean;
-  forcedOpen?: boolean;
-};
-
-export type KeyRuntimeState = {
-  collected: boolean;
-};
-
-export type LeverRuntimeState = {
-  toggled: boolean;
-};
-
-export type PlateRuntimeState = {
-  pressed: boolean;
-};
-
-export type BlockRuntimeState = {
-  x: number;
-  y: number;
-  weightClass: number; // 0..3
-};
-
-export type HazardRuntimeState = {
-  hazardType: HazardType;
-  enabled: boolean;
-};
-
-export type SecretRuntimeState = {
-  revealed: boolean;
-};
-
-export type CircuitRuntimeState = {
-  // “Active” is the output of behavior mode after evaluation.
-  active: boolean;
-  // For edge detection on satisfiable (raw) signal:
-  // used by TOGGLE mode and for “toggle target” effects.
-  lastSatisfied: boolean;
-  // Debug info: helpful to show in UI.
-  lastSatisfiedCount: number;
-};
-
-export type DungeonRuntimeState = {
-  doors: Record<number, DoorRuntimeState>;
-  keys: Record<number, KeyRuntimeState>;
-  levers: Record<number, LeverRuntimeState>;
-  plates: Record<number, PlateRuntimeState>;
-  blocks: Record<number, BlockRuntimeState>;
-  hazards: Record<number, HazardRuntimeState>;
-  secrets: Record<number, SecretRuntimeState>;
-  circuits: Record<number, CircuitRuntimeState>;
-};
-
-function cloneState<S>(s: S): S {
-  // runtime state is shallow objects + maps, so structuredClone is ideal if available
-  // but we keep it simple and explicit.
-  return JSON.parse(JSON.stringify(s)) as S;
-}
-
-function idxOf(W: number, x: number, y: number) {
-  return y * W + x;
-}
-
-export function initDungeonRuntimeState(
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  const doors: Record<number, DoorRuntimeState> = {};
-  const keys: Record<number, KeyRuntimeState> = {};
-  const levers: Record<number, LeverRuntimeState> = {};
-  const plates: Record<number, PlateRuntimeState> = {};
-  const blocks: Record<number, BlockRuntimeState> = {};
-  const hazards: Record<number, HazardRuntimeState> = {};
-  const secrets: Record<number, SecretRuntimeState> = {};
-  const circuits: Record<number, CircuitRuntimeState> = {};
-
-  // Doors
-  for (const d of content.meta.doors) {
-    doors[d.id] = { kind: d.kind, isOpen: false };
-  }
-
-  // Keys
-  for (const k of content.meta.keys) {
-    keys[k.id] = { collected: false };
-  }
-
-  // Levers
-  for (const l of content.meta.levers) {
-    levers[l.id] = { toggled: false };
-  }
-
-  // Plates
-  for (const p of content.meta.plates) {
-    plates[p.id] = { pressed: false };
-  }
-
-  // Blocks
-  for (const b of content.meta.blocks) {
-    blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
-  }
-
-  // Hazards
-  for (const h of content.meta.hazards) {
-    hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
-  }
-
-  // Secrets
-  for (const s of content.meta.secrets) {
-    secrets[s.id] = { revealed: false };
-  }
-
-  // Circuits (runtime debug state only)
-  for (const c of content.meta.circuits) {
-    circuits[c.id] = {
-      active: false,
-      lastSatisfied: false,
-      lastSatisfiedCount: 0,
-    };
-  }
-
-  return {
-    doors,
-    keys,
-    levers,
-    plates,
-    blocks,
-    hazards,
-    secrets,
-    circuits,
-  };
-}
-
-// ----------------- Basic actions -----------------
-
-export function collectKey(
-  state: DungeonRuntimeState,
-  keyCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.keys[keyCircuitId]) next.keys[keyCircuitId] = { collected: false };
-  next.keys[keyCircuitId].collected = true;
-  return next;
-}
-
-export function toggleLever(
-  state: DungeonRuntimeState,
-  leverCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.levers[leverCircuitId])
-    next.levers[leverCircuitId] = { toggled: false };
-  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
-  return next;
-}
-
-// Plates are now DERIVED — keep these for compatibility/testing, but App.tsx no longer calls them.
-export function setPlatePressed(
-  state: DungeonRuntimeState,
-  plateCircuitId: number,
-  pressed: boolean,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.plates[plateCircuitId])
-    next.plates[plateCircuitId] = { pressed: false };
-  next.plates[plateCircuitId].pressed = pressed;
-  return next;
-}
-
-export function togglePlate(
-  state: DungeonRuntimeState,
-  plateCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.plates[plateCircuitId])
-    next.plates[plateCircuitId] = { pressed: false };
-  next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
-  return next;
-}
-
-export function resetRuntimeState(
-  _state: DungeonRuntimeState,
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  // Re-init from current content meta
-  return initDungeonRuntimeState(content);
-}
-
-// ----------------- Derived state -----------------
-
-/**
- * DERIVED PLATES:
- * Plate.pressed is computed from block occupancy (and plate config), not directly mutated.
- *
- * This should be called any time blocks move (and once after init).
- */
-export function derivePlatesFromBlocks(
-  state: DungeonRuntimeState,
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-
-  // Precompute a quick occupancy set for blocks
-  const occupied = new Set<number>();
-  for (const b of Object.values(next.blocks)) {
-    occupied.add(idxOf(content.width, b.x, b.y));
-  }
-
-  for (const p of content.meta.plates) {
-    if (!next.plates[p.id]) next.plates[p.id] = { pressed: false };
-
-    const onBlock = occupied.has(idxOf(content.width, p.x, p.y));
-    let pressed = false;
-
-    // For now we only have blocks in the prototype, but we respect the plate flags:
-    if (p.activatedByBlock && onBlock) pressed = true;
-
-    // (Player activation can be added later)
-    if (p.inverted) pressed = !pressed;
-
-    next.plates[p.id].pressed = pressed;
-  }
-
-  return next;
-}
-
-// ----------------- Block push (prototype) -----------------
-
-export type PushResult =
-  | { ok: true; next: DungeonRuntimeState }
-  | { ok: false; next: DungeonRuntimeState; error: string };
-
-function hasBlockAt(
-  state: DungeonRuntimeState,
-  x: number,
-  y: number,
-  ignoreBlockId?: number,
-): boolean {
-  for (const [idStr, b] of Object.entries(state.blocks)) {
-    const id = Number(idStr);
-    if (ignoreBlockId != null && id === ignoreBlockId) continue;
-    if (b.x === x && b.y === y) return true;
-  }
-  return false;
-}
-
-/**
- * Attempt to push a specific block by (dx,dy).
- * - checks bounds/walls
- * - blocks cannot overlap
- * - doors block movement unless currently open
- */
-export function tryPushBlock(
-  state: DungeonRuntimeState,
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs,
-  blockId: number,
-  dx: number,
-  dy: number,
-): PushResult {
-  const b = state.blocks[blockId];
-  if (!b) return { ok: false, next: state, error: `Unknown block ${blockId}` };
-  if ((dx | 0) === 0 && (dy | 0) === 0)
-    return { ok: false, next: state, error: "No movement" };
-  if (Math.abs(dx) + Math.abs(dy) !== 1)
-    return {
-      ok: false,
-      next: state,
-      error: "Only cardinal pushes are supported",
-    };
-
-  const nx = b.x + dx;
-  const ny = b.y + dy;
-
-  const okWalk = isTileWalkable(dungeon, content, nx, ny, {
-    isDoorOpen: (doorId) => {
-      const door = state.doors?.[doorId];
-      return !!(door?.isOpen || (door as any)?.forcedOpen);
-    },
-    isSecretRevealed: (secretId) => !!state.secrets?.[secretId]?.revealed,
-  });
-
-  if (!okWalk) {
-    return { ok: false, next: state, error: "Blocked" };
-  }
-
-  if (hasBlockAt(state, nx, ny, blockId)) {
-    return { ok: false, next: state, error: "Another block is in the way" };
-  }
-
-  const next = cloneState(state);
-  next.blocks[blockId] = { ...next.blocks[blockId], x: nx, y: ny };
-  return { ok: true, next };
-}
-
-// ----------------- Target application helpers -----------------
-
-export function ensureDoor(
-  state: DungeonRuntimeState,
-  id: number,
-  kind: DoorKind,
-): void {
-  if (!state.doors[id]) state.doors[id] = { kind, isOpen: false };
-}
-
-export function ensureHazard(
-  state: DungeonRuntimeState,
-  id: number,
-  hazardType: HazardType,
-): void {
-  if (!state.hazards[id]) state.hazards[id] = { hazardType, enabled: false };
-}
-
-export function ensureSecret(state: DungeonRuntimeState, id: number): void {
-  if (!state.secrets[id]) state.secrets[id] = { revealed: false };
-}
-
-export function ensurePlate(state: DungeonRuntimeState, id: number): void {
-  if (!state.plates[id]) state.plates[id] = { pressed: false };
-}
 </file>
 
 <file path="src/batchStats.ts">

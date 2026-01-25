@@ -28,6 +28,19 @@ type Props = {
 
   // if your atlas origin is top-left, set true
   flipAtlasY?: boolean;
+
+  doorTile?: number;
+  keyTile?: number;
+  leverTile?: number;
+  plateTile?: number;
+  blockTile?: number;
+  chestTile?: number;
+  monsterTile?: number;
+  secretDoorTile?: number;
+  hiddenPassageTile?: number;
+
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>;
 };
 
 function OrthoRig({
@@ -55,34 +68,64 @@ function OrthoRig({
   return null;
 }
 
-function PlaneScene({
-  bsp,
-  content,
-  atlasUrl,
-  atlasCols,
-  atlasRows,
-  wallTile,
-  floorTile,
-  flipAtlasY,
-}: Omit<Props, "focusX" | "focusY" | "zoom">) {
+function PlaneScene(props: Omit<Props, "focusX" | "focusY" | "zoom">) {
+  const {
+    bsp,
+    content,
+    atlasUrl,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+  } = props;
+
   const W = bsp.width;
   const H = bsp.height;
 
   const atlas = useMemo(() => {
     const loader = new THREE.TextureLoader();
     const t = loader.load(atlasUrl);
+
+    // Pixel art correctness
     t.magFilter = THREE.NearestFilter;
     t.minFilter = THREE.NearestFilter;
     t.generateMipmaps = false;
     t.wrapS = THREE.ClampToEdgeWrapping;
     t.wrapT = THREE.ClampToEdgeWrapping;
+
+    // Important: avoid implicit Y flipping if you are controlling it in-shader
+    t.flipY = false;
+
+    // This is an actual color texture (unlike masks)
+    t.colorSpace = THREE.SRGBColorSpace;
+
     return t;
   }, [atlasUrl]);
 
-  const charTex = useMemo(() => {
-    const mask = buildCharMask(bsp, content, { wallTile, floorTile });
-    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
-  }, [bsp, content, W, H, wallTile, floorTile]);
+  const charTex = useMemo(
+    () => {
+      const mask = buildCharMask(bsp, content, {
+        wallTile,
+        floorTile,
+        doorTile: props.doorTile,
+        keyTile: props.keyTile,
+        leverTile: props.leverTile,
+        plateTile: props.plateTile,
+        blockTile: props.blockTile,
+        chestTile: props.chestTile,
+        monsterTile: props.monsterTile,
+        secretDoorTile: props.secretDoorTile,
+        hiddenPassageTile: props.hiddenPassageTile,
+        hazardDefaultTile: props.hazardDefaultTile,
+        hazardTilesByType: props.hazardTilesByType,
+      });
+      return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
+    },
+    [
+      /* include the prop deps */
+    ],
+  );
 
   const mat = useMemo(() => {
     return new THREE.ShaderMaterial({

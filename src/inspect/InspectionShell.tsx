@@ -16,6 +16,7 @@ import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { imageDataToPngDataUrl } from "../mazeGen";
 import DungeonRenderView from "../rendering/DungeonRenderView";
 import type { DungeonRuntimeState } from "../dungeonState";
+import { CP437_TILES } from "../rendering/codepage437Tiles";
 import {
   collectKey,
   toggleLever,
@@ -23,7 +24,6 @@ import {
   tryPushBlock,
   initDungeonRuntimeState,
 } from "../dungeonState";
-
 import type {
   CircuitEvalDiagnostics,
   CircuitEvalResult,
@@ -1206,14 +1206,14 @@ export function InspectionShell(props: InspectionShellProps) {
       {/* Right: Canvas */}
       <div className="maze-canvas-panel" ref={canvasPanelRef}>
         <div className="maze-canvas-wrap" ref={canvasWrapRef}>
-          <canvas
+          {/*<canvas
             ref={canvasRef}
             className="maze-canvas"
             style={canvasStyle}
             onMouseMove={onMouseMove}
             onMouseLeave={onMouseLeave}
             onClick={onClick}
-          />
+          />*/}
 
           {/* Blinking hover rect */}
           {tooltip.visible && (
@@ -1368,14 +1368,31 @@ export function InspectionShell(props: InspectionShellProps) {
               bsp={dungeon}
               content={content}
               focusX={focusCell.x}
-              focusY={focusCell.y}
-              atlasUrl={"/tileset.png"}
-              atlasCols={16}
-              atlasRows={16}
-              wallTile={1}
-              floorTile={0}
+              focusY={focusCell.y} // Base tiles
+              floorTile={CP437_TILES.floor}
+              wallTile={CP437_TILES.wall}
+              // Feature tiles (FeatureType → glyph)
+              doorTile={CP437_TILES.doorClosed}
+              keyTile={CP437_TILES.key}
+              leverTile={CP437_TILES.lever}
+              plateTile={CP437_TILES.plate}
+              blockTile={CP437_TILES.block}
+              chestTile={CP437_TILES.chest}
+              monsterTile={CP437_TILES.monster}
+              secretDoorTile={CP437_TILES.secretDoor}
+              hiddenPassageTile={CP437_TILES.hiddenPassage}
+              hazardDefaultTile={CP437_TILES.hazard}
+              atlasUrl={"/textures/codepage437.png"}
+              atlasCols={32}
+              atlasRows={8}
+              hazardTilesByType={{
+                1: 48, // lava
+                2: 49, // poison
+                3: 50, // water
+                4: 51, // spikes
+              }}
               zoom={32}
-              flipAtlasY={true}
+              flipAtlasY={false}
             />
           )}
         </div>
