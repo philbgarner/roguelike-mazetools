@@ -439,6 +439,11 @@ details[open] > .maze-summary {
     font-weight: 700;
 }
 
+.maze-canvas-wrap {
+    position: relative;
+    display: inline-block; /* shrink-wrap to canvas */
+}
+
 /* Canvas panel: IMPORTANT: padding must match your JS (-12px) math */
 .maze-canvas-panel {
     position: relative;
@@ -459,8 +464,8 @@ details[open] > .maze-summary {
 
 /* Tooltip uses screen coords, so we keep it fixed to viewport */
 .maze-tooltip {
-    position: fixed;
-    z-index: 9999;
+    position: absolute;
+    z-index: 50;
     pointer-events: none;
     min-width: 220px;
     max-width: 340px;
@@ -470,6 +475,28 @@ details[open] > .maze-summary {
     background: rgba(10, 14, 22, 0.92);
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(8px);
+}
+
+.maze-hover-rect {
+    position: absolute;
+    pointer-events: none;
+    box-sizing: border-box;
+    border-radius: 6px;
+    border: 2px solid rgba(255, 255, 255, 0.92);
+    animation: maze-hover-blink 0.9s steps(2, end) infinite;
+    z-index: 40;
+}
+
+@keyframes maze-hover-blink {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.15;
+    }
+    100% {
+        opacity: 1;
+    }
 }
 
 .maze-tooltip-line {

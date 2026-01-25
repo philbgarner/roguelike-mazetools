@@ -20,7 +20,6 @@ import {
   collectKey,
   toggleLever,
   derivePlatesFromBlocks,
-  resetRuntimeState,
   tryPushBlock,
   initDungeonRuntimeState,
 } from "../dungeonState";
@@ -84,10 +83,6 @@ function clampInt(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, x));
 }
 
-function isOdd(n: number) {
-  return (n & 1) === 1;
-}
-
 function downloadDataUrl(filename: string, dataUrl: string) {
   const a = document.createElement("a");
   a.href = dataUrl;
@@ -137,16 +132,19 @@ function readDoorState(
 
 function getCanvasCellFromMouse(
   e: React.MouseEvent,
-  panelEl: HTMLDivElement | null,
+  canvasEl: HTMLCanvasElement | null,
   scale: number,
 ) {
-  if (!panelEl) return null;
-  const rect = panelEl.getBoundingClientRect();
+  if (!canvasEl) return null;
+
+  const rect = canvasEl.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
+
   const x = Math.floor(sx / scale);
   const y = Math.floor(sy / scale);
-  return { x, y, screenX: sx, screenY: sy };
+
+  return { x, y, localX: sx, localY: sy };
 }
 
 function setPixel(
@@ -433,6 +431,7 @@ export function InspectionShell(props: InspectionShellProps) {
   const content = result.content;
 
   const contentRef = useRef<ContentOutputs>(content);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
@@ -472,8 +471,6 @@ export function InspectionShell(props: InspectionShellProps) {
     visible: boolean;
     x: number;
     y: number;
-    screenX: number;
-    screenY: number;
     lines: string[];
     featureType: number;
     featureId: number;
@@ -481,8 +478,6 @@ export function InspectionShell(props: InspectionShellProps) {
     visible: false,
     x: 0,
     y: 0,
-    screenX: 0,
-    screenY: 0,
     lines: [],
     featureType: 0,
     featureId: 0,
@@ -613,13 +608,33 @@ export function InspectionShell(props: InspectionShellProps) {
     }
   }
 
-  function scheduleTooltip(
-    e: React.MouseEvent,
-    x: number,
-    y: number,
-    screenX: number,
-    screenY: number,
-  ) {
+  function getTooltipStyle(): React.CSSProperties {
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return { left: 0, top: 0 };
+
+    const wrapW = wrap.clientWidth;
+    const wrapH = wrap.clientHeight;
+
+    const cellLeft = tooltip.x * scale;
+    const cellTop = tooltip.y * scale;
+
+    const pad = 8;
+    const estTipW = 320;
+    const estTipH = 120;
+
+    let left = cellLeft;
+    let top = cellTop + scale + pad;
+
+    left = Math.max(pad, Math.min(left, wrapW - estTipW - pad));
+
+    if (top + estTipH > wrapH - pad) {
+      top = Math.max(pad, cellTop - estTipH - pad);
+    }
+
+    return { left, top };
+  }
+
+  function scheduleTooltip(x: number, y: number) {
     clearHoverTimer();
     hoverTimerRef.current = window.setTimeout(() => {
       const { lines, ft, fid } = buildTooltipLines(x, y);
@@ -627,8 +642,6 @@ export function InspectionShell(props: InspectionShellProps) {
         visible: true,
         x,
         y,
-        screenX,
-        screenY,
         lines,
         featureType: ft,
         featureId: fid,
@@ -688,12 +701,13 @@ export function InspectionShell(props: InspectionShellProps) {
 
   // Mouse move => delayed tooltip
   const onMouseMove = (e: React.MouseEvent) => {
-    const c = getCanvasCellFromMouse(e, canvasPanelRef.current, scale);
+    const c = getCanvasCellFromMouse(e, canvasRef.current, scale);
     if (!c) return;
 
     const x = c.x;
     const y = c.y;
     if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) {
+      lastHoverCellRef.current = null;
       clearHoverTimer();
       setTooltip((t) => (t.visible ? { ...t, visible: false } : t));
       return;
@@ -703,7 +717,7 @@ export function InspectionShell(props: InspectionShellProps) {
     if (last && last.x === x && last.y === y) return;
 
     lastHoverCellRef.current = { x, y };
-    scheduleTooltip(e, x, y, c.screenX, c.screenY);
+    scheduleTooltip(x, y);
   };
 
   const onMouseLeave = () => {
@@ -718,7 +732,7 @@ export function InspectionShell(props: InspectionShellProps) {
   // - Click block tile -> select/deselect block for pushing
   // - Click adjacent tile with selected block -> try push
   const onClick = (e: React.MouseEvent) => {
-    const c = getCanvasCellFromMouse(e, canvasPanelRef.current, scale);
+    const c = getCanvasCellFromMouse(e, canvasRef.current, scale);
     if (!c) return;
 
     const x = c.x;
@@ -932,28 +946,40 @@ export function InspectionShell(props: InspectionShellProps) {
 
       {/* Right: Canvas */}
       <div className="maze-canvas-panel" ref={canvasPanelRef}>
-        <canvas
-          ref={canvasRef}
-          className="maze-canvas"
-          style={canvasStyle}
-          onMouseMove={onMouseMove}
-          onMouseLeave={onMouseLeave}
-          onClick={onClick}
-        />
+        <div className="maze-canvas-wrap" ref={canvasWrapRef}>
+          <canvas
+            ref={canvasRef}
+            className="maze-canvas"
+            style={canvasStyle}
+            onMouseMove={onMouseMove}
+            onMouseLeave={onMouseLeave}
+            onClick={onClick}
+          />
 
-        {tooltip.visible && (
-          <div
-            className="maze-tooltip"
-            style={{
-              left: tooltip.screenX + 12,
-              top: tooltip.screenY + 12,
-            }}
-          >
-            {tooltip.lines.map((ln, idx) => (
-              <div key={idx}>{ln}</div>
-            ))}
-          </div>
-        )}
+          {/* Blinking hover rect */}
+          {tooltip.visible && (
+            <div
+              className="maze-hover-rect"
+              style={{
+                left: tooltip.x * scale,
+                top: tooltip.y * scale,
+                width: scale,
+                height: scale,
+              }}
+            />
+          )}
+
+          {/* Tooltip anchored to hovered cell */}
+          {tooltip.visible && (
+            <div className="maze-tooltip" style={getTooltipStyle()}>
+              {tooltip.lines.map((ln, idx) => (
+                <div key={idx} className="maze-tooltip-line">
+                  {ln}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
