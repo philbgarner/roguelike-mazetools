@@ -381,6 +381,22 @@ function InspectionRouter(props: {
   if (result.kind === "single") {
     return (
       <SingleInspectView
+        onRandomizeSeedAndRegenerate={() => {
+          // Keep all wizard choices; change only seed; re-run immediately.
+          const seed = `seed-${Math.floor(Date.now() / 1000)}-${Math.floor(
+            Math.random() * 1000,
+          )}`;
+
+          dispatch({ type: "REROLL_SEED", seed });
+
+          // REROLL_SEED patches contract if it exists, so EXEC_START can run immediately.
+          // But guard just in case contract is missing for some edge reason:
+          if (!state.contract) {
+            dispatch({ type: "DERIVE_CONTRACT" });
+          }
+
+          dispatch({ type: "EXEC_START" });
+        }}
         payload={{
           dungeon: result.dungeon,
           content: result.content,

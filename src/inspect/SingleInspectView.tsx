@@ -31,6 +31,8 @@ export type SingleInspectViewProps = {
   payload: SingleInspectPayload;
   onBack: () => void;
 
+  onRandomizeSeedAndRegenerate?: () => void;
+
   /** Optional: override title */
   title?: string;
 
@@ -52,6 +54,7 @@ export function SingleInspectView(props: SingleInspectViewProps) {
       title={title}
       onBack={onBack}
       onDownloadPng={props.onDownloadPng}
+      onRandomizeSeedAndRegenerate={props.onRandomizeSeedAndRegenerate}
       result={{
         dungeon: payload.dungeon,
         content: payload.content,
