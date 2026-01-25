@@ -477,6 +477,51 @@ details[open] > .maze-summary {
     backdrop-filter: blur(8px);
 }
 
+.maze-legend {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    z-index: 45;
+    pointer-events: none;
+
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(10, 14, 22, 0.85);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(8px);
+
+    font-size: 12px;
+    line-height: 1.2;
+    max-width: 420px;
+}
+
+.maze-legend-title {
+    font-weight: 700;
+    opacity: 0.95;
+    margin-bottom: 6px;
+}
+
+.maze-legend-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 12px;
+}
+
+.maze-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    opacity: 0.95;
+}
+
+.maze-legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
 .maze-hover-rect {
     position: absolute;
     pointer-events: none;
@@ -515,6 +560,8 @@ details[open] > .maze-summary {
     background: rgba(0, 0, 0, 0.12);
     color: var(--muted);
     font-size: 12px;
+    position: relative;
+    top: 1em;
 }
 
 .maze-legend b {

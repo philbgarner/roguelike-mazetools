@@ -1,10 +1,10 @@
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-24 (rev U)**
+**CONTEXT VERSION:** **2026-01-24 (rev V)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST‑EFFORT)**
-**PHASE STATUS:** **WIZARD UI REFACTOR NEARING COMPLETION; EXECUTION + INSPECTION ADAPTERS ALIGNED WITH GENERATOR CONTRACTS**
+**PHASE STATUS:** **WIZARD UI REFACTOR COMPLETE; INSPECTION UX TRUTHFUL, CIRCUIT‑AWARE, AND CONTRACT‑ACCURATE**
 
 ---
 
@@ -46,11 +46,11 @@ It is designed to evolve toward a JRPG / metroidvania‑style dungeon system emp
 
 **Milestone 4 remains CLOSED and VALIDATED.**
 
-All composition logic, diagnostics, and reliability guarantees remain unchanged by the UI refactor described below.
+All composition logic, diagnostics, and reliability guarantees remain unchanged by the UI and inspection work described below.
 
 ---
 
-## UI ARCHITECTURE REFACTOR (REV S → REV U)
+## UI ARCHITECTURE REFACTOR (REV S → REV V)
 
 ### Motivation
 
@@ -61,9 +61,9 @@ The legacy `App.tsx` mixed:
 * batch analysis
 * live inspection
 
-This allowed invalid state combinations and obscured user intent.
+This allowed invalid state combinations, blurred execution boundaries, and made inspection misleading in subtle ways (incorrect feature mappings, ambiguous tooltips).
 
-The UI is being refactored into a **linear wizard** that mirrors the generator pipeline and enforces invariants by construction.
+The UI has now been fully refactored into a **linear wizard** plus **truthful inspection shell** that mirrors the generator pipeline and enforces invariants by construction.
 
 ---
 
@@ -141,11 +141,11 @@ Strict boundary: **configuration → execution → inspection**.
 * **Step 5** is read‑only
 * **Any post‑execution change** immediately tears down inspection
 
-This matrix is now **fully enforced in the wizard reducer and routing logic**.
+This matrix is **fully enforced** in the wizard reducer and routing logic.
 
 ---
 
-## IMPLEMENTATION PROGRESS (REV U)
+## IMPLEMENTATION PROGRESS (REV V)
 
 ### Wizard UI
 
@@ -158,60 +158,84 @@ This matrix is now **fully enforced in the wizard reducer and routing logic**.
 ### Execution Adapter (Step 6)
 
 * Execution split cleanly from configuration and inspection
+
 * Runtime normalization added for legacy content outputs:
 
   * `content.meta.plates`
   * `content.meta.circuits`
+
 * Execution now matches **repo‑accurate contracts**:
 
   * `derivePlatesFromBlocks` treated as state‑returning
   * `evaluateCircuits(runtime, circuits)` signature honored
   * `computeGlobalCircuitMetrics(diagnostics)` input corrected
 
-### Inspection Adapters (Step 7)
+### Inspection Shell & UX (Step 7) — **MAJOR UPDATE**
 
-* **SingleInspectView** converted to payload‑based adapter
+* InspectionShell fully separated from generation concerns
 
-  * clean separation between inspection shell and routing
-  * no hidden mutation or implicit execution
-* **BatchResultsView** aligned to summary‑only payload contract
+* Canvas hit‑testing corrected to be **canvas‑relative**, not panel‑relative
 
-  * no map rendering
-  * copy / download JSON utilities preserved
+* Hover system rebuilt using HTML overlays:
+
+  * blinking cell highlight rectangle
+  * anchored tooltip that flips intelligently near edges
+
+* Tooltip content upgraded from raw ints → **truthful semantic decode**:
+
+  * correct `FeatureType` mapping (door=4, key=5, lever=6, plate=7, block=8, hidden=9, hazard=10, secret door=3)
+  * runtime‑aware state (door open/closed, lever on/off, plate pressed, block position)
+  * **exact circuit membership** derived from `CircuitDef.triggers[]` / `targets[]`
+  * optional annotation with evaluation order, topo depth, and cycle participation when diagnostics are present
+
+* Click‑to‑interact behavior corrected to match canonical feature ids
+
+### Visual Truthfulness & Legend
+
+* Content layer rendering corrected to align with canonical `FeatureType` enum
+* Hazards rendered consistently via `hazardType` overlay
+* HTML legend added to canvas:
+
+  * shows color → semantic meaning
+  * uses correct RGBA conversion (alpha normalized)
+  * only shown when relevant (e.g. content layer)
+
+This ensures **what the user sees is what the generator actually produced**.
 
 ### Type Safety & Contracts
 
 * RunContract discriminated union respected (`single` vs `batch`)
-* All wizard → execution → inspection boundaries now type‑checked
-* Accidental cross‑mode access (e.g. `contract.batch` in single mode) eliminated
+* All wizard → execution → inspection boundaries type‑checked
+* Accidental cross‑mode access eliminated
 
 ---
 
 ## CURRENT STATE SUMMARY
 
 * Milestone 4 remains closed and untouched
-* Milestone 5 Phase 2.5 soft enforcement continues unchanged at the generator layer
-* Wizard refactor is functionally complete and structurally sound
-* Execution and inspection paths are now **contract‑accurate and deterministic**
+* Milestone 5 Phase 2.5 soft enforcement remains unchanged at the generator layer
+* Wizard refactor is **complete and invariant‑safe**
+* Inspection UX is now **truthful, circuit‑aware, and diagnostically authoritative**
+* UI no longer introduces semantic ambiguity or hidden behavior
 
 ---
 
 ## NEXT STEPS (PRIORITY ORDER)
 
-### UI (Finish & Stabilize)
+### UI (Stabilization & Polish)
 
-1. Light polish pass on wizard UX:
-
+1. Minor UX polish:
    * inline validation hints
    * clearer invalidation messaging
+   * onclick in canvas cell should toggle levers and update states in linked entities.
 2. Optional: expose additional execution metadata in Step 5 summary
-3. Add keyboard / accessibility affordances (non‑policy)
+3. Keyboard + accessibility affordances (non‑policy)
 
-### Generator (Milestone 5 Phase 2.5)
+### Generator (Milestone 5 — Phase 2.5)
 
 1. Implement **clean lever reachability preview** signal
 2. Run 1000+ seed batch comparison vs baseline
-3. Record stability metrics and misalignment deltas
+3. Record stability metrics and intent‑misalignment deltas
 
 ### Milestone 5 Roadmap
 

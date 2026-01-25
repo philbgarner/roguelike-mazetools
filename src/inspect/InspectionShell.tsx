@@ -120,6 +120,135 @@ const PAL = {
   loot: rgba(255, 210, 150),
 } as const;
 
+function palToCss(c: readonly [number, number, number, number]) {
+  return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${c[3] / 255})`;
+}
+
+function featureTypeName(ft: number) {
+  switch (ft | 0) {
+    case 0:
+      return "none";
+    case 1:
+      return "monster";
+    case 2:
+      return "chest";
+    case 3:
+      return "secret door";
+    case 4:
+      return "door";
+    case 5:
+      return "key";
+    case 6:
+      return "lever";
+    case 7:
+      return "plate";
+    case 8:
+      return "block";
+    case 9:
+      return "hidden passage";
+    case 10:
+      return "hazard";
+    default:
+      return `feature(${ft})`;
+  }
+}
+
+// Extract ids from "anything" that might be a circuit node/edge descriptor.
+function extractIdsDeep(obj: any, out: number[]) {
+  if (!obj) return;
+  if (typeof obj === "number" && Number.isFinite(obj)) {
+    out.push(obj | 0);
+    return;
+  }
+  if (Array.isArray(obj)) {
+    for (const it of obj) extractIdsDeep(it, out);
+    return;
+  }
+  if (typeof obj === "object") {
+    // common id keys
+    for (const k of [
+      "id",
+      "doorId",
+      "leverId",
+      "plateId",
+      "keyId",
+      "blockId",
+      "featureId",
+    ]) {
+      const v = (obj as any)[k];
+      if (typeof v === "number" && Number.isFinite(v)) out.push(v | 0);
+    }
+    // traverse a few likely containers
+    for (const k of Object.keys(obj)) {
+      const v = (obj as any)[k];
+      if (v && (typeof v === "object" || Array.isArray(v)))
+        extractIdsDeep(v, out);
+    }
+  }
+}
+
+type CircuitMembership = {
+  circuitIndex: number;
+  circuitId: number;
+  as: "trigger" | "target";
+  kind: string;
+  effect?: string;
+};
+
+function findCircuitsForFeatureExact(
+  circuits: any[],
+  ft: number,
+  fid: number,
+): CircuitMembership[] {
+  if (!Array.isArray(circuits) || !fid) return [];
+
+  // Map featureType -> trigger kind
+  const triggerKind =
+    ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
+
+  // Map featureType -> target kind
+  const targetKind =
+    ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
+
+  const out: CircuitMembership[] = [];
+
+  for (let circuitIndex = 0; circuitIndex < circuits.length; circuitIndex++) {
+    const c = circuits[circuitIndex];
+    const circuitId = (c?.id ?? circuitIndex) | 0;
+
+    // triggers
+    if (triggerKind && Array.isArray(c?.triggers)) {
+      for (const t of c.triggers) {
+        if (t?.kind === triggerKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
+          out.push({
+            circuitIndex,
+            circuitId,
+            as: "trigger",
+            kind: String(t.kind),
+          });
+        }
+      }
+    }
+
+    // targets
+    if (targetKind && Array.isArray(c?.targets)) {
+      for (const t of c.targets) {
+        if (t?.kind === targetKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
+          out.push({
+            circuitIndex,
+            circuitId,
+            as: "target",
+            kind: String(t.kind),
+            effect: t?.effect ? String(t.effect) : undefined,
+          });
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
 // Door state derivation helper (copied from App.tsx comment + usage)
 function readDoorState(
   runtime: DungeonRuntimeState,
@@ -257,24 +386,39 @@ function renderContentComposite(
       const hz = hazardType[i] | 0;
 
       if (ft !== 0) {
-        // NOTE: keep your existing mapping here.
-        // (I’m preserving your current adapter logic.)
-        if (ft === 3) {
-          // door (your adapter mapping)
+        // Canonical mapping (FeatureType):
+        // 3 secret door (wall), 4 door (floor), 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage, 10 hazard
+        if (ft === 4) {
+          // door
           if (runtime) {
             const ds = readDoorState(runtime, fid);
-            if (ds.isOpen) setPixel(img, x, y, PAL.doorOpen);
-            else setPixel(img, x, y, PAL.doorClosed);
+            setPixel(img, x, y, ds.isOpen ? PAL.doorOpen : PAL.doorClosed);
           } else {
             setPixel(img, x, y, PAL.doorClosed);
           }
-        } else if (ft === 4) setPixel(img, x, y, PAL.key);
-        else if (ft === 5) setPixel(img, x, y, PAL.lever);
-        else if (ft === 6) setPixel(img, x, y, PAL.plate);
-        else if (ft === 7) setPixel(img, x, y, PAL.block);
-        else if (ft === 8) setPixel(img, x, y, PAL.secret);
-        else if (ft === 9) setPixel(img, x, y, PAL.loot);
-        else setPixel(img, x, y, hashColor(ft * 4096 + fid));
+        } else if (ft === 5) {
+          setPixel(img, x, y, PAL.key);
+        } else if (ft === 6) {
+          setPixel(img, x, y, PAL.lever);
+        } else if (ft === 7) {
+          setPixel(img, x, y, PAL.plate);
+        } else if (ft === 8) {
+          setPixel(img, x, y, PAL.block);
+        } else if (ft === 3) {
+          // secret door tile (often on wall) — render as "secret"
+          setPixel(img, x, y, PAL.secret);
+        } else if (ft === 9) {
+          // hidden passage — render as "secret" (or keep distinct later)
+          setPixel(img, x, y, PAL.secret);
+        } else if (ft === 10) {
+          // hazard featureType itself can exist; final hazard color should still win
+          setPixel(img, x, y, PAL.hazard);
+        } else if (ft === 2) {
+          // chest (if you use it)
+          setPixel(img, x, y, PAL.loot);
+        } else {
+          setPixel(img, x, y, hashColor(ft * 4096 + fid));
+        }
       }
 
       if (hz !== 0) {
@@ -562,39 +706,123 @@ export function InspectionShell(props: InspectionShellProps) {
     const ft = content.masks.featureType[i] | 0;
     const fid = content.masks.featureId[i] | 0;
     const fp = content.masks.featureParam[i] | 0;
+
     const danger = content.masks.danger[i] | 0;
     const loot = content.masks.lootTier[i] | 0;
-    const hz = content.masks.hazardType[i] | 0;
+    const hz = content.masks.hazardType[i] | 0; // meaningful when ft==10 per repomix
 
     const lines: string[] = [];
+
+    // --- raw (keep) ---
     lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
     if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
     if (hz !== 0) lines.push(`hazardType=${hz}`);
     if (danger !== 0) lines.push(`danger=${danger}`);
     if (loot !== 0) lines.push(`lootTier=${loot}`);
 
-    // runtime-aware info for doors/keys/levers/plates/blocks
-    if (runtime) {
-      if (ft === 3 && fid) {
-        const ds = readDoorState(runtime, fid);
-        lines.push(`door#${fid}: ${ds.isOpen ? "OPEN" : "CLOSED"}`);
+    // --- readable section ---
+    if (ft !== 0) {
+      lines.push(""); // spacer line
+      lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
+
+      // --- exact circuit membership (repomix: CircuitDef { triggers[], targets[] }) ---
+      const circuits = content.meta?.circuits ?? [];
+      const memberships: string[] = [];
+
+      // Build diag lookup (optional)
+      const diagByIndex =
+        circuitDiagnostics?.perCircuit &&
+        Array.isArray(circuitDiagnostics.perCircuit)
+          ? new Map(
+              circuitDiagnostics.perCircuit.map((d) => [d.circuitIndex, d]),
+            )
+          : null;
+
+      // featureType -> trigger kind
+      const triggerKind =
+        ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
+
+      // featureType -> target kind
+      const targetKind =
+        ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
+
+      for (let ci = 0; ci < circuits.length; ci++) {
+        const c: any = circuits[ci];
+        const cid = (c?.id ?? ci) | 0;
+
+        // match triggers
+        if (triggerKind && Array.isArray(c?.triggers)) {
+          for (const t of c.triggers) {
+            if (
+              t?.kind === triggerKind &&
+              ((t?.refId ?? -1) | 0) === (fid | 0)
+            ) {
+              const d = diagByIndex?.get(ci);
+              const extra = d
+                ? ` (order=${d.evalOrderIndex}, depth=${d.topoDepth}${d.participatesInCycle ? ", cycle" : ""})`
+                : "";
+              memberships.push(
+                `• circuit[${ci}] id=${cid}: trigger ${t.kind}${extra}`,
+              );
+              break;
+            }
+          }
+        }
+
+        // match targets
+        if (targetKind && Array.isArray(c?.targets)) {
+          for (const t of c.targets) {
+            if (
+              t?.kind === targetKind &&
+              ((t?.refId ?? -1) | 0) === (fid | 0)
+            ) {
+              const d = diagByIndex?.get(ci);
+              const extra = d
+                ? ` (order=${d.evalOrderIndex}, depth=${d.topoDepth}${d.participatesInCycle ? ", cycle" : ""})`
+                : "";
+              // repomix: targets have { kind, refId, effect }
+              const eff = t?.effect ? ` ${t.effect}` : "";
+              memberships.push(
+                `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}${extra}`,
+              );
+              break;
+            }
+          }
+        }
       }
-      if (ft === 4 && fid) {
-        const k = runtime.keys[fid];
-        if (k)
-          lines.push(`key#${fid}: ${k.collected ? "COLLECTED" : "AVAILABLE"}`);
+
+      if (memberships.length) {
+        lines.push(...memberships);
+      } else {
+        lines.push(`• circuits: none`);
       }
-      if (ft === 5 && fid) {
-        const l = runtime.levers[fid];
-        if (l) lines.push(`lever#${fid}: ${l.toggled ? "ON" : "OFF"}`);
-      }
-      if (ft === 6 && fid) {
-        const p = runtime.plates[fid];
-        if (p) lines.push(`plate#${fid}: ${p.pressed ? "PRESSED" : "UP"}`);
-      }
-      if (ft === 7 && fid) {
-        const b = runtime.blocks[fid];
-        if (b) lines.push(`block#${fid}: (${b.x},${b.y})`);
+
+      // --- runtime-aware status (correct mapping) ---
+      if (runtime) {
+        if (ft === 4 && fid) {
+          const ds = readDoorState(runtime, fid);
+          lines.push(`• door state: ${ds.isOpen ? "OPEN" : "CLOSED"}`);
+          if (ds.forcedOpen) lines.push(`• forced open`);
+        } else if (ft === 5 && fid) {
+          const k = runtime.keys[fid];
+          if (k)
+            lines.push(`• key: ${k.collected ? "COLLECTED" : "AVAILABLE"}`);
+        } else if (ft === 6 && fid) {
+          const l = runtime.levers[fid];
+          if (l) lines.push(`• lever: ${l.toggled ? "ON" : "OFF"}`);
+        } else if (ft === 7 && fid) {
+          const p = runtime.plates[fid];
+          if (p) lines.push(`• plate: ${p.pressed ? "PRESSED" : "UP"}`);
+        } else if (ft === 8 && fid) {
+          const b = runtime.blocks[fid];
+          if (b) lines.push(`• block pos: (${b.x},${b.y})`);
+        } else if (ft === 3 && fid) {
+          lines.push(`• secret door tile`);
+        } else if (ft === 9 && fid) {
+          lines.push(`• hidden passage tile`);
+        } else if (ft === 10 && fid) {
+          lines.push(`• hazard tile`);
+        }
       }
     }
 
@@ -977,6 +1205,109 @@ export function InspectionShell(props: InspectionShellProps) {
                   {ln}
                 </div>
               ))}
+            </div>
+          )}
+
+          {layer === "content" && (
+            <div className="maze-legend">
+              <div className="maze-legend-title">Legend (content)</div>
+              <div className="maze-legend-grid">
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.wall) }}
+                  />
+                  <span>Wall</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.floor) }}
+                  />
+                  <span>Floor</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.entrance) }}
+                  />
+                  <span>Entrance</span>
+                </div>
+
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.exit) }}
+                  />
+                  <span>Exit</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.doorClosed) }}
+                  />
+                  <span>Door (closed)</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.doorOpen) }}
+                  />
+                  <span>Door (open)</span>
+                </div>
+
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.key) }}
+                  />
+                  <span>Key</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.lever) }}
+                  />
+                  <span>Lever</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.plate) }}
+                  />
+                  <span>Plate</span>
+                </div>
+
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.block) }}
+                  />
+                  <span>Block</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.secret) }}
+                  />
+                  <span>Secret</span>
+                </div>
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.hazard) }}
+                  />
+                  <span>Hazard</span>
+                </div>
+
+                <div className="maze-legend-item">
+                  <span
+                    className="maze-legend-swatch"
+                    style={{ background: palToCss(PAL.loot) }}
+                  />
+                  <span>Loot</span>
+                </div>
+              </div>
             </div>
           )}
         </div>
