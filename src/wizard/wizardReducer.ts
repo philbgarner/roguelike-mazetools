@@ -214,7 +214,8 @@ export type WizardAction =
 
   // Global reset
   | { type: "RESET_ALL" }
-  | { type: "INVALIDATE_RESULTS" };
+  | { type: "INVALIDATE_RESULTS" }
+  | { type: "REROLL_SEED"; seed: string };
 
 function clampInt(n: number, lo: number, hi: number): number {
   const x = n | 0;
@@ -326,6 +327,31 @@ export function wizardReducer(
   switch (action.type) {
     case "RESET_ALL":
       return initialWizardState();
+    case "REROLL_SEED": {
+      if (!state.world) return state;
+
+      const seed = String(action.seed ?? "");
+
+      const world: WorldConfig = { ...state.world, seed };
+
+      // If we already derived a contract, keep it and patch only the seed.
+      // This preserves all wizard choices and allows immediate re-exec.
+      const contract = state.contract
+        ? {
+            ...state.contract,
+            world: { ...state.contract.world, seed },
+          }
+        : null;
+
+      return {
+        ...state,
+        world,
+        contract,
+        progress: null,
+        result: null,
+        error: "",
+      };
+    }
 
     case "INVALIDATE_RESULTS":
       // Used when any upstream edit happens after execution

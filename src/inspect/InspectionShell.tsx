@@ -73,6 +73,8 @@ export type InspectionShellProps = {
 
   /** Optional: title */
   title?: string;
+
+  onRandomizeSeedAndRegenerate?: () => void;
 };
 
 // ----------------------------- Helpers --------------------------------------
@@ -1053,6 +1055,11 @@ export function InspectionShell(props: InspectionShellProps) {
       <div className="maze-controls">
         <div className="maze-header-row">
           <h2 className="maze-title">{title}</h2>
+          {props.onRandomizeSeedAndRegenerate && (
+            <button onClick={props.onRandomizeSeedAndRegenerate}>
+              🎲 Randomize Seed + Regenerate
+            </button>
+          )}
           {!!onBack && (
             <button
               className="maze-btn"
