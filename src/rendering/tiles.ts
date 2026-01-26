@@ -20,6 +20,10 @@ export type TileBuildParams = {
   // Hazards (FeatureType=10)
   hazardDefaultTile?: number;
   hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
 };
 
 export function buildCharMask(
@@ -87,6 +91,23 @@ export function buildCharMask(
     }
 
     out[i] = t & 0xff;
+  }
+
+  // --- Player overlay (highest priority) ------------------------------------
+  if (
+    params.playerTile !== undefined &&
+    params.playerX !== undefined &&
+    params.playerY !== undefined
+  ) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      // only place player on non-wall cells
+      if (solid[pi] !== 255) {
+        out[pi] = params.playerTile & 0xff;
+      }
+    }
   }
 
   return out;

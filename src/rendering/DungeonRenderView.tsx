@@ -1,5 +1,5 @@
 // src/rendering/DungeonRenderView.tsx
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
@@ -10,10 +10,6 @@ type Props = {
   bsp: BspDungeonOutputs;
   content: ContentOutputs;
 
-  // camera focus in cell coords
-  focusX: number;
-  focusY: number;
-
   // tileset atlas image URL (PNG) and layout
   atlasUrl: string;
   atlasCols: number;
@@ -22,9 +18,6 @@ type Props = {
   // which tiles to use for floor/wall; everything else comes from char mask
   wallTile: number;
   floorTile: number;
-
-  // controls how many cells fit on screen; higher zoom = closer
-  zoom?: number;
 
   // if your atlas origin is top-left, set true
   flipAtlasY?: boolean;
@@ -41,34 +34,40 @@ type Props = {
 
   hazardDefaultTile?: number;
   hazardTilesByType?: Partial<Record<number, number>>;
-};
 
-function OrthoRig({
-  focusX,
-  focusY,
-  zoom = 32,
-}: {
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+
+  // camera target (you’re using player coords for this)
   focusX: number;
   focusY: number;
+
+  // pixels per cell (used for “few pixels” stop)
   zoom?: number;
-}) {
-  const { camera } = useThree();
 
-  useFrame(() => {
-    const cam = camera as THREE.OrthographicCamera;
-    cam.zoom = zoom;
+  onCameraSettled?: (cell: { x: number; y: number }) => void;
+};
 
-    // Center on the selected cell center
-    cam.position.set(focusX + 0.5, focusY + 0.5, 10);
-    cam.up.set(0, 1, 0);
-    cam.lookAt(focusX + 0.5, focusY + 0.5, 0);
-    cam.updateProjectionMatrix();
-  });
+// -------------------------------
+// Canvas-internal scene
+// -------------------------------
 
-  return null;
+function cellToWorldPx(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pxPerCell: number,
+) {
+  // World units = pixels in our plane setup:
+  // plane width = W * pxPerCell, height = H * pxPerCell, centered at (0,0).
+  const worldX = (x + 0.5 - w / 2) * pxPerCell;
+  const worldY = (h / 2 - (y + 0.5)) * pxPerCell; // y-down -> world up
+  return { worldX, worldY };
 }
 
-function PlaneScene(props: Omit<Props, "focusX" | "focusY" | "zoom">) {
+function DungeonRenderScene(props: Props) {
   const {
     bsp,
     content,
@@ -78,11 +77,20 @@ function PlaneScene(props: Omit<Props, "focusX" | "focusY" | "zoom">) {
     wallTile,
     floorTile,
     flipAtlasY,
+
+    focusX,
+    focusY,
+    zoom,
+
+    onCameraSettled,
   } = props;
 
   const W = bsp.width;
   const H = bsp.height;
 
+  const pxPerCell = zoom ?? 32;
+
+  // --- Load atlas texture (inside Canvas tree = safe) ---
   const atlas = useMemo(() => {
     const loader = new THREE.TextureLoader();
     const t = loader.load(atlasUrl);
@@ -94,39 +102,64 @@ function PlaneScene(props: Omit<Props, "focusX" | "focusY" | "zoom">) {
     t.wrapS = THREE.ClampToEdgeWrapping;
     t.wrapT = THREE.ClampToEdgeWrapping;
 
-    // Important: avoid implicit Y flipping if you are controlling it in-shader
+    // IMPORTANT: do not double-flip; shader handles optional flip
     t.flipY = false;
 
-    // This is an actual color texture (unlike masks)
+    // Atlas is color
     t.colorSpace = THREE.SRGBColorSpace;
 
     return t;
   }, [atlasUrl]);
 
-  const charTex = useMemo(
-    () => {
-      const mask = buildCharMask(bsp, content, {
-        wallTile,
-        floorTile,
-        doorTile: props.doorTile,
-        keyTile: props.keyTile,
-        leverTile: props.leverTile,
-        plateTile: props.plateTile,
-        blockTile: props.blockTile,
-        chestTile: props.chestTile,
-        monsterTile: props.monsterTile,
-        secretDoorTile: props.secretDoorTile,
-        hiddenPassageTile: props.hiddenPassageTile,
-        hazardDefaultTile: props.hazardDefaultTile,
-        hazardTilesByType: props.hazardTilesByType,
-      });
-      return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
-    },
-    [
-      /* include the prop deps */
-    ],
-  );
+  // --- Build char texture (R8) ---
+  const charTex = useMemo(() => {
+    const mask = buildCharMask(bsp, content, {
+      wallTile,
+      floorTile,
 
+      doorTile: props.doorTile,
+      keyTile: props.keyTile,
+      leverTile: props.leverTile,
+      plateTile: props.plateTile,
+      blockTile: props.blockTile,
+      chestTile: props.chestTile,
+      monsterTile: props.monsterTile,
+      secretDoorTile: props.secretDoorTile,
+      hiddenPassageTile: props.hiddenPassageTile,
+
+      hazardDefaultTile: props.hazardDefaultTile,
+      hazardTilesByType: props.hazardTilesByType,
+
+      playerX: props.playerX,
+      playerY: props.playerY,
+      playerTile: props.playerTile,
+    });
+
+    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
+  }, [
+    bsp,
+    content,
+    W,
+    H,
+    wallTile,
+    floorTile,
+    props.doorTile,
+    props.keyTile,
+    props.leverTile,
+    props.plateTile,
+    props.blockTile,
+    props.chestTile,
+    props.monsterTile,
+    props.secretDoorTile,
+    props.hiddenPassageTile,
+    props.hazardDefaultTile,
+    props.hazardTilesByType,
+    props.playerX,
+    props.playerY,
+    props.playerTile,
+  ]);
+
+  // --- Shader material ---
   const mat = useMemo(() => {
     return new THREE.ShaderMaterial({
       vertexShader: tileVert,
@@ -158,33 +191,161 @@ function PlaneScene(props: Omit<Props, "focusX" | "focusY" | "zoom">) {
     flipAtlasY,
   ]);
 
+  // -------------------------------
+  // Smooth camera rig (inside Canvas)
+  // -------------------------------
+
+  const { camera } = useThree();
+
+  const [targetCell, setTargetCell] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+
+  // camera current + target positions in world pixels
+  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
+  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
+
+  // Track last focus to detect changes
+  const lastFocus = useRef<{ x: number; y: number } | null>(null);
+
+  // Initialize camera when map size / zoom changes
+  useEffect(() => {
+    const { worldX, worldY } = cellToWorldPx(focusX, focusY, W, H, pxPerCell);
+    camWorld.current.set(worldX, worldY, 10);
+    targetWorld.current.set(worldX, worldY, 10);
+
+    // place camera immediately
+    camera.position.set(worldX, worldY, 10);
+
+    // orthographic zoom: for us, “zoom” is pixels-per-cell, but OrthographicCamera.zoom
+    // is an abstract scale. We’ll keep it at 1 and work in pixel-world units.
+    // (If you prefer using camera.zoom, we can switch, but this is simplest.)
+    const cam = camera as THREE.OrthographicCamera;
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+
+    setTargetCell(null);
+    lastFocus.current = { x: focusX, y: focusY };
+  }, [W, H, pxPerCell, focusX, focusY, camera]);
+
+  // When focus changes, set a new target cell
+  useEffect(() => {
+    const prev = lastFocus.current;
+    if (!prev || prev.x !== focusX || prev.y !== focusY) {
+      setTargetCell({ x: focusX, y: focusY });
+      lastFocus.current = { x: focusX, y: focusY };
+    }
+  }, [focusX, focusY]);
+
+  useFrame((_state, delta) => {
+    const cam = camera as THREE.OrthographicCamera;
+
+    if (!targetCell) {
+      // no active animation; keep camera at current
+      cam.position.x = camWorld.current.x;
+      cam.position.y = camWorld.current.y;
+      cam.updateProjectionMatrix();
+      return;
+    }
+
+    const { worldX, worldY } = cellToWorldPx(
+      targetCell.x,
+      targetCell.y,
+      W,
+      H,
+      pxPerCell,
+    );
+    targetWorld.current.set(worldX, worldY, 10);
+
+    // frame-rate independent smoothing
+    const speed = 14; // 10-20 range
+    const t = 1 - Math.exp(-speed * delta);
+
+    camWorld.current.lerp(targetWorld.current, t);
+
+    cam.position.x = camWorld.current.x;
+    cam.position.y = camWorld.current.y;
+    cam.updateProjectionMatrix();
+
+    // stop within a few pixels
+    const dx = camWorld.current.x - targetWorld.current.x;
+    const dy = camWorld.current.y - targetWorld.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    const stopPx = 3;
+    if (dist <= stopPx) {
+      camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
+      cam.position.x = camWorld.current.x;
+      cam.position.y = camWorld.current.y;
+      cam.updateProjectionMatrix();
+
+      onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
+      setTargetCell(null);
+    }
+  });
+
+  // -------------------------------
+  // Draw the plane (pixel-world units)
+  // -------------------------------
   return (
-    <mesh position={[W / 2, H / 2, 0]}>
-      {/* 1 unit = 1 cell */}
-      <planeGeometry args={[W, H, 1, 1]} />
+    <mesh position={[0, 0, 0]}>
+      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
+      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
       <primitive object={mat} attach="material" />
     </mesh>
   );
 }
 
+// -------------------------------
+// Wrapper (NO R3F hooks here)
+// -------------------------------
+
 export default function DungeonRenderView(props: Props) {
-  const { bsp, content, focusX, focusY, zoom } = props;
+  const pxPerCell = props.zoom ?? 32;
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
       <Canvas
         orthographic
+        // camera parameters here are just defaults; the rig positions it
         camera={{
           position: [0, 0, 10],
-          zoom: zoom ?? 32,
+          zoom: 1,
           near: 0.1,
           far: 1000,
         }}
         gl={{ antialias: false, alpha: false }}
       >
-        <OrthoRig focusX={focusX} focusY={focusY} zoom={zoom} />
-        <PlaneScene {...props} />
+        {/* Set a fixed ortho frustum in pixel-world units */}
+        <OrthoFrustum pxPerCell={pxPerCell} />
+        <DungeonRenderScene {...props} />
       </Canvas>
     </div>
   );
+}
+
+// Keeps ortho frustum stable and sized in “pixel world units”
+function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    const cam = camera as THREE.OrthographicCamera;
+
+    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
+    const halfW = size.width / 2;
+    const halfH = size.height / 2;
+
+    cam.left = -halfW;
+    cam.right = halfW;
+    cam.top = halfH;
+    cam.bottom = -halfH;
+
+    cam.near = 0.1;
+    cam.far = 1000;
+
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+  }, [camera, size.width, size.height, pxPerCell]);
+
+  return null;
 }

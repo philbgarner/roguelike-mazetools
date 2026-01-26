@@ -1,6 +1,7 @@
 /* src/styles.css */
 
 :root {
+    overflow: hidden;
     --bg: #0b0f17;
     --panel: #0f1624;
     --panel2: #121b2b;
@@ -34,6 +35,7 @@
 
 html,
 body {
+    overflow: hidden;
     margin: 0;
     padding: 0;
     height: 100%;
@@ -64,9 +66,9 @@ input {
     display: flex;
     grid-template-columns: 420px 1fr;
     gap: 14px;
-    padding: 14px;
+    padding: 0;
     overflow-y: auto;
-    max-height: 90vh;
+    max-height: 98vh;
 }
 
 /* Wizard + Execution: single centered large panel */
@@ -442,6 +444,9 @@ details[open] > .maze-summary {
 .maze-canvas-wrap {
     position: relative;
     display: inline-block; /* shrink-wrap to canvas */
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
 }
 
 /* Canvas panel: IMPORTANT: padding must match your JS (-12px) math */

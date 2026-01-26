@@ -157,6 +157,73 @@ function featureTypeName(ft: number) {
   }
 }
 
+function computeStartCellFromEntranceRoom(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+): {
+  x: number;
+  y: number;
+} {
+  const w = dungeon.width;
+  const h = dungeon.height;
+
+  const entranceRoomId = content.meta.entranceRoomId;
+  const regionId = dungeon.masks.regionId;
+  const solid = dungeon.masks.solid;
+
+  // fallback if something is missing
+  let fallback = { x: Math.floor(w / 2), y: Math.floor(h / 2) };
+
+  if (!entranceRoomId || entranceRoomId <= 0) return fallback;
+
+  let eMinX = 1e9,
+    eMinY = 1e9,
+    eMaxX = -1,
+    eMaxY = -1;
+  let found = false;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (regionId[i] === entranceRoomId) {
+        found = true;
+        if (x < eMinX) eMinX = x;
+        if (y < eMinY) eMinY = y;
+        if (x > eMaxX) eMaxX = x;
+        if (y > eMaxY) eMaxY = y;
+      }
+    }
+  }
+
+  if (!found) return fallback;
+
+  // center of entrance bounds
+  let cx = Math.floor((eMinX + eMaxX) / 2);
+  let cy = Math.floor((eMinY + eMaxY) / 2);
+  let ci = cy * w + cx;
+
+  // ensure floor
+  if (ci >= 0 && ci < solid.length && solid[ci] === 0) {
+    return { x: cx, y: cy };
+  }
+
+  // If center isn't floor, search nearby (small spiral-ish scan)
+  const R = 8;
+  for (let r = 1; r <= R; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x < 0 || x >= w || y < 0 || y >= h) continue;
+        const i = y * w + x;
+        if (solid[i] === 0) return { x, y };
+      }
+    }
+  }
+
+  return fallback;
+}
+
 // Extract ids from "anything" that might be a circuit node/edge descriptor.
 function extractIdsDeep(obj: any, out: number[]) {
   if (!obj) return;
@@ -637,6 +704,20 @@ export function InspectionShell(props: InspectionShellProps) {
     featureType: 0,
     featureId: 0,
   });
+
+  const startCell = useMemo(
+    () => computeStartCellFromEntranceRoom(dungeon, content),
+    [dungeon, content],
+  );
+
+  const [player, setPlayer] = useState<{ x: number; y: number }>(
+    () => startCell,
+  );
+
+  useEffect(() => {
+    setPlayer(startCell);
+    setFocusCell(startCell); // keep camera + focus aligned initially
+  }, [startCell.x, startCell.y]);
 
   // Apply runtime mutation -> derive plates -> evaluate circuits (same semantics as old App)
   const applyRuntime = React.useCallback((next: DungeonRuntimeState) => {
@@ -1369,6 +1450,9 @@ export function InspectionShell(props: InspectionShellProps) {
               content={content}
               focusX={focusCell.x}
               focusY={focusCell.y} // Base tiles
+              playerX={player.x}
+              playerY={player.y}
+              playerTile={CP437_TILES.player}
               floorTile={CP437_TILES.floor}
               wallTile={CP437_TILES.wall}
               // Feature tiles (FeatureType → glyph)

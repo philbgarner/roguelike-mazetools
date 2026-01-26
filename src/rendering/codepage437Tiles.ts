@@ -20,4 +20,6 @@ export const CP437_TILES = {
   secretDoor: 35, // '#'
   hiddenPassage: 176, // '░'
   hazard: 126, // '~'
+
+  player: 64, // '@'
 } as const;
