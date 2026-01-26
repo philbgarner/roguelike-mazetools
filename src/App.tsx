@@ -1,7 +1,7 @@
 // src/App.tsx
 import React, { useEffect, useMemo, useReducer } from "react";
 import "./styles.css";
-
+import { computeStartCell } from "./inspect/computeStartCell";
 import { AnimatePresence, motion } from "framer-motion";
 
 import SingleInspectView from "./inspect/SingleInspectView";
@@ -182,6 +182,7 @@ function ExecutionView(props: {
           // Metrics want diagnostics, not eval result
           const diag0 = (eval0 as any).diagnostics ?? null;
           const metrics0 = computeGlobalCircuitMetrics(diag0);
+          const startCell0 = computeStartCell(dungeon, content);
 
           if (cancelled) return;
 
@@ -196,6 +197,8 @@ function ExecutionView(props: {
               content,
 
               runtime0: rt0,
+
+              startCell0,
 
               // Keep whatever your inspection expects:
               circuitEval0: eval0,
@@ -401,6 +404,7 @@ function InspectionRouter(props: {
           dungeon: result.dungeon,
           content: result.content,
           runtime0: result.runtime0,
+          startCell0: (result as any).startCell0, // until your Wizard result type is updated
           seed: result.seed,
           seedUsed: result.seedUsed,
           circuitDiagnostics0:

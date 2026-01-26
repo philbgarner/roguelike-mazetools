@@ -16,6 +16,7 @@ import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { imageDataToPngDataUrl } from "../mazeGen";
 import DungeonRenderView from "../rendering/DungeonRenderView";
 import type { DungeonRuntimeState } from "../dungeonState";
+import { computeStartCell } from "./computeStartCell";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
 import {
   collectKey,
@@ -155,73 +156,6 @@ function featureTypeName(ft: number) {
     default:
       return `feature(${ft})`;
   }
-}
-
-function computeStartCellFromEntranceRoom(
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs,
-): {
-  x: number;
-  y: number;
-} {
-  const w = dungeon.width;
-  const h = dungeon.height;
-
-  const entranceRoomId = content.meta.entranceRoomId;
-  const regionId = dungeon.masks.regionId;
-  const solid = dungeon.masks.solid;
-
-  // fallback if something is missing
-  let fallback = { x: Math.floor(w / 2), y: Math.floor(h / 2) };
-
-  if (!entranceRoomId || entranceRoomId <= 0) return fallback;
-
-  let eMinX = 1e9,
-    eMinY = 1e9,
-    eMaxX = -1,
-    eMaxY = -1;
-  let found = false;
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      if (regionId[i] === entranceRoomId) {
-        found = true;
-        if (x < eMinX) eMinX = x;
-        if (y < eMinY) eMinY = y;
-        if (x > eMaxX) eMaxX = x;
-        if (y > eMaxY) eMaxY = y;
-      }
-    }
-  }
-
-  if (!found) return fallback;
-
-  // center of entrance bounds
-  let cx = Math.floor((eMinX + eMaxX) / 2);
-  let cy = Math.floor((eMinY + eMaxY) / 2);
-  let ci = cy * w + cx;
-
-  // ensure floor
-  if (ci >= 0 && ci < solid.length && solid[ci] === 0) {
-    return { x: cx, y: cy };
-  }
-
-  // If center isn't floor, search nearby (small spiral-ish scan)
-  const R = 8;
-  for (let r = 1; r <= R; r++) {
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const x = cx + dx;
-        const y = cy + dy;
-        if (x < 0 || x >= w || y < 0 || y >= h) continue;
-        const i = y * w + x;
-        if (solid[i] === 0) return { x, y };
-      }
-    }
-  }
-
-  return fallback;
 }
 
 // Extract ids from "anything" that might be a circuit node/edge descriptor.
@@ -500,13 +434,10 @@ function renderContentComposite(
   }
 
   // --- Entrance marker: cyan pixel at center of entrance room bounds ----------
-  if (eFound) {
-    const cx = Math.floor((eMinX + eMaxX) / 2);
-    const cy = Math.floor((eMinY + eMaxY) / 2);
-    const ci = cy * w + cx;
-    if (ci >= 0 && ci < solid.length && !solid[ci]) {
-      setPixel(img, cx, cy, PAL.entrance);
-    }
+  const s = computeStartCell(dungeon, content);
+  const i = s.y * w + s.x;
+  if (i >= 0 && i < solid.length && solid[i] === 0) {
+    setPixel(img, s.x, s.y, PAL.entrance);
   }
 
   // --- Exit marker: purple pixel at center of farthest room bounds ------------
@@ -656,11 +587,6 @@ export function InspectionShell(props: InspectionShellProps) {
   const [scale, setScale] = useState(6);
 
   const [pane, setPane] = useState<InspectPane>("content");
-  // For Render pane camera focus (cell coords)
-  const [focusCell, setFocusCell] = useState<{ x: number; y: number }>({
-    x: 0,
-    y: 0,
-  });
 
   const [selectedCircuitIndex, setSelectedCircuitIndex] = useState<
     number | null
@@ -705,18 +631,12 @@ export function InspectionShell(props: InspectionShellProps) {
     featureId: 0,
   });
 
-  const startCell = useMemo(
-    () => computeStartCellFromEntranceRoom(dungeon, content),
-    [dungeon, content],
-  );
-
-  const [player, setPlayer] = useState<{ x: number; y: number }>(
-    () => startCell,
-  );
+  const startCell = useMemo(() => {
+    return result.startCell0 ?? computeStartCell(dungeon, content);
+  }, [result.startCell0, dungeon, content]);
 
   useEffect(() => {
     setPlayer(startCell);
-    setFocusCell(startCell); // keep camera + focus aligned initially
   }, [startCell.x, startCell.y]);
 
   // Apply runtime mutation -> derive plates -> evaluate circuits (same semantics as old App)
@@ -1032,10 +952,6 @@ export function InspectionShell(props: InspectionShellProps) {
       setTooltip((t) => (t.visible ? { ...t, visible: false } : t));
       return;
     }
-
-    // keep render-camera focus in sync with hover
-    setFocusCell({ x, y });
-
     const last = lastHoverCellRef.current;
     if (last && last.x === x && last.y === y) return;
 
@@ -1061,7 +977,6 @@ export function InspectionShell(props: InspectionShellProps) {
     const x = c.x;
     const y = c.y;
     if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return;
-    setFocusCell({ x, y });
 
     const w = dungeon.width;
     const i = y * w + x;

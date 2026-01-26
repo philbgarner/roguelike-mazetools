@@ -255,7 +255,7 @@ function DungeonRenderScene(props: Props) {
     // clear any in-flight chase (map/zoom swap)
     targetCellRef.current = null;
     settlingRef.current = null;
-  }, [W, H, pxPerCell, camera, flipGridX, flipGridY]);
+  }, [W, H, pxPerCell, camera, flipGridX]);
 
   // When focus changes, set a new target cell (without spam)
   useEffect(() => {
