@@ -5,6 +5,8 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
 import { tileFrag, tileVert } from "./tileShader";
+import type { RenderTheme } from "./renderTheme";
+import { THEME_DEFAULT } from "./renderTheme";
 
 type Props = {
   bsp: BspDungeonOutputs;
@@ -61,6 +63,8 @@ type Props = {
   // grid orientation fixes (defaults true/true to match your current convention)
   flipGridX?: boolean;
   flipGridY?: boolean;
+
+  theme?: RenderTheme;
 };
 
 // -------------------------------
@@ -116,11 +120,55 @@ function DungeonRenderScene(props: Props) {
   const flipGridX = props.flipGridX ?? true;
   const flipGridY = props.flipGridY ?? true;
 
-  const floorColor = props.floorColor ?? [1, 1, 1, 1];
-  const wallColor = props.wallColor ?? [1, 1, 1, 1];
-  const playerColor = props.playerColor ?? [1, 1, 1, 1];
-  const itemColor = props.itemColor ?? [1, 1, 1, 1];
-  const hazardColor = props.hazardColor ?? [1, 0.35, 0.35, 1]; // danger red tint
+  const theme = props.theme ?? THEME_DEFAULT;
+
+  // Convert "#RRGGBB" + alpha to vec4 0..1
+  const hexToVec4 = (hex: string, a = 1) => {
+    const c = new THREE.Color(hex);
+    return [c.r, c.g, c.b, a] as [number, number, number, number];
+  };
+
+  // Apply strength as a "mix from white" (same semantics as: rgb *= mix(1, tint, strength))
+  // This keeps strength intuitive without needing shader changes.
+  const applyStrength = (
+    rgba: [number, number, number, number],
+    strength: number,
+  ): [number, number, number, number] => {
+    const s = Math.max(0, Math.min(1.5, strength)); // allow mild >1 boost; clamp for safety
+    const r = 1 + (rgba[0] - 1) * s;
+    const g = 1 + (rgba[1] - 1) * s;
+    const b = 1 + (rgba[2] - 1) * s;
+    return [r, g, b, rgba[3]];
+  };
+
+  // Theme-first colors (preferred)
+  const themeFloor = applyStrength(
+    hexToVec4(theme.colors.floor, 1),
+    theme.strength.floor,
+  );
+  const themeWall = applyStrength(
+    hexToVec4(theme.colors.wallEdge, 1),
+    theme.strength.wallEdge,
+  );
+  const themePlayer = applyStrength(
+    hexToVec4(theme.colors.player, 1),
+    theme.strength.player,
+  );
+  const themeItem = applyStrength(
+    hexToVec4(theme.colors.interactable, 1),
+    theme.strength.interactable,
+  );
+  const themeHazard = applyStrength(
+    hexToVec4(theme.colors.hazard, 1),
+    theme.strength.hazard,
+  );
+
+  // Backward-compatible overrides (props win only if explicitly provided)
+  const floorColor = props.floorColor ?? themeFloor;
+  const wallColor = props.wallColor ?? themeWall;
+  const playerColor = props.playerColor ?? themePlayer;
+  const itemColor = props.itemColor ?? themeItem;
+  const hazardColor = props.hazardColor ?? themeHazard;
 
   // --- Load atlas texture (inside Canvas tree = safe) ---
   const atlas = useMemo(() => {
@@ -246,6 +294,7 @@ function DungeonRenderScene(props: Props) {
     playerColor,
     itemColor,
     hazardColor,
+    props.theme,
   ]);
 
   // -------------------------------
