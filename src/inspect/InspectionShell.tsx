@@ -1448,8 +1448,8 @@ export function InspectionShell(props: InspectionShellProps) {
             <DungeonRenderView
               bsp={dungeon}
               content={content}
-              focusX={focusCell.x}
-              focusY={focusCell.y} // Base tiles
+              focusX={player.x}
+              focusY={player.y} // Base tiles
               playerX={player.x}
               playerY={player.y}
               playerTile={CP437_TILES.player}
@@ -1477,6 +1477,8 @@ export function InspectionShell(props: InspectionShellProps) {
               }}
               zoom={32}
               flipAtlasY={false}
+              flipGridX={false}
+              flipGridY={true}
             />
           )}
         </div>

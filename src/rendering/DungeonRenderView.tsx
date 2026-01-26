@@ -1,5 +1,5 @@
 // src/rendering/DungeonRenderView.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
@@ -19,7 +19,7 @@ type Props = {
   wallTile: number;
   floorTile: number;
 
-  // if your atlas origin is top-left, set true
+  // if your atlas origin is top-left, set true (shader handles flip)
   flipAtlasY?: boolean;
 
   doorTile?: number;
@@ -39,14 +39,18 @@ type Props = {
   playerY?: number;
   playerTile?: number;
 
-  // camera target (you’re using player coords for this)
+  // camera target (typically player coords)
   focusX: number;
   focusY: number;
 
-  // pixels per cell (used for “few pixels” stop)
+  // pixels per cell (world units are pixels)
   zoom?: number;
 
   onCameraSettled?: (cell: { x: number; y: number }) => void;
+
+  // grid orientation fixes (defaults true/true to match your current convention)
+  flipGridX?: boolean;
+  flipGridY?: boolean;
 };
 
 // -------------------------------
@@ -59,11 +63,19 @@ function cellToWorldPx(
   w: number,
   h: number,
   pxPerCell: number,
+  flipGridX: boolean,
 ) {
-  // World units = pixels in our plane setup:
-  // plane width = W * pxPerCell, height = H * pxPerCell, centered at (0,0).
-  const worldX = (x + 0.5 - w / 2) * pxPerCell;
-  const worldY = (h / 2 - (y + 0.5)) * pxPerCell; // y-down -> world up
+  // X flip still applies (mirroring)
+  const fx = flipGridX ? w - 1 - x : x;
+
+  // IMPORTANT:
+  // DO NOT flip Y here.
+  // y is already top-left–origin, y-down.
+  const fy = y;
+
+  const worldX = (fx + 0.5 - w / 2) * pxPerCell;
+  const worldY = (h / 2 - (fy + 0.5)) * pxPerCell;
+
   return { worldX, worldY };
 }
 
@@ -85,10 +97,14 @@ function DungeonRenderScene(props: Props) {
     onCameraSettled,
   } = props;
 
+  console.log("dungeon render scene focus x/y", focusX, focusY);
   const W = bsp.width;
   const H = bsp.height;
 
   const pxPerCell = zoom ?? 32;
+
+  const flipGridX = props.flipGridX ?? true;
+  const flipGridY = props.flipGridY ?? true;
 
   // --- Load atlas texture (inside Canvas tree = safe) ---
   const atlas = useMemo(() => {
@@ -173,6 +189,8 @@ function DungeonRenderScene(props: Props) {
         uWallTile: { value: wallTile },
         uFloorTile: { value: floorTile },
         uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
+        uFlipGridX: { value: flipGridX ? 1 : 0 },
+        uFlipGridY: { value: flipGridY ? 1 : 0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -189,6 +207,8 @@ function DungeonRenderScene(props: Props) {
     wallTile,
     floorTile,
     flipAtlasY,
+    flipGridX,
+    flipGridY,
   ]);
 
   // -------------------------------
@@ -197,10 +217,6 @@ function DungeonRenderScene(props: Props) {
 
   const { camera } = useThree();
 
-  const [targetCell, setTargetCell] = useState<{ x: number; y: number } | null>(
-    null,
-  );
-
   // camera current + target positions in world pixels
   const camWorld = useRef(new THREE.Vector3(0, 0, 10));
   const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
@@ -208,42 +224,59 @@ function DungeonRenderScene(props: Props) {
   // Track last focus to detect changes
   const lastFocus = useRef<{ x: number; y: number } | null>(null);
 
-  // Initialize camera when map size / zoom changes
+  // Stable target tracking (refs, not state)
+  const targetCellRef = useRef<{ x: number; y: number } | null>(null);
+  const settlingRef = useRef<{ x: number; y: number; frames: number } | null>(
+    null,
+  );
+
+  // Initialize camera when map size / zoom changes (NOT on focus changes)
   useEffect(() => {
-    const { worldX, worldY } = cellToWorldPx(focusX, focusY, W, H, pxPerCell);
+    const { worldX, worldY } = cellToWorldPx(
+      focusX,
+      focusY,
+      W,
+      H,
+      pxPerCell,
+      flipGridX,
+    );
+
     camWorld.current.set(worldX, worldY, 10);
     targetWorld.current.set(worldX, worldY, 10);
-
-    // place camera immediately
     camera.position.set(worldX, worldY, 10);
 
-    // orthographic zoom: for us, “zoom” is pixels-per-cell, but OrthographicCamera.zoom
-    // is an abstract scale. We’ll keep it at 1 and work in pixel-world units.
-    // (If you prefer using camera.zoom, we can switch, but this is simplest.)
     const cam = camera as THREE.OrthographicCamera;
     cam.zoom = 1;
     cam.updateProjectionMatrix();
 
-    setTargetCell(null);
+    // baseline for change detection
     lastFocus.current = { x: focusX, y: focusY };
-  }, [W, H, pxPerCell, focusX, focusY, camera]);
 
-  // When focus changes, set a new target cell
+    // clear any in-flight chase (map/zoom swap)
+    targetCellRef.current = null;
+    settlingRef.current = null;
+  }, [W, H, pxPerCell, camera, flipGridX, flipGridY]);
+
+  // When focus changes, set a new target cell (without spam)
   useEffect(() => {
     const prev = lastFocus.current;
     if (!prev || prev.x !== focusX || prev.y !== focusY) {
-      setTargetCell({ x: focusX, y: focusY });
       lastFocus.current = { x: focusX, y: focusY };
+
+      const curTarget = targetCellRef.current;
+      if (!curTarget || curTarget.x !== focusX || curTarget.y !== focusY) {
+        targetCellRef.current = { x: focusX, y: focusY };
+        settlingRef.current = { x: focusX, y: focusY, frames: 0 };
+      }
     }
   }, [focusX, focusY]);
 
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;
+    const targetCell = targetCellRef.current;
 
     if (!targetCell) {
-      // no active animation; keep camera at current
-      cam.position.x = camWorld.current.x;
-      cam.position.y = camWorld.current.y;
+      cam.position.copy(camWorld.current);
       cam.updateProjectionMatrix();
       return;
     }
@@ -254,33 +287,52 @@ function DungeonRenderScene(props: Props) {
       W,
       H,
       pxPerCell,
+      flipGridX,
     );
     targetWorld.current.set(worldX, worldY, 10);
 
     // frame-rate independent smoothing
     const speed = 14; // 10-20 range
     const t = 1 - Math.exp(-speed * delta);
-
     camWorld.current.lerp(targetWorld.current, t);
 
-    cam.position.x = camWorld.current.x;
-    cam.position.y = camWorld.current.y;
+    cam.position.copy(camWorld.current);
     cam.updateProjectionMatrix();
 
-    // stop within a few pixels
+    // stop within a few pixels (world units are pixels)
     const dx = camWorld.current.x - targetWorld.current.x;
     const dy = camWorld.current.y - targetWorld.current.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
+    // increment frames for this chase
+    const s = settlingRef.current;
+    if (s && s.x === targetCell.x && s.y === targetCell.y) {
+      s.frames += 1;
+    }
+
     const stopPx = 3;
-    if (dist <= stopPx) {
+    const maxFrames = 90; // ~1.5s @ 60fps
+    const shouldForceSettle = !!s && s.frames >= maxFrames;
+
+    if (dist <= stopPx || shouldForceSettle) {
       camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
-      cam.position.x = camWorld.current.x;
-      cam.position.y = camWorld.current.y;
+      cam.position.copy(camWorld.current);
       cam.updateProjectionMatrix();
 
+      console.log(
+        "camera settled on",
+        { x: targetCell.x, y: targetCell.y },
+        {
+          dist,
+          forced: shouldForceSettle,
+          frames: s?.frames,
+        },
+      );
+
       onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
-      setTargetCell(null);
+
+      targetCellRef.current = null;
+      settlingRef.current = null;
     }
   });
 

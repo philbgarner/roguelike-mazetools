@@ -1,10 +1,12 @@
+---
+
 # RENDERING-CONTEXT.md
 
 ## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-**CONTEXT VERSION:** **2026-01-25 (rev B)**  
-**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane  
-**STATUS:** **PHASE R1 FIRST-PIXEL ONLINE (CP437 ATLAS) + CAMERA SMOOTHING INTEGRATED; HOOKS-OUTSIDE-CANVAS BUG FIXED VIA WRAPPER/SCENE SPLIT**
+**CONTEXT VERSION:** **2026-01-25 (rev C)**
+**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
+**STATUS:** **PHASE R1 FUNCTIONALLY COMPLETE: CP437 TILESET RENDERER ONLINE WITH EDGE-ONLY WALLS, CORRECT GRID ORIENTATION, AND SMOOTH CAMERA FOLLOW**
 
 ---
 
@@ -18,6 +20,7 @@ The result is a first-pass “GPU view” of the dungeon that can later grow int
 * richer shading / lighting
 * overlays and debug visualizations
 * true runtime-driven visual state
+* themed visual styles
 
 ---
 
@@ -54,14 +57,22 @@ Render view consumes the same single-seed data already present in Step 7:
 
 ### Player / Camera
 
-We now treat the render view as having a minimal “player” concept:
+We treat the render view as having a minimal “player” concept:
 
 * A local **player cell** `{x,y}` exists (Step 7 local inspection state).
 * Player is initialized to the **start tile** (entrance tile) when a new dungeon result is loaded.
 * The render camera is orthographic and targets the player:
+
   * Render view accepts `focusX, focusY` in **cell coordinates**
   * Initial camera focus = player position
   * When player `{x,y}` changes, the camera receives a new target and smooths toward it.
+
+### Coordinates (Authoritative Rule)
+
+* **Grid flips belong in the shader.**
+* **Camera never flips grid axes** — it only converts *y-down grid space* into *y-up world space*.
+
+This separation is now considered **locked** and should not be re-questioned.
 
 ---
 
@@ -78,10 +89,10 @@ We leverage generator `DataTexture`s already produced by the dungeon pipeline, s
 
 We introduce a dedicated R8 `DataTexture` (unsigned byte) that encodes **which tile index to draw** at each cell:
 
-* `charTex[x,y] = 0` → “none” (shader draws base floor/wall)
-* `charTex[x,y] = N` → draw tile index N from the atlas
+* `charTex[x,y] = 0` → “none” (shader draws base floor / wall logic)
+* `charTex[x,y] = N` → draw tile index `N` from the atlas
 
-This is the first “render pipeline bridge” between procedural content masks/runtime state and GPU shading.
+This is the first explicit **render-pipeline bridge** between procedural content masks / runtime state and GPU shading.
 
 ### Tileset atlas (external image) — CP437
 
@@ -99,10 +110,14 @@ We standardized on **Code Page 437** glyph atlas:
 The fragment shader determines what tile to draw for each cell:
 
 1. Determine cell coordinates from UV (grid space)
-2. Sample `solid` at that cell to decide wall vs floor base
-3. Sample `charTex` to override base tile when non-zero
-4. Convert tile index → atlas UV
-5. Sample atlas texture and output color
+2. Sample `solid` to classify wall vs floor
+3. **Render only exterior wall edges**:
+
+   * A wall cell is drawable **only if at least one of its 8 neighbors is floor**
+   * Interior wall mass is rendered as **blank / transparent**
+4. Sample `charTex` to override base tile when non-zero
+5. Convert tile index → atlas UV
+6. Sample atlas texture and output color
 
 Filtering must be `NearestFilter` on all textures (atlas + data textures) to preserve crisp pixels.
 
@@ -112,145 +127,143 @@ Filtering must be `NearestFilter` on all textures (atlas + data textures) to pre
 
 ### What we discovered (rev A carry-forward)
 
-`InspectionShell.tsx` initially attempted to show a render view but the condition was wrong:
+* Render toggle keyed on `layer` instead of `pane`
+* Render branch referenced undefined inspection variables
+* R3F hooks were called outside `<Canvas>`, violating R3F rules
+* Camera/grid orientation bugs caused mirrored and inverted views
 
-* switching on `layer === "content"` instead of `pane`
-* render branch referenced undefined variables (`bsp`, `hoverX`, `selectedX`, etc.)
-* canvas always rendered (stacking/DOM awkwardness)
-
-### What we did (this session — rev B)
+### What we did (rev B → rev C)
 
 #### A) CP437 atlas integration
 
-We confirmed the atlas characteristics and updated the renderer plan accordingly:
-
-* `atlasCols = 32`, `atlasRows = 8`
-* Suggested baseline glyph picks for immediate readability:
-  * floor = `46` (`.`)
-  * wall  = `219` (`█`)
-  * player = `64` (`@`) (added as a render-only overlay)
-  * plus a small set of conventional roguelike glyphs for door/key/lever/plate/block/chest/hazard
-
-We introduced/used a “CP437 tile preset” concept so these mappings are explicit and easy to iterate.
+* Locked atlas grid at `32 × 8`
+* Established a CP437 preset for floor, wall, player, and common roguelike glyphs
+* Confirmed nearest-filtered pixel-art correctness
 
 #### B) Player + start tile initialization
 
-We added a minimal player notion to Step 7 inspection:
-
-* player state `{x,y}` lives in `InspectionShell` (local inspection state only)
-* player is initialized to the **start tile** (entrance tile) when a new single-seed result is loaded
-* player is rendered as a high-priority overlay into `charTex` (player sits “on top” of other glyphs)
-
-Important: we removed the incorrect assumption that `dungeon.meta.entranceRoomId` exists in `BspDungeonOutputs`. The start tile must be sourced from existing entrance/start semantics (content/runtime metadata or existing entrance marker logic).
+* Player state `{x,y}` lives in `InspectionShell`
+* Player initialized from entrance/start semantics (not assumed room IDs)
+* Player rendered as a high-priority overlay in `charTex`
 
 #### C) Camera smoothing + hook correctness
 
-We implemented “snap-lerp” camera behavior:
+* Implemented snap-lerp camera controller inside Canvas tree
+* Split `DungeonRenderView` (wrapper) from `DungeonRenderScene` (hooks)
+* Stabilized camera settle detection using refs (not React state)
+* `onCameraSettled` now fires deterministically
 
-* on player `{x,y}` change → set `targetCell`
-* each frame → lerp camera world coords toward target
-* when within a few pixels → snap to exact position, clear target, call `onCameraSettled`
+#### D) Grid orientation fix (critical)
 
-During this, we hit an R3F rule violation:
+* Explicit shader-side grid flips (`flipGridX`, `flipGridY`)
+* Camera mapping no longer flips grid axes
+* Eliminated double-invert bugs on Y
+* Orientation now matches content-pane inspection exactly
 
-* `useThree()` / `useFrame()` were being called in `DungeonRenderView` outside `<Canvas>`, producing the runtime error:
-  * “hooks can only be used inside the Canvas component”
+#### E) Edge-only wall rendering (new)
 
-Fix:
-
-* Refactor into:
-  * `DungeonRenderView` = wrapper parent that owns `<Canvas>` only (no R3F hooks)
-  * `DungeonRenderScene` (child) = all “fun stuff”: textures, material, plane, camera smoothing rig (all hooks live here)
-
-We also removed the conflicting per-frame “snap” rig (`OrthoRig`) that would fight the smoothing controller.
+* Wall rendering now uses **8-way adjacency**
+* Only exterior wall edges are drawn
+* Interior wall mass is left blank / transparent
+* Produces a clean, readable “outline dungeon” visualization well-suited to inspection
 
 ---
 
 ## IMPLEMENTATION PLAN STATUS
 
-### Phase R1 — Tileset plane renderer (in progress; first pixel achieved)
+### Phase R1 — Tileset plane renderer
 
 **DONE / ONLINE**
+
 * Single plane + shader + atlas sampling
 * `charTex` R8 overlay path
-* CP437 atlas grid parameters (32×8) and conventional glyph picks
-* Player overlay into `charTex`
-* Camera smoothing (“snap-lerp”) running inside Canvas tree
-* Hook placement corrected via wrapper/scene split
+* CP437 atlas grid parameters + preset glyph mapping
+* Player overlay rendered on top of base tiles
+* Smooth snap-lerp camera with correct grid/world mapping
+* Edge-only wall rendering using 8-way neighborhood checks
+* Interior wall mass suppressed (blank)
+* R3F hook placement hardened
 
-**REMAINING TO CLOSE R1**
-* Validate start tile source is authoritative (entrance tile semantics), and document where it comes from
-* Confirm orientation correctness (atlas flip flag vs UV space); lock `flipAtlasY` default after verification
-* Confirm featureType → glyph mapping aligns with actual `FeatureType` enum values in `mazeGen.ts` (no placeholders)
-
-### Phase R2 — Runtime + interaction parity (next)
-
-* Drive door glyph open/closed from `runtime`
-* Key disappears when collected
-* Blocks rendered from runtime positions
-* Hazards reflect hazardType overlays
-* Render-pane selection parity:
-  * raycast plane → cell
-  * hover tooltip overlay (UI, not shader)
-  * selection/focus sync with content pane
-
-### Phase R3 — Sprites and animation
-
-* Sprite layers (player/monsters)
-* Animated frames / state
-* Optional lighting/post effects (still orthographic)
-
-### Phase R4 — Advanced GPU composition
-
-* Multi-layer composition: base map + overlays + entities
-* Instanced sprites / texture arrays
-* Hybrid debug overlays and diagnostics visualization
+R1 is now considered **functionally complete**.
 
 ---
 
 ## NEXT STEPS (IMMEDIATE)
 
 1. **Lock the start tile source**
-   * Identify the authoritative entrance/start cell data (content meta / runtime meta / existing entrance marker)
-   * Implement `computeStartCell(...)` to use that data
-   * Document it here so future patterns / runtime parity can rely on it
+
+   * Identify the authoritative entrance/start cell data
+   * Implement `computeStartCell(...)`
+   * Document the source of truth here for future runtime parity
 
 2. **Finalize FeatureType → glyph mapping**
-   * Verify `FeatureType` enum values from `mazeGen.ts`
+
+   * Verify `FeatureType` enum values in `mazeGen.ts`
    * Ensure `buildCharMask` switch cases match real values
-   * Keep CP437 preset as the canonical “theme” layer
+   * Keep CP437 preset as the canonical default theme
 
-3. **Clamp camera to map bounds (optional but recommended)**
-   * Prevent camera from panning beyond map edges, especially on small maps
-   * Works cleanly with the existing lerp controller
+3. **Define per-layer color channels (theming groundwork)**
 
-4. **Render-pane click-to-focus**
+   * Introduce a small, explicit color palette per logical layer:
+
+     * base / floor
+     * wall edges
+     * player
+     * items / interactables
+     * hazards (e.g. danger layer tinted **red**)
+     * debug overlays
+   * Pass per-layer tint colors as uniforms (or a small palette texture)
+   * This is the **first step toward a full theming system**:
+
+     * alternate palettes
+     * biome-aware coloring
+     * accessibility / contrast modes
+
+4. **Clamp camera to map bounds (optional but recommended)**
+
+   * Prevent camera from panning beyond map edges
+   * Works cleanly with existing snap-lerp controller
+
+5. **Render-pane click-to-focus**
+
    * Raycast plane → cell
-   * Option A: sets player cell (teleport) for inspection
-   * Option B: sets focus cell only (camera) without moving player
+   * Option A: sets player cell (teleport for inspection)
+   * Option B: sets focus cell only (camera without moving player)
+ 
+6. Themes
+   * sketch the **layer → color uniform schema** explicitly, or
+   * add a tiny “theme object” to this doc that R2 can consume directly.
 
 ---
 
 ## NEXT STEPS (AFTER R1 CLOSE)
 
-5. **Runtime-driven visuals (R2 kickoff)**
-   * Doors open/closed from runtime
-   * Key collected state toggles glyph
-   * Blocks from runtime positions
-   * Hazard glyphs by `hazardType`
+6. **Runtime-driven visuals (R2 kickoff)**
 
-6. **Debug overlays**
+   * Doors open/closed from runtime
+   * Keys disappear when collected
+   * Blocks rendered from runtime positions
+   * Hazard glyphs driven by `hazardType`
+
+7. **Debug overlays**
+
    * Uniform toggles for viewing raw masks
-   * Optional overlay layer for region boundaries / distance fields
+   * Optional overlays for:
+
+     * regions
+     * distance fields
+     * reachability
 
 ---
 
 ## DEFINITIONS
 
-* **Cell**: integer grid tile coordinate (x,y)
+* **Cell**: integer grid tile coordinate `(x,y)`
 * **Atlas tile index**: integer ID selecting a tile within the atlas grid
 * **CP437**: Code Page 437 glyph set; 256 codepoints mapped 1:1 to tile indices
 * **R8 DataTexture**: unsigned byte texture encoding per-cell indices
 * **Focus cell**: the cell coordinate the camera is centered on in render pane
-* **Player cell**: a minimal inspection-only entity position used to drive camera and render overlay
-* **Snap-lerp camera**: camera smoothly approaches a target, then snaps/settles when within a pixel threshold
+* **Player cell**: inspection-only entity used to drive camera and render overlay
+* **Snap-lerp camera**: camera smoothly approaches a target, then snaps/settles within a pixel threshold
+
+---

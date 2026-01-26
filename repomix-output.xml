@@ -2790,260 +2790,6 @@ export function BatchResultsView(props: BatchResultsViewProps) {
 export default BatchResultsView;
 </file>
 
-<file path="src/rendering/codepage437Tiles.ts">
-// CP437 glyph picks for dungeon rendering
-// Atlas: 32 x 8 grid, 9x14 px per tile, indices 0–255
-
-export const CP437_TILES = {
-  // Base terrain
-  floor: 46, // '.' classic roguelike floor
-  wall: 219, // '█' solid wall
-
-  // Core interactables
-  doorClosed: 43, // '+'
-  doorOpen: 47, // '/'
-  key: 107, // 'k'
-  lever: 33, // '!'
-  plate: 94, // '^'
-  block: 79, // 'O'
-  chest: 36, // '$'
-
-  // Special / optional
-  monster: 77, // 'M'
-  secretDoor: 35, // '#'
-  hiddenPassage: 176, // '░'
-  hazard: 126, // '~'
-} as const;
-</file>
-
-<file path="src/rendering/RENDERING-CONTEXT.md">
----
-
-# RENDERING-CONTEXT.md
-
-## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
-
-**CONTEXT VERSION:** **2026-01-24 (rev A)**
-**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **BOOTSTRAP PLAN LOCKED; INTEGRATION PATCH IDENTIFIED (pane toggle + focus cell)**
-
----
-
-## GOAL
-
-Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
-
-The result is a first-pass “GPU view” of the dungeon that can later grow into:
-
-* animated sprites
-* richer shading / lighting
-* overlays and debug visualizations
-* true runtime-driven visual state
-
----
-
-## NON-GOALS (FOR NOW)
-
-* No new generation controls (Step 7 remains inspection-only).
-* No batch rendering mode.
-* No 3D meshes for rooms/walls; it is a **single-plane tileset renderer**.
-* No full sprite animation system yet (we will start with static tile indices).
-* No complicated scene graph; just one plane + camera + shader.
-
----
-
-## RENDER VIEW CONTRACT
-
-### Location
-
-The render component lives **inside `InspectionShell`** as an alternate view alongside the current content/canvas inspection view.
-
-### View Mode
-
-`InspectionShell` provides a local toggle:
-
-* `pane = "content"` → existing 2D canvas inspection (layer selection, tooltip, legend, click-to-interact runtime controls)
-* `pane = "render"` → new R3F render pipeline
-
-### Inputs
-
-Render view consumes the same single-seed data already present in Step 7:
-
-* `dungeon: BspDungeonOutputs`
-* `content: ContentOutputs`
-* `runtime: DungeonRuntimeState` (optional initially, but intended to drive door open/closed, key collected, block moved, etc.)
-
-### Focus / Camera
-
-Camera is orthographic and should remain centered over the plane at a cell coordinate:
-
-* Render view accepts `focusX, focusY` in **cell coordinates**
-* `InspectionShell` maintains a local `focusCell` state
-
-  * updated via hover/click in content pane
-  * used as the camera focus in render pane
-
----
-
-## DATA MODEL (TEXTURES)
-
-### Generator textures (existing)
-
-We will leverage generator `DataTexture`s already produced by the dungeon pipeline, such as:
-
-* `solid` (wall/floor)
-* content masks (`featureType`, `featureId`, `hazardType`, etc.) if needed
-
-### Character / tile-index texture (new)
-
-We introduce a dedicated R8 `DataTexture` (unsigned byte) that encodes **which tile index to draw** at each cell:
-
-* `charTex[x,y] = 0` → “none” (shader draws base floor/wall)
-* `charTex[x,y] = N` → draw tile index N from the atlas
-
-This is the first “render pipeline bridge” between procedural content masks/runtime state and GPU shading.
-
-### Tileset atlas (external image)
-
-The shader samples from a single atlas texture:
-
-* `atlasCols`, `atlasRows` specify its grid layout
-* nearest filtering only (pixel-art correctness)
-
----
-
-## SHADER RESPONSIBILITIES
-
-The fragment shader determines what tile to draw for each cell:
-
-1. Determine cell coordinates from UV (grid space)
-2. Sample `solid` at that cell to decide wall vs floor base
-3. Sample `charTex` to override base tile when non-zero
-4. Convert tile index → atlas UV
-5. Sample atlas texture and output color
-
-Filtering must be `NearestFilter` on all textures (atlas + data textures) to preserve crisp pixels.
-
----
-
-## UI INTEGRATION NOTES (SESSION FINDINGS)
-
-### What we discovered
-
-Your current `InspectionShell.tsx` attempts to conditionally show a render view but the condition is wrong:
-
-* the JSX was switching on `layer === "content"` instead of `pane`
-* the render branch referenced undefined variables (`bsp`, `hoverX`, `selectedX`, etc.)
-* the canvas was always rendered, meaning render view would be stacked awkwardly in the DOM
-
-### What we did (this session)
-
-We defined a correct integration approach:
-
-1. **Use `pane`** to switch between content and render views (not `layer`)
-2. Add a `focusCell` state `{x,y}` in `InspectionShell`
-3. Update `focusCell` on hover/click in content pane
-4. When `pane === "render"`:
-
-   * hide the 2D canvas entirely
-   * show `<DungeonRenderView bsp={dungeon} ... focusX={focusCell.x} focusY={focusCell.y} />`
-
-This keeps Step 7’s contract intact (inspection-only, local view state).
-
----
-
-## DEPENDENCIES
-
-To implement the R3F renderer:
-
-* `three`
-* `@react-three/fiber`
-
-(Optionally later: `@react-three/drei`)
-
----
-
-## NEXT STEPS (IMMEDIATE)
-
-1. **Land the `pane` toggle + focusCell wiring** in `InspectionShell.tsx`
-
-   * `pane` selector in UI
-   * conditional render: canvas vs `<DungeonRenderView />`
-   * no undefined variables
-
-2. **Add initial rendering module**
-
-   * `src/rendering/DungeonRenderView.tsx`
-   * `src/rendering/tileShader.ts`
-   * `src/rendering/tiles.ts` (build `charTex`)
-
-3. **First pixel milestone**
-
-   * render floor vs wall tiles from `solid`
-   * overlay a simple `charTex` mapping (door/key/lever/plate/block/hazard)
-   * verify crisp nearest sampling and correct orientation (atlas flip if needed)
-
----
-
-## NEXT STEPS (AFTER FIRST PIXEL)
-
-4. **Runtime-driven visuals**
-
-   * door tile varies open/closed based on `runtime.doors[doorId]`
-   * key disappears / changes if collected
-   * blocks drawn from runtime position (not just static mask)
-   * hazard overlays by `hazardType`
-
-5. **Selection + inspection parity**
-
-   * click-to-select in render pane (raycast plane → cell)
-   * sync selection/focus between panes
-   * optional hover tooltip overlay in render pane (UI layer, not shader)
-
-6. **Debug overlays**
-
-   * shader uniform toggles for viewing raw masks (solid/featureType/hazardType)
-   * visualize region boundaries, distance fields, danger/loot ramps
-
----
-
-## LARGER PLAN (RENDERING ROADMAP)
-
-### Phase R1 — Tileset plane renderer (this work)
-
-* single plane, orthographic camera
-* data-texture-driven tile selection
-* atlas sampling
-
-### Phase R2 — Runtime + interaction parity
-
-* render responds to runtime mutations (doors/levers/blocks/keys)
-* click/hover behavior matches canvas inspection semantics
-
-### Phase R3 — Sprites and animation
-
-* sprite layers (player/monsters)
-* per-entity animation frames / state
-* optional lighting/post effects
-
-### Phase R4 — Advanced GPU composition
-
-* multi-layer composition: base map + overlays + entities
-* instanced sprites or texture arrays
-* hybrid UI overlays for debugging / diagnostics
-
----
-
-## DEFINITIONS
-
-* **Cell**: integer grid tile coordinate (x,y)
-* **Atlas tile index**: integer ID selecting a tile within the atlas grid
-* **R8 DataTexture**: unsigned byte texture encoding per-cell indices
-* **Focus cell**: the cell coordinate the camera is centered on in render pane
-
----
-</file>
-
 <file path="src/rendering/tileShader.ts">
 // src/rendering/tileShader.ts
 export const tileVert = /* glsl */ `
@@ -5241,324 +4987,291 @@ export function SingleInspectView(props: SingleInspectViewProps) {
 export default SingleInspectView;
 </file>
 
-<file path="src/rendering/DungeonRenderView.tsx">
-// src/rendering/DungeonRenderView.tsx
-import React, { useMemo } from "react";
-import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-import { buildCharMask, maskToTileTextureR8 } from "./tiles";
-import { tileFrag, tileVert } from "./tileShader";
+<file path="src/rendering/codepage437Tiles.ts">
+// CP437 glyph picks for dungeon rendering
+// Atlas: 32 x 8 grid, 9x14 px per tile, indices 0–255
 
-type Props = {
-  bsp: BspDungeonOutputs;
-  content: ContentOutputs;
+export const CP437_TILES = {
+  // Base terrain
+  floor: 46, // '.' classic roguelike floor
+  wall: 219, // '█' solid wall
 
-  // camera focus in cell coords
-  focusX: number;
-  focusY: number;
+  // Core interactables
+  doorClosed: 43, // '+'
+  doorOpen: 47, // '/'
+  key: 107, // 'k'
+  lever: 33, // '!'
+  plate: 94, // '^'
+  block: 79, // 'O'
+  chest: 36, // '$'
 
-  // tileset atlas image URL (PNG) and layout
-  atlasUrl: string;
-  atlasCols: number;
-  atlasRows: number;
+  // Special / optional
+  monster: 77, // 'M'
+  secretDoor: 35, // '#'
+  hiddenPassage: 176, // '░'
+  hazard: 126, // '~'
 
-  // which tiles to use for floor/wall; everything else comes from char mask
-  wallTile: number;
-  floorTile: number;
-
-  // controls how many cells fit on screen; higher zoom = closer
-  zoom?: number;
-
-  // if your atlas origin is top-left, set true
-  flipAtlasY?: boolean;
-
-  doorTile?: number;
-  keyTile?: number;
-  leverTile?: number;
-  plateTile?: number;
-  blockTile?: number;
-  chestTile?: number;
-  monsterTile?: number;
-  secretDoorTile?: number;
-  hiddenPassageTile?: number;
-
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>;
-};
-
-function OrthoRig({
-  focusX,
-  focusY,
-  zoom = 32,
-}: {
-  focusX: number;
-  focusY: number;
-  zoom?: number;
-}) {
-  const { camera } = useThree();
-
-  useFrame(() => {
-    const cam = camera as THREE.OrthographicCamera;
-    cam.zoom = zoom;
-
-    // Center on the selected cell center
-    cam.position.set(focusX + 0.5, focusY + 0.5, 10);
-    cam.up.set(0, 1, 0);
-    cam.lookAt(focusX + 0.5, focusY + 0.5, 0);
-    cam.updateProjectionMatrix();
-  });
-
-  return null;
-}
-
-function PlaneScene(props: Omit<Props, "focusX" | "focusY" | "zoom">) {
-  const {
-    bsp,
-    content,
-    atlasUrl,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-  } = props;
-
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const atlas = useMemo(() => {
-    const loader = new THREE.TextureLoader();
-    const t = loader.load(atlasUrl);
-
-    // Pixel art correctness
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.generateMipmaps = false;
-    t.wrapS = THREE.ClampToEdgeWrapping;
-    t.wrapT = THREE.ClampToEdgeWrapping;
-
-    // Important: avoid implicit Y flipping if you are controlling it in-shader
-    t.flipY = false;
-
-    // This is an actual color texture (unlike masks)
-    t.colorSpace = THREE.SRGBColorSpace;
-
-    return t;
-  }, [atlasUrl]);
-
-  const charTex = useMemo(
-    () => {
-      const mask = buildCharMask(bsp, content, {
-        wallTile,
-        floorTile,
-        doorTile: props.doorTile,
-        keyTile: props.keyTile,
-        leverTile: props.leverTile,
-        plateTile: props.plateTile,
-        blockTile: props.blockTile,
-        chestTile: props.chestTile,
-        monsterTile: props.monsterTile,
-        secretDoorTile: props.secretDoorTile,
-        hiddenPassageTile: props.hiddenPassageTile,
-        hazardDefaultTile: props.hazardDefaultTile,
-        hazardTilesByType: props.hazardTilesByType,
-      });
-      return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
-    },
-    [
-      /* include the prop deps */
-    ],
-  );
-
-  const mat = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      vertexShader: tileVert,
-      fragmentShader: tileFrag,
-      uniforms: {
-        uSolid: { value: bsp.textures.solid },
-        uChar: { value: charTex },
-        uAtlas: { value: atlas },
-        uGridSize: { value: new THREE.Vector2(W, H) },
-        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
-        uWallTile: { value: wallTile },
-        uFloorTile: { value: floorTile },
-        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
-      },
-      depthTest: false,
-      depthWrite: false,
-      transparent: false,
-    });
-  }, [
-    bsp.textures.solid,
-    charTex,
-    atlas,
-    W,
-    H,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-  ]);
-
-  return (
-    <mesh position={[W / 2, H / 2, 0]}>
-      {/* 1 unit = 1 cell */}
-      <planeGeometry args={[W, H, 1, 1]} />
-      <primitive object={mat} attach="material" />
-    </mesh>
-  );
-}
-
-export default function DungeonRenderView(props: Props) {
-  const { bsp, content, focusX, focusY, zoom } = props;
-
-  return (
-    <div style={{ width: "100%", height: "100%" }}>
-      <Canvas
-        orthographic
-        camera={{
-          position: [0, 0, 10],
-          zoom: zoom ?? 32,
-          near: 0.1,
-          far: 1000,
-        }}
-        gl={{ antialias: false, alpha: false }}
-      >
-        <OrthoRig focusX={focusX} focusY={focusY} zoom={zoom} />
-        <PlaneScene {...props} />
-      </Canvas>
-    </div>
-  );
-}
+  player: 64, // '@'
+} as const;
 </file>
 
-<file path="src/rendering/tiles.ts">
-// src/rendering/tiles.ts
-import * as THREE from "three";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+<file path="src/rendering/RENDERING-CONTEXT.md">
+# RENDERING-CONTEXT.md
 
-export type TileBuildParams = {
-  wallTile: number;
-  floorTile: number;
+## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-  // FeatureType-specific tiles (adjust to your atlas)
-  monsterTile?: number; // FeatureType=1
-  chestTile?: number; // FeatureType=2
-  secretDoorTile?: number; // FeatureType=3
-  doorTile?: number; // FeatureType=4
-  keyTile?: number; // FeatureType=5
-  leverTile?: number; // FeatureType=6
-  plateTile?: number; // FeatureType=7
-  blockTile?: number; // FeatureType=8
-  hiddenPassageTile?: number; // FeatureType=9
+**CONTEXT VERSION:** **2026-01-25 (rev B)**  
+**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane  
+**STATUS:** **PHASE R1 FIRST-PIXEL ONLINE (CP437 ATLAS) + CAMERA SMOOTHING INTEGRATED; HOOKS-OUTSIDE-CANVAS BUG FIXED VIA WRAPPER/SCENE SPLIT**
 
-  // Hazards (FeatureType=10)
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
-};
+---
 
-export function buildCharMask(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  params: TileBuildParams,
-): Uint8Array {
-  const W = bsp.width;
-  const H = bsp.height;
+## GOAL
 
-  const out = new Uint8Array(W * H);
+Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
 
-  const solid = bsp.masks.solid; // 0 floor, 255 wall
-  const ft = content.masks.featureType; // FeatureType enum
-  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
+The result is a first-pass “GPU view” of the dungeon that can later grow into:
 
-  for (let i = 0; i < out.length; i++) {
-    // Let shader choose base wall/floor. Only override with a non-zero tile index.
-    if (solid[i] === 255) {
-      out[i] = 0;
-      continue;
-    }
+* animated sprites
+* richer shading / lighting
+* overlays and debug visualizations
+* true runtime-driven visual state
 
-    const featureType = ft[i] ?? 0;
+---
 
-    let t = 0;
-    switch (featureType) {
-      case 1: // monster (if used)
-        t = params.monsterTile ?? 0;
-        break;
-      case 2: // chest
-        t = params.chestTile ?? 0;
-        break;
-      case 3: // secret door
-        t = params.secretDoorTile ?? 0;
-        break;
-      case 4: // door
-        t = params.doorTile ?? 0;
-        break;
-      case 5: // key
-        t = params.keyTile ?? 0;
-        break;
-      case 6: // lever
-        t = params.leverTile ?? 0;
-        break;
-      case 7: // plate
-        t = params.plateTile ?? 0;
-        break;
-      case 8: // block
-        t = params.blockTile ?? 0;
-        break;
-      case 9: // hidden passage
-        t = params.hiddenPassageTile ?? 0;
-        break;
-      case 10: {
-        const hazardType = hz ? hz[i] : 0;
-        t =
-          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
-          params.hazardDefaultTile ??
-          0;
-        break;
-      }
-      default:
-        t = 0;
-    }
+## NON-GOALS (FOR NOW)
 
-    out[i] = t & 0xff;
-  }
+* No new generation controls (Step 7 remains inspection-only).
+* No batch rendering mode.
+* No 3D meshes for rooms/walls; it is a **single-plane tileset renderer**.
+* No full sprite animation system yet (we will start with static tile indices).
+* No complicated scene graph; just one plane + camera + shader.
 
-  return out;
-}
+---
 
-export function maskToTileTextureR8(
-  mask: Uint8Array,
-  W: number,
-  H: number,
-  name: string,
-): THREE.DataTexture {
-  const tex = new THREE.DataTexture(
-    mask,
-    W,
-    H,
-    THREE.RedFormat,
-    THREE.UnsignedByteType,
-  );
+## RENDER VIEW CONTRACT
 
-  tex.name = name;
-  tex.needsUpdate = true;
+### Location
 
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
+The render component lives **inside `InspectionShell`** as an alternate view alongside the current content/canvas inspection view.
 
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
+### View Mode
 
-  // Match your generator DataTextures
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.flipY = false;
+`InspectionShell` provides a local toggle:
 
-  return tex;
-}
+* `pane = "content"` → existing 2D canvas inspection (layer selection, tooltip, legend, click-to-interact runtime controls)
+* `pane = "render"` → new R3F render pipeline
+
+### Inputs
+
+Render view consumes the same single-seed data already present in Step 7:
+
+* `dungeon: BspDungeonOutputs`
+* `content: ContentOutputs`
+* `runtime: DungeonRuntimeState` (optional initially, but intended to drive door open/closed, key collected, block moved, etc.)
+
+### Player / Camera
+
+We now treat the render view as having a minimal “player” concept:
+
+* A local **player cell** `{x,y}` exists (Step 7 local inspection state).
+* Player is initialized to the **start tile** (entrance tile) when a new dungeon result is loaded.
+* The render camera is orthographic and targets the player:
+  * Render view accepts `focusX, focusY` in **cell coordinates**
+  * Initial camera focus = player position
+  * When player `{x,y}` changes, the camera receives a new target and smooths toward it.
+
+---
+
+## DATA MODEL (TEXTURES)
+
+### Generator textures (existing)
+
+We leverage generator `DataTexture`s already produced by the dungeon pipeline, such as:
+
+* `solid` (wall/floor)
+* content masks (`featureType`, `featureId`, `hazardType`, etc.) if needed
+
+### Character / tile-index texture (new)
+
+We introduce a dedicated R8 `DataTexture` (unsigned byte) that encodes **which tile index to draw** at each cell:
+
+* `charTex[x,y] = 0` → “none” (shader draws base floor/wall)
+* `charTex[x,y] = N` → draw tile index N from the atlas
+
+This is the first “render pipeline bridge” between procedural content masks/runtime state and GPU shading.
+
+### Tileset atlas (external image) — CP437
+
+We standardized on **Code Page 437** glyph atlas:
+
+* Atlas contains **256 tiles** at **9×14 px** each
+* Grid layout: **32 columns × 8 rows**
+* Tile indices map directly to CP437 codepoints (`0..255`)
+* Nearest filtering only (pixel-art correctness)
+
+---
+
+## SHADER RESPONSIBILITIES
+
+The fragment shader determines what tile to draw for each cell:
+
+1. Determine cell coordinates from UV (grid space)
+2. Sample `solid` at that cell to decide wall vs floor base
+3. Sample `charTex` to override base tile when non-zero
+4. Convert tile index → atlas UV
+5. Sample atlas texture and output color
+
+Filtering must be `NearestFilter` on all textures (atlas + data textures) to preserve crisp pixels.
+
+---
+
+## UI INTEGRATION NOTES (SESSION FINDINGS)
+
+### What we discovered (rev A carry-forward)
+
+`InspectionShell.tsx` initially attempted to show a render view but the condition was wrong:
+
+* switching on `layer === "content"` instead of `pane`
+* render branch referenced undefined variables (`bsp`, `hoverX`, `selectedX`, etc.)
+* canvas always rendered (stacking/DOM awkwardness)
+
+### What we did (this session — rev B)
+
+#### A) CP437 atlas integration
+
+We confirmed the atlas characteristics and updated the renderer plan accordingly:
+
+* `atlasCols = 32`, `atlasRows = 8`
+* Suggested baseline glyph picks for immediate readability:
+  * floor = `46` (`.`)
+  * wall  = `219` (`█`)
+  * player = `64` (`@`) (added as a render-only overlay)
+  * plus a small set of conventional roguelike glyphs for door/key/lever/plate/block/chest/hazard
+
+We introduced/used a “CP437 tile preset” concept so these mappings are explicit and easy to iterate.
+
+#### B) Player + start tile initialization
+
+We added a minimal player notion to Step 7 inspection:
+
+* player state `{x,y}` lives in `InspectionShell` (local inspection state only)
+* player is initialized to the **start tile** (entrance tile) when a new single-seed result is loaded
+* player is rendered as a high-priority overlay into `charTex` (player sits “on top” of other glyphs)
+
+Important: we removed the incorrect assumption that `dungeon.meta.entranceRoomId` exists in `BspDungeonOutputs`. The start tile must be sourced from existing entrance/start semantics (content/runtime metadata or existing entrance marker logic).
+
+#### C) Camera smoothing + hook correctness
+
+We implemented “snap-lerp” camera behavior:
+
+* on player `{x,y}` change → set `targetCell`
+* each frame → lerp camera world coords toward target
+* when within a few pixels → snap to exact position, clear target, call `onCameraSettled`
+
+During this, we hit an R3F rule violation:
+
+* `useThree()` / `useFrame()` were being called in `DungeonRenderView` outside `<Canvas>`, producing the runtime error:
+  * “hooks can only be used inside the Canvas component”
+
+Fix:
+
+* Refactor into:
+  * `DungeonRenderView` = wrapper parent that owns `<Canvas>` only (no R3F hooks)
+  * `DungeonRenderScene` (child) = all “fun stuff”: textures, material, plane, camera smoothing rig (all hooks live here)
+
+We also removed the conflicting per-frame “snap” rig (`OrthoRig`) that would fight the smoothing controller.
+
+---
+
+## IMPLEMENTATION PLAN STATUS
+
+### Phase R1 — Tileset plane renderer (in progress; first pixel achieved)
+
+**DONE / ONLINE**
+* Single plane + shader + atlas sampling
+* `charTex` R8 overlay path
+* CP437 atlas grid parameters (32×8) and conventional glyph picks
+* Player overlay into `charTex`
+* Camera smoothing (“snap-lerp”) running inside Canvas tree
+* Hook placement corrected via wrapper/scene split
+
+**REMAINING TO CLOSE R1**
+* Validate start tile source is authoritative (entrance tile semantics), and document where it comes from
+* Confirm orientation correctness (atlas flip flag vs UV space); lock `flipAtlasY` default after verification
+* Confirm featureType → glyph mapping aligns with actual `FeatureType` enum values in `mazeGen.ts` (no placeholders)
+
+### Phase R2 — Runtime + interaction parity (next)
+
+* Drive door glyph open/closed from `runtime`
+* Key disappears when collected
+* Blocks rendered from runtime positions
+* Hazards reflect hazardType overlays
+* Render-pane selection parity:
+  * raycast plane → cell
+  * hover tooltip overlay (UI, not shader)
+  * selection/focus sync with content pane
+
+### Phase R3 — Sprites and animation
+
+* Sprite layers (player/monsters)
+* Animated frames / state
+* Optional lighting/post effects (still orthographic)
+
+### Phase R4 — Advanced GPU composition
+
+* Multi-layer composition: base map + overlays + entities
+* Instanced sprites / texture arrays
+* Hybrid debug overlays and diagnostics visualization
+
+---
+
+## NEXT STEPS (IMMEDIATE)
+
+1. **Lock the start tile source**
+   * Identify the authoritative entrance/start cell data (content meta / runtime meta / existing entrance marker)
+   * Implement `computeStartCell(...)` to use that data
+   * Document it here so future patterns / runtime parity can rely on it
+
+2. **Finalize FeatureType → glyph mapping**
+   * Verify `FeatureType` enum values from `mazeGen.ts`
+   * Ensure `buildCharMask` switch cases match real values
+   * Keep CP437 preset as the canonical “theme” layer
+
+3. **Clamp camera to map bounds (optional but recommended)**
+   * Prevent camera from panning beyond map edges, especially on small maps
+   * Works cleanly with the existing lerp controller
+
+4. **Render-pane click-to-focus**
+   * Raycast plane → cell
+   * Option A: sets player cell (teleport) for inspection
+   * Option B: sets focus cell only (camera) without moving player
+
+---
+
+## NEXT STEPS (AFTER R1 CLOSE)
+
+5. **Runtime-driven visuals (R2 kickoff)**
+   * Doors open/closed from runtime
+   * Key collected state toggles glyph
+   * Blocks from runtime positions
+   * Hazard glyphs by `hazardType`
+
+6. **Debug overlays**
+   * Uniform toggles for viewing raw masks
+   * Optional overlay layer for region boundaries / distance fields
+
+---
+
+## DEFINITIONS
+
+* **Cell**: integer grid tile coordinate (x,y)
+* **Atlas tile index**: integer ID selecting a tile within the atlas grid
+* **CP437**: Code Page 437 glyph set; 256 codepoints mapped 1:1 to tile indices
+* **R8 DataTexture**: unsigned byte texture encoding per-cell indices
+* **Focus cell**: the cell coordinate the camera is centered on in render pane
+* **Player cell**: a minimal inspection-only entity position used to drive camera and render overlay
+* **Snap-lerp camera**: camera smoothly approaches a target, then snaps/settles when within a pixel threshold
 </file>
 
 <file path="src/wizard/wizardReducer.ts">
@@ -6487,6 +6200,508 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
   stats.tilesUnique = seen.size;
 
   return { candidates: out, stats };
+}
+</file>
+
+<file path="src/rendering/DungeonRenderView.tsx">
+// src/rendering/DungeonRenderView.tsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import { buildCharMask, maskToTileTextureR8 } from "./tiles";
+import { tileFrag, tileVert } from "./tileShader";
+
+type Props = {
+  bsp: BspDungeonOutputs;
+  content: ContentOutputs;
+
+  // tileset atlas image URL (PNG) and layout
+  atlasUrl: string;
+  atlasCols: number;
+  atlasRows: number;
+
+  // which tiles to use for floor/wall; everything else comes from char mask
+  wallTile: number;
+  floorTile: number;
+
+  // if your atlas origin is top-left, set true
+  flipAtlasY?: boolean;
+
+  doorTile?: number;
+  keyTile?: number;
+  leverTile?: number;
+  plateTile?: number;
+  blockTile?: number;
+  chestTile?: number;
+  monsterTile?: number;
+  secretDoorTile?: number;
+  hiddenPassageTile?: number;
+
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>;
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+
+  // camera target (you’re using player coords for this)
+  focusX: number;
+  focusY: number;
+
+  // pixels per cell (used for “few pixels” stop)
+  zoom?: number;
+
+  onCameraSettled?: (cell: { x: number; y: number }) => void;
+};
+
+// -------------------------------
+// Canvas-internal scene
+// -------------------------------
+
+function cellToWorldPx(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pxPerCell: number,
+) {
+  // World units = pixels in our plane setup:
+  // plane width = W * pxPerCell, height = H * pxPerCell, centered at (0,0).
+  const worldX = (x + 0.5 - w / 2) * pxPerCell;
+  const worldY = (h / 2 - (y + 0.5)) * pxPerCell; // y-down -> world up
+  return { worldX, worldY };
+}
+
+function DungeonRenderScene(props: Props) {
+  const {
+    bsp,
+    content,
+    atlasUrl,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+
+    focusX,
+    focusY,
+    zoom,
+
+    onCameraSettled,
+  } = props;
+
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const pxPerCell = zoom ?? 32;
+
+  // --- Load atlas texture (inside Canvas tree = safe) ---
+  const atlas = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    const t = loader.load(atlasUrl);
+
+    // Pixel art correctness
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+
+    // IMPORTANT: do not double-flip; shader handles optional flip
+    t.flipY = false;
+
+    // Atlas is color
+    t.colorSpace = THREE.SRGBColorSpace;
+
+    return t;
+  }, [atlasUrl]);
+
+  // --- Build char texture (R8) ---
+  const charTex = useMemo(() => {
+    const mask = buildCharMask(bsp, content, {
+      wallTile,
+      floorTile,
+
+      doorTile: props.doorTile,
+      keyTile: props.keyTile,
+      leverTile: props.leverTile,
+      plateTile: props.plateTile,
+      blockTile: props.blockTile,
+      chestTile: props.chestTile,
+      monsterTile: props.monsterTile,
+      secretDoorTile: props.secretDoorTile,
+      hiddenPassageTile: props.hiddenPassageTile,
+
+      hazardDefaultTile: props.hazardDefaultTile,
+      hazardTilesByType: props.hazardTilesByType,
+
+      playerX: props.playerX,
+      playerY: props.playerY,
+      playerTile: props.playerTile,
+    });
+
+    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
+  }, [
+    bsp,
+    content,
+    W,
+    H,
+    wallTile,
+    floorTile,
+    props.doorTile,
+    props.keyTile,
+    props.leverTile,
+    props.plateTile,
+    props.blockTile,
+    props.chestTile,
+    props.monsterTile,
+    props.secretDoorTile,
+    props.hiddenPassageTile,
+    props.hazardDefaultTile,
+    props.hazardTilesByType,
+    props.playerX,
+    props.playerY,
+    props.playerTile,
+  ]);
+
+  // --- Shader material ---
+  const mat = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      vertexShader: tileVert,
+      fragmentShader: tileFrag,
+      uniforms: {
+        uSolid: { value: bsp.textures.solid },
+        uChar: { value: charTex },
+        uAtlas: { value: atlas },
+        uGridSize: { value: new THREE.Vector2(W, H) },
+        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
+        uWallTile: { value: wallTile },
+        uFloorTile: { value: floorTile },
+        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
+      },
+      depthTest: false,
+      depthWrite: false,
+      transparent: false,
+    });
+  }, [
+    bsp.textures.solid,
+    charTex,
+    atlas,
+    W,
+    H,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+  ]);
+
+  // -------------------------------
+  // Smooth camera rig (inside Canvas)
+  // -------------------------------
+
+  const { camera } = useThree();
+
+  const [targetCell, setTargetCell] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+
+  // camera current + target positions in world pixels
+  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
+  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
+
+  // Track last focus to detect changes
+  const lastFocus = useRef<{ x: number; y: number } | null>(null);
+
+  // Initialize camera when map size / zoom changes
+  useEffect(() => {
+    const { worldX, worldY } = cellToWorldPx(focusX, focusY, W, H, pxPerCell);
+    camWorld.current.set(worldX, worldY, 10);
+    targetWorld.current.set(worldX, worldY, 10);
+
+    // place camera immediately
+    camera.position.set(worldX, worldY, 10);
+
+    // orthographic zoom: for us, “zoom” is pixels-per-cell, but OrthographicCamera.zoom
+    // is an abstract scale. We’ll keep it at 1 and work in pixel-world units.
+    // (If you prefer using camera.zoom, we can switch, but this is simplest.)
+    const cam = camera as THREE.OrthographicCamera;
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+
+    setTargetCell(null);
+    lastFocus.current = { x: focusX, y: focusY };
+  }, [W, H, pxPerCell, focusX, focusY, camera]);
+
+  // When focus changes, set a new target cell
+  useEffect(() => {
+    const prev = lastFocus.current;
+    if (!prev || prev.x !== focusX || prev.y !== focusY) {
+      setTargetCell({ x: focusX, y: focusY });
+      lastFocus.current = { x: focusX, y: focusY };
+    }
+  }, [focusX, focusY]);
+
+  useFrame((_state, delta) => {
+    const cam = camera as THREE.OrthographicCamera;
+
+    if (!targetCell) {
+      // no active animation; keep camera at current
+      cam.position.x = camWorld.current.x;
+      cam.position.y = camWorld.current.y;
+      cam.updateProjectionMatrix();
+      return;
+    }
+
+    const { worldX, worldY } = cellToWorldPx(
+      targetCell.x,
+      targetCell.y,
+      W,
+      H,
+      pxPerCell,
+    );
+    targetWorld.current.set(worldX, worldY, 10);
+
+    // frame-rate independent smoothing
+    const speed = 14; // 10-20 range
+    const t = 1 - Math.exp(-speed * delta);
+
+    camWorld.current.lerp(targetWorld.current, t);
+
+    cam.position.x = camWorld.current.x;
+    cam.position.y = camWorld.current.y;
+    cam.updateProjectionMatrix();
+
+    // stop within a few pixels
+    const dx = camWorld.current.x - targetWorld.current.x;
+    const dy = camWorld.current.y - targetWorld.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    const stopPx = 3;
+    if (dist <= stopPx) {
+      camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
+      cam.position.x = camWorld.current.x;
+      cam.position.y = camWorld.current.y;
+      cam.updateProjectionMatrix();
+
+      onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
+      setTargetCell(null);
+    }
+  });
+
+  // -------------------------------
+  // Draw the plane (pixel-world units)
+  // -------------------------------
+  return (
+    <mesh position={[0, 0, 0]}>
+      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
+      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
+      <primitive object={mat} attach="material" />
+    </mesh>
+  );
+}
+
+// -------------------------------
+// Wrapper (NO R3F hooks here)
+// -------------------------------
+
+export default function DungeonRenderView(props: Props) {
+  const pxPerCell = props.zoom ?? 32;
+
+  return (
+    <div style={{ width: "100%", height: "100%" }}>
+      <Canvas
+        orthographic
+        // camera parameters here are just defaults; the rig positions it
+        camera={{
+          position: [0, 0, 10],
+          zoom: 1,
+          near: 0.1,
+          far: 1000,
+        }}
+        gl={{ antialias: false, alpha: false }}
+      >
+        {/* Set a fixed ortho frustum in pixel-world units */}
+        <OrthoFrustum pxPerCell={pxPerCell} />
+        <DungeonRenderScene {...props} />
+      </Canvas>
+    </div>
+  );
+}
+
+// Keeps ortho frustum stable and sized in “pixel world units”
+function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    const cam = camera as THREE.OrthographicCamera;
+
+    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
+    const halfW = size.width / 2;
+    const halfH = size.height / 2;
+
+    cam.left = -halfW;
+    cam.right = halfW;
+    cam.top = halfH;
+    cam.bottom = -halfH;
+
+    cam.near = 0.1;
+    cam.far = 1000;
+
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+  }, [camera, size.width, size.height, pxPerCell]);
+
+  return null;
+}
+</file>
+
+<file path="src/rendering/tiles.ts">
+// src/rendering/tiles.ts
+import * as THREE from "three";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+
+export type TileBuildParams = {
+  wallTile: number;
+  floorTile: number;
+
+  // FeatureType-specific tiles (adjust to your atlas)
+  monsterTile?: number; // FeatureType=1
+  chestTile?: number; // FeatureType=2
+  secretDoorTile?: number; // FeatureType=3
+  doorTile?: number; // FeatureType=4
+  keyTile?: number; // FeatureType=5
+  leverTile?: number; // FeatureType=6
+  plateTile?: number; // FeatureType=7
+  blockTile?: number; // FeatureType=8
+  hiddenPassageTile?: number; // FeatureType=9
+
+  // Hazards (FeatureType=10)
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+};
+
+export function buildCharMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: TileBuildParams,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType; // FeatureType enum
+  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
+
+  for (let i = 0; i < out.length; i++) {
+    // Let shader choose base wall/floor. Only override with a non-zero tile index.
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    let t = 0;
+    switch (featureType) {
+      case 1: // monster (if used)
+        t = params.monsterTile ?? 0;
+        break;
+      case 2: // chest
+        t = params.chestTile ?? 0;
+        break;
+      case 3: // secret door
+        t = params.secretDoorTile ?? 0;
+        break;
+      case 4: // door
+        t = params.doorTile ?? 0;
+        break;
+      case 5: // key
+        t = params.keyTile ?? 0;
+        break;
+      case 6: // lever
+        t = params.leverTile ?? 0;
+        break;
+      case 7: // plate
+        t = params.plateTile ?? 0;
+        break;
+      case 8: // block
+        t = params.blockTile ?? 0;
+        break;
+      case 9: // hidden passage
+        t = params.hiddenPassageTile ?? 0;
+        break;
+      case 10: {
+        const hazardType = hz ? hz[i] : 0;
+        t =
+          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
+          params.hazardDefaultTile ??
+          0;
+        break;
+      }
+      default:
+        t = 0;
+    }
+
+    out[i] = t & 0xff;
+  }
+
+  // --- Player overlay (highest priority) ------------------------------------
+  if (
+    params.playerTile !== undefined &&
+    params.playerX !== undefined &&
+    params.playerY !== undefined
+  ) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      // only place player on non-wall cells
+      if (solid[pi] !== 255) {
+        out[pi] = params.playerTile & 0xff;
+      }
+    }
+  }
+
+  return out;
+}
+
+export function maskToTileTextureR8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Match your generator DataTextures
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  return tex;
 }
 </file>
 
@@ -8137,6 +8352,7 @@ export function evaluateCircuits(
 /* src/styles.css */
 
 :root {
+    overflow: hidden;
     --bg: #0b0f17;
     --panel: #0f1624;
     --panel2: #121b2b;
@@ -8170,6 +8386,7 @@ export function evaluateCircuits(
 
 html,
 body {
+    overflow: hidden;
     margin: 0;
     padding: 0;
     height: 100%;
@@ -8200,9 +8417,9 @@ input {
     display: flex;
     grid-template-columns: 420px 1fr;
     gap: 14px;
-    padding: 14px;
+    padding: 0;
     overflow-y: auto;
-    max-height: 90vh;
+    max-height: 98vh;
 }
 
 /* Wizard + Execution: single centered large panel */
@@ -8578,6 +8795,9 @@ details[open] > .maze-summary {
 .maze-canvas-wrap {
     position: relative;
     display: inline-block; /* shrink-wrap to canvas */
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
 }
 
 /* Canvas panel: IMPORTANT: padding must match your JS (-12px) math */
@@ -8878,6 +9098,73 @@ function featureTypeName(ft: number) {
     default:
       return `feature(${ft})`;
   }
+}
+
+function computeStartCellFromEntranceRoom(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+): {
+  x: number;
+  y: number;
+} {
+  const w = dungeon.width;
+  const h = dungeon.height;
+
+  const entranceRoomId = content.meta.entranceRoomId;
+  const regionId = dungeon.masks.regionId;
+  const solid = dungeon.masks.solid;
+
+  // fallback if something is missing
+  let fallback = { x: Math.floor(w / 2), y: Math.floor(h / 2) };
+
+  if (!entranceRoomId || entranceRoomId <= 0) return fallback;
+
+  let eMinX = 1e9,
+    eMinY = 1e9,
+    eMaxX = -1,
+    eMaxY = -1;
+  let found = false;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (regionId[i] === entranceRoomId) {
+        found = true;
+        if (x < eMinX) eMinX = x;
+        if (y < eMinY) eMinY = y;
+        if (x > eMaxX) eMaxX = x;
+        if (y > eMaxY) eMaxY = y;
+      }
+    }
+  }
+
+  if (!found) return fallback;
+
+  // center of entrance bounds
+  let cx = Math.floor((eMinX + eMaxX) / 2);
+  let cy = Math.floor((eMinY + eMaxY) / 2);
+  let ci = cy * w + cx;
+
+  // ensure floor
+  if (ci >= 0 && ci < solid.length && solid[ci] === 0) {
+    return { x: cx, y: cy };
+  }
+
+  // If center isn't floor, search nearby (small spiral-ish scan)
+  const R = 8;
+  for (let r = 1; r <= R; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x < 0 || x >= w || y < 0 || y >= h) continue;
+        const i = y * w + x;
+        if (solid[i] === 0) return { x, y };
+      }
+    }
+  }
+
+  return fallback;
 }
 
 // Extract ids from "anything" that might be a circuit node/edge descriptor.
@@ -9360,6 +9647,20 @@ export function InspectionShell(props: InspectionShellProps) {
     featureType: 0,
     featureId: 0,
   });
+
+  const startCell = useMemo(
+    () => computeStartCellFromEntranceRoom(dungeon, content),
+    [dungeon, content],
+  );
+
+  const [player, setPlayer] = useState<{ x: number; y: number }>(
+    () => startCell,
+  );
+
+  useEffect(() => {
+    setPlayer(startCell);
+    setFocusCell(startCell); // keep camera + focus aligned initially
+  }, [startCell.x, startCell.y]);
 
   // Apply runtime mutation -> derive plates -> evaluate circuits (same semantics as old App)
   const applyRuntime = React.useCallback((next: DungeonRuntimeState) => {
@@ -10092,6 +10393,9 @@ export function InspectionShell(props: InspectionShellProps) {
               content={content}
               focusX={focusCell.x}
               focusY={focusCell.y} // Base tiles
+              playerX={player.x}
+              playerY={player.y}
+              playerTile={CP437_TILES.player}
               floorTile={CP437_TILES.floor}
               wallTile={CP437_TILES.wall}
               // Feature tiles (FeatureType → glyph)

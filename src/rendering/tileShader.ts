@@ -7,6 +7,7 @@ void main() {
 }
 `;
 
+// src/rendering/tileShader.ts
 export const tileFrag = /* glsl */ `
 precision highp float;
 
@@ -20,31 +21,71 @@ uniform float uWallTile;    // tile index
 uniform float uFloorTile;   // tile index
 uniform float uFlipAtlasY;  // 0 or 1
 
+uniform float uFlipGridX;   // 0 or 1
+uniform float uFlipGridY;   // 0 or 1
+
 varying vec2 vUv;
 
 float sampleR8(sampler2D tex, vec2 uv) {
   return texture2D(tex, uv).r; // 0..1
 }
 
+float isWallAtCell(vec2 cell) {
+  vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
+  vec2 uv = (c + vec2(0.5)) / uGridSize;
+  float s = sampleR8(uSolid, uv);
+  return step(0.5, s); // 1 if wall, 0 if floor
+}
+
 void main() {
+  // Apply grid flips BEFORE computing cell coords
+  vec2 uvGrid = vUv;
+  if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
+  if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
+
   // Which cell are we in?
-  vec2 gridUv = vUv * uGridSize;
+  vec2 gridUv = uvGrid * uGridSize;
   vec2 cell = floor(gridUv);
   vec2 local = fract(gridUv);
 
-  // Sample at cell center in texture space
+  // Center UV for sampling
   vec2 texUv = (cell + vec2(0.5)) / uGridSize;
 
-  float solid = sampleR8(uSolid, texUv); // 0..1
-  float chN  = sampleR8(uChar, texUv);   // 0..1
+  // Current cell wall/floor
+  float curWall = step(0.5, sampleR8(uSolid, texUv));
 
-  float isWall = step(0.5, solid);
+  // 8-neighbor walls (clamped)
+  float wL  = isWallAtCell(cell + vec2(-1.0,  0.0));
+  float wR  = isWallAtCell(cell + vec2( 1.0,  0.0));
+  float wU  = isWallAtCell(cell + vec2( 0.0, -1.0));
+  float wD  = isWallAtCell(cell + vec2( 0.0,  1.0));
 
-  // Decode R8 -> 0..255 tile index
-  float ch = floor(chN * 255.0 + 0.5);
+  float wUL = isWallAtCell(cell + vec2(-1.0, -1.0));
+  float wUR = isWallAtCell(cell + vec2( 1.0, -1.0));
+  float wDL = isWallAtCell(cell + vec2(-1.0,  1.0));
+  float wDR = isWallAtCell(cell + vec2( 1.0,  1.0));
 
-  float tile = mix(uFloorTile, uWallTile, isWall);
-  tile = mix(tile, ch, step(0.5, ch)); // if ch >= 1 use ch
+  // Exterior/edge wall if current is wall AND any neighbor is floor
+  float allNeighborsWall = wL * wR * wU * wD * wUL * wUR * wDL * wDR;
+  float hasFloorNeighbor = 1.0 - allNeighborsWall;
+  float isEdgeWall = curWall * hasFloorNeighbor;
+
+  // Char overlay (still allowed on top of blank walls)
+  float chN = sampleR8(uChar, texUv);
+  float ch  = floor(chN * 255.0 + 0.5);
+  float hasChar = step(0.5, ch);
+
+  // Interior wall and no char => blank (transparent)
+  if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+    return;
+  }
+
+  // Base tile: floor for floor cells; wall tile only for edge walls
+  float baseTile = mix(uFloorTile, uWallTile, isEdgeWall);
+
+  // Char overrides base when non-zero
+  float tile = mix(baseTile, ch, hasChar);
 
   float cols = uAtlasGrid.x;
   float rows = uAtlasGrid.y;
@@ -52,14 +93,9 @@ void main() {
   float tx = mod(tile, cols);
   float ty = floor(tile / cols);
 
-  // atlas UV inside the tile
   vec2 atlasUv = (vec2(tx, ty) + local) / vec2(cols, rows);
+  if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
 
-  if (uFlipAtlasY > 0.5) {
-    atlasUv.y = 1.0 - atlasUv.y;
-  }
-
-  vec4 c = texture2D(uAtlas, atlasUv);
-  gl_FragColor = c;
+  gl_FragColor = texture2D(uAtlas, atlasUv);
 }
 `;
