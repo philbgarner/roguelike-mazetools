@@ -13,6 +13,7 @@ precision highp float;
 
 uniform sampler2D uSolid;   // R8 normalized
 uniform sampler2D uChar;    // R8 normalized
+uniform sampler2D uTint;    // R8 normalized (tint channel id)
 uniform sampler2D uAtlas;   // RGBA tileset
 
 uniform vec2 uGridSize;     // (W, H)
@@ -23,6 +24,12 @@ uniform float uFlipAtlasY;  // 0 or 1
 
 uniform float uFlipGridX;   // 0 or 1
 uniform float uFlipGridY;   // 0 or 1
+
+uniform vec4 uFloorColor;
+uniform vec4 uWallColor;
+uniform vec4 uPlayerColor;
+uniform vec4 uItemColor;
+uniform vec4 uHazardColor;
 
 varying vec2 vUv;
 
@@ -87,6 +94,15 @@ void main() {
   // Char overrides base when non-zero
   float tile = mix(baseTile, ch, hasChar);
 
+  // Tint selection (0=base, 1=player, 2=item, 3=hazard)
+  float tintN = sampleR8(uTint, texUv);
+  float tintId = floor(tintN * 255.0 + 0.5);
+  vec4 baseTint = mix(uFloorColor, uWallColor, isEdgeWall);
+  vec4 tint = baseTint;
+  if (tintId > 0.5 && tintId < 1.5) tint = uPlayerColor;
+  else if (tintId > 1.5 && tintId < 2.5) tint = uItemColor;
+  else if (tintId > 2.5 && tintId < 3.5) tint = uHazardColor;
+
   float cols = uAtlasGrid.x;
   float rows = uAtlasGrid.y;
 
@@ -96,6 +112,8 @@ void main() {
   vec2 atlasUv = (vec2(tx, ty) + local) / vec2(cols, rows);
   if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
 
-  gl_FragColor = texture2D(uAtlas, atlasUv);
+  vec4 c = texture2D(uAtlas, atlasUv);
+  c.rgb *= tint.rgb;
+  gl_FragColor = c;
 }
 `;

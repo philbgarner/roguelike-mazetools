@@ -6,8 +6,8 @@ export type Cell = { x: number; y: number };
 function isFloor(dungeon: BspDungeonOutputs, x: number, y: number) {
   const w = dungeon.width;
   const i = y * w + x;
-  // repomix comment: solid is 0 floor, 255 wall
-  return dungeon.masks.solid[i] === 0;
+  // Contract: floor predicate is "not wall"
+  return dungeon.masks.solid[i] !== 255;
 }
 
 export function computeStartCell(

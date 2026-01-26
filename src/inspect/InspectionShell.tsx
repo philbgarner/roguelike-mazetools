@@ -632,11 +632,31 @@ export function InspectionShell(props: InspectionShellProps) {
   });
 
   const startCell = useMemo(() => {
-    return result.startCell0 ?? computeStartCell(dungeon, content);
-  }, [result.startCell0, dungeon, content]);
+    return computeStartCell(dungeon, content);
+  }, [dungeon, content]);
+
+  // -------------------------
+  // Render-pane local state
+  // -------------------------
+
+  // "player" is an overlay-only marker (does NOT drive camera focus unless you choose)
+  const [player, setPlayer] = useState<{ x: number; y: number }>(() => ({
+    x: startCell.x,
+    y: startCell.y,
+  }));
+
+  // "focus" is the camera target; click-to-focus updates this
+  const [focus, setFocus] = useState<{ x: number; y: number }>(() => ({
+    x: startCell.x,
+    y: startCell.y,
+  }));
 
   useEffect(() => {
-    setPlayer(startCell);
+    // When a new dungeon loads (new startCell), reset both:
+    // - player overlay snaps to start
+    // - camera focus also snaps to start
+    setPlayer({ x: startCell.x, y: startCell.y });
+    setFocus({ x: startCell.x, y: startCell.y });
   }, [startCell.x, startCell.y]);
 
   // Apply runtime mutation -> derive plates -> evaluate circuits (same semantics as old App)
@@ -1363,8 +1383,9 @@ export function InspectionShell(props: InspectionShellProps) {
             <DungeonRenderView
               bsp={dungeon}
               content={content}
-              focusX={player.x}
-              focusY={player.y} // Base tiles
+              focusX={focus.x}
+              focusY={focus.y}
+              onCellFocus={(cell) => setFocus(cell)}
               playerX={player.x}
               playerY={player.y}
               playerTile={CP437_TILES.player}

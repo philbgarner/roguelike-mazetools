@@ -22,10 +22,6 @@ type Props = {
   // camera target (typically player coords)
   focusX: number;
   focusY: number;
-
-  // CLICK -> set focus target (camera only)
-  onCellFocus?: (cell: { x: number; y: number }) => void;
-
   // if your atlas origin is top-left, set true (shader handles flip)
   flipAtlasY?: boolean;
 
@@ -253,7 +249,6 @@ function DungeonRenderScene(props: Props) {
   // -------------------------------
 
   const { camera } = useThree();
-  const { size } = useThree();
 
   // camera current + target positions in world pixels
   const camWorld = useRef(new THREE.Vector3(0, 0, 10));
@@ -278,33 +273,12 @@ function DungeonRenderScene(props: Props) {
       pxPerCell,
       flipGridX,
     );
-    const cam = camera as THREE.OrthographicCamera;
 
     camWorld.current.set(worldX, worldY, 10);
     targetWorld.current.set(worldX, worldY, 10);
-
-    // Clamp target to map bounds (account for viewport size in world px)
-    const halfViewW = (size.width * 0.5) / cam.zoom;
-    const halfViewH = (size.height * 0.5) / cam.zoom;
-    const halfMapW = W * pxPerCell * 0.5;
-    const halfMapH = H * pxPerCell * 0.5;
-
-    const minX = -halfMapW + halfViewW;
-    const maxX = halfMapW - halfViewW;
-    const minY = -halfMapH + halfViewH;
-    const maxY = halfMapH - halfViewH;
-
-    targetWorld.current.x = Math.min(
-      maxX,
-      Math.max(minX, targetWorld.current.x),
-    );
-    targetWorld.current.y = Math.min(
-      maxY,
-      Math.max(minY, targetWorld.current.y),
-    );
-
     camera.position.set(worldX, worldY, 10);
 
+    const cam = camera as THREE.OrthographicCamera;
     cam.zoom = 1;
     cam.updateProjectionMatrix();
 
@@ -314,17 +288,7 @@ function DungeonRenderScene(props: Props) {
     // clear any in-flight chase (map/zoom swap)
     targetCellRef.current = null;
     settlingRef.current = null;
-  }, [
-    W,
-    H,
-    pxPerCell,
-    camera,
-    flipGridX,
-    focusX,
-    focusY,
-    size.width,
-    size.height,
-  ]);
+  }, [W, H, pxPerCell, camera, flipGridX]);
 
   // When focus changes, set a new target cell (without spam)
   useEffect(() => {
@@ -409,35 +373,7 @@ function DungeonRenderScene(props: Props) {
   // Draw the plane (pixel-world units)
   // -------------------------------
   return (
-    <mesh
-      position={[0, 0, 0]}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        // uv is 0..1 across the plane
-        const uv = e.uv;
-        if (!uv) return;
-
-        // Apply grid flips same as shader.
-        // We do this so click mapping matches what the user sees.
-        let u = uv.x;
-        let v = uv.y;
-
-        if (flipGridX) u = 1 - u;
-        if (flipGridY) v = 1 - v;
-
-        // numeric safety
-        u = Math.min(0.999999, Math.max(0, u));
-        v = Math.min(0.999999, Math.max(0, v));
-
-        const cx = Math.floor(u * W);
-        const cy = Math.floor(v * H);
-
-        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
-
-        // Camera-only: set focus target, do NOT move player.
-        props.onCellFocus?.({ x: cx, y: cy });
-      }}
-    >
+    <mesh position={[0, 0, 0]}>
       {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
       <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
       <primitive object={mat} attach="material" />

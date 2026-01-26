@@ -1,6 +1,7 @@
 // src/rendering/tiles.ts
 import * as THREE from "three";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+// FeatureType values are defined in mazeGen.ts as literal union 0..10.
 
 export type TileBuildParams = {
   wallTile: number;
@@ -25,6 +26,65 @@ export type TileBuildParams = {
   playerY?: number;
   playerTile?: number;
 };
+
+// 0=base, 1=player, 2=item/interactable, 3=hazard
+export function buildTintMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: Pick<TileBuildParams, "playerX" | "playerY">,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType;
+
+  for (let i = 0; i < out.length; i++) {
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    // hazards get danger tint
+    if (featureType === 10) {
+      out[i] = 3;
+      continue;
+    }
+
+    // interactables/items (tinted consistently for now)
+    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
+    if (
+      featureType === 1 ||
+      featureType === 2 ||
+      featureType === 4 ||
+      featureType === 5 ||
+      featureType === 6 ||
+      featureType === 7 ||
+      featureType === 8 ||
+      featureType === 9
+    ) {
+      out[i] = 2;
+      continue;
+    }
+
+    out[i] = 0;
+  }
+
+  // Player wins
+  if (params.playerX !== undefined && params.playerY !== undefined) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      if (solid[pi] !== 255) out[pi] = 1;
+    }
+  }
+
+  return out;
+}
 
 export function buildCharMask(
   bsp: BspDungeonOutputs,

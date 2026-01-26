@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
+import { buildCharMask, maskToTileTextureR8 } from "./tiles";
 import { tileFrag, tileVert } from "./tileShader";
 
 type Props = {
@@ -18,13 +18,6 @@ type Props = {
   // which tiles to use for floor/wall; everything else comes from char mask
   wallTile: number;
   floorTile: number;
-
-  // camera target (typically player coords)
-  focusX: number;
-  focusY: number;
-
-  // CLICK -> set focus target (camera only)
-  onCellFocus?: (cell: { x: number; y: number }) => void;
 
   // if your atlas origin is top-left, set true (shader handles flip)
   flipAtlasY?: boolean;
@@ -46,12 +39,9 @@ type Props = {
   playerY?: number;
   playerTile?: number;
 
-  // R2 groundwork: tint colors (multiply atlas RGB)
-  floorColor?: [number, number, number, number]; // rgba 0..1
-  wallColor?: [number, number, number, number];
-  playerColor?: [number, number, number, number];
-  itemColor?: [number, number, number, number];
-  hazardColor?: [number, number, number, number];
+  // camera target (typically player coords)
+  focusX: number;
+  focusY: number;
 
   // pixels per cell (world units are pixels)
   zoom?: number;
@@ -115,12 +105,6 @@ function DungeonRenderScene(props: Props) {
 
   const flipGridX = props.flipGridX ?? true;
   const flipGridY = props.flipGridY ?? true;
-
-  const floorColor = props.floorColor ?? [1, 1, 1, 1];
-  const wallColor = props.wallColor ?? [1, 1, 1, 1];
-  const playerColor = props.playerColor ?? [1, 1, 1, 1];
-  const itemColor = props.itemColor ?? [1, 1, 1, 1];
-  const hazardColor = props.hazardColor ?? [1, 0.35, 0.35, 1]; // danger red tint
 
   // --- Load atlas texture (inside Canvas tree = safe) ---
   const atlas = useMemo(() => {
@@ -191,15 +175,6 @@ function DungeonRenderScene(props: Props) {
     props.playerTile,
   ]);
 
-  // tint channel texture (R8)
-  const tintTex = useMemo(() => {
-    const mask = buildTintMask(bsp, content, {
-      playerX: props.playerX,
-      playerY: props.playerY,
-    });
-    return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
-  }, [bsp, content, W, H, props.playerX, props.playerY]);
-
   // --- Shader material ---
   const mat = useMemo(() => {
     return new THREE.ShaderMaterial({
@@ -208,7 +183,6 @@ function DungeonRenderScene(props: Props) {
       uniforms: {
         uSolid: { value: bsp.textures.solid },
         uChar: { value: charTex },
-        uTint: { value: tintTex },
         uAtlas: { value: atlas },
         uGridSize: { value: new THREE.Vector2(W, H) },
         uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
@@ -217,11 +191,6 @@ function DungeonRenderScene(props: Props) {
         uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
         uFlipGridX: { value: flipGridX ? 1 : 0 },
         uFlipGridY: { value: flipGridY ? 1 : 0 },
-        uFloorColor: { value: new THREE.Vector4(...floorColor) },
-        uWallColor: { value: new THREE.Vector4(...wallColor) },
-        uPlayerColor: { value: new THREE.Vector4(...playerColor) },
-        uItemColor: { value: new THREE.Vector4(...itemColor) },
-        uHazardColor: { value: new THREE.Vector4(...hazardColor) },
       },
       depthTest: false,
       depthWrite: false,
@@ -230,7 +199,6 @@ function DungeonRenderScene(props: Props) {
   }, [
     bsp.textures.solid,
     charTex,
-    tintTex,
     atlas,
     W,
     H,
@@ -241,11 +209,6 @@ function DungeonRenderScene(props: Props) {
     flipAtlasY,
     flipGridX,
     flipGridY,
-    floorColor,
-    wallColor,
-    playerColor,
-    itemColor,
-    hazardColor,
   ]);
 
   // -------------------------------
@@ -253,7 +216,6 @@ function DungeonRenderScene(props: Props) {
   // -------------------------------
 
   const { camera } = useThree();
-  const { size } = useThree();
 
   // camera current + target positions in world pixels
   const camWorld = useRef(new THREE.Vector3(0, 0, 10));
@@ -278,33 +240,12 @@ function DungeonRenderScene(props: Props) {
       pxPerCell,
       flipGridX,
     );
-    const cam = camera as THREE.OrthographicCamera;
 
     camWorld.current.set(worldX, worldY, 10);
     targetWorld.current.set(worldX, worldY, 10);
-
-    // Clamp target to map bounds (account for viewport size in world px)
-    const halfViewW = (size.width * 0.5) / cam.zoom;
-    const halfViewH = (size.height * 0.5) / cam.zoom;
-    const halfMapW = W * pxPerCell * 0.5;
-    const halfMapH = H * pxPerCell * 0.5;
-
-    const minX = -halfMapW + halfViewW;
-    const maxX = halfMapW - halfViewW;
-    const minY = -halfMapH + halfViewH;
-    const maxY = halfMapH - halfViewH;
-
-    targetWorld.current.x = Math.min(
-      maxX,
-      Math.max(minX, targetWorld.current.x),
-    );
-    targetWorld.current.y = Math.min(
-      maxY,
-      Math.max(minY, targetWorld.current.y),
-    );
-
     camera.position.set(worldX, worldY, 10);
 
+    const cam = camera as THREE.OrthographicCamera;
     cam.zoom = 1;
     cam.updateProjectionMatrix();
 
@@ -314,17 +255,7 @@ function DungeonRenderScene(props: Props) {
     // clear any in-flight chase (map/zoom swap)
     targetCellRef.current = null;
     settlingRef.current = null;
-  }, [
-    W,
-    H,
-    pxPerCell,
-    camera,
-    flipGridX,
-    focusX,
-    focusY,
-    size.width,
-    size.height,
-  ]);
+  }, [W, H, pxPerCell, camera, flipGridX]);
 
   // When focus changes, set a new target cell (without spam)
   useEffect(() => {
@@ -409,35 +340,7 @@ function DungeonRenderScene(props: Props) {
   // Draw the plane (pixel-world units)
   // -------------------------------
   return (
-    <mesh
-      position={[0, 0, 0]}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        // uv is 0..1 across the plane
-        const uv = e.uv;
-        if (!uv) return;
-
-        // Apply grid flips same as shader.
-        // We do this so click mapping matches what the user sees.
-        let u = uv.x;
-        let v = uv.y;
-
-        if (flipGridX) u = 1 - u;
-        if (flipGridY) v = 1 - v;
-
-        // numeric safety
-        u = Math.min(0.999999, Math.max(0, u));
-        v = Math.min(0.999999, Math.max(0, v));
-
-        const cx = Math.floor(u * W);
-        const cy = Math.floor(v * H);
-
-        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
-
-        // Camera-only: set focus target, do NOT move player.
-        props.onCellFocus?.({ x: cx, y: cy });
-      }}
-    >
+    <mesh position={[0, 0, 0]}>
       {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
       <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
       <primitive object={mat} attach="material" />
