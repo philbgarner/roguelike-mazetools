@@ -586,6 +586,8 @@ export function InspectionShell(props: InspectionShellProps) {
   const [layer, setLayer] = useState<Layer>("content");
   const [scale, setScale] = useState(6);
 
+  const [controlsCollapsed, setControlsCollapsed] = useState(false);
+
   const [pane, setPane] = useState<InspectPane>("content");
 
   const [selectedCircuitIndex, setSelectedCircuitIndex] = useState<
@@ -622,6 +624,8 @@ export function InspectionShell(props: InspectionShellProps) {
     lines: string[];
     featureType: number;
     featureId: number;
+    clientX?: number;
+    clientY?: number;
   }>({
     visible: false,
     x: 0,
@@ -872,29 +876,87 @@ export function InspectionShell(props: InspectionShellProps) {
     const wrap = canvasWrapRef.current;
     if (!wrap) return { left: 0, top: 0 };
 
+    const rect = wrap.getBoundingClientRect();
     const wrapW = wrap.clientWidth;
     const wrapH = wrap.clientHeight;
-
-    const cellLeft = tooltip.x * scale;
-    const cellTop = tooltip.y * scale;
 
     const pad = 8;
     const estTipW = 320;
     const estTipH = 120;
 
-    let left = cellLeft;
-    let top = cellTop + scale + pad;
+    // If render provided mouse position, anchor to that (relative to wrap)
+    const hasClient = tooltip.clientX != null && tooltip.clientY != null;
+    const anchorX = hasClient
+      ? tooltip.clientX! - rect.left
+      : tooltip.x * scale;
+    const anchorY = hasClient ? tooltip.clientY! - rect.top : tooltip.y * scale;
+
+    let left = anchorX;
+    let top = anchorY + pad;
 
     left = Math.max(pad, Math.min(left, wrapW - estTipW - pad));
-
-    if (top + estTipH > wrapH - pad) {
-      top = Math.max(pad, cellTop - estTipH - pad);
-    }
+    if (top + estTipH > wrapH - pad)
+      top = Math.max(pad, anchorY - estTipH - pad);
 
     return { left, top };
   }
 
-  function scheduleTooltip(x: number, y: number) {
+  function tryInteractAtCell(x: number, y: number): boolean {
+    const w = dungeon.width;
+    const i = y * w + x;
+
+    const ft = content.masks.featureType[i] | 0;
+    const fid = content.masks.featureId[i] | 0;
+
+    if (ft === 8 && fid) {
+      // block
+      setSelectedBlockId((prev) => (prev === fid ? null : fid));
+      return true;
+    }
+
+    if (selectedBlockId != null) {
+      const b = runtime.blocks?.[selectedBlockId];
+      if (!b) {
+        setSelectedBlockId(null);
+        return true;
+      }
+
+      const dx = (x - b.x) | 0;
+      const dy = (y - b.y) | 0;
+      if (Math.abs(dx) + Math.abs(dy) !== 1) return true;
+
+      const res = tryPushBlock(
+        runtime,
+        dungeon,
+        content,
+        selectedBlockId,
+        dx,
+        dy,
+      );
+      if (res.ok) applyRuntime(res.next);
+      return true;
+    }
+
+    if (ft === 6 && fid) {
+      // lever
+      applyRuntime(toggleLever(runtime, fid));
+      return true;
+    }
+
+    if (ft === 5 && fid) {
+      // key
+      applyRuntime(collectKey(runtime, fid));
+      return true;
+    }
+
+    return false;
+  }
+
+  function scheduleTooltip(
+    x: number,
+    y: number,
+    pos?: { clientX: number; clientY: number },
+  ) {
     clearHoverTimer();
     hoverTimerRef.current = window.setTimeout(() => {
       const { lines, ft, fid } = buildTooltipLines(x, y);
@@ -905,6 +967,8 @@ export function InspectionShell(props: InspectionShellProps) {
         lines,
         featureType: ft,
         featureId: fid,
+        clientX: pos?.clientX,
+        clientY: pos?.clientY,
       });
     }, 75);
   }
@@ -1079,143 +1143,179 @@ export function InspectionShell(props: InspectionShellProps) {
   };
 
   return (
-    <div className="maze-app">
+    <div
+      className={
+        controlsCollapsed
+          ? "maze-app maze-app--inspect maze-app--controls-collapsed"
+          : "maze-app maze-app--inspect"
+      }
+    >
       {/* Left: Inspection controls + diagnostics */}
-      <div className="maze-controls">
+      <div
+        className={
+          controlsCollapsed
+            ? "maze-controls maze-controls--collapsed"
+            : "maze-controls"
+        }
+      >
         <div className="maze-header-row">
-          <h2 className="maze-title">{title}</h2>
-          {props.onRandomizeSeedAndRegenerate && (
-            <button onClick={props.onRandomizeSeedAndRegenerate}>
-              🎲 Randomize Seed + Regenerate
-            </button>
-          )}
-          {!!onBack && (
-            <button
-              className="maze-btn"
-              onClick={onBack}
-              title="Return to wizard"
-            >
-              Back
-            </button>
-          )}
-        </div>
+          {!controlsCollapsed && <h2 className="maze-title">{title}</h2>}
 
-        <div className="maze-controls-row">
-          <button
-            className="maze-btn"
-            onClick={resetRuntime}
-            title="Reset runtime state from current content"
-          >
-            Reset Runtime
-          </button>
+          <div className="maze-header-actions">
+            {!controlsCollapsed && props.onRandomizeSeedAndRegenerate && (
+              <button onClick={props.onRandomizeSeedAndRegenerate}>
+                🎲 Randomize Seed + Regenerate
+              </button>
+            )}
 
-          <button
-            className="maze-btn"
-            onClick={() => {
-              resetRuntime();
-            }}
-            title="Hard reset runtime state (doors/levers/keys/blocks)"
-          >
-            Hard Reset
-          </button>
+            {!!onBack && (
+              <>
+                <button
+                  className="maze-btn"
+                  onClick={() => setControlsCollapsed((v) => !v)}
+                  title={
+                    controlsCollapsed
+                      ? "Show Dungeon Inspection panel"
+                      : "Hide Dungeon Inspection panel"
+                  }
+                >
+                  {controlsCollapsed ? "Show" : "Hide"}
+                </button>
 
-          <button
-            className="maze-btn"
-            onClick={onDownload}
-            disabled={!imgForDownload}
-            title="Download current layer as PNG"
-          >
-            Download PNG
-          </button>
-        </div>
-
-        <div className="maze-grid">
-          <label className="maze-field">
-            <span>Layer</span>
-            <select
-              value={layer}
-              onChange={(e) => setLayer(e.target.value as Layer)}
-            >
-              <option value="content">content</option>
-              <option value="solid">solid</option>
-              <option value="regionId">regionId</option>
-              <option value="distanceToWall">distanceToWall</option>
-              <option value="featureType">featureType</option>
-              <option value="featureId">featureId</option>
-              <option value="featureParam">featureParam</option>
-              <option value="danger">danger</option>
-              <option value="lootTier">lootTier</option>
-              <option value="hazardType">hazardType</option>
-            </select>
-          </label>
-
-          <label className="maze-field">
-            <span>Scale</span>
-            <input
-              type="number"
-              value={scale}
-              min={1}
-              max={32}
-              onChange={(e) =>
-                setScale(clampInt(Number(e.target.value), 1, 32))
-              }
-            />
-          </label>
-
-          <label className="maze-field">
-            <span>Pane</span>
-            <select
-              value={pane}
-              onChange={(e) => setPane(e.target.value as InspectPane)}
-            >
-              <option value="content">content</option>
-              <option value="render">render</option>
-            </select>
-          </label>
-        </div>
-
-        {selectedBlockId != null && (
-          <div style={{ marginTop: 8, opacity: 0.9 }}>
-            Block selected: <b>#{selectedBlockId}</b> — click a target cell to
-            attempt push.
+                <button
+                  className="maze-btn"
+                  onClick={onBack}
+                  title="Return to wizard"
+                >
+                  Back
+                </button>
+              </>
+            )}
           </div>
-        )}
+        </div>
 
-        <div style={{ height: 12 }} />
+        {!controlsCollapsed && (
+          <div className="maze-controls-body">
+            <div className="maze-controls-row">
+              <button
+                className="maze-btn"
+                onClick={resetRuntime}
+                title="Reset runtime state from current content"
+              >
+                Reset Runtime
+              </button>
 
-        <CircuitDiagnosticsSection
-          title="Circuit Diagnostics"
-          circuits={content.meta.circuits}
-          diagnostics={circuitDiagnostics}
-          selectedCircuitIndex={selectedCircuitIndex}
-          onSelectCircuitIndex={setSelectedCircuitIndex}
-          filters={circuitDiagFilters}
-          onChangeFilters={setCircuitDiagFilters}
-          sort={circuitDiagSort}
-          onChangeSort={setCircuitDiagSort}
-          allowJumpLinks={true}
-          showRawJson={false}
-        />
+              <button
+                className="maze-btn"
+                onClick={() => {
+                  resetRuntime();
+                }}
+                title="Hard reset runtime state (doors/levers/keys/blocks)"
+              >
+                Hard Reset
+              </button>
 
-        <div style={{ height: 12 }} />
+              <button
+                className="maze-btn"
+                onClick={onDownload}
+                disabled={!imgForDownload}
+                title="Download current layer as PNG"
+              >
+                Download PNG
+              </button>
+            </div>
 
-        <RoleDiagnosticsSection
-          title="Role Diagnostics"
-          circuits={content.meta.circuits}
-          diagnostics={roleDiagnostics}
-          selectedCircuitIndex={selectedCircuitIndex}
-          onSelectCircuitIndex={setSelectedCircuitIndex}
-          showRawJson={false}
-        />
+            <div className="maze-grid">
+              <label className="maze-field">
+                <span>Layer</span>
+                <select
+                  value={layer}
+                  onChange={(e) => setLayer(e.target.value as Layer)}
+                >
+                  <option value="content">content</option>
+                  <option value="solid">solid</option>
+                  <option value="regionId">regionId</option>
+                  <option value="distanceToWall">distanceToWall</option>
+                  <option value="featureType">featureType</option>
+                  <option value="featureId">featureId</option>
+                  <option value="featureParam">featureParam</option>
+                  <option value="danger">danger</option>
+                  <option value="lootTier">lootTier</option>
+                  <option value="hazardType">hazardType</option>
+                </select>
+              </label>
 
-        {/* Optional: raw circuit debug */}
-        {circuitDebug && (
-          <details style={{ marginTop: 12 }}>
-            <summary style={{ cursor: "pointer" }}>Circuit Debug (raw)</summary>
-            <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(circuitDebug, null, 2)}
-            </pre>
-          </details>
+              <label className="maze-field">
+                <span>Scale</span>
+                <input
+                  type="number"
+                  value={scale}
+                  min={1}
+                  max={32}
+                  onChange={(e) =>
+                    setScale(clampInt(Number(e.target.value), 1, 32))
+                  }
+                />
+              </label>
+
+              <label className="maze-field">
+                <span>Pane</span>
+                <select
+                  value={pane}
+                  onChange={(e) => setPane(e.target.value as InspectPane)}
+                >
+                  <option value="content">content</option>
+                  <option value="render">render</option>
+                </select>
+              </label>
+            </div>
+
+            {selectedBlockId != null && (
+              <div style={{ marginTop: 8, opacity: 0.9 }}>
+                Block selected: <b>#{selectedBlockId}</b> — click a target cell
+                to attempt push.
+              </div>
+            )}
+
+            <div style={{ height: 12 }} />
+
+            <CircuitDiagnosticsSection
+              title="Circuit Diagnostics"
+              circuits={content.meta.circuits}
+              diagnostics={circuitDiagnostics}
+              selectedCircuitIndex={selectedCircuitIndex}
+              onSelectCircuitIndex={setSelectedCircuitIndex}
+              filters={circuitDiagFilters}
+              onChangeFilters={setCircuitDiagFilters}
+              sort={circuitDiagSort}
+              onChangeSort={setCircuitDiagSort}
+              allowJumpLinks={true}
+              showRawJson={false}
+            />
+
+            <div style={{ height: 12 }} />
+
+            <RoleDiagnosticsSection
+              title="Role Diagnostics"
+              circuits={content.meta.circuits}
+              diagnostics={roleDiagnostics}
+              selectedCircuitIndex={selectedCircuitIndex}
+              onSelectCircuitIndex={setSelectedCircuitIndex}
+              showRawJson={false}
+            />
+
+            {/* Optional: raw circuit debug */}
+            {circuitDebug && (
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: "pointer" }}>
+                  Circuit Debug (raw)
+                </summary>
+                <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(circuitDebug, null, 2)}
+                </pre>
+              </details>
+            )}
+          </div>
         )}
       </div>
 
@@ -1230,19 +1330,6 @@ export function InspectionShell(props: InspectionShellProps) {
             onMouseLeave={onMouseLeave}
             onClick={onClick}
           />*/}
-
-          {/* Blinking hover rect */}
-          {tooltip.visible && (
-            <div
-              className="maze-hover-rect"
-              style={{
-                left: tooltip.x * scale,
-                top: tooltip.y * scale,
-                width: scale,
-                height: scale,
-              }}
-            />
-          )}
 
           {/* Tooltip anchored to hovered cell */}
 
@@ -1415,6 +1502,21 @@ export function InspectionShell(props: InspectionShellProps) {
               flipAtlasY={false}
               flipGridX={false}
               flipGridY={true}
+              onCellHover={({ x, y, clientX, clientY }) => {
+                const last = lastHoverCellRef.current;
+                if (last && last.x === x && last.y === y) return;
+                lastHoverCellRef.current = { x, y };
+                scheduleTooltip(x, y, { clientX, clientY });
+              }}
+              onCellHoverEnd={() => {
+                clearHoverTimer();
+                lastHoverCellRef.current = null;
+                setTooltip((t) => (t.visible ? { ...t, visible: false } : t));
+              }}
+              onCellClick={({ x, y }) => {
+                // Interactions win; only if false will render view fall back to camera focus
+                return tryInteractAtCell(x, y);
+              }}
             />
           )}
         </div>

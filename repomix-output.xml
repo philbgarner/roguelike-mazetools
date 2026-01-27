@@ -6109,113 +6109,240 @@ void main() {
 
 // src/rendering/tileShader.ts
 export const tileFrag = /* glsl */ `
-precision highp float;
+  precision highp float;
 
-uniform sampler2D uSolid;   // R8 normalized
-uniform sampler2D uChar;    // R8 normalized
-uniform sampler2D uTint;    // R8 normalized (tint channel id)
-uniform sampler2D uAtlas;   // RGBA tileset
+  uniform float uTime;
+  uniform float uHazardOmega;
+  uniform float uInteractOmega;
+  uniform float uAoStrength;
+  uniform vec2  uLightDir;
 
-uniform vec2 uGridSize;     // (W, H)
-uniform vec2 uAtlasGrid;    // (cols, rows)
-uniform float uWallTile;    // tile index
-uniform float uFloorTile;   // tile index
-uniform float uFlipAtlasY;  // 0 or 1
+  uniform sampler2D uSolid;
+  uniform sampler2D uChar;
+  uniform sampler2D uTint;
+  uniform sampler2D uAtlas;
 
-uniform float uFlipGridX;   // 0 or 1
-uniform float uFlipGridY;   // 0 or 1
+  uniform vec2 uGridSize;
+  uniform vec2 uAtlasGrid;
+  uniform float uWallTile;
+  uniform float uFloorTile;
+  uniform float uDoorTile;
 
-uniform vec4 uFloorColor;
-uniform vec4 uWallColor;
-uniform vec4 uPlayerColor;
-uniform vec4 uItemColor;
-uniform vec4 uHazardColor;
+  uniform float uFlipAtlasY;
+  uniform float uFlipGridX;
+  uniform float uFlipGridY;
 
-varying vec2 vUv;
+  uniform vec4 uFloorColor;
+  uniform vec4 uWallColor;
+  uniform vec4 uPlayerColor;
+  uniform vec4 uItemColor;
+  uniform vec4 uHazardColor;
+  uniform vec4 uEnemyColor;
 
-float sampleR8(sampler2D tex, vec2 uv) {
-  return texture2D(tex, uv).r; // 0..1
-}
+  uniform float uEnemyBreathOmega;
+  uniform float uEnemyBreathAmp;
+  uniform float uMonsterTile;
 
-float isWallAtCell(vec2 cell) {
-  vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
-  vec2 uv = (c + vec2(0.5)) / uGridSize;
-  float s = sampleR8(uSolid, uv);
-  return step(0.5, s); // 1 if wall, 0 if floor
-}
+  varying vec2 vUv;
 
-void main() {
-  // Apply grid flips BEFORE computing cell coords
-  vec2 uvGrid = vUv;
-  if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
-  if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
 
-  // Which cell are we in?
-  vec2 gridUv = uvGrid * uGridSize;
-  vec2 cell = floor(gridUv);
-  vec2 local = fract(gridUv);
-
-  // Center UV for sampling
-  vec2 texUv = (cell + vec2(0.5)) / uGridSize;
-
-  // Current cell wall/floor
-  float curWall = step(0.5, sampleR8(uSolid, texUv));
-
-  // 8-neighbor walls (clamped)
-  float wL  = isWallAtCell(cell + vec2(-1.0,  0.0));
-  float wR  = isWallAtCell(cell + vec2( 1.0,  0.0));
-  float wU  = isWallAtCell(cell + vec2( 0.0, -1.0));
-  float wD  = isWallAtCell(cell + vec2( 0.0,  1.0));
-
-  float wUL = isWallAtCell(cell + vec2(-1.0, -1.0));
-  float wUR = isWallAtCell(cell + vec2( 1.0, -1.0));
-  float wDL = isWallAtCell(cell + vec2(-1.0,  1.0));
-  float wDR = isWallAtCell(cell + vec2( 1.0,  1.0));
-
-  // Exterior/edge wall if current is wall AND any neighbor is floor
-  float allNeighborsWall = wL * wR * wU * wD * wUL * wUR * wDL * wDR;
-  float hasFloorNeighbor = 1.0 - allNeighborsWall;
-  float isEdgeWall = curWall * hasFloorNeighbor;
-
-  // Char overlay (still allowed on top of blank walls)
-  float chN = sampleR8(uChar, texUv);
-  float ch  = floor(chN * 255.0 + 0.5);
-  float hasChar = step(0.5, ch);
-
-  // Interior wall and no char => blank (transparent)
-  if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-    return;
+  float tileIs(float tile, float target) {
+    return 1.0 - step(0.5, abs(tile - target));
   }
 
-  // Base tile: floor for floor cells; wall tile only for edge walls
-  float baseTile = mix(uFloorTile, uWallTile, isEdgeWall);
+  float sampleR8(sampler2D tex, vec2 uv) {
+    return texture2D(tex, uv).r;
+  }
 
-  // Char overrides base when non-zero
-  float tile = mix(baseTile, ch, hasChar);
+  float isWallAtCell(vec2 cell) {
+    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
+    vec2 uv = (c + vec2(0.5)) / uGridSize;
+    return step(0.5, sampleR8(uSolid, uv));
+  }
 
-  // Tint selection (0=base, 1=player, 2=item, 3=hazard)
-  float tintN = sampleR8(uTint, texUv);
-  float tintId = floor(tintN * 255.0 + 0.5);
-  vec4 baseTint = mix(uFloorColor, uWallColor, isEdgeWall);
-  vec4 tint = baseTint;
-  if (tintId > 0.5 && tintId < 1.5) tint = uPlayerColor;
-  else if (tintId > 1.5 && tintId < 2.5) tint = uItemColor;
-  else if (tintId > 2.5 && tintId < 3.5) tint = uHazardColor;
+  vec2 breatheWarp(vec2 local, float t, float amp) {
+    vec2 p = local - vec2(0.5);
+    float sY = 1.0 + amp * t;
+    float sX = 1.0 - amp * 0.6 * t;
+    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
+    return clamp(q, vec2(0.001), vec2(0.999));
+  }
 
-  float cols = uAtlasGrid.x;
-  float rows = uAtlasGrid.y;
+  float atlasAlphaAtLocal(
+    vec2 localCoord,
+    float tx,
+    float ty,
+    float cols,
+    float rows
+  ) {
+    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
+              / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
+    return texture2D(uAtlas, uv).a;
+  }
 
-  float tx = mod(tile, cols);
-  float ty = floor(tile / cols);
+  // ------------------------------------------------------------
+  // Main
+  // ------------------------------------------------------------
 
-  vec2 atlasUv = (vec2(tx, ty) + local) / vec2(cols, rows);
-  if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+  void main() {
+    vec2 uvGrid = vUv;
+    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
+    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
 
-  vec4 c = texture2D(uAtlas, atlasUv);
-  c.rgb *= tint.rgb;
-  gl_FragColor = c;
-}
+    vec2 gridUv = uvGrid * uGridSize;
+    vec2 cell   = floor(gridUv);
+    vec2 local  = fract(gridUv);
+    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
+
+    float curWall = step(0.5, sampleR8(uSolid, texUv));
+
+    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
+    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
+    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
+    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
+
+    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
+    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
+    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
+    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
+
+    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
+    float isEdgeWall = curWall * (1.0 - allWall);
+
+    float chN = sampleR8(uChar, texUv);
+    float ch  = floor(chN * 255.0 + 0.5);
+    float hasChar = step(0.5, ch);
+
+    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    float tile = mix(
+      mix(uFloorTile, uWallTile, isEdgeWall),
+      ch,
+      hasChar
+    );
+
+    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
+
+    float cols = uAtlasGrid.x;
+    float rows = uAtlasGrid.y;
+    float tx = mod(tile, cols);
+    float ty = floor(tile / cols);
+
+    float isMonster = tileIs(tile, uMonsterTile);
+    vec2 local2 = local;
+
+    if (isMonster > 0.5) {
+      float breath = sin(uTime * uEnemyBreathOmega);
+      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
+    }
+
+    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+
+    vec4 c = texture2D(uAtlas, atlasUv);
+
+    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
+    float inkA = smoothstep(0.05, 0.20, c.a);
+    vec3 ink = c.rgb;
+
+    // -------------------------
+    // Tint selection
+    // -------------------------
+
+    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
+
+    if (tintId > 0.5 && tintId < 1.5) {
+      float t = 0.5 + 0.5 * sin(uTime * 4.0);
+      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
+    } else if (tintId > 1.5 && tintId < 2.5) {
+      tint = uItemColor;
+    } else if (tintId > 2.5 && tintId < 3.5) {
+      tint = uHazardColor;
+    }
+
+    if (isMonster > 0.5) {
+      tint = uEnemyColor;
+    }
+
+    // -------------------------
+    // Lighting
+    // -------------------------
+
+    float modulate = 1.0;
+    if (tintId > 2.5 && tintId < 3.5)
+      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
+    else if (tintId > 1.5 && tintId < 2.5)
+      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
+
+    float ao = (curWall < 0.5)
+      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
+      : 0.0;
+
+    vec2 dir = normalize(uLightDir + vec2(1e-5));
+    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
+
+    float shade = mix(0.97, 1.08, isEdgeWall);
+    shade *= (1.0 - ao);
+    shade *= (1.0 - shadow);
+    shade *= modulate;
+
+    ink *= tint.rgb * shade;
+
+    // ------------------------------------------------------------
+    // DOOR EFFECT — stronger, calmer, architectural
+    // ------------------------------------------------------------
+
+    float isDoor = tileIs(tile, uDoorTile);
+
+    if (isDoor > 0.5) {
+      vec2 eps = vec2(1.0 / 32.0);
+
+      float aC = inkA;
+      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
+      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
+      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
+      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
+
+      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
+
+      // Slow, weighty pulse (much slower than items)
+      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
+
+      // Vertical bias — doors feel tall and solid
+      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
+
+      float strength = edge * pulse * vertical;
+
+      vec3 hi = vec3(0.92, 0.95, 1.0);
+      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
+    }
+
+    // -------------------------
+    // Item metallic sheen (unchanged)
+    // -------------------------
+
+    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
+      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
+      float d = abs(phase - 0.5);
+      float core = 1.0 - smoothstep(0.01, 0.03, d);
+      float halo = 1.0 - smoothstep(0.04, 0.16, d);
+      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
+      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
+      vec3 hi = vec3(0.96, 0.98, 1.0);
+      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
+    }
+
+    vec3 outRgb = mix(bg, ink, inkA);
+    gl_FragColor = vec4(outRgb, 1.0);
+  }
+
 `;
 </file>
 
@@ -6466,23 +6593,22 @@ export function maskToTileTextureR8(
 
 ## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-**CONTEXT VERSION:** **2026-01-27 (rev G)**
+**CONTEXT VERSION:** **2026-01-28 (rev H)**
 **OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; R1.5 INTERACTION, THEMING, INSPECTION AFFORDANCES & SHADER POLISH IN PROGRESS**
+**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 SHADER SEMANTICS + VISUAL HIERARCHY ESTABLISHED (POLISH IN PROGRESS)**
 
 ---
 
 ## GOAL
 
-Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
+Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **custom fragment shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
 
-The result is a first-pass “GPU view” of the dungeon that can later grow into:
+The result is a first-class **GPU inspection view** that:
 
-* animated sprites
-* richer shading / lighting
-* overlays and debug visualizations
-* true runtime-driven visual state
-* themed visual styles
+* is visually readable at a glance
+* preserves CP437 crispness
+* reflects semantic roles (player, enemies, items, hazards, doors)
+* stays inspection-only (no gameplay coupling yet)
 
 ---
 
@@ -6490,9 +6616,9 @@ The result is a first-pass “GPU view” of the dungeon that can later grow int
 
 * No new generation controls (Step 7 remains inspection-only).
 * No batch rendering mode.
-* No 3D meshes for rooms/walls; it is a **single-plane tileset renderer**.
-* No full sprite animation system yet (static tile indices only).
-* No complicated scene graph; just one plane + camera + shader.
+* No 3D geometry for walls/floors — **single plane only**.
+* No sprite animation system (all motion is procedural in shader).
+* No runtime-authoritative visuals yet (R2 responsibility).
 
 ---
 
@@ -6500,23 +6626,16 @@ The result is a first-pass “GPU view” of the dungeon that can later grow int
 
 ### Location
 
-The render component lives **inside `InspectionShell`** as an alternate view alongside the current content/canvas inspection view.
+The render component lives **inside `InspectionShell`** as an alternate view alongside the existing 2D canvas inspection view.
 
 ### View Mode
 
 `InspectionShell` provides a local toggle:
 
 * `pane = "content"` → existing 2D canvas inspection
-  (layer selection, tooltips, legend, click-to-interact runtime controls)
-* `pane = "render"` → R3F render pipeline
+* `pane = "render"` → R3F tileset renderer
 
-### Inputs
-
-Render view consumes the same single-seed data already present in Step 7:
-
-* `dungeon: BspDungeonOutputs`
-* `content: ContentOutputs`
-* `runtime: DungeonRuntimeState` (optional initially, but intended to drive visual state)
+Both panes consume the **same single-seed dungeon + content outputs**.
 
 ---
 
@@ -6524,79 +6643,78 @@ Render view consumes the same single-seed data already present in Step 7:
 
 ### Entities
 
-Render view has **two distinct inspection-only concepts**:
+Render view distinguishes **two inspection-only concepts**:
 
 * **Player cell** `{x,y}`
 
-  * Rendered as an overlay glyph
-  * Initialized to the **start cell**
-  * Does **not** automatically move when camera focus changes
+  * Rendered as a glyph
+  * Initialized to start cell
+  * Does **not** drive camera
 
 * **Focus cell** `{x,y}`
 
-  * The **sole driver of the camera target**
-  * Initialized to the same start cell
-  * Can diverge freely from player position
+  * Sole camera target
+  * Click-to-focus only
+  * May diverge freely from player
 
-This separation is intentional and **locked**.
+This separation is **intentional and locked**.
 
 ### Camera behavior
 
-* Camera is **orthographic**
-* Camera target is driven by `focusX, focusY`
-* Camera uses a **snap-lerp controller**:
+* Orthographic camera
+* Target driven by focus cell
+* Snap-lerp controller:
 
-  * Smoothly approaches target
-  * Settles within a pixel threshold
-  * Emits `onCameraSettled({x,y})` deterministically
-
-### Interaction
-
-* **Render-pane click-to-focus is enabled**
-
-  * Raycast plane → UV → cell
-  * Click updates **focus only**
-  * Player overlay remains unchanged
-* Allows free visual inspection without mutating gameplay state
+  * smooth convergence
+  * deterministic settle
+  * emits `onCameraSettled({x,y})`
 
 ---
 
 ## COORDINATES (AUTHORITATIVE RULE)
 
-* **Grid flips belong in the shader**
-* **Camera never flips grid axes** — it only converts
-  *y-down grid space → y-up world space*
+* **All grid flips happen in the shader**
+* **Camera never flips grid axes**
 
-This separation is **locked**.
+  * Only converts y-down grid → y-up world
+
+This rule is locked to avoid compounding transforms.
 
 ---
 
 ## DATA MODEL (TEXTURES)
 
-### Generator textures (existing)
+### Generator textures
 
-* `solid` (wall / floor)
-* content masks (`featureType`, `featureId`, `hazardType`, etc.)
+* `solid` — wall vs floor
+* content masks:
 
-### Character / tile-index texture (`charTex`)
+  * `featureType`
+  * `featureId`
+  * `hazardType`
+  * etc.
 
-R8 `DataTexture` encoding which atlas tile to draw per cell:
+### Character / tile index texture (`charTex`)
 
-* `0` → no override (shader draws base wall/floor)
+R8 `DataTexture` encoding which CP437 tile to draw per cell:
+
+* `0` → draw base wall/floor tile
 * `N` → draw atlas tile `N`
 
-Primary **content → render bridge**.
+This is the **primary bridge** between content generation and rendering.
 
 ### Tint channel texture (`tintTex`)
 
-R8 `DataTexture` encoding **semantic tint channels**:
+R8 `DataTexture` encoding **semantic roles**:
 
-* `0` — base (floor / wall)
-* `1` — player
-* `2` — interactables
-* `3` — hazards (danger)
+| Value | Meaning               |
+| ----: | --------------------- |
+|     0 | base (floor / wall)   |
+|     1 | player                |
+|     2 | interactables / items |
+|     3 | hazards               |
 
-Shader multiplies atlas RGB by tint color.
+Tint IDs are **semantic**, not visual — colors come from theme uniforms.
 
 ---
 
@@ -6607,7 +6725,7 @@ Shader multiplies atlas RGB by tint color.
 A data-only object defining semantic color roles and strength multipliers.
 
 * Lives in `renderTheme.ts`
-* Renderer consumes theme → shader uniforms
+* Consumed CPU-side → shader uniforms
 * Shader has **no semantic knowledge**
 
 Themes currently defined:
@@ -6615,38 +6733,89 @@ Themes currently defined:
 * **Default (CP437 Neutral)**
 * **Danger-Forward Debug**
 
-Theme selection is inspection-only.
+Themes may control **effect intensity**, not logic.
 
 ---
 
-## SHADER RESPONSIBILITIES
+## SHADER RESPONSIBILITIES (CURRENT)
 
-Fragment shader:
+The fragment shader now does **substantially more than R1**, while still honoring constraints:
 
 1. Compute cell coords from UV
-2. Sample `solid` to classify wall vs floor
+2. Classify wall vs floor via `solid`
 3. Render **only exterior wall edges**
-4. Sample `charTex` for tile override
-5. Sample `tintTex` for semantic channel
-6. Resolve tile → atlas UV
-7. Sample atlas and apply tint
+4. Resolve base tile vs char override
+5. Sample atlas (nearest)
+6. Split output into:
 
-All textures use `NearestFilter`.
+   * **background**
+   * **glyph ink (alpha-masked)**
+7. Apply **semantic effects to ink only**
+8. Composite opaque final color
+
+All textures remain `NearestFilter`.
 
 ---
 
-## SESSION SUMMARY (WHAT WE JUST IMPLEMENTED)
+## SESSION SUMMARY — 2026-01-28 (WHAT WE JUST DID)
 
-### R1.5 — interaction & theming expansion
+### R1.5 — shader semantics & visual hierarchy breakthrough
 
-* **RenderTheme system landed and wired**
+This session completed a **major qualitative step**:
 
-  * `RenderTheme` contract introduced
-  * Default + Danger-Forward Debug themes created
-  * Render view derives tint uniforms from theme
-  * Strength multipliers applied CPU-side (no shader churn)
+#### 1. Ink / background separation (LOCKED)
 
-R1 renderer remains closed; no changes beyond R1.5 scope.
+* Atlas alpha now strictly defines **glyph ink**
+* Floors render with a **solid black background**
+* Walls retain tinted background on exterior edges
+* All effects apply to **ink only**, never to background
+
+This unlocked clean, readable effects without muddy tiles.
+
+#### 2. Semantic visual hierarchy established
+
+Each role now has a **distinct motion/energy profile**:
+
+| Role     | Effect                                    |
+| -------- | ----------------------------------------- |
+| Player   | Subtle pulse toward white                 |
+| Monsters | Breathing warp (scale-based) + enemy tint |
+| Items    | Strong metallic sheen band                |
+| Doors    | Edge-only varnish highlight               |
+| Hazards  | Pulsing intensity                         |
+
+This hierarchy is deliberate:
+
+* **items > doors > enemies > player > floor**
+  in visual salience.
+
+#### 3. Monster breathing (procedural warp)
+
+* Monsters no longer use metallic sheen
+* Glyph is gently warped around center
+* Feels “alive” without sprite animation
+* Amplitude and speed are uniform-controlled
+
+#### 4. Door effect re-scoped (IMPORTANT)
+
+* Metallic sheen removed from doors
+* Doors now get:
+
+  * **edge-only highlight**
+  * very subtle temporal shimmer
+* Doors are interactive but **intentionally less loud than items**
+
+This is correct and matches design intent.
+
+#### 5. Effect exclusion rules enforced
+
+* Item metallic sheen explicitly excludes:
+
+  * monsters
+  * doors
+* No overlapping semantic effects
+
+This prevents visual noise and keeps inspection readable.
 
 ---
 
@@ -6656,145 +6825,117 @@ R1 renderer remains closed; no changes beyond R1.5 scope.
 
 **CLOSED / STABLE**
 
-Bug fixes only.
+No further changes except bug fixes.
+
+---
 
 ### Phase R1.5 — Interaction, theming, affordances & shader polish
 
-**IN PROGRESS**
+**ACTIVE (ADVANCED)**
+
+**Completed / Locked**
 
 * Click-to-focus camera ✔
 * Player vs focus separation ✔
 * Tint channel texture ✔
-* RenderTheme formalized & wired ✔
-* CP437 canonical default ✔
-* Tooltips + click-to-interact ⏳
-* Shader polish pass ⏳
+* RenderTheme wiring ✔
+* CP437 canonical atlas ✔
+* Ink vs background split ✔
+* Semantic effect hierarchy ✔
+
+**In progress**
+
+* Door edge highlight tuning
+* Fine control of effect amplitudes per theme
+* Render-pane tooltips & click-to-interact
+* Camera bounds clamping during focus chase
 
 ---
 
-## START CELL — SOURCE OF TRUTH (LOCKED)
+## UPDATED NEXT STEPS (R1.5 — IMMEDIATE)
 
-```ts
-computeStartCell(
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs
-): { x: number; y: number }
-```
+### 1. Door highlight tuning (small, important)
 
-Floor predicate: `solid[i] !== 255`.
-Used by all spawn/initialization consumers.
+* Increase **edge contrast** slightly (not brightness)
+* Prefer:
 
----
+  * edge darkening + thin highlight
+  * NOT glint bands
+* Doors should read as:
 
-## NEXT STEPS (IMMEDIATE — R1.5)
+  * solid
+  * physical
+  * interactive
+  * but *not collectible*
 
-1. **Render-mode inspection tooltips & interaction**
-
-   * Hover tooltip in render pane (cell-based)
-   * Tooltip mirrors content-mode inspection data:
-
-     * feature type / id
-     * hazard type
-     * runtime-relevant flags
-   * Click interaction in render mode:
-
-     * doors, levers, plates, blocks
-     * routed to existing runtime handlers
-   * Rules:
-
-     * reuse existing inspection adapters
-     * never duplicate semantic inference
-     * click-to-focus remains camera-only unless click hits an interactable (see below)
-
-2. **Enforce camera bounds during focus chase**
-
-   * Apply clamp inside `useFrame`, not just init
-   * Prevent panning beyond dungeon extents
-
-3. **Finalize `FeatureType → glyph` mapping audit**
-
-   * Verify enums vs `buildCharMask`
-   * Confirm wall-resident features (secret doors, etc.) render correctly
-
-4. **Focus affordances**
-
-   * Optional focus marker
-   * Optional “recenter on player” control
-
-5. **Shader special effects (tile-level lighting & shading) — NEW**
-
-   **Goal:** add “3D-ish” depth and inspection readability while staying within the
-   single-plane, nearest-filter, CP437 constraints.
-
-   ### 5.1 Per-tile fake lighting
-
-   * Treat walls vs floors differently
-   * Exterior wall edges slightly brighter
-   * Floor interiors slightly darker (subtle)
-
-   ### 5.2 Ambient occlusion from neighbors (fake AO)
-
-   * Sample `solid` neighbors
-   * Darken floors adjacent to walls
-   * Make corridors/rooms pop (readability win)
-
-   ### 5.3 Directional shadowing
-
-   * Choose a light direction (uniform)
-   * Darken tiles “behind” walls in that direction
-   * Keep conservative to avoid noisy glyph readability
-
-   ### 5.4 Hazard pulse
-
-   * If `tintTex == hazard channel`, modulate tint by:
-
-     * `(0.7 + 0.3 * sin(time * ω))`
-   * Use a uniform `uTime` (or frame counter) and `ω` parameter
-
-   ### 5.5 Interactable “breathing”
-
-   * If `tintTex == interactable channel`, subtle oscillation
-   * Ensure it does not overpower the theme tint roles
-
-   ### 5.6 Player outline / glow (cheap)
-
-   * Detect player boundary by sampling neighboring `tintTex`
-   * Draw a 1px outline / halo without blurring atlas sampling
-   * Must preserve crisp pixel edges (avoid linear filtering)
-
-   ### 5.7 Specular sparkle / sheen (items)
-
-   * Interactables only
-   * Small moving highlight across glyph (procedural, not sprite sheets)
-   * Optional toggle in debug theme
-
-   **Constraints / rules:**
-
-   * Keep sampling count bounded (prefer 4-neighbor unless 8 is required)
-   * Preserve CP437 crispness (no smooth filtering)
-   * Effects must be theme-compatible (tint first, then effect modulation)
-   * Effects may be toggled per theme (Danger-Forward Debug can be louder)
+This is a polish task, not a redesign.
 
 ---
 
-## NEXT STEPS (R2 — RUNTIME-DRIVEN VISUALS)
+### 2. Render-pane inspection affordances
+
+* Hover tooltips in render pane
+* Same semantic info as content pane:
+
+  * feature type / id
+  * hazard type
+  * runtime state
+* Click interactions:
+
+  * doors
+  * levers
+  * plates
+  * blocks
+* Rules:
+
+  * reuse existing inspection logic
+  * render pane must not infer semantics independently
+
+---
+
+### 3. Camera bounds enforcement
+
+* Clamp focus during snap-lerp
+* Prevent panning beyond dungeon extents
+* Must remain deterministic
+
+---
+
+### 4. FeatureType → glyph audit (final)
+
+* Verify enum ↔ glyph mapping
+* Confirm wall-resident features:
+
+  * secret doors
+  * hidden passages
+* Ensure charTex is authoritative
+
+---
+
+## NEXT PHASE (R2 — RUNTIME-DRIVEN VISUALS)
+
+R2 explicitly **does not start yet**, but is now clearly scoped:
 
 * Doors reflect open/closed runtime state
 * Keys disappear when collected
-* Blocks rendered from runtime positions
-* Hazard glyphs driven by `hazardType`
-* Optional tile-based animation hooks
+* Blocks render from runtime positions
+* Hazards reflect `hazardType`
+* Optional low-frequency tile animations
+
+R2 begins **only after** R1.5 interaction parity is complete.
 
 ---
 
 ## DEFINITIONS
 
 * **Cell** — integer grid coordinate `(x,y)`
-* **Atlas tile index** — selects CP437 glyph
+* **Atlas tile index** — CP437 glyph selector
 * **R8 DataTexture** — unsigned byte per cell
-* **Focus cell** — camera target (render pane)
-* **Player cell** — inspection-only overlay
-* **Snap-lerp camera** — smooth approach + deterministic settle
+* **Ink** — glyph pixels (atlas alpha > 0)
+* **Background** — tile fill beneath ink
+* **Focus cell** — camera target
+* **Player cell** — inspection overlay
+* **Snap-lerp camera** — smooth + deterministic
 
 ---
 </file>
@@ -8478,6 +8619,17 @@ type Props = {
   flipGridY?: boolean;
 
   theme?: RenderTheme;
+
+  onCellHover?: (info: {
+    x: number;
+    y: number;
+    clientX: number;
+    clientY: number;
+  }) => void;
+  onCellHoverEnd?: () => void;
+
+  // Return true if you handled the click (interaction), false to fall back to camera focus.
+  onCellClick?: (cell: { x: number; y: number }) => boolean;
 };
 
 // -------------------------------
@@ -8524,7 +8676,6 @@ function DungeonRenderScene(props: Props) {
     onCameraSettled,
   } = props;
 
-  console.log("dungeon render scene focus x/y", focusX, focusY);
   const W = bsp.width;
   const H = bsp.height;
 
@@ -8675,6 +8826,7 @@ function DungeonRenderScene(props: Props) {
         uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
         uWallTile: { value: wallTile },
         uFloorTile: { value: floorTile },
+        uDoorTile: { value: props.doorTile ?? 0 },
         uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
         uFlipGridX: { value: flipGridX ? 1 : 0 },
         uFlipGridY: { value: flipGridY ? 1 : 0 },
@@ -8683,6 +8835,17 @@ function DungeonRenderScene(props: Props) {
         uPlayerColor: { value: new THREE.Vector4(...playerColor) },
         uItemColor: { value: new THREE.Vector4(...itemColor) },
         uHazardColor: { value: new THREE.Vector4(...hazardColor) },
+        // R1.5 shader effects
+        uTime: { value: 0 },
+        uHazardOmega: { value: 6.0 },
+        uInteractOmega: { value: 2.0 },
+        uOutlineStrength: { value: 0.65 },
+        uAoStrength: { value: 0.35 },
+        uLightDir: { value: new THREE.Vector2(-1, -1) },
+        uEnemyColor: { value: new THREE.Vector4(1.0, 0.35, 0.35, 1.0) },
+        uEnemyBreathOmega: { value: 5.0 }, // try 2.0–4.0
+        uEnemyBreathAmp: { value: 0.06 }, // try 0.02–0.06
+        uMonsterTile: { value: props.monsterTile ?? 0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -8714,8 +8877,7 @@ function DungeonRenderScene(props: Props) {
   // Smooth camera rig (inside Canvas)
   // -------------------------------
 
-  const { camera } = useThree();
-  const { size } = useThree();
+  const { camera, size, viewport } = useThree();
 
   // camera current + target positions in world pixels
   const camWorld = useRef(new THREE.Vector3(0, 0, 10));
@@ -8745,24 +8907,26 @@ function DungeonRenderScene(props: Props) {
     camWorld.current.set(worldX, worldY, 10);
     targetWorld.current.set(worldX, worldY, 10);
 
-    // Clamp target to map bounds (account for viewport size in world px)
-    const halfViewW = (size.width * 0.5) / cam.zoom;
-    const halfViewH = (size.height * 0.5) / cam.zoom;
-    const halfMapW = W * pxPerCell * 0.5;
-    const halfMapH = H * pxPerCell * 0.5;
+    // Clamp during chase so we never pan beyond dungeon extents.
+    const planeW = W * pxPerCell;
+    const planeH = H * pxPerCell;
 
-    const minX = -halfMapW + halfViewW;
-    const maxX = halfMapW - halfViewW;
-    const minY = -halfMapH + halfViewH;
-    const maxY = halfMapH - halfViewH;
+    const halfVw = viewport.width / 2;
+    const halfVh = viewport.height / 2;
 
-    targetWorld.current.x = Math.min(
-      maxX,
-      Math.max(minX, targetWorld.current.x),
+    // If viewport is larger than plane, lock to center (0,0).
+    const minX = Math.min(-planeW / 2 + halfVw, 0);
+    const maxX = Math.max(planeW / 2 - halfVw, 0);
+    const minY = Math.min(-planeH / 2 + halfVh, 0);
+    const maxY = Math.max(planeH / 2 - halfVh, 0);
+
+    targetWorld.current.x = Math.max(
+      minX,
+      Math.min(maxX, targetWorld.current.x),
     );
-    targetWorld.current.y = Math.min(
-      maxY,
-      Math.max(minY, targetWorld.current.y),
+    targetWorld.current.y = Math.max(
+      minY,
+      Math.min(maxY, targetWorld.current.y),
     );
 
     camera.position.set(worldX, worldY, 10);
@@ -8802,9 +8966,19 @@ function DungeonRenderScene(props: Props) {
     }
   }, [focusX, focusY]);
 
+  useEffect(() => {
+    return () => {
+      atlas.dispose();
+    };
+  }, [atlas]);
+
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;
     const targetCell = targetCellRef.current;
+
+    if ((mat as any).uniforms?.uTime) {
+      (mat as any).uniforms.uTime.value = _state.clock.getElapsedTime();
+    }
 
     if (!targetCell) {
       cam.position.copy(camWorld.current);
@@ -8850,16 +9024,6 @@ function DungeonRenderScene(props: Props) {
       cam.position.copy(camWorld.current);
       cam.updateProjectionMatrix();
 
-      console.log(
-        "camera settled on",
-        { x: targetCell.x, y: targetCell.y },
-        {
-          dist,
-          forced: shouldForceSettle,
-          frames: s?.frames,
-        },
-      );
-
       onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
 
       targetCellRef.current = null;
@@ -8867,36 +9031,66 @@ function DungeonRenderScene(props: Props) {
     }
   });
 
+  const lastHoverRef = useRef<{ x: number; y: number } | null>(null);
+
   // -------------------------------
   // Draw the plane (pixel-world units)
   // -------------------------------
   return (
     <mesh
       position={[0, 0, 0]}
-      onPointerDown={(e) => {
+      onPointerMove={(e) => {
         e.stopPropagation();
-        // uv is 0..1 across the plane
         const uv = e.uv;
         if (!uv) return;
 
-        // Apply grid flips same as shader.
-        // We do this so click mapping matches what the user sees.
         let u = uv.x;
         let v = uv.y;
 
-        if (flipGridX) u = 1 - u;
-        if (flipGridY) v = 1 - v;
-
-        // numeric safety
         u = Math.min(0.999999, Math.max(0, u));
         v = Math.min(0.999999, Math.max(0, v));
 
         const cx = Math.floor(u * W);
         const cy = Math.floor(v * H);
-
         if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
 
-        // Camera-only: set focus target, do NOT move player.
+        const last = lastHoverRef.current;
+        if (last && last.x === cx && last.y === cy) return;
+        lastHoverRef.current = { x: cx, y: cy };
+
+        props.onCellHover?.({
+          x: cx,
+          y: cy,
+          clientX: e.clientX,
+          clientY: e.clientY,
+        });
+      }}
+      onPointerOut={() => {
+        lastHoverRef.current = null;
+        props.onCellHoverEnd?.();
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        const uv = e.uv;
+        if (!uv) return;
+
+        let u = uv.x;
+        let v = uv.y;
+        if (flipGridX) u = 1 - u;
+        if (flipGridY) v = 1 - v;
+
+        u = Math.min(0.999999, Math.max(0, u));
+        v = Math.min(0.999999, Math.max(0, v));
+
+        const cx = Math.floor(u * W);
+        const cy = Math.floor(v * H);
+        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+
+        // 1) Let inspection logic handle interactables first.
+        const handled = props.onCellClick?.({ x: cx, y: cy }) ?? false;
+        if (handled) return;
+
+        // 2) Otherwise, camera-only focus.
         props.onCellFocus?.({ x: cx, y: cy });
       }}
     >
@@ -10179,6 +10373,8 @@ export function InspectionShell(props: InspectionShellProps) {
     lines: string[];
     featureType: number;
     featureId: number;
+    clientX?: number;
+    clientY?: number;
   }>({
     visible: false,
     x: 0,
@@ -10429,29 +10625,87 @@ export function InspectionShell(props: InspectionShellProps) {
     const wrap = canvasWrapRef.current;
     if (!wrap) return { left: 0, top: 0 };
 
+    const rect = wrap.getBoundingClientRect();
     const wrapW = wrap.clientWidth;
     const wrapH = wrap.clientHeight;
-
-    const cellLeft = tooltip.x * scale;
-    const cellTop = tooltip.y * scale;
 
     const pad = 8;
     const estTipW = 320;
     const estTipH = 120;
 
-    let left = cellLeft;
-    let top = cellTop + scale + pad;
+    // If render provided mouse position, anchor to that (relative to wrap)
+    const hasClient = tooltip.clientX != null && tooltip.clientY != null;
+    const anchorX = hasClient
+      ? tooltip.clientX! - rect.left
+      : tooltip.x * scale;
+    const anchorY = hasClient ? tooltip.clientY! - rect.top : tooltip.y * scale;
+
+    let left = anchorX;
+    let top = anchorY + pad;
 
     left = Math.max(pad, Math.min(left, wrapW - estTipW - pad));
-
-    if (top + estTipH > wrapH - pad) {
-      top = Math.max(pad, cellTop - estTipH - pad);
-    }
+    if (top + estTipH > wrapH - pad)
+      top = Math.max(pad, anchorY - estTipH - pad);
 
     return { left, top };
   }
 
-  function scheduleTooltip(x: number, y: number) {
+  function tryInteractAtCell(x: number, y: number): boolean {
+    const w = dungeon.width;
+    const i = y * w + x;
+
+    const ft = content.masks.featureType[i] | 0;
+    const fid = content.masks.featureId[i] | 0;
+
+    if (ft === 8 && fid) {
+      // block
+      setSelectedBlockId((prev) => (prev === fid ? null : fid));
+      return true;
+    }
+
+    if (selectedBlockId != null) {
+      const b = runtime.blocks?.[selectedBlockId];
+      if (!b) {
+        setSelectedBlockId(null);
+        return true;
+      }
+
+      const dx = (x - b.x) | 0;
+      const dy = (y - b.y) | 0;
+      if (Math.abs(dx) + Math.abs(dy) !== 1) return true;
+
+      const res = tryPushBlock(
+        runtime,
+        dungeon,
+        content,
+        selectedBlockId,
+        dx,
+        dy,
+      );
+      if (res.ok) applyRuntime(res.next);
+      return true;
+    }
+
+    if (ft === 6 && fid) {
+      // lever
+      applyRuntime(toggleLever(runtime, fid));
+      return true;
+    }
+
+    if (ft === 5 && fid) {
+      // key
+      applyRuntime(collectKey(runtime, fid));
+      return true;
+    }
+
+    return false;
+  }
+
+  function scheduleTooltip(
+    x: number,
+    y: number,
+    pos?: { clientX: number; clientY: number },
+  ) {
     clearHoverTimer();
     hoverTimerRef.current = window.setTimeout(() => {
       const { lines, ft, fid } = buildTooltipLines(x, y);
@@ -10462,6 +10716,8 @@ export function InspectionShell(props: InspectionShellProps) {
         lines,
         featureType: ft,
         featureId: fid,
+        clientX: pos?.clientX,
+        clientY: pos?.clientY,
       });
     }, 75);
   }
@@ -10788,19 +11044,6 @@ export function InspectionShell(props: InspectionShellProps) {
             onClick={onClick}
           />*/}
 
-          {/* Blinking hover rect */}
-          {tooltip.visible && (
-            <div
-              className="maze-hover-rect"
-              style={{
-                left: tooltip.x * scale,
-                top: tooltip.y * scale,
-                width: scale,
-                height: scale,
-              }}
-            />
-          )}
-
           {/* Tooltip anchored to hovered cell */}
 
           {pane === "content" ? (
@@ -10972,6 +11215,21 @@ export function InspectionShell(props: InspectionShellProps) {
               flipAtlasY={false}
               flipGridX={false}
               flipGridY={true}
+              onCellHover={({ x, y, clientX, clientY }) => {
+                const last = lastHoverCellRef.current;
+                if (last && last.x === x && last.y === y) return;
+                lastHoverCellRef.current = { x, y };
+                scheduleTooltip(x, y, { clientX, clientY });
+              }}
+              onCellHoverEnd={() => {
+                clearHoverTimer();
+                lastHoverCellRef.current = null;
+                setTooltip((t) => (t.visible ? { ...t, visible: false } : t));
+              }}
+              onCellClick={({ x, y }) => {
+                // Interactions win; only if false will render view fall back to camera focus
+                return tryInteractAtCell(x, y);
+              }}
             />
           )}
         </div>

@@ -4,23 +4,22 @@
 
 ## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-**CONTEXT VERSION:** **2026-01-27 (rev G)**
+**CONTEXT VERSION:** **2026-01-28 (rev I)**
 **OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; R1.5 INTERACTION, THEMING, INSPECTION AFFORDANCES & SHADER POLISH IN PROGRESS**
+**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 SHADER SEMANTICS + VISUAL HIERARCHY ESTABLISHED (POLISH IN PROGRESS)**
 
 ---
 
 ## GOAL
 
-Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
+Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **custom fragment shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
 
-The result is a first-pass “GPU view” of the dungeon that can later grow into:
+The result is a first-class **GPU inspection view** that:
 
-* animated sprites
-* richer shading / lighting
-* overlays and debug visualizations
-* true runtime-driven visual state
-* themed visual styles
+* is visually readable at a glance
+* preserves CP437 crispness
+* reflects semantic roles (player, enemies, items, hazards, doors)
+* stays inspection-only (no gameplay coupling yet)
 
 ---
 
@@ -28,9 +27,9 @@ The result is a first-pass “GPU view” of the dungeon that can later grow int
 
 * No new generation controls (Step 7 remains inspection-only).
 * No batch rendering mode.
-* No 3D meshes for rooms/walls; it is a **single-plane tileset renderer**.
-* No full sprite animation system yet (static tile indices only).
-* No complicated scene graph; just one plane + camera + shader.
+* No 3D geometry for walls/floors — **single plane only**.
+* No sprite animation system (all motion is procedural in shader).
+* No runtime-authoritative visuals yet (R2 responsibility).
 
 ---
 
@@ -38,23 +37,16 @@ The result is a first-pass “GPU view” of the dungeon that can later grow int
 
 ### Location
 
-The render component lives **inside `InspectionShell`** as an alternate view alongside the current content/canvas inspection view.
+The render component lives **inside `InspectionShell`** as an alternate view alongside the existing 2D canvas inspection view.
 
 ### View Mode
 
 `InspectionShell` provides a local toggle:
 
 * `pane = "content"` → existing 2D canvas inspection
-  (layer selection, tooltips, legend, click-to-interact runtime controls)
-* `pane = "render"` → R3F render pipeline
+* `pane = "render"` → R3F tileset renderer
 
-### Inputs
-
-Render view consumes the same single-seed data already present in Step 7:
-
-* `dungeon: BspDungeonOutputs`
-* `content: ContentOutputs`
-* `runtime: DungeonRuntimeState` (optional initially, but intended to drive visual state)
+Both panes consume the **same single-seed dungeon + content outputs**.
 
 ---
 
@@ -62,79 +54,83 @@ Render view consumes the same single-seed data already present in Step 7:
 
 ### Entities
 
-Render view has **two distinct inspection-only concepts**:
+Render view distinguishes **two inspection-only concepts**:
 
 * **Player cell** `{x,y}`
 
-  * Rendered as an overlay glyph
-  * Initialized to the **start cell**
-  * Does **not** automatically move when camera focus changes
+  * Rendered as a glyph
+  * Initialized to start cell
+  * Does **not** drive camera
 
 * **Focus cell** `{x,y}`
 
-  * The **sole driver of the camera target**
-  * Initialized to the same start cell
-  * Can diverge freely from player position
+  * Sole camera target
+  * Click-to-focus only
+  * May diverge freely from player
 
-This separation is intentional and **locked**.
+This separation is **intentional and locked**.
 
 ### Camera behavior
 
-* Camera is **orthographic**
-* Camera target is driven by `focusX, focusY`
-* Camera uses a **snap-lerp controller**:
+* Orthographic camera
+* Target driven by focus cell
+* Snap-lerp controller:
 
-  * Smoothly approaches target
-  * Settles within a pixel threshold
-  * Emits `onCameraSettled({x,y})` deterministically
-
-### Interaction
-
-* **Render-pane click-to-focus is enabled**
-
-  * Raycast plane → UV → cell
-  * Click updates **focus only**
-  * Player overlay remains unchanged
-* Allows free visual inspection without mutating gameplay state
+  * smooth convergence
+  * deterministic settle
+  * emits `onCameraSettled({x,y})`
 
 ---
 
 ## COORDINATES (AUTHORITATIVE RULE)
 
-* **Grid flips belong in the shader**
-* **Camera never flips grid axes** — it only converts
-  *y-down grid space → y-up world space*
+* **All grid flips happen in the shader**
+* **Camera never flips grid axes**
 
-This separation is **locked**.
+  * Only converts y-down grid → y-up world
+
+This rule is locked to avoid compounding transforms.
 
 ---
 
 ## DATA MODEL (TEXTURES)
 
-### Generator textures (existing)
+### Generator textures
 
-* `solid` (wall / floor)
-* content masks (`featureType`, `featureId`, `hazardType`, etc.)
+* `solid` — wall vs floor
+* content masks:
 
-### Character / tile-index texture (`charTex`)
+  * `featureType`
+  * `featureId`
+  * `hazardType`
+  * etc.
 
-R8 `DataTexture` encoding which atlas tile to draw per cell:
+### Character / tile index texture (`charTex`)
 
-* `0` → no override (shader draws base wall/floor)
+R8 `DataTexture` encoding which CP437 tile to draw per cell:
+
+* `0` → draw base wall/floor tile
 * `N` → draw atlas tile `N`
 
-Primary **content → render bridge**.
+This is the **primary bridge** between content generation and rendering.
 
 ### Tint channel texture (`tintTex`)
 
-R8 `DataTexture` encoding **semantic tint channels**:
+R8 `DataTexture` encoding **semantic roles**:
 
-* `0` — base (floor / wall)
-* `1` — player
-* `2` — interactables
-* `3` — hazards (danger)
+| Value | Meaning               |
+| ----: | --------------------- |
+|     0 | base (floor / wall)   |
+|     1 | player                |
+|     2 | interactables / items |
+|     3 | hazards               |
 
-Shader multiplies atlas RGB by tint color.
+Tint IDs are **semantic**, not visual — colors come from theme uniforms.
+
+**Important (rev I clarification):**
+
+* **Monsters are currently identified by tile index** (e.g. `tile == uMonsterTile`) and tinted via an **enemy color uniform** (not via a `tintTex` ID).
+* `tintTex` remains authoritative for **player / items / hazards / base** semantics.
 
 ---
 
@@ -145,7 +141,7 @@ Shader multiplies atlas RGB by tint color.
 A data-only object defining semantic color roles and strength multipliers.
 
 * Lives in `renderTheme.ts`
-* Renderer consumes theme → shader uniforms
+* Consumed CPU-side → shader uniforms
 * Shader has **no semantic knowledge**
 
 Themes currently defined:
@@ -153,38 +149,91 @@ Themes currently defined:
 * **Default (CP437 Neutral)**
 * **Danger-Forward Debug**
 
-Theme selection is inspection-only.
+Themes may control **effect intensity**, not logic.
 
 ---
 
-## SHADER RESPONSIBILITIES
+## SHADER RESPONSIBILITIES (CURRENT)
 
-Fragment shader:
+The fragment shader now does **substantially more than R1**, while still honoring constraints:
 
 1. Compute cell coords from UV
-2. Sample `solid` to classify wall vs floor
+2. Classify wall vs floor via `solid`
 3. Render **only exterior wall edges**
-4. Sample `charTex` for tile override
-5. Sample `tintTex` for semantic channel
-6. Resolve tile → atlas UV
-7. Sample atlas and apply tint
+4. Resolve base tile vs char override
+5. Sample atlas (nearest)
+6. Split output into:
 
-All textures use `NearestFilter`.
+   * **background**
+   * **glyph ink (alpha-masked)**
+7. Apply **semantic effects to ink only**
+8. Composite opaque final color
+
+All textures remain `NearestFilter`.
 
 ---
 
-## SESSION SUMMARY (WHAT WE JUST IMPLEMENTED)
+## SESSION SUMMARY — 2026-01-28 (WHAT WE JUST DID)
 
-### R1.5 — interaction & theming expansion
+### R1.5 — shader semantics & visual hierarchy breakthrough
 
-* **RenderTheme system landed and wired**
+This session completed a **major qualitative step**:
 
-  * `RenderTheme` contract introduced
-  * Default + Danger-Forward Debug themes created
-  * Render view derives tint uniforms from theme
-  * Strength multipliers applied CPU-side (no shader churn)
+#### 1. Ink / background separation (LOCKED)
 
-R1 renderer remains closed; no changes beyond R1.5 scope.
+* Atlas alpha now strictly defines **glyph ink**
+* Floors render with a **solid black background**
+* Walls retain tinted background on exterior edges
+* All effects apply to **ink only**, never to background
+
+This unlocked clean, readable effects without muddy tiles.
+
+#### 2. Semantic visual hierarchy established
+
+Each role now has a **distinct motion/energy profile**:
+
+| Role     | Effect                                    |
+| -------- | ----------------------------------------- |
+| Player   | Subtle pulse toward white                 |
+| Monsters | Breathing warp (scale-based) + enemy tint |
+| Items    | Strong metallic sheen band                |
+| Doors    | Edge-only varnish highlight               |
+| Hazards  | Pulsing intensity                         |
+
+This hierarchy is deliberate:
+
+* **items (highest)** → **doors/enemies (mid, distinct)** → **player (subtle)** → **base tiles**.
+
+#### 3. Monster breathing (procedural warp)
+
+* Monsters no longer use metallic sheen
+* Glyph is gently warped around center
+* Feels “alive” without sprite animation
+* Amplitude and speed are uniform-controlled
+
+#### 4. Door effect re-scoped (IMPORTANT)
+
+* Metallic sheen removed from doors
+* Doors now get:
+
+  * **edge-only highlight**
+  * very subtle temporal shimmer
+* Doors are interactive but **intentionally less loud than items**
+
+**Important (rev I clarification):**
+
+* Door “edge-only highlight” is computed from the **atlas glyph alpha edge** (neighbor alpha taps in atlas UV space), **not** from grid-neighbor cell sampling.
+* Highlight strength is modulated by a slow pulse + mild vertical bias (a “varnish” feel), and mixes ink toward a pale near-white.
+
+#### 5. Effect exclusion rules enforced
+
+* Item metallic sheen explicitly excludes:
+
+  * monsters
+  * doors
+* No overlapping semantic effects
+
+This prevents visual noise and keeps inspection readable.
 
 ---
 
@@ -194,144 +243,116 @@ R1 renderer remains closed; no changes beyond R1.5 scope.
 
 **CLOSED / STABLE**
 
-Bug fixes only.
+No further changes except bug fixes.
+
+---
 
 ### Phase R1.5 — Interaction, theming, affordances & shader polish
 
-**IN PROGRESS**
+**ACTIVE (ADVANCED)**
+
+**Completed / Locked**
 
 * Click-to-focus camera ✔
 * Player vs focus separation ✔
 * Tint channel texture ✔
-* RenderTheme formalized & wired ✔
-* CP437 canonical default ✔
-* Tooltips + click-to-interact ⏳
-* Shader polish pass ⏳
+* RenderTheme wiring ✔
+* CP437 canonical atlas ✔
+* Ink vs background split ✔
+* Semantic effect hierarchy ✔
+
+**In progress**
+
+* Door edge highlight tuning
+* Fine control of effect amplitudes per theme
+* Render-pane tooltips & click-to-interact
+* Camera bounds clamping during focus chase
 
 ---
 
-## START CELL — SOURCE OF TRUTH (LOCKED)
+## UPDATED NEXT STEPS (R1.5 — IMMEDIATE)
 
-```ts
-computeStartCell(
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs
-): { x: number; y: number }
-```
+### 1. Door highlight tuning (small, important)
 
-Floor predicate: `solid[i] !== 255`.
-Used by all spawn/initialization consumers.
+* Increase **edge contrast** slightly (not brightness)
+* Prefer:
 
----
+  * edge darkening + thin highlight
+  * NOT glint bands
+* Doors should read as:
 
-## NEXT STEPS (IMMEDIATE — R1.5)
+  * solid
+  * physical
+  * interactive
+  * but *not collectible*
 
-1. **Render-mode inspection tooltips & interaction**
-
-   * Hover tooltip in render pane (cell-based)
-   * Tooltip mirrors content-mode inspection data:
-
-     * feature type / id
-     * hazard type
-     * runtime-relevant flags
-   * Click interaction in render mode:
-
-     * doors, levers, plates, blocks
-     * routed to existing runtime handlers
-   * Rules:
-
-     * reuse existing inspection adapters
-     * never duplicate semantic inference
-     * click-to-focus remains camera-only unless click hits an interactable (see below)
-
-2. **Enforce camera bounds during focus chase**
-
-   * Apply clamp inside `useFrame`, not just init
-   * Prevent panning beyond dungeon extents
-
-3. **Finalize `FeatureType → glyph` mapping audit**
-
-   * Verify enums vs `buildCharMask`
-   * Confirm wall-resident features (secret doors, etc.) render correctly
-
-4. **Focus affordances**
-
-   * Optional focus marker
-   * Optional “recenter on player” control
-
-5. **Shader special effects (tile-level lighting & shading) — NEW**
-
-   **Goal:** add “3D-ish” depth and inspection readability while staying within the
-   single-plane, nearest-filter, CP437 constraints.
-
-   ### 5.1 Per-tile fake lighting
-
-   * Treat walls vs floors differently
-   * Exterior wall edges slightly brighter
-   * Floor interiors slightly darker (subtle)
-
-   ### 5.2 Ambient occlusion from neighbors (fake AO)
-
-   * Sample `solid` neighbors
-   * Darken floors adjacent to walls
-   * Make corridors/rooms pop (readability win)
-
-   ### 5.3 Directional shadowing
-
-   * Choose a light direction (uniform)
-   * Darken tiles “behind” walls in that direction
-   * Keep conservative to avoid noisy glyph readability
-
-   ### 5.4 Hazard pulse
-
-   * If `tintTex == hazard channel`, modulate tint by:
-
-     * `(0.7 + 0.3 * sin(time * ω))`
-   * Use a uniform `uTime` (or frame counter) and `ω` parameter
-
-   ### 5.5 Interactable “breathing”
-
-   * If `tintTex == interactable channel`, subtle oscillation
-   * Ensure it does not overpower the theme tint roles
-
-   ### 5.6 Player outline / glow (cheap)
-
-   * Detect player boundary by sampling neighboring `tintTex`
-   * Draw a 1px outline / halo without blurring atlas sampling
-   * Must preserve crisp pixel edges (avoid linear filtering)
-
-   ### 5.7 Specular sparkle / sheen (items)
-
-   * Interactables only
-   * Small moving highlight across glyph (procedural, not sprite sheets)
-   * Optional toggle in debug theme
-
-   **Constraints / rules:**
-
-   * Keep sampling count bounded (prefer 4-neighbor unless 8 is required)
-   * Preserve CP437 crispness (no smooth filtering)
-   * Effects must be theme-compatible (tint first, then effect modulation)
-   * Effects may be toggled per theme (Danger-Forward Debug can be louder)
+This is a polish task, not a redesign.
 
 ---
 
-## NEXT STEPS (R2 — RUNTIME-DRIVEN VISUALS)
+### 2. Render-pane inspection affordances
+
+* Hover tooltips in render pane
+* Same semantic info as content pane:
+
+  * feature type / id
+  * hazard type
+  * runtime state
+* Click interactions:
+
+  * doors
+  * levers
+  * plates
+  * blocks
+* Rules:
+
+  * reuse existing inspection logic
+  * render pane must not infer semantics independently
+
+---
+
+### 3. Camera bounds enforcement
+
+* Clamp focus during snap-lerp
+* Prevent panning beyond dungeon extents
+* Must remain deterministic
+
+---
+
+### 4. FeatureType → glyph audit (final)
+
+* Verify enum ↔ glyph mapping
+* Confirm wall-resident features:
+
+  * secret doors
+  * hidden passages
+* Ensure `charTex` is authoritative
+
+---
+
+## NEXT PHASE (R2 — RUNTIME-DRIVEN VISUALS)
+
+R2 explicitly **does not start yet**, but is now clearly scoped:
 
 * Doors reflect open/closed runtime state
 * Keys disappear when collected
-* Blocks rendered from runtime positions
-* Hazard glyphs driven by `hazardType`
-* Optional tile-based animation hooks
+* Blocks render from runtime positions
+* Hazards reflect `hazardType`
+* Optional low-frequency tile animations
+
+R2 begins **only after** R1.5 interaction parity is complete.
 
 ---
 
 ## DEFINITIONS
 
 * **Cell** — integer grid coordinate `(x,y)`
-* **Atlas tile index** — selects CP437 glyph
+* **Atlas tile index** — CP437 glyph selector
 * **R8 DataTexture** — unsigned byte per cell
-* **Focus cell** — camera target (render pane)
-* **Player cell** — inspection-only overlay
-* **Snap-lerp camera** — smooth approach + deterministic settle
+* **Ink** — glyph pixels (atlas alpha > 0)
+* **Background** — tile fill beneath ink
+* **Focus cell** — camera target
+* **Player cell** — inspection overlay
+* **Snap-lerp camera** — smooth + deterministic
 
 ---

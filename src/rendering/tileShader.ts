@@ -9,111 +9,238 @@ void main() {
 
 // src/rendering/tileShader.ts
 export const tileFrag = /* glsl */ `
-precision highp float;
+  precision highp float;
 
-uniform sampler2D uSolid;   // R8 normalized
-uniform sampler2D uChar;    // R8 normalized
-uniform sampler2D uTint;    // R8 normalized (tint channel id)
-uniform sampler2D uAtlas;   // RGBA tileset
+  uniform float uTime;
+  uniform float uHazardOmega;
+  uniform float uInteractOmega;
+  uniform float uAoStrength;
+  uniform vec2  uLightDir;
 
-uniform vec2 uGridSize;     // (W, H)
-uniform vec2 uAtlasGrid;    // (cols, rows)
-uniform float uWallTile;    // tile index
-uniform float uFloorTile;   // tile index
-uniform float uFlipAtlasY;  // 0 or 1
+  uniform sampler2D uSolid;
+  uniform sampler2D uChar;
+  uniform sampler2D uTint;
+  uniform sampler2D uAtlas;
 
-uniform float uFlipGridX;   // 0 or 1
-uniform float uFlipGridY;   // 0 or 1
+  uniform vec2 uGridSize;
+  uniform vec2 uAtlasGrid;
+  uniform float uWallTile;
+  uniform float uFloorTile;
+  uniform float uDoorTile;
 
-uniform vec4 uFloorColor;
-uniform vec4 uWallColor;
-uniform vec4 uPlayerColor;
-uniform vec4 uItemColor;
-uniform vec4 uHazardColor;
+  uniform float uFlipAtlasY;
+  uniform float uFlipGridX;
+  uniform float uFlipGridY;
 
-varying vec2 vUv;
+  uniform vec4 uFloorColor;
+  uniform vec4 uWallColor;
+  uniform vec4 uPlayerColor;
+  uniform vec4 uItemColor;
+  uniform vec4 uHazardColor;
+  uniform vec4 uEnemyColor;
 
-float sampleR8(sampler2D tex, vec2 uv) {
-  return texture2D(tex, uv).r; // 0..1
-}
+  uniform float uEnemyBreathOmega;
+  uniform float uEnemyBreathAmp;
+  uniform float uMonsterTile;
 
-float isWallAtCell(vec2 cell) {
-  vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
-  vec2 uv = (c + vec2(0.5)) / uGridSize;
-  float s = sampleR8(uSolid, uv);
-  return step(0.5, s); // 1 if wall, 0 if floor
-}
+  varying vec2 vUv;
 
-void main() {
-  // Apply grid flips BEFORE computing cell coords
-  vec2 uvGrid = vUv;
-  if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
-  if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
 
-  // Which cell are we in?
-  vec2 gridUv = uvGrid * uGridSize;
-  vec2 cell = floor(gridUv);
-  vec2 local = fract(gridUv);
-
-  // Center UV for sampling
-  vec2 texUv = (cell + vec2(0.5)) / uGridSize;
-
-  // Current cell wall/floor
-  float curWall = step(0.5, sampleR8(uSolid, texUv));
-
-  // 8-neighbor walls (clamped)
-  float wL  = isWallAtCell(cell + vec2(-1.0,  0.0));
-  float wR  = isWallAtCell(cell + vec2( 1.0,  0.0));
-  float wU  = isWallAtCell(cell + vec2( 0.0, -1.0));
-  float wD  = isWallAtCell(cell + vec2( 0.0,  1.0));
-
-  float wUL = isWallAtCell(cell + vec2(-1.0, -1.0));
-  float wUR = isWallAtCell(cell + vec2( 1.0, -1.0));
-  float wDL = isWallAtCell(cell + vec2(-1.0,  1.0));
-  float wDR = isWallAtCell(cell + vec2( 1.0,  1.0));
-
-  // Exterior/edge wall if current is wall AND any neighbor is floor
-  float allNeighborsWall = wL * wR * wU * wD * wUL * wUR * wDL * wDR;
-  float hasFloorNeighbor = 1.0 - allNeighborsWall;
-  float isEdgeWall = curWall * hasFloorNeighbor;
-
-  // Char overlay (still allowed on top of blank walls)
-  float chN = sampleR8(uChar, texUv);
-  float ch  = floor(chN * 255.0 + 0.5);
-  float hasChar = step(0.5, ch);
-
-  // Interior wall and no char => blank (transparent)
-  if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-    return;
+  float tileIs(float tile, float target) {
+    return 1.0 - step(0.5, abs(tile - target));
   }
 
-  // Base tile: floor for floor cells; wall tile only for edge walls
-  float baseTile = mix(uFloorTile, uWallTile, isEdgeWall);
+  float sampleR8(sampler2D tex, vec2 uv) {
+    return texture2D(tex, uv).r;
+  }
 
-  // Char overrides base when non-zero
-  float tile = mix(baseTile, ch, hasChar);
+  float isWallAtCell(vec2 cell) {
+    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
+    vec2 uv = (c + vec2(0.5)) / uGridSize;
+    return step(0.5, sampleR8(uSolid, uv));
+  }
 
-  // Tint selection (0=base, 1=player, 2=item, 3=hazard)
-  float tintN = sampleR8(uTint, texUv);
-  float tintId = floor(tintN * 255.0 + 0.5);
-  vec4 baseTint = mix(uFloorColor, uWallColor, isEdgeWall);
-  vec4 tint = baseTint;
-  if (tintId > 0.5 && tintId < 1.5) tint = uPlayerColor;
-  else if (tintId > 1.5 && tintId < 2.5) tint = uItemColor;
-  else if (tintId > 2.5 && tintId < 3.5) tint = uHazardColor;
+  vec2 breatheWarp(vec2 local, float t, float amp) {
+    vec2 p = local - vec2(0.5);
+    float sY = 1.0 + amp * t;
+    float sX = 1.0 - amp * 0.6 * t;
+    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
+    return clamp(q, vec2(0.001), vec2(0.999));
+  }
 
-  float cols = uAtlasGrid.x;
-  float rows = uAtlasGrid.y;
+  float atlasAlphaAtLocal(
+    vec2 localCoord,
+    float tx,
+    float ty,
+    float cols,
+    float rows
+  ) {
+    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
+              / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
+    return texture2D(uAtlas, uv).a;
+  }
 
-  float tx = mod(tile, cols);
-  float ty = floor(tile / cols);
+  // ------------------------------------------------------------
+  // Main
+  // ------------------------------------------------------------
 
-  vec2 atlasUv = (vec2(tx, ty) + local) / vec2(cols, rows);
-  if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+  void main() {
+    vec2 uvGrid = vUv;
+    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
+    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
 
-  vec4 c = texture2D(uAtlas, atlasUv);
-  c.rgb *= tint.rgb;
-  gl_FragColor = c;
-}
+    vec2 gridUv = uvGrid * uGridSize;
+    vec2 cell   = floor(gridUv);
+    vec2 local  = fract(gridUv);
+    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
+
+    float curWall = step(0.5, sampleR8(uSolid, texUv));
+
+    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
+    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
+    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
+    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
+
+    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
+    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
+    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
+    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
+
+    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
+    float isEdgeWall = curWall * (1.0 - allWall);
+
+    float chN = sampleR8(uChar, texUv);
+    float ch  = floor(chN * 255.0 + 0.5);
+    float hasChar = step(0.5, ch);
+
+    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    float tile = mix(
+      mix(uFloorTile, uWallTile, isEdgeWall),
+      ch,
+      hasChar
+    );
+
+    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
+
+    float cols = uAtlasGrid.x;
+    float rows = uAtlasGrid.y;
+    float tx = mod(tile, cols);
+    float ty = floor(tile / cols);
+
+    float isMonster = tileIs(tile, uMonsterTile);
+    vec2 local2 = local;
+
+    if (isMonster > 0.5) {
+      float breath = sin(uTime * uEnemyBreathOmega);
+      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
+    }
+
+    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+
+    vec4 c = texture2D(uAtlas, atlasUv);
+
+    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
+    float inkA = smoothstep(0.05, 0.20, c.a);
+    vec3 ink = c.rgb;
+
+    // -------------------------
+    // Tint selection
+    // -------------------------
+
+    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
+
+    if (tintId > 0.5 && tintId < 1.5) {
+      float t = 0.5 + 0.5 * sin(uTime * 4.0);
+      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
+    } else if (tintId > 1.5 && tintId < 2.5) {
+      tint = uItemColor;
+    } else if (tintId > 2.5 && tintId < 3.5) {
+      tint = uHazardColor;
+    }
+
+    if (isMonster > 0.5) {
+      tint = uEnemyColor;
+    }
+
+    // -------------------------
+    // Lighting
+    // -------------------------
+
+    float modulate = 1.0;
+    if (tintId > 2.5 && tintId < 3.5)
+      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
+    else if (tintId > 1.5 && tintId < 2.5)
+      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
+
+    float ao = (curWall < 0.5)
+      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
+      : 0.0;
+
+    vec2 dir = normalize(uLightDir + vec2(1e-5));
+    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
+
+    float shade = mix(0.97, 1.08, isEdgeWall);
+    shade *= (1.0 - ao);
+    shade *= (1.0 - shadow);
+    shade *= modulate;
+
+    ink *= tint.rgb * shade;
+
+    // ------------------------------------------------------------
+    // DOOR EFFECT — stronger, calmer, architectural
+    // ------------------------------------------------------------
+
+    float isDoor = tileIs(tile, uDoorTile);
+
+    if (isDoor > 0.5) {
+      vec2 eps = vec2(1.0 / 32.0);
+
+      float aC = inkA;
+      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
+      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
+      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
+      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
+
+      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
+
+      // Slow, weighty pulse (much slower than items)
+      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
+
+      // Vertical bias — doors feel tall and solid
+      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
+
+      float strength = edge * pulse * vertical;
+
+      vec3 hi = vec3(0.92, 0.95, 1.0);
+      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
+    }
+
+    // -------------------------
+    // Item metallic sheen (unchanged)
+    // -------------------------
+
+    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
+      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
+      float d = abs(phase - 0.5);
+      float core = 1.0 - smoothstep(0.01, 0.03, d);
+      float halo = 1.0 - smoothstep(0.04, 0.16, d);
+      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
+      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
+      vec3 hi = vec3(0.96, 0.98, 1.0);
+      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
+    }
+
+    vec3 outRgb = mix(bg, ink, inkA);
+    gl_FragColor = vec4(outRgb, 1.0);
+  }
+
 `;

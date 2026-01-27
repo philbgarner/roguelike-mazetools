@@ -65,6 +65,17 @@ type Props = {
   flipGridY?: boolean;
 
   theme?: RenderTheme;
+
+  onCellHover?: (info: {
+    x: number;
+    y: number;
+    clientX: number;
+    clientY: number;
+  }) => void;
+  onCellHoverEnd?: () => void;
+
+  // Return true if you handled the click (interaction), false to fall back to camera focus.
+  onCellClick?: (cell: { x: number; y: number }) => boolean;
 };
 
 // -------------------------------
@@ -111,7 +122,6 @@ function DungeonRenderScene(props: Props) {
     onCameraSettled,
   } = props;
 
-  console.log("dungeon render scene focus x/y", focusX, focusY);
   const W = bsp.width;
   const H = bsp.height;
 
@@ -241,6 +251,8 @@ function DungeonRenderScene(props: Props) {
 
   // tint channel texture (R8)
   const tintTex = useMemo(() => {
+    //Enemies/monsters are currently detected by tile == monsterTile and shaded via uEnemyColor (not a tint ID)
+    // Tint channel remains reserved for player/items/hazards.
     const mask = buildTintMask(bsp, content, {
       playerX: props.playerX,
       playerY: props.playerY,
@@ -262,6 +274,7 @@ function DungeonRenderScene(props: Props) {
         uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
         uWallTile: { value: wallTile },
         uFloorTile: { value: floorTile },
+        uDoorTile: { value: props.doorTile ?? 0 },
         uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
         uFlipGridX: { value: flipGridX ? 1 : 0 },
         uFlipGridY: { value: flipGridY ? 1 : 0 },
@@ -270,6 +283,17 @@ function DungeonRenderScene(props: Props) {
         uPlayerColor: { value: new THREE.Vector4(...playerColor) },
         uItemColor: { value: new THREE.Vector4(...itemColor) },
         uHazardColor: { value: new THREE.Vector4(...hazardColor) },
+        // R1.5 shader effects
+        uTime: { value: 0 },
+        uHazardOmega: { value: 6.0 },
+        uInteractOmega: { value: 2.0 },
+        uOutlineStrength: { value: 0.65 },
+        uAoStrength: { value: 0.35 },
+        uLightDir: { value: new THREE.Vector2(-1, -1) },
+        uEnemyColor: { value: new THREE.Vector4(1.0, 0.35, 0.35, 1.0) },
+        uEnemyBreathOmega: { value: 5.0 }, // try 2.0–4.0
+        uEnemyBreathAmp: { value: 0.06 }, // try 0.02–0.06
+        uMonsterTile: { value: props.monsterTile ?? 0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -301,8 +325,7 @@ function DungeonRenderScene(props: Props) {
   // Smooth camera rig (inside Canvas)
   // -------------------------------
 
-  const { camera } = useThree();
-  const { size } = useThree();
+  const { camera, size, viewport } = useThree();
 
   // camera current + target positions in world pixels
   const camWorld = useRef(new THREE.Vector3(0, 0, 10));
@@ -332,24 +355,26 @@ function DungeonRenderScene(props: Props) {
     camWorld.current.set(worldX, worldY, 10);
     targetWorld.current.set(worldX, worldY, 10);
 
-    // Clamp target to map bounds (account for viewport size in world px)
-    const halfViewW = (size.width * 0.5) / cam.zoom;
-    const halfViewH = (size.height * 0.5) / cam.zoom;
-    const halfMapW = W * pxPerCell * 0.5;
-    const halfMapH = H * pxPerCell * 0.5;
+    // Clamp during chase so we never pan beyond dungeon extents.
+    const planeW = W * pxPerCell;
+    const planeH = H * pxPerCell;
 
-    const minX = -halfMapW + halfViewW;
-    const maxX = halfMapW - halfViewW;
-    const minY = -halfMapH + halfViewH;
-    const maxY = halfMapH - halfViewH;
+    const halfVw = viewport.width / 2;
+    const halfVh = viewport.height / 2;
 
-    targetWorld.current.x = Math.min(
-      maxX,
-      Math.max(minX, targetWorld.current.x),
+    // If viewport is larger than plane, lock to center (0,0).
+    const minX = Math.min(-planeW / 2 + halfVw, 0);
+    const maxX = Math.max(planeW / 2 - halfVw, 0);
+    const minY = Math.min(-planeH / 2 + halfVh, 0);
+    const maxY = Math.max(planeH / 2 - halfVh, 0);
+
+    targetWorld.current.x = Math.max(
+      minX,
+      Math.min(maxX, targetWorld.current.x),
     );
-    targetWorld.current.y = Math.min(
-      maxY,
-      Math.max(minY, targetWorld.current.y),
+    targetWorld.current.y = Math.max(
+      minY,
+      Math.min(maxY, targetWorld.current.y),
     );
 
     camera.position.set(worldX, worldY, 10);
@@ -389,9 +414,19 @@ function DungeonRenderScene(props: Props) {
     }
   }, [focusX, focusY]);
 
+  useEffect(() => {
+    return () => {
+      atlas.dispose();
+    };
+  }, [atlas]);
+
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;
     const targetCell = targetCellRef.current;
+
+    if ((mat as any).uniforms?.uTime) {
+      (mat as any).uniforms.uTime.value = _state.clock.getElapsedTime();
+    }
 
     if (!targetCell) {
       cam.position.copy(camWorld.current);
@@ -437,16 +472,6 @@ function DungeonRenderScene(props: Props) {
       cam.position.copy(camWorld.current);
       cam.updateProjectionMatrix();
 
-      console.log(
-        "camera settled on",
-        { x: targetCell.x, y: targetCell.y },
-        {
-          dist,
-          forced: shouldForceSettle,
-          frames: s?.frames,
-        },
-      );
-
       onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
 
       targetCellRef.current = null;
@@ -454,36 +479,66 @@ function DungeonRenderScene(props: Props) {
     }
   });
 
+  const lastHoverRef = useRef<{ x: number; y: number } | null>(null);
+
   // -------------------------------
   // Draw the plane (pixel-world units)
   // -------------------------------
   return (
     <mesh
       position={[0, 0, 0]}
-      onPointerDown={(e) => {
+      onPointerMove={(e) => {
         e.stopPropagation();
-        // uv is 0..1 across the plane
         const uv = e.uv;
         if (!uv) return;
 
-        // Apply grid flips same as shader.
-        // We do this so click mapping matches what the user sees.
         let u = uv.x;
         let v = uv.y;
 
-        if (flipGridX) u = 1 - u;
-        if (flipGridY) v = 1 - v;
-
-        // numeric safety
         u = Math.min(0.999999, Math.max(0, u));
         v = Math.min(0.999999, Math.max(0, v));
 
         const cx = Math.floor(u * W);
         const cy = Math.floor(v * H);
-
         if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
 
-        // Camera-only: set focus target, do NOT move player.
+        const last = lastHoverRef.current;
+        if (last && last.x === cx && last.y === cy) return;
+        lastHoverRef.current = { x: cx, y: cy };
+
+        props.onCellHover?.({
+          x: cx,
+          y: cy,
+          clientX: e.clientX,
+          clientY: e.clientY,
+        });
+      }}
+      onPointerOut={() => {
+        lastHoverRef.current = null;
+        props.onCellHoverEnd?.();
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        const uv = e.uv;
+        if (!uv) return;
+
+        let u = uv.x;
+        let v = uv.y;
+        if (flipGridX) u = 1 - u;
+        if (flipGridY) v = 1 - v;
+
+        u = Math.min(0.999999, Math.max(0, u));
+        v = Math.min(0.999999, Math.max(0, v));
+
+        const cx = Math.floor(u * W);
+        const cy = Math.floor(v * H);
+        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+
+        // 1) Let inspection logic handle interactables first.
+        const handled = props.onCellClick?.({ x: cx, y: cy }) ?? false;
+        if (handled) return;
+
+        // 2) Otherwise, camera-only focus.
         props.onCellFocus?.({ x: cx, y: cy });
       }}
     >

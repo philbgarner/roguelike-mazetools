@@ -71,6 +71,27 @@ input {
     max-height: 98vh;
 }
 
+.maze-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Inspection layout: make the right pane truly consume remaining width */
+.maze-app.maze-app--inspect .maze-preview {
+    flex: 1;
+    min-width: 0; /* critical: allows the preview to shrink/grow without overflow */
+}
+
+.maze-app.maze-app--inspect .maze-controls {
+    flex: 0 0 auto;
+}
+
+.maze-app.maze-app--inspect .maze-controls.maze-controls--collapsed {
+    width: 180px;
+    max-width: 180px;
+}
+
 /* Wizard + Execution: single centered large panel */
 .maze-app.maze-app--centered {
     display: flex;
