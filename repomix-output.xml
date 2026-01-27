@@ -57,14 +57,13 @@ src/
   inspect/
     BatchResultsView.tsx
     computeStartCell.ts
-    DungeonRenderView.tsx
     InspectionShell.tsx
     SingleInspectView.tsx
   rendering/
     codepage437Tiles.ts
-    DungeonRenderView copy.tsx
     DungeonRenderView.tsx
     RENDERING-CONTEXT.md
+    renderTheme.ts
     tiles.ts
     tileShader.ts
   wizard/
@@ -2793,849 +2792,123 @@ export function BatchResultsView(props: BatchResultsViewProps) {
 export default BatchResultsView;
 </file>
 
-<file path="src/inspect/DungeonRenderView.tsx">
-// src/rendering/DungeonRenderView.tsx
-import React, { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-import { buildCharMask, maskToTileTextureR8 } from "./tiles";
-import { tileFrag, tileVert } from "./tileShader";
+<file path="src/rendering/renderTheme.ts">
+// RenderTheme is intentionally “uniform-ready”:
+// - colors are hex strings (easy to serialize + author)
+// - renderer converts to THREE.Color / vec3 as needed
 
-type Props = {
-  bsp: BspDungeonOutputs;
-  content: ContentOutputs;
+export type RenderTheme = {
+  id: string;
+  label: string;
 
-  // tileset atlas image URL (PNG) and layout
-  atlasUrl: string;
-  atlasCols: number;
-  atlasRows: number;
+  // Base tileset tint roles (these map directly to shader uniforms)
+  colors: {
+    floor: string; // base floor tint
+    wallEdge: string; // exterior wall edges tint
+    player: string; // tintTex=1
+    interactable: string; // tintTex=2 (items / levers / doors / keys / chests)
+    hazard: string; // tintTex=3 (danger)
 
-  // which tiles to use for floor/wall; everything else comes from char mask
-  wallTile: number;
-  floorTile: number;
+    // Debug overlays / affordances (future: optional extra passes or composite)
+    focus: string; // focus cell marker
+    selection: string; // selected cell highlight
+    debugOverlay: string; // general purpose overlay tint
+  };
 
-  // if your atlas origin is top-left, set true (shader handles flip)
-  flipAtlasY?: boolean;
+  // Multipliers let you tune “how strong” each tint is without changing hue.
+  // If your shader doesn’t support this yet, keep them at 1 and ignore.
+  strength: {
+    floor: number;
+    wallEdge: number;
+    player: number;
+    interactable: number;
+    hazard: number;
+    focus: number;
+    selection: number;
+    debugOverlay: number;
+  };
 
-  doorTile?: number;
-  keyTile?: number;
-  leverTile?: number;
-  plateTile?: number;
-  blockTile?: number;
-  chestTile?: number;
-  monsterTile?: number;
-  secretDoorTile?: number;
-  hiddenPassageTile?: number;
-
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>;
-
-  playerX?: number;
-  playerY?: number;
-  playerTile?: number;
-
-  // camera target (typically player coords)
-  focusX: number;
-  focusY: number;
-
-  // pixels per cell (world units are pixels)
-  zoom?: number;
-
-  onCameraSettled?: (cell: { x: number; y: number }) => void;
-
-  // grid orientation fixes (defaults true/true to match your current convention)
-  flipGridX?: boolean;
-  flipGridY?: boolean;
+  // Optional: semantic guidance for UI widgets / legend
+  legend: {
+    tintChannelLabels: Record<0 | 1 | 2 | 3, string>;
+  };
 };
 
-// -------------------------------
-// Canvas-internal scene
-// -------------------------------
-
-function cellToWorldPx(
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  pxPerCell: number,
-  flipGridX: boolean,
-) {
-  // X flip still applies (mirroring)
-  const fx = flipGridX ? w - 1 - x : x;
-
-  // IMPORTANT:
-  // DO NOT flip Y here.
-  // y is already top-left–origin, y-down.
-  const fy = y;
-
-  const worldX = (fx + 0.5 - w / 2) * pxPerCell;
-  const worldY = (h / 2 - (fy + 0.5)) * pxPerCell;
-
-  return { worldX, worldY };
-}
-
-function DungeonRenderScene(props: Props) {
-  const {
-    bsp,
-    content,
-    atlasUrl,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-
-    focusX,
-    focusY,
-    zoom,
-
-    onCameraSettled,
-  } = props;
-
-  console.log("dungeon render scene focus x/y", focusX, focusY);
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const pxPerCell = zoom ?? 32;
-
-  const flipGridX = props.flipGridX ?? true;
-  const flipGridY = props.flipGridY ?? true;
-
-  // --- Load atlas texture (inside Canvas tree = safe) ---
-  const atlas = useMemo(() => {
-    const loader = new THREE.TextureLoader();
-    const t = loader.load(atlasUrl);
-
-    // Pixel art correctness
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.generateMipmaps = false;
-    t.wrapS = THREE.ClampToEdgeWrapping;
-    t.wrapT = THREE.ClampToEdgeWrapping;
-
-    // IMPORTANT: do not double-flip; shader handles optional flip
-    t.flipY = false;
-
-    // Atlas is color
-    t.colorSpace = THREE.SRGBColorSpace;
-
-    return t;
-  }, [atlasUrl]);
-
-  // --- Build char texture (R8) ---
-  const charTex = useMemo(() => {
-    const mask = buildCharMask(bsp, content, {
-      wallTile,
-      floorTile,
-
-      doorTile: props.doorTile,
-      keyTile: props.keyTile,
-      leverTile: props.leverTile,
-      plateTile: props.plateTile,
-      blockTile: props.blockTile,
-      chestTile: props.chestTile,
-      monsterTile: props.monsterTile,
-      secretDoorTile: props.secretDoorTile,
-      hiddenPassageTile: props.hiddenPassageTile,
-
-      hazardDefaultTile: props.hazardDefaultTile,
-      hazardTilesByType: props.hazardTilesByType,
-
-      playerX: props.playerX,
-      playerY: props.playerY,
-      playerTile: props.playerTile,
-    });
-
-    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
-  }, [
-    bsp,
-    content,
-    W,
-    H,
-    wallTile,
-    floorTile,
-    props.doorTile,
-    props.keyTile,
-    props.leverTile,
-    props.plateTile,
-    props.blockTile,
-    props.chestTile,
-    props.monsterTile,
-    props.secretDoorTile,
-    props.hiddenPassageTile,
-    props.hazardDefaultTile,
-    props.hazardTilesByType,
-    props.playerX,
-    props.playerY,
-    props.playerTile,
-  ]);
-
-  // --- Shader material ---
-  const mat = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      vertexShader: tileVert,
-      fragmentShader: tileFrag,
-      uniforms: {
-        uSolid: { value: bsp.textures.solid },
-        uChar: { value: charTex },
-        uAtlas: { value: atlas },
-        uGridSize: { value: new THREE.Vector2(W, H) },
-        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
-        uWallTile: { value: wallTile },
-        uFloorTile: { value: floorTile },
-        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
-        uFlipGridX: { value: flipGridX ? 1 : 0 },
-        uFlipGridY: { value: flipGridY ? 1 : 0 },
-      },
-      depthTest: false,
-      depthWrite: false,
-      transparent: false,
-    });
-  }, [
-    bsp.textures.solid,
-    charTex,
-    atlas,
-    W,
-    H,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-    flipGridX,
-    flipGridY,
-  ]);
-
-  // -------------------------------
-  // Smooth camera rig (inside Canvas)
-  // -------------------------------
-
-  const { camera } = useThree();
-
-  // camera current + target positions in world pixels
-  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
-  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
-
-  // Track last focus to detect changes
-  const lastFocus = useRef<{ x: number; y: number } | null>(null);
-
-  // Stable target tracking (refs, not state)
-  const targetCellRef = useRef<{ x: number; y: number } | null>(null);
-  const settlingRef = useRef<{ x: number; y: number; frames: number } | null>(
-    null,
-  );
-
-  // Initialize camera when map size / zoom changes (NOT on focus changes)
-  useEffect(() => {
-    const { worldX, worldY } = cellToWorldPx(
-      focusX,
-      focusY,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-
-    camWorld.current.set(worldX, worldY, 10);
-    targetWorld.current.set(worldX, worldY, 10);
-    camera.position.set(worldX, worldY, 10);
-
-    const cam = camera as THREE.OrthographicCamera;
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-
-    // baseline for change detection
-    lastFocus.current = { x: focusX, y: focusY };
-
-    // clear any in-flight chase (map/zoom swap)
-    targetCellRef.current = null;
-    settlingRef.current = null;
-  }, [W, H, pxPerCell, camera, flipGridX]);
-
-  // When focus changes, set a new target cell (without spam)
-  useEffect(() => {
-    const prev = lastFocus.current;
-    if (!prev || prev.x !== focusX || prev.y !== focusY) {
-      lastFocus.current = { x: focusX, y: focusY };
-
-      const curTarget = targetCellRef.current;
-      if (!curTarget || curTarget.x !== focusX || curTarget.y !== focusY) {
-        targetCellRef.current = { x: focusX, y: focusY };
-        settlingRef.current = { x: focusX, y: focusY, frames: 0 };
-      }
-    }
-  }, [focusX, focusY]);
-
-  useFrame((_state, delta) => {
-    const cam = camera as THREE.OrthographicCamera;
-    const targetCell = targetCellRef.current;
-
-    if (!targetCell) {
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-      return;
-    }
-
-    const { worldX, worldY } = cellToWorldPx(
-      targetCell.x,
-      targetCell.y,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-    targetWorld.current.set(worldX, worldY, 10);
-
-    // frame-rate independent smoothing
-    const speed = 14; // 10-20 range
-    const t = 1 - Math.exp(-speed * delta);
-    camWorld.current.lerp(targetWorld.current, t);
-
-    cam.position.copy(camWorld.current);
-    cam.updateProjectionMatrix();
-
-    // stop within a few pixels (world units are pixels)
-    const dx = camWorld.current.x - targetWorld.current.x;
-    const dy = camWorld.current.y - targetWorld.current.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // increment frames for this chase
-    const s = settlingRef.current;
-    if (s && s.x === targetCell.x && s.y === targetCell.y) {
-      s.frames += 1;
-    }
-
-    const stopPx = 3;
-    const maxFrames = 90; // ~1.5s @ 60fps
-    const shouldForceSettle = !!s && s.frames >= maxFrames;
-
-    if (dist <= stopPx || shouldForceSettle) {
-      camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-
-      console.log(
-        "camera settled on",
-        { x: targetCell.x, y: targetCell.y },
-        {
-          dist,
-          forced: shouldForceSettle,
-          frames: s?.frames,
-        },
-      );
-
-      onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
-
-      targetCellRef.current = null;
-      settlingRef.current = null;
-    }
-  });
-
-  // -------------------------------
-  // Draw the plane (pixel-world units)
-  // -------------------------------
-  return (
-    <mesh position={[0, 0, 0]}>
-      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
-      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
-      <primitive object={mat} attach="material" />
-    </mesh>
-  );
-}
-
-// -------------------------------
-// Wrapper (NO R3F hooks here)
-// -------------------------------
-
-export default function DungeonRenderView(props: Props) {
-  const pxPerCell = props.zoom ?? 32;
-
-  return (
-    <div style={{ width: "100%", height: "100%" }}>
-      <Canvas
-        orthographic
-        // camera parameters here are just defaults; the rig positions it
-        camera={{
-          position: [0, 0, 10],
-          zoom: 1,
-          near: 0.1,
-          far: 1000,
-        }}
-        gl={{ antialias: false, alpha: false }}
-      >
-        {/* Set a fixed ortho frustum in pixel-world units */}
-        <OrthoFrustum pxPerCell={pxPerCell} />
-        <DungeonRenderScene {...props} />
-      </Canvas>
-    </div>
-  );
-}
-
-// Keeps ortho frustum stable and sized in “pixel world units”
-function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
-  const { camera, size } = useThree();
-
-  useEffect(() => {
-    const cam = camera as THREE.OrthographicCamera;
-
-    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
-    const halfW = size.width / 2;
-    const halfH = size.height / 2;
-
-    cam.left = -halfW;
-    cam.right = halfW;
-    cam.top = halfH;
-    cam.bottom = -halfH;
-
-    cam.near = 0.1;
-    cam.far = 1000;
-
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-  }, [camera, size.width, size.height, pxPerCell]);
-
-  return null;
-}
-</file>
-
-<file path="src/rendering/DungeonRenderView copy.tsx">
-// src/rendering/DungeonRenderView.tsx
-import React, { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
-import { tileFrag, tileVert } from "./tileShader";
-
-type Props = {
-  bsp: BspDungeonOutputs;
-  content: ContentOutputs;
-
-  // tileset atlas image URL (PNG) and layout
-  atlasUrl: string;
-  atlasCols: number;
-  atlasRows: number;
-
-  // which tiles to use for floor/wall; everything else comes from char mask
-  wallTile: number;
-  floorTile: number;
-
-  // camera target (typically player coords)
-  focusX: number;
-  focusY: number;
-  // if your atlas origin is top-left, set true (shader handles flip)
-  flipAtlasY?: boolean;
-
-  doorTile?: number;
-  keyTile?: number;
-  leverTile?: number;
-  plateTile?: number;
-  blockTile?: number;
-  chestTile?: number;
-  monsterTile?: number;
-  secretDoorTile?: number;
-  hiddenPassageTile?: number;
-
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>;
-
-  playerX?: number;
-  playerY?: number;
-  playerTile?: number;
-
-  // R2 groundwork: tint colors (multiply atlas RGB)
-  floorColor?: [number, number, number, number]; // rgba 0..1
-  wallColor?: [number, number, number, number];
-  playerColor?: [number, number, number, number];
-  itemColor?: [number, number, number, number];
-  hazardColor?: [number, number, number, number];
-
-  // pixels per cell (world units are pixels)
-  zoom?: number;
-
-  onCameraSettled?: (cell: { x: number; y: number }) => void;
-
-  // grid orientation fixes (defaults true/true to match your current convention)
-  flipGridX?: boolean;
-  flipGridY?: boolean;
+export const THEME_DANGER_FORWARD_DEBUG: RenderTheme = {
+  id: "danger_forward_debug",
+  label: "Danger-Forward Debug",
+
+  colors: {
+    floor: "#2B2F36", // dark neutral
+    wallEdge: "#A7B0BE", // bright edges for structure readability
+    player: "#00B7FF", // electric cyan (stands apart from red danger)
+    interactable: "#FFD166", // loud amber (but still below hazard)
+    hazard: "#FF0033", // alert red (the point of this theme)
+
+    focus: "#00FFB2", // neon mint (camera target clarity)
+    selection: "#FFE600", // bright yellow selection
+    debugOverlay: "#FFFFFF", // pure overlay for max contrast
+  },
+
+  strength: {
+    floor: 0.55, // intentionally muted
+    wallEdge: 1.15, // edges readable even in dark base
+    player: 1.15,
+    interactable: 1.05,
+    hazard: 1.35, // hazard dominates
+
+    focus: 1.25,
+    selection: 1.2,
+    debugOverlay: 0.9,
+  },
+
+  legend: {
+    tintChannelLabels: {
+      0: "Base (Muted)",
+      1: "Player (Cyan)",
+      2: "Interactable (Amber)",
+      3: "HAZARD (Alert Red)",
+    },
+  },
 };
 
-// -------------------------------
-// Canvas-internal scene
-// -------------------------------
+export const THEME_DEFAULT: RenderTheme = {
+  id: "default",
+  label: "Default (CP437 Neutral)",
 
-function cellToWorldPx(
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  pxPerCell: number,
-  flipGridX: boolean,
-) {
-  // X flip still applies (mirroring)
-  const fx = flipGridX ? w - 1 - x : x;
+  colors: {
+    floor: "#C9C7BE", // warm light grey
+    wallEdge: "#4A4F58", // slate
+    player: "#3A7DFF", // clear blue
+    interactable: "#E5C07B", // warm amber
+    hazard: "#E06C75", // soft danger red
 
-  // IMPORTANT:
-  // DO NOT flip Y here.
-  // y is already top-left–origin, y-down.
-  const fy = y;
+    focus: "#61AFEF", // cyan-blue focus marker
+    selection: "#98C379", // green selection
+    debugOverlay: "#ABB2BF", // neutral overlay
+  },
 
-  const worldX = (fx + 0.5 - w / 2) * pxPerCell;
-  const worldY = (h / 2 - (fy + 0.5)) * pxPerCell;
+  strength: {
+    floor: 1.0,
+    wallEdge: 1.0,
+    player: 1.0,
+    interactable: 1.0,
+    hazard: 1.0,
 
-  return { worldX, worldY };
-}
+    focus: 1.0,
+    selection: 1.0,
+    debugOverlay: 0.9,
+  },
 
-function DungeonRenderScene(props: Props) {
-  const {
-    bsp,
-    content,
-    atlasUrl,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-
-    focusX,
-    focusY,
-    zoom,
-
-    onCameraSettled,
-  } = props;
-
-  console.log("dungeon render scene focus x/y", focusX, focusY);
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const pxPerCell = zoom ?? 32;
-
-  const flipGridX = props.flipGridX ?? true;
-  const flipGridY = props.flipGridY ?? true;
-
-  const floorColor = props.floorColor ?? [1, 1, 1, 1];
-  const wallColor = props.wallColor ?? [1, 1, 1, 1];
-  const playerColor = props.playerColor ?? [1, 1, 1, 1];
-  const itemColor = props.itemColor ?? [1, 1, 1, 1];
-  const hazardColor = props.hazardColor ?? [1, 0.35, 0.35, 1]; // danger red tint
-
-  // --- Load atlas texture (inside Canvas tree = safe) ---
-  const atlas = useMemo(() => {
-    const loader = new THREE.TextureLoader();
-    const t = loader.load(atlasUrl);
-
-    // Pixel art correctness
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.generateMipmaps = false;
-    t.wrapS = THREE.ClampToEdgeWrapping;
-    t.wrapT = THREE.ClampToEdgeWrapping;
-
-    // IMPORTANT: do not double-flip; shader handles optional flip
-    t.flipY = false;
-
-    // Atlas is color
-    t.colorSpace = THREE.SRGBColorSpace;
-
-    return t;
-  }, [atlasUrl]);
-
-  // --- Build char texture (R8) ---
-  const charTex = useMemo(() => {
-    const mask = buildCharMask(bsp, content, {
-      wallTile,
-      floorTile,
-
-      doorTile: props.doorTile,
-      keyTile: props.keyTile,
-      leverTile: props.leverTile,
-      plateTile: props.plateTile,
-      blockTile: props.blockTile,
-      chestTile: props.chestTile,
-      monsterTile: props.monsterTile,
-      secretDoorTile: props.secretDoorTile,
-      hiddenPassageTile: props.hiddenPassageTile,
-
-      hazardDefaultTile: props.hazardDefaultTile,
-      hazardTilesByType: props.hazardTilesByType,
-
-      playerX: props.playerX,
-      playerY: props.playerY,
-      playerTile: props.playerTile,
-    });
-
-    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
-  }, [
-    bsp,
-    content,
-    W,
-    H,
-    wallTile,
-    floorTile,
-    props.doorTile,
-    props.keyTile,
-    props.leverTile,
-    props.plateTile,
-    props.blockTile,
-    props.chestTile,
-    props.monsterTile,
-    props.secretDoorTile,
-    props.hiddenPassageTile,
-    props.hazardDefaultTile,
-    props.hazardTilesByType,
-    props.playerX,
-    props.playerY,
-    props.playerTile,
-  ]);
-
-  // tint channel texture (R8)
-  const tintTex = useMemo(() => {
-    const mask = buildTintMask(bsp, content, {
-      playerX: props.playerX,
-      playerY: props.playerY,
-    });
-    return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
-  }, [bsp, content, W, H, props.playerX, props.playerY]);
-
-  // --- Shader material ---
-  const mat = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      vertexShader: tileVert,
-      fragmentShader: tileFrag,
-      uniforms: {
-        uSolid: { value: bsp.textures.solid },
-        uChar: { value: charTex },
-        uTint: { value: tintTex },
-        uAtlas: { value: atlas },
-        uGridSize: { value: new THREE.Vector2(W, H) },
-        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
-        uWallTile: { value: wallTile },
-        uFloorTile: { value: floorTile },
-        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
-        uFlipGridX: { value: flipGridX ? 1 : 0 },
-        uFlipGridY: { value: flipGridY ? 1 : 0 },
-        uFloorColor: { value: new THREE.Vector4(...floorColor) },
-        uWallColor: { value: new THREE.Vector4(...wallColor) },
-        uPlayerColor: { value: new THREE.Vector4(...playerColor) },
-        uItemColor: { value: new THREE.Vector4(...itemColor) },
-        uHazardColor: { value: new THREE.Vector4(...hazardColor) },
-      },
-      depthTest: false,
-      depthWrite: false,
-      transparent: false,
-    });
-  }, [
-    bsp.textures.solid,
-    charTex,
-    tintTex,
-    atlas,
-    W,
-    H,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-    flipGridX,
-    flipGridY,
-    floorColor,
-    wallColor,
-    playerColor,
-    itemColor,
-    hazardColor,
-  ]);
-
-  // -------------------------------
-  // Smooth camera rig (inside Canvas)
-  // -------------------------------
-
-  const { camera } = useThree();
-
-  // camera current + target positions in world pixels
-  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
-  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
-
-  // Track last focus to detect changes
-  const lastFocus = useRef<{ x: number; y: number } | null>(null);
-
-  // Stable target tracking (refs, not state)
-  const targetCellRef = useRef<{ x: number; y: number } | null>(null);
-  const settlingRef = useRef<{ x: number; y: number; frames: number } | null>(
-    null,
-  );
-
-  // Initialize camera when map size / zoom changes (NOT on focus changes)
-  useEffect(() => {
-    const { worldX, worldY } = cellToWorldPx(
-      focusX,
-      focusY,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-
-    camWorld.current.set(worldX, worldY, 10);
-    targetWorld.current.set(worldX, worldY, 10);
-    camera.position.set(worldX, worldY, 10);
-
-    const cam = camera as THREE.OrthographicCamera;
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-
-    // baseline for change detection
-    lastFocus.current = { x: focusX, y: focusY };
-
-    // clear any in-flight chase (map/zoom swap)
-    targetCellRef.current = null;
-    settlingRef.current = null;
-  }, [W, H, pxPerCell, camera, flipGridX]);
-
-  // When focus changes, set a new target cell (without spam)
-  useEffect(() => {
-    const prev = lastFocus.current;
-    if (!prev || prev.x !== focusX || prev.y !== focusY) {
-      lastFocus.current = { x: focusX, y: focusY };
-
-      const curTarget = targetCellRef.current;
-      if (!curTarget || curTarget.x !== focusX || curTarget.y !== focusY) {
-        targetCellRef.current = { x: focusX, y: focusY };
-        settlingRef.current = { x: focusX, y: focusY, frames: 0 };
-      }
-    }
-  }, [focusX, focusY]);
-
-  useFrame((_state, delta) => {
-    const cam = camera as THREE.OrthographicCamera;
-    const targetCell = targetCellRef.current;
-
-    if (!targetCell) {
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-      return;
-    }
-
-    const { worldX, worldY } = cellToWorldPx(
-      targetCell.x,
-      targetCell.y,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-    targetWorld.current.set(worldX, worldY, 10);
-
-    // frame-rate independent smoothing
-    const speed = 14; // 10-20 range
-    const t = 1 - Math.exp(-speed * delta);
-    camWorld.current.lerp(targetWorld.current, t);
-
-    cam.position.copy(camWorld.current);
-    cam.updateProjectionMatrix();
-
-    // stop within a few pixels (world units are pixels)
-    const dx = camWorld.current.x - targetWorld.current.x;
-    const dy = camWorld.current.y - targetWorld.current.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // increment frames for this chase
-    const s = settlingRef.current;
-    if (s && s.x === targetCell.x && s.y === targetCell.y) {
-      s.frames += 1;
-    }
-
-    const stopPx = 3;
-    const maxFrames = 90; // ~1.5s @ 60fps
-    const shouldForceSettle = !!s && s.frames >= maxFrames;
-
-    if (dist <= stopPx || shouldForceSettle) {
-      camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-
-      console.log(
-        "camera settled on",
-        { x: targetCell.x, y: targetCell.y },
-        {
-          dist,
-          forced: shouldForceSettle,
-          frames: s?.frames,
-        },
-      );
-
-      onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
-
-      targetCellRef.current = null;
-      settlingRef.current = null;
-    }
-  });
-
-  // -------------------------------
-  // Draw the plane (pixel-world units)
-  // -------------------------------
-  return (
-    <mesh position={[0, 0, 0]}>
-      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
-      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
-      <primitive object={mat} attach="material" />
-    </mesh>
-  );
-}
-
-// -------------------------------
-// Wrapper (NO R3F hooks here)
-// -------------------------------
-
-export default function DungeonRenderView(props: Props) {
-  const pxPerCell = props.zoom ?? 32;
-
-  return (
-    <div style={{ width: "100%", height: "100%" }}>
-      <Canvas
-        orthographic
-        // camera parameters here are just defaults; the rig positions it
-        camera={{
-          position: [0, 0, 10],
-          zoom: 1,
-          near: 0.1,
-          far: 1000,
-        }}
-        gl={{ antialias: false, alpha: false }}
-      >
-        {/* Set a fixed ortho frustum in pixel-world units */}
-        <OrthoFrustum pxPerCell={pxPerCell} />
-        <DungeonRenderScene {...props} />
-      </Canvas>
-    </div>
-  );
-}
-
-// Keeps ortho frustum stable and sized in “pixel world units”
-function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
-  const { camera, size } = useThree();
-
-  useEffect(() => {
-    const cam = camera as THREE.OrthographicCamera;
-
-    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
-    const halfW = size.width / 2;
-    const halfH = size.height / 2;
-
-    cam.left = -halfW;
-    cam.right = halfW;
-    cam.top = halfH;
-    cam.bottom = -halfH;
-
-    cam.near = 0.1;
-    cam.far = 1000;
-
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-  }, [camera, size.width, size.height, pxPerCell]);
-
-  return null;
-}
+  legend: {
+    tintChannelLabels: {
+      0: "Base",
+      1: "Player",
+      2: "Interactable",
+      3: "Hazard",
+    },
+  },
+};
 </file>
 
 <file path="src/wizard/WizardScreen.tsx">
@@ -6978,318 +6251,6 @@ void main() {
 }
 </file>
 
-<file path="src/rendering/RENDERING-CONTEXT.md">
-Here’s an **updated, re-emitted `RENDERING-CONTEXT.md`** that records exactly what we just changed and cleanly advances the plan.
-I’ve bumped the revision, updated the contracts to reflect **decoupled focus vs player**, marked completed items, and tightened the next-steps list so it reflects reality (not intent).
-
----
-
-# RENDERING-CONTEXT.md
-
-## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
-
-**CONTEXT VERSION:** **2026-01-26 (rev E)**
-**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; R1.5 INTERACTION & THEMING GROUNDWORK IN PROGRESS**
-
----
-
-## GOAL
-
-Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
-
-The result is a first-pass “GPU view” of the dungeon that can later grow into:
-
-* animated sprites
-* richer shading / lighting
-* overlays and debug visualizations
-* true runtime-driven visual state
-* themed visual styles
-
----
-
-## NON-GOALS (FOR NOW)
-
-* No new generation controls (Step 7 remains inspection-only).
-* No batch rendering mode.
-* No 3D meshes for rooms/walls; it is a **single-plane tileset renderer**.
-* No full sprite animation system yet (static tile indices only).
-* No complicated scene graph; just one plane + camera + shader.
-
----
-
-## RENDER VIEW CONTRACT
-
-### Location
-
-The render component lives **inside `InspectionShell`** as an alternate view alongside the current content/canvas inspection view.
-
-### View Mode
-
-`InspectionShell` provides a local toggle:
-
-* `pane = "content"` → existing 2D canvas inspection (layer selection, tooltip, legend, click-to-interact runtime controls)
-* `pane = "render"` → R3F render pipeline
-
-### Inputs
-
-Render view consumes the same single-seed data already present in Step 7:
-
-* `dungeon: BspDungeonOutputs`
-* `content: ContentOutputs`
-* `runtime: DungeonRuntimeState` (optional initially, but intended to drive doors, keys, blocks, hazards)
-
----
-
-## PLAYER / CAMERA MODEL (UPDATED & LOCKED)
-
-### Entities
-
-Render view now has **two distinct inspection-only concepts**:
-
-* **Player cell** `{x,y}`
-
-  * Rendered as an overlay glyph.
-  * Initialized to the **start cell**.
-  * Does **not** automatically move when the camera focus changes.
-
-* **Focus cell** `{x,y}`
-
-  * The **sole driver of the camera target**.
-  * Initialized to the same start cell.
-  * Can diverge freely from player position.
-
-This separation is intentional and **locked**.
-
-### Camera behavior
-
-* Camera is **orthographic**.
-* Camera target is driven by `focusX, focusY` (cell coordinates).
-* Camera uses a **snap-lerp controller**:
-
-  * Smoothly approaches the target.
-  * Settles within a pixel threshold.
-  * Emits `onCameraSettled({x,y})` deterministically.
-
-### Interaction
-
-* **Render-pane click-to-focus is enabled**:
-
-  * Raycast plane → UV → cell.
-  * Click **updates focus cell only**.
-  * Player overlay remains unchanged.
-* This allows inspection panning without mutating any gameplay state.
-
----
-
-## COORDINATES (AUTHORITATIVE RULE)
-
-* **Grid flips belong in the shader.**
-* **Camera never flips grid axes** — it only converts *y-down grid space* into *y-up world space*.
-
-This separation is **locked** and must not be re-questioned.
-
----
-
-## DATA MODEL (TEXTURES)
-
-### Generator textures (existing)
-
-We leverage generator `DataTexture`s already produced by the dungeon pipeline, such as:
-
-* `solid` (wall/floor)
-* content masks (`featureType`, `featureId`, `hazardType`, etc.)
-
-### Character / tile-index texture (`charTex`)
-
-A dedicated R8 `DataTexture` encoding **which tile index to draw** per cell:
-
-* `charTex[x,y] = 0` → no override (shader draws base wall/floor)
-* `charTex[x,y] = N` → draw atlas tile `N`
-
-This is the primary **content → render bridge**.
-
-### Tint channel texture (`tintTex`) — NEW
-
-A parallel R8 `DataTexture` encoding **semantic tint channels**:
-
-* `0` — base (floor / wall)
-* `1` — player
-* `2` — items / interactables
-* `3` — hazards (danger)
-
-Shader multiplies atlas RGB by the selected tint color.
-
-This establishes the **first step toward full theming**.
-
-### Tileset atlas — CP437
-
-* **Code Page 437** glyph atlas
-* **256 tiles**, **9×14 px** each
-* Grid: **32 columns × 8 rows**
-* Tile indices map directly to CP437 codepoints (`0..255`)
-* **Nearest filtering only**
-
----
-
-## SHADER RESPONSIBILITIES
-
-The fragment shader:
-
-1. Determines cell coordinates from UV
-2. Samples `solid` to classify wall vs floor
-3. **Renders only exterior wall edges**
-
-   * A wall cell is drawable only if at least one of its 8 neighbors is floor
-   * Interior wall mass is suppressed
-4. Samples `charTex` to override base tile
-5. Samples `tintTex` to select color channel
-6. Converts tile index → atlas UV
-7. Samples atlas and applies tint
-
-All textures use `NearestFilter`.
-
----
-
-## SESSION SUMMARY (WHAT WE JUST DID)
-
-### R1.5 interaction & groundwork
-
-* **Decoupled camera focus from player**
-
-  * Added explicit `focus` state in `InspectionShell`
-  * Player overlay no longer implicitly drives camera
-* **Render-pane click-to-focus implemented**
-
-  * Plane pointer → UV → cell mapping
-  * Click updates focus only (camera pans; no gameplay mutation)
-  * Event propagation hardened (`onPointerDownCapture`)
-* **Start cell semantics simplified**
-
-  * `computeStartCell(dungeon, content)` is now the only source of truth
-  * Removed invalid `startCell0` dependency
-* **Layer-based tint groundwork landed**
-
-  * Added `tintTex` R8 texture
-  * Added tint uniforms (floor, wall, player, item, hazard)
-  * Hazards now render danger-tinted in render view
-* **Camera bounds clamping partially integrated**
-
-  * Clamp logic exists for initial placement
-  * (Continuous clamp during focus chase is pending)
-
-R1 renderer remains **closed and stable**; these changes are classified as **R1.5 interaction/theming groundwork**.
-
----
-
-## IMPLEMENTATION PLAN STATUS
-
-### Phase R1 — Tileset plane renderer
-
-**CLOSED / STABLE**
-
-No changes allowed beyond bug fixes.
-
-### Phase R1.5 — Inspection interaction & theming groundwork
-
-**IN PROGRESS**
-
-* Click-to-focus camera ✔
-* Player vs focus separation ✔
-* Tint channel texture + uniforms ✔
-* CP437 remains canonical default ✔
-
----
-
-## START CELL — SOURCE OF TRUTH (LOCKDOWN)
-
-### Contract (CONFIRMED)
-
-A single helper is authoritative:
-
-```ts
-computeStartCell(
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs
-): { x: number; y: number }
-```
-
-* Floor predicate is locked: `solid[i] !== 255`
-* All consumers use this helper:
-
-  * content-pane entrance marker
-  * render-pane player init
-  * render-pane initial focus
-  * future execution spawn
-
-No additional start semantics may be introduced.
-
----
-
-## NEXT STEPS (IMMEDIATE)
-
-1. **Enforce camera bounds during focus chase**
-
-   * Apply clamp inside `useFrame`, not just init
-   * Prevent panning beyond dungeon extents
-
-2. **Finalize `FeatureType → glyph` mapping audit**
-
-   * Verify enum values in `mazeGen.ts`
-   * Ensure `buildCharMask` cases exactly match generator output
-   * Confirm wall-resident features (e.g. secret doors) are rendered correctly
-
-3. **Formalize `RenderTheme` object**
-
-   * Explicit color roles:
-
-     * floor
-     * wall edge
-     * player
-     * item / interactable
-     * hazard
-     * debug overlay
-   * Single object passed to render view
-   * No ad-hoc uniforms after this point
-
-4. **Focus affordances**
-
-   * Optional visual marker for focus cell
-   * Optional “recenter on player” control
-
----
-
-## NEXT STEPS (R2 — RUNTIME-DRIVEN VISUALS)
-
-* Doors reflect open / closed runtime state
-* Keys disappear when collected
-* Blocks rendered from runtime positions
-* Hazard glyphs driven by `hazardType`
-* Optional tile-based animation hooks
-
----
-
-## DEFINITIONS
-
-* **Cell**: integer grid coordinate `(x,y)`
-* **Atlas tile index**: integer selecting a tile in the atlas
-* **CP437**: Code Page 437 glyph set
-* **R8 DataTexture**: unsigned byte per-cell texture
-* **Focus cell**: camera target cell in render pane
-* **Player cell**: inspection-only overlay glyph
-* **Snap-lerp camera**: smooth approach + deterministic settle
-
----
-
-If you want, next we can:
-
-* lock the continuous camera clamp,
-* sketch the `RenderTheme` type directly in this doc, or
-* mark R1.5 as closed and formally open **Phase R2**.
-
-Just tell me which one you want to do first.
-</file>
-
 <file path="src/rendering/tiles.ts">
 // src/rendering/tiles.ts
 import * as THREE from "three";
@@ -7496,6 +6457,346 @@ export function maskToTileTextureR8(
 
   return tex;
 }
+</file>
+
+<file path="src/rendering/RENDERING-CONTEXT.md">
+---
+
+# RENDERING-CONTEXT.md
+
+## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
+
+**CONTEXT VERSION:** **2026-01-27 (rev G)**
+**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
+**STATUS:** **PHASE R1 CLOSED; R1.5 INTERACTION, THEMING, INSPECTION AFFORDANCES & SHADER POLISH IN PROGRESS**
+
+---
+
+## GOAL
+
+Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
+
+The result is a first-pass “GPU view” of the dungeon that can later grow into:
+
+* animated sprites
+* richer shading / lighting
+* overlays and debug visualizations
+* true runtime-driven visual state
+* themed visual styles
+
+---
+
+## NON-GOALS (FOR NOW)
+
+* No new generation controls (Step 7 remains inspection-only).
+* No batch rendering mode.
+* No 3D meshes for rooms/walls; it is a **single-plane tileset renderer**.
+* No full sprite animation system yet (static tile indices only).
+* No complicated scene graph; just one plane + camera + shader.
+
+---
+
+## RENDER VIEW CONTRACT
+
+### Location
+
+The render component lives **inside `InspectionShell`** as an alternate view alongside the current content/canvas inspection view.
+
+### View Mode
+
+`InspectionShell` provides a local toggle:
+
+* `pane = "content"` → existing 2D canvas inspection
+  (layer selection, tooltips, legend, click-to-interact runtime controls)
+* `pane = "render"` → R3F render pipeline
+
+### Inputs
+
+Render view consumes the same single-seed data already present in Step 7:
+
+* `dungeon: BspDungeonOutputs`
+* `content: ContentOutputs`
+* `runtime: DungeonRuntimeState` (optional initially, but intended to drive visual state)
+
+---
+
+## PLAYER / CAMERA MODEL (LOCKED)
+
+### Entities
+
+Render view has **two distinct inspection-only concepts**:
+
+* **Player cell** `{x,y}`
+
+  * Rendered as an overlay glyph
+  * Initialized to the **start cell**
+  * Does **not** automatically move when camera focus changes
+
+* **Focus cell** `{x,y}`
+
+  * The **sole driver of the camera target**
+  * Initialized to the same start cell
+  * Can diverge freely from player position
+
+This separation is intentional and **locked**.
+
+### Camera behavior
+
+* Camera is **orthographic**
+* Camera target is driven by `focusX, focusY`
+* Camera uses a **snap-lerp controller**:
+
+  * Smoothly approaches target
+  * Settles within a pixel threshold
+  * Emits `onCameraSettled({x,y})` deterministically
+
+### Interaction
+
+* **Render-pane click-to-focus is enabled**
+
+  * Raycast plane → UV → cell
+  * Click updates **focus only**
+  * Player overlay remains unchanged
+* Allows free visual inspection without mutating gameplay state
+
+---
+
+## COORDINATES (AUTHORITATIVE RULE)
+
+* **Grid flips belong in the shader**
+* **Camera never flips grid axes** — it only converts
+  *y-down grid space → y-up world space*
+
+This separation is **locked**.
+
+---
+
+## DATA MODEL (TEXTURES)
+
+### Generator textures (existing)
+
+* `solid` (wall / floor)
+* content masks (`featureType`, `featureId`, `hazardType`, etc.)
+
+### Character / tile-index texture (`charTex`)
+
+R8 `DataTexture` encoding which atlas tile to draw per cell:
+
+* `0` → no override (shader draws base wall/floor)
+* `N` → draw atlas tile `N`
+
+Primary **content → render bridge**.
+
+### Tint channel texture (`tintTex`)
+
+R8 `DataTexture` encoding **semantic tint channels**:
+
+* `0` — base (floor / wall)
+* `1` — player
+* `2` — interactables
+* `3` — hazards (danger)
+
+Shader multiplies atlas RGB by tint color.
+
+---
+
+## THEMING (LOCKED)
+
+### `RenderTheme`
+
+A data-only object defining semantic color roles and strength multipliers.
+
+* Lives in `renderTheme.ts`
+* Renderer consumes theme → shader uniforms
+* Shader has **no semantic knowledge**
+
+Themes currently defined:
+
+* **Default (CP437 Neutral)**
+* **Danger-Forward Debug**
+
+Theme selection is inspection-only.
+
+---
+
+## SHADER RESPONSIBILITIES
+
+Fragment shader:
+
+1. Compute cell coords from UV
+2. Sample `solid` to classify wall vs floor
+3. Render **only exterior wall edges**
+4. Sample `charTex` for tile override
+5. Sample `tintTex` for semantic channel
+6. Resolve tile → atlas UV
+7. Sample atlas and apply tint
+
+All textures use `NearestFilter`.
+
+---
+
+## SESSION SUMMARY (WHAT WE JUST IMPLEMENTED)
+
+### R1.5 — interaction & theming expansion
+
+* **RenderTheme system landed and wired**
+
+  * `RenderTheme` contract introduced
+  * Default + Danger-Forward Debug themes created
+  * Render view derives tint uniforms from theme
+  * Strength multipliers applied CPU-side (no shader churn)
+
+R1 renderer remains closed; no changes beyond R1.5 scope.
+
+---
+
+## IMPLEMENTATION PLAN STATUS
+
+### Phase R1 — Tileset plane renderer
+
+**CLOSED / STABLE**
+
+Bug fixes only.
+
+### Phase R1.5 — Interaction, theming, affordances & shader polish
+
+**IN PROGRESS**
+
+* Click-to-focus camera ✔
+* Player vs focus separation ✔
+* Tint channel texture ✔
+* RenderTheme formalized & wired ✔
+* CP437 canonical default ✔
+* Tooltips + click-to-interact ⏳
+* Shader polish pass ⏳
+
+---
+
+## START CELL — SOURCE OF TRUTH (LOCKED)
+
+```ts
+computeStartCell(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs
+): { x: number; y: number }
+```
+
+Floor predicate: `solid[i] !== 255`.
+Used by all spawn/initialization consumers.
+
+---
+
+## NEXT STEPS (IMMEDIATE — R1.5)
+
+1. **Render-mode inspection tooltips & interaction**
+
+   * Hover tooltip in render pane (cell-based)
+   * Tooltip mirrors content-mode inspection data:
+
+     * feature type / id
+     * hazard type
+     * runtime-relevant flags
+   * Click interaction in render mode:
+
+     * doors, levers, plates, blocks
+     * routed to existing runtime handlers
+   * Rules:
+
+     * reuse existing inspection adapters
+     * never duplicate semantic inference
+     * click-to-focus remains camera-only unless click hits an interactable (see below)
+
+2. **Enforce camera bounds during focus chase**
+
+   * Apply clamp inside `useFrame`, not just init
+   * Prevent panning beyond dungeon extents
+
+3. **Finalize `FeatureType → glyph` mapping audit**
+
+   * Verify enums vs `buildCharMask`
+   * Confirm wall-resident features (secret doors, etc.) render correctly
+
+4. **Focus affordances**
+
+   * Optional focus marker
+   * Optional “recenter on player” control
+
+5. **Shader special effects (tile-level lighting & shading) — NEW**
+
+   **Goal:** add “3D-ish” depth and inspection readability while staying within the
+   single-plane, nearest-filter, CP437 constraints.
+
+   ### 5.1 Per-tile fake lighting
+
+   * Treat walls vs floors differently
+   * Exterior wall edges slightly brighter
+   * Floor interiors slightly darker (subtle)
+
+   ### 5.2 Ambient occlusion from neighbors (fake AO)
+
+   * Sample `solid` neighbors
+   * Darken floors adjacent to walls
+   * Make corridors/rooms pop (readability win)
+
+   ### 5.3 Directional shadowing
+
+   * Choose a light direction (uniform)
+   * Darken tiles “behind” walls in that direction
+   * Keep conservative to avoid noisy glyph readability
+
+   ### 5.4 Hazard pulse
+
+   * If `tintTex == hazard channel`, modulate tint by:
+
+     * `(0.7 + 0.3 * sin(time * ω))`
+   * Use a uniform `uTime` (or frame counter) and `ω` parameter
+
+   ### 5.5 Interactable “breathing”
+
+   * If `tintTex == interactable channel`, subtle oscillation
+   * Ensure it does not overpower the theme tint roles
+
+   ### 5.6 Player outline / glow (cheap)
+
+   * Detect player boundary by sampling neighboring `tintTex`
+   * Draw a 1px outline / halo without blurring atlas sampling
+   * Must preserve crisp pixel edges (avoid linear filtering)
+
+   ### 5.7 Specular sparkle / sheen (items)
+
+   * Interactables only
+   * Small moving highlight across glyph (procedural, not sprite sheets)
+   * Optional toggle in debug theme
+
+   **Constraints / rules:**
+
+   * Keep sampling count bounded (prefer 4-neighbor unless 8 is required)
+   * Preserve CP437 crispness (no smooth filtering)
+   * Effects must be theme-compatible (tint first, then effect modulation)
+   * Effects may be toggled per theme (Danger-Forward Debug can be louder)
+
+---
+
+## NEXT STEPS (R2 — RUNTIME-DRIVEN VISUALS)
+
+* Doors reflect open/closed runtime state
+* Keys disappear when collected
+* Blocks rendered from runtime positions
+* Hazard glyphs driven by `hazardType`
+* Optional tile-based animation hooks
+
+---
+
+## DEFINITIONS
+
+* **Cell** — integer grid coordinate `(x,y)`
+* **Atlas tile index** — selects CP437 glyph
+* **R8 DataTexture** — unsigned byte per cell
+* **Focus cell** — camera target (render pane)
+* **Player cell** — inspection-only overlay
+* **Snap-lerp camera** — smooth approach + deterministic settle
+
+---
 </file>
 
 <file path="src/dungeonState.ts">
@@ -7834,509 +7135,6 @@ export function ensureSecret(state: DungeonRuntimeState, id: number): void {
 
 export function ensurePlate(state: DungeonRuntimeState, id: number): void {
   if (!state.plates[id]) state.plates[id] = { pressed: false };
-}
-</file>
-
-<file path="src/rendering/DungeonRenderView.tsx">
-// src/rendering/DungeonRenderView.tsx
-import React, { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
-import { tileFrag, tileVert } from "./tileShader";
-
-type Props = {
-  bsp: BspDungeonOutputs;
-  content: ContentOutputs;
-
-  // tileset atlas image URL (PNG) and layout
-  atlasUrl: string;
-  atlasCols: number;
-  atlasRows: number;
-
-  // which tiles to use for floor/wall; everything else comes from char mask
-  wallTile: number;
-  floorTile: number;
-
-  // camera target (typically player coords)
-  focusX: number;
-  focusY: number;
-
-  // CLICK -> set focus target (camera only)
-  onCellFocus?: (cell: { x: number; y: number }) => void;
-
-  // if your atlas origin is top-left, set true (shader handles flip)
-  flipAtlasY?: boolean;
-
-  doorTile?: number;
-  keyTile?: number;
-  leverTile?: number;
-  plateTile?: number;
-  blockTile?: number;
-  chestTile?: number;
-  monsterTile?: number;
-  secretDoorTile?: number;
-  hiddenPassageTile?: number;
-
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>;
-
-  playerX?: number;
-  playerY?: number;
-  playerTile?: number;
-
-  // R2 groundwork: tint colors (multiply atlas RGB)
-  floorColor?: [number, number, number, number]; // rgba 0..1
-  wallColor?: [number, number, number, number];
-  playerColor?: [number, number, number, number];
-  itemColor?: [number, number, number, number];
-  hazardColor?: [number, number, number, number];
-
-  // pixels per cell (world units are pixels)
-  zoom?: number;
-
-  onCameraSettled?: (cell: { x: number; y: number }) => void;
-
-  // grid orientation fixes (defaults true/true to match your current convention)
-  flipGridX?: boolean;
-  flipGridY?: boolean;
-};
-
-// -------------------------------
-// Canvas-internal scene
-// -------------------------------
-
-function cellToWorldPx(
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  pxPerCell: number,
-  flipGridX: boolean,
-) {
-  // X flip still applies (mirroring)
-  const fx = flipGridX ? w - 1 - x : x;
-
-  // IMPORTANT:
-  // DO NOT flip Y here.
-  // y is already top-left–origin, y-down.
-  const fy = y;
-
-  const worldX = (fx + 0.5 - w / 2) * pxPerCell;
-  const worldY = (h / 2 - (fy + 0.5)) * pxPerCell;
-
-  return { worldX, worldY };
-}
-
-function DungeonRenderScene(props: Props) {
-  const {
-    bsp,
-    content,
-    atlasUrl,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-
-    focusX,
-    focusY,
-    zoom,
-
-    onCameraSettled,
-  } = props;
-
-  console.log("dungeon render scene focus x/y", focusX, focusY);
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const pxPerCell = zoom ?? 32;
-
-  const flipGridX = props.flipGridX ?? true;
-  const flipGridY = props.flipGridY ?? true;
-
-  const floorColor = props.floorColor ?? [1, 1, 1, 1];
-  const wallColor = props.wallColor ?? [1, 1, 1, 1];
-  const playerColor = props.playerColor ?? [1, 1, 1, 1];
-  const itemColor = props.itemColor ?? [1, 1, 1, 1];
-  const hazardColor = props.hazardColor ?? [1, 0.35, 0.35, 1]; // danger red tint
-
-  // --- Load atlas texture (inside Canvas tree = safe) ---
-  const atlas = useMemo(() => {
-    const loader = new THREE.TextureLoader();
-    const t = loader.load(atlasUrl);
-
-    // Pixel art correctness
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.generateMipmaps = false;
-    t.wrapS = THREE.ClampToEdgeWrapping;
-    t.wrapT = THREE.ClampToEdgeWrapping;
-
-    // IMPORTANT: do not double-flip; shader handles optional flip
-    t.flipY = false;
-
-    // Atlas is color
-    t.colorSpace = THREE.SRGBColorSpace;
-
-    return t;
-  }, [atlasUrl]);
-
-  // --- Build char texture (R8) ---
-  const charTex = useMemo(() => {
-    const mask = buildCharMask(bsp, content, {
-      wallTile,
-      floorTile,
-
-      doorTile: props.doorTile,
-      keyTile: props.keyTile,
-      leverTile: props.leverTile,
-      plateTile: props.plateTile,
-      blockTile: props.blockTile,
-      chestTile: props.chestTile,
-      monsterTile: props.monsterTile,
-      secretDoorTile: props.secretDoorTile,
-      hiddenPassageTile: props.hiddenPassageTile,
-
-      hazardDefaultTile: props.hazardDefaultTile,
-      hazardTilesByType: props.hazardTilesByType,
-
-      playerX: props.playerX,
-      playerY: props.playerY,
-      playerTile: props.playerTile,
-    });
-
-    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
-  }, [
-    bsp,
-    content,
-    W,
-    H,
-    wallTile,
-    floorTile,
-    props.doorTile,
-    props.keyTile,
-    props.leverTile,
-    props.plateTile,
-    props.blockTile,
-    props.chestTile,
-    props.monsterTile,
-    props.secretDoorTile,
-    props.hiddenPassageTile,
-    props.hazardDefaultTile,
-    props.hazardTilesByType,
-    props.playerX,
-    props.playerY,
-    props.playerTile,
-  ]);
-
-  // tint channel texture (R8)
-  const tintTex = useMemo(() => {
-    const mask = buildTintMask(bsp, content, {
-      playerX: props.playerX,
-      playerY: props.playerY,
-    });
-    return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
-  }, [bsp, content, W, H, props.playerX, props.playerY]);
-
-  // --- Shader material ---
-  const mat = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      vertexShader: tileVert,
-      fragmentShader: tileFrag,
-      uniforms: {
-        uSolid: { value: bsp.textures.solid },
-        uChar: { value: charTex },
-        uTint: { value: tintTex },
-        uAtlas: { value: atlas },
-        uGridSize: { value: new THREE.Vector2(W, H) },
-        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
-        uWallTile: { value: wallTile },
-        uFloorTile: { value: floorTile },
-        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
-        uFlipGridX: { value: flipGridX ? 1 : 0 },
-        uFlipGridY: { value: flipGridY ? 1 : 0 },
-        uFloorColor: { value: new THREE.Vector4(...floorColor) },
-        uWallColor: { value: new THREE.Vector4(...wallColor) },
-        uPlayerColor: { value: new THREE.Vector4(...playerColor) },
-        uItemColor: { value: new THREE.Vector4(...itemColor) },
-        uHazardColor: { value: new THREE.Vector4(...hazardColor) },
-      },
-      depthTest: false,
-      depthWrite: false,
-      transparent: false,
-    });
-  }, [
-    bsp.textures.solid,
-    charTex,
-    tintTex,
-    atlas,
-    W,
-    H,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-    flipGridX,
-    flipGridY,
-    floorColor,
-    wallColor,
-    playerColor,
-    itemColor,
-    hazardColor,
-  ]);
-
-  // -------------------------------
-  // Smooth camera rig (inside Canvas)
-  // -------------------------------
-
-  const { camera } = useThree();
-  const { size } = useThree();
-
-  // camera current + target positions in world pixels
-  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
-  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
-
-  // Track last focus to detect changes
-  const lastFocus = useRef<{ x: number; y: number } | null>(null);
-
-  // Stable target tracking (refs, not state)
-  const targetCellRef = useRef<{ x: number; y: number } | null>(null);
-  const settlingRef = useRef<{ x: number; y: number; frames: number } | null>(
-    null,
-  );
-
-  // Initialize camera when map size / zoom changes (NOT on focus changes)
-  useEffect(() => {
-    const { worldX, worldY } = cellToWorldPx(
-      focusX,
-      focusY,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-    const cam = camera as THREE.OrthographicCamera;
-
-    camWorld.current.set(worldX, worldY, 10);
-    targetWorld.current.set(worldX, worldY, 10);
-
-    // Clamp target to map bounds (account for viewport size in world px)
-    const halfViewW = (size.width * 0.5) / cam.zoom;
-    const halfViewH = (size.height * 0.5) / cam.zoom;
-    const halfMapW = W * pxPerCell * 0.5;
-    const halfMapH = H * pxPerCell * 0.5;
-
-    const minX = -halfMapW + halfViewW;
-    const maxX = halfMapW - halfViewW;
-    const minY = -halfMapH + halfViewH;
-    const maxY = halfMapH - halfViewH;
-
-    targetWorld.current.x = Math.min(
-      maxX,
-      Math.max(minX, targetWorld.current.x),
-    );
-    targetWorld.current.y = Math.min(
-      maxY,
-      Math.max(minY, targetWorld.current.y),
-    );
-
-    camera.position.set(worldX, worldY, 10);
-
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-
-    // baseline for change detection
-    lastFocus.current = { x: focusX, y: focusY };
-
-    // clear any in-flight chase (map/zoom swap)
-    targetCellRef.current = null;
-    settlingRef.current = null;
-  }, [
-    W,
-    H,
-    pxPerCell,
-    camera,
-    flipGridX,
-    focusX,
-    focusY,
-    size.width,
-    size.height,
-  ]);
-
-  // When focus changes, set a new target cell (without spam)
-  useEffect(() => {
-    const prev = lastFocus.current;
-    if (!prev || prev.x !== focusX || prev.y !== focusY) {
-      lastFocus.current = { x: focusX, y: focusY };
-
-      const curTarget = targetCellRef.current;
-      if (!curTarget || curTarget.x !== focusX || curTarget.y !== focusY) {
-        targetCellRef.current = { x: focusX, y: focusY };
-        settlingRef.current = { x: focusX, y: focusY, frames: 0 };
-      }
-    }
-  }, [focusX, focusY]);
-
-  useFrame((_state, delta) => {
-    const cam = camera as THREE.OrthographicCamera;
-    const targetCell = targetCellRef.current;
-
-    if (!targetCell) {
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-      return;
-    }
-
-    const { worldX, worldY } = cellToWorldPx(
-      targetCell.x,
-      targetCell.y,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-    targetWorld.current.set(worldX, worldY, 10);
-
-    // frame-rate independent smoothing
-    const speed = 14; // 10-20 range
-    const t = 1 - Math.exp(-speed * delta);
-    camWorld.current.lerp(targetWorld.current, t);
-
-    cam.position.copy(camWorld.current);
-    cam.updateProjectionMatrix();
-
-    // stop within a few pixels (world units are pixels)
-    const dx = camWorld.current.x - targetWorld.current.x;
-    const dy = camWorld.current.y - targetWorld.current.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // increment frames for this chase
-    const s = settlingRef.current;
-    if (s && s.x === targetCell.x && s.y === targetCell.y) {
-      s.frames += 1;
-    }
-
-    const stopPx = 3;
-    const maxFrames = 90; // ~1.5s @ 60fps
-    const shouldForceSettle = !!s && s.frames >= maxFrames;
-
-    if (dist <= stopPx || shouldForceSettle) {
-      camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-
-      console.log(
-        "camera settled on",
-        { x: targetCell.x, y: targetCell.y },
-        {
-          dist,
-          forced: shouldForceSettle,
-          frames: s?.frames,
-        },
-      );
-
-      onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
-
-      targetCellRef.current = null;
-      settlingRef.current = null;
-    }
-  });
-
-  // -------------------------------
-  // Draw the plane (pixel-world units)
-  // -------------------------------
-  return (
-    <mesh
-      position={[0, 0, 0]}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        // uv is 0..1 across the plane
-        const uv = e.uv;
-        if (!uv) return;
-
-        // Apply grid flips same as shader.
-        // We do this so click mapping matches what the user sees.
-        let u = uv.x;
-        let v = uv.y;
-
-        if (flipGridX) u = 1 - u;
-        if (flipGridY) v = 1 - v;
-
-        // numeric safety
-        u = Math.min(0.999999, Math.max(0, u));
-        v = Math.min(0.999999, Math.max(0, v));
-
-        const cx = Math.floor(u * W);
-        const cy = Math.floor(v * H);
-
-        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
-
-        // Camera-only: set focus target, do NOT move player.
-        props.onCellFocus?.({ x: cx, y: cy });
-      }}
-    >
-      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
-      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
-      <primitive object={mat} attach="material" />
-    </mesh>
-  );
-}
-
-// -------------------------------
-// Wrapper (NO R3F hooks here)
-// -------------------------------
-
-export default function DungeonRenderView(props: Props) {
-  const pxPerCell = props.zoom ?? 32;
-
-  return (
-    <div style={{ width: "100%", height: "100%" }}>
-      <Canvas
-        orthographic
-        // camera parameters here are just defaults; the rig positions it
-        camera={{
-          position: [0, 0, 10],
-          zoom: 1,
-          near: 0.1,
-          far: 1000,
-        }}
-        gl={{ antialias: false, alpha: false }}
-      >
-        {/* Set a fixed ortho frustum in pixel-world units */}
-        <OrthoFrustum pxPerCell={pxPerCell} />
-        <DungeonRenderScene {...props} />
-      </Canvas>
-    </div>
-  );
-}
-
-// Keeps ortho frustum stable and sized in “pixel world units”
-function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
-  const { camera, size } = useThree();
-
-  useEffect(() => {
-    const cam = camera as THREE.OrthographicCamera;
-
-    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
-    const halfW = size.width / 2;
-    const halfH = size.height / 2;
-
-    cam.left = -halfW;
-    cam.right = halfW;
-    cam.top = halfH;
-    cam.bottom = -halfH;
-
-    cam.near = 0.1;
-    cam.far = 1000;
-
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-  }, [camera, size.width, size.height, pxPerCell]);
-
-  return null;
 }
 </file>
 
@@ -9609,6 +8407,558 @@ export function evaluateCircuits(
   }
 
   return { next, debug, diagnostics };
+}
+</file>
+
+<file path="src/rendering/DungeonRenderView.tsx">
+// src/rendering/DungeonRenderView.tsx
+import React, { useEffect, useMemo, useRef } from "react";
+import * as THREE from "three";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
+import { tileFrag, tileVert } from "./tileShader";
+import type { RenderTheme } from "./renderTheme";
+import { THEME_DEFAULT } from "./renderTheme";
+
+type Props = {
+  bsp: BspDungeonOutputs;
+  content: ContentOutputs;
+
+  // tileset atlas image URL (PNG) and layout
+  atlasUrl: string;
+  atlasCols: number;
+  atlasRows: number;
+
+  // which tiles to use for floor/wall; everything else comes from char mask
+  wallTile: number;
+  floorTile: number;
+
+  // camera target (typically player coords)
+  focusX: number;
+  focusY: number;
+
+  // CLICK -> set focus target (camera only)
+  onCellFocus?: (cell: { x: number; y: number }) => void;
+
+  // if your atlas origin is top-left, set true (shader handles flip)
+  flipAtlasY?: boolean;
+
+  doorTile?: number;
+  keyTile?: number;
+  leverTile?: number;
+  plateTile?: number;
+  blockTile?: number;
+  chestTile?: number;
+  monsterTile?: number;
+  secretDoorTile?: number;
+  hiddenPassageTile?: number;
+
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>;
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+
+  // R2 groundwork: tint colors (multiply atlas RGB)
+  floorColor?: [number, number, number, number]; // rgba 0..1
+  wallColor?: [number, number, number, number];
+  playerColor?: [number, number, number, number];
+  itemColor?: [number, number, number, number];
+  hazardColor?: [number, number, number, number];
+
+  // pixels per cell (world units are pixels)
+  zoom?: number;
+
+  onCameraSettled?: (cell: { x: number; y: number }) => void;
+
+  // grid orientation fixes (defaults true/true to match your current convention)
+  flipGridX?: boolean;
+  flipGridY?: boolean;
+
+  theme?: RenderTheme;
+};
+
+// -------------------------------
+// Canvas-internal scene
+// -------------------------------
+
+function cellToWorldPx(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pxPerCell: number,
+  flipGridX: boolean,
+) {
+  // X flip still applies (mirroring)
+  const fx = flipGridX ? w - 1 - x : x;
+
+  // IMPORTANT:
+  // DO NOT flip Y here.
+  // y is already top-left–origin, y-down.
+  const fy = y;
+
+  const worldX = (fx + 0.5 - w / 2) * pxPerCell;
+  const worldY = (h / 2 - (fy + 0.5)) * pxPerCell;
+
+  return { worldX, worldY };
+}
+
+function DungeonRenderScene(props: Props) {
+  const {
+    bsp,
+    content,
+    atlasUrl,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+
+    focusX,
+    focusY,
+    zoom,
+
+    onCameraSettled,
+  } = props;
+
+  console.log("dungeon render scene focus x/y", focusX, focusY);
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const pxPerCell = zoom ?? 32;
+
+  const flipGridX = props.flipGridX ?? true;
+  const flipGridY = props.flipGridY ?? true;
+
+  const theme = props.theme ?? THEME_DEFAULT;
+
+  // Convert "#RRGGBB" + alpha to vec4 0..1
+  const hexToVec4 = (hex: string, a = 1) => {
+    const c = new THREE.Color(hex);
+    return [c.r, c.g, c.b, a] as [number, number, number, number];
+  };
+
+  // Apply strength as a "mix from white" (same semantics as: rgb *= mix(1, tint, strength))
+  // This keeps strength intuitive without needing shader changes.
+  const applyStrength = (
+    rgba: [number, number, number, number],
+    strength: number,
+  ): [number, number, number, number] => {
+    const s = Math.max(0, Math.min(1.5, strength)); // allow mild >1 boost; clamp for safety
+    const r = 1 + (rgba[0] - 1) * s;
+    const g = 1 + (rgba[1] - 1) * s;
+    const b = 1 + (rgba[2] - 1) * s;
+    return [r, g, b, rgba[3]];
+  };
+
+  // Theme-first colors (preferred)
+  const themeFloor = applyStrength(
+    hexToVec4(theme.colors.floor, 1),
+    theme.strength.floor,
+  );
+  const themeWall = applyStrength(
+    hexToVec4(theme.colors.wallEdge, 1),
+    theme.strength.wallEdge,
+  );
+  const themePlayer = applyStrength(
+    hexToVec4(theme.colors.player, 1),
+    theme.strength.player,
+  );
+  const themeItem = applyStrength(
+    hexToVec4(theme.colors.interactable, 1),
+    theme.strength.interactable,
+  );
+  const themeHazard = applyStrength(
+    hexToVec4(theme.colors.hazard, 1),
+    theme.strength.hazard,
+  );
+
+  // Backward-compatible overrides (props win only if explicitly provided)
+  const floorColor = props.floorColor ?? themeFloor;
+  const wallColor = props.wallColor ?? themeWall;
+  const playerColor = props.playerColor ?? themePlayer;
+  const itemColor = props.itemColor ?? themeItem;
+  const hazardColor = props.hazardColor ?? themeHazard;
+
+  // --- Load atlas texture (inside Canvas tree = safe) ---
+  const atlas = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    const t = loader.load(atlasUrl);
+
+    // Pixel art correctness
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+
+    // IMPORTANT: do not double-flip; shader handles optional flip
+    t.flipY = false;
+
+    // Atlas is color
+    t.colorSpace = THREE.SRGBColorSpace;
+
+    return t;
+  }, [atlasUrl]);
+
+  // --- Build char texture (R8) ---
+  const charTex = useMemo(() => {
+    const mask = buildCharMask(bsp, content, {
+      wallTile,
+      floorTile,
+
+      doorTile: props.doorTile,
+      keyTile: props.keyTile,
+      leverTile: props.leverTile,
+      plateTile: props.plateTile,
+      blockTile: props.blockTile,
+      chestTile: props.chestTile,
+      monsterTile: props.monsterTile,
+      secretDoorTile: props.secretDoorTile,
+      hiddenPassageTile: props.hiddenPassageTile,
+
+      hazardDefaultTile: props.hazardDefaultTile,
+      hazardTilesByType: props.hazardTilesByType,
+
+      playerX: props.playerX,
+      playerY: props.playerY,
+      playerTile: props.playerTile,
+    });
+
+    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
+  }, [
+    bsp,
+    content,
+    W,
+    H,
+    wallTile,
+    floorTile,
+    props.doorTile,
+    props.keyTile,
+    props.leverTile,
+    props.plateTile,
+    props.blockTile,
+    props.chestTile,
+    props.monsterTile,
+    props.secretDoorTile,
+    props.hiddenPassageTile,
+    props.hazardDefaultTile,
+    props.hazardTilesByType,
+    props.playerX,
+    props.playerY,
+    props.playerTile,
+  ]);
+
+  // tint channel texture (R8)
+  const tintTex = useMemo(() => {
+    const mask = buildTintMask(bsp, content, {
+      playerX: props.playerX,
+      playerY: props.playerY,
+    });
+    return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
+  }, [bsp, content, W, H, props.playerX, props.playerY]);
+
+  // --- Shader material ---
+  const mat = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      vertexShader: tileVert,
+      fragmentShader: tileFrag,
+      uniforms: {
+        uSolid: { value: bsp.textures.solid },
+        uChar: { value: charTex },
+        uTint: { value: tintTex },
+        uAtlas: { value: atlas },
+        uGridSize: { value: new THREE.Vector2(W, H) },
+        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
+        uWallTile: { value: wallTile },
+        uFloorTile: { value: floorTile },
+        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
+        uFlipGridX: { value: flipGridX ? 1 : 0 },
+        uFlipGridY: { value: flipGridY ? 1 : 0 },
+        uFloorColor: { value: new THREE.Vector4(...floorColor) },
+        uWallColor: { value: new THREE.Vector4(...wallColor) },
+        uPlayerColor: { value: new THREE.Vector4(...playerColor) },
+        uItemColor: { value: new THREE.Vector4(...itemColor) },
+        uHazardColor: { value: new THREE.Vector4(...hazardColor) },
+      },
+      depthTest: false,
+      depthWrite: false,
+      transparent: false,
+    });
+  }, [
+    bsp.textures.solid,
+    charTex,
+    tintTex,
+    atlas,
+    W,
+    H,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+    flipGridX,
+    flipGridY,
+    floorColor,
+    wallColor,
+    playerColor,
+    itemColor,
+    hazardColor,
+    props.theme,
+  ]);
+
+  // -------------------------------
+  // Smooth camera rig (inside Canvas)
+  // -------------------------------
+
+  const { camera } = useThree();
+  const { size } = useThree();
+
+  // camera current + target positions in world pixels
+  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
+  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
+
+  // Track last focus to detect changes
+  const lastFocus = useRef<{ x: number; y: number } | null>(null);
+
+  // Stable target tracking (refs, not state)
+  const targetCellRef = useRef<{ x: number; y: number } | null>(null);
+  const settlingRef = useRef<{ x: number; y: number; frames: number } | null>(
+    null,
+  );
+
+  // Initialize camera when map size / zoom changes (NOT on focus changes)
+  useEffect(() => {
+    const { worldX, worldY } = cellToWorldPx(
+      focusX,
+      focusY,
+      W,
+      H,
+      pxPerCell,
+      flipGridX,
+    );
+    const cam = camera as THREE.OrthographicCamera;
+
+    camWorld.current.set(worldX, worldY, 10);
+    targetWorld.current.set(worldX, worldY, 10);
+
+    // Clamp target to map bounds (account for viewport size in world px)
+    const halfViewW = (size.width * 0.5) / cam.zoom;
+    const halfViewH = (size.height * 0.5) / cam.zoom;
+    const halfMapW = W * pxPerCell * 0.5;
+    const halfMapH = H * pxPerCell * 0.5;
+
+    const minX = -halfMapW + halfViewW;
+    const maxX = halfMapW - halfViewW;
+    const minY = -halfMapH + halfViewH;
+    const maxY = halfMapH - halfViewH;
+
+    targetWorld.current.x = Math.min(
+      maxX,
+      Math.max(minX, targetWorld.current.x),
+    );
+    targetWorld.current.y = Math.min(
+      maxY,
+      Math.max(minY, targetWorld.current.y),
+    );
+
+    camera.position.set(worldX, worldY, 10);
+
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+
+    // baseline for change detection
+    lastFocus.current = { x: focusX, y: focusY };
+
+    // clear any in-flight chase (map/zoom swap)
+    targetCellRef.current = null;
+    settlingRef.current = null;
+  }, [
+    W,
+    H,
+    pxPerCell,
+    camera,
+    flipGridX,
+    focusX,
+    focusY,
+    size.width,
+    size.height,
+  ]);
+
+  // When focus changes, set a new target cell (without spam)
+  useEffect(() => {
+    const prev = lastFocus.current;
+    if (!prev || prev.x !== focusX || prev.y !== focusY) {
+      lastFocus.current = { x: focusX, y: focusY };
+
+      const curTarget = targetCellRef.current;
+      if (!curTarget || curTarget.x !== focusX || curTarget.y !== focusY) {
+        targetCellRef.current = { x: focusX, y: focusY };
+        settlingRef.current = { x: focusX, y: focusY, frames: 0 };
+      }
+    }
+  }, [focusX, focusY]);
+
+  useFrame((_state, delta) => {
+    const cam = camera as THREE.OrthographicCamera;
+    const targetCell = targetCellRef.current;
+
+    if (!targetCell) {
+      cam.position.copy(camWorld.current);
+      cam.updateProjectionMatrix();
+      return;
+    }
+
+    const { worldX, worldY } = cellToWorldPx(
+      targetCell.x,
+      targetCell.y,
+      W,
+      H,
+      pxPerCell,
+      flipGridX,
+    );
+    targetWorld.current.set(worldX, worldY, 10);
+
+    // frame-rate independent smoothing
+    const speed = 14; // 10-20 range
+    const t = 1 - Math.exp(-speed * delta);
+    camWorld.current.lerp(targetWorld.current, t);
+
+    cam.position.copy(camWorld.current);
+    cam.updateProjectionMatrix();
+
+    // stop within a few pixels (world units are pixels)
+    const dx = camWorld.current.x - targetWorld.current.x;
+    const dy = camWorld.current.y - targetWorld.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // increment frames for this chase
+    const s = settlingRef.current;
+    if (s && s.x === targetCell.x && s.y === targetCell.y) {
+      s.frames += 1;
+    }
+
+    const stopPx = 3;
+    const maxFrames = 90; // ~1.5s @ 60fps
+    const shouldForceSettle = !!s && s.frames >= maxFrames;
+
+    if (dist <= stopPx || shouldForceSettle) {
+      camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
+      cam.position.copy(camWorld.current);
+      cam.updateProjectionMatrix();
+
+      console.log(
+        "camera settled on",
+        { x: targetCell.x, y: targetCell.y },
+        {
+          dist,
+          forced: shouldForceSettle,
+          frames: s?.frames,
+        },
+      );
+
+      onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
+
+      targetCellRef.current = null;
+      settlingRef.current = null;
+    }
+  });
+
+  // -------------------------------
+  // Draw the plane (pixel-world units)
+  // -------------------------------
+  return (
+    <mesh
+      position={[0, 0, 0]}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        // uv is 0..1 across the plane
+        const uv = e.uv;
+        if (!uv) return;
+
+        // Apply grid flips same as shader.
+        // We do this so click mapping matches what the user sees.
+        let u = uv.x;
+        let v = uv.y;
+
+        if (flipGridX) u = 1 - u;
+        if (flipGridY) v = 1 - v;
+
+        // numeric safety
+        u = Math.min(0.999999, Math.max(0, u));
+        v = Math.min(0.999999, Math.max(0, v));
+
+        const cx = Math.floor(u * W);
+        const cy = Math.floor(v * H);
+
+        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+
+        // Camera-only: set focus target, do NOT move player.
+        props.onCellFocus?.({ x: cx, y: cy });
+      }}
+    >
+      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
+      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
+      <primitive object={mat} attach="material" />
+    </mesh>
+  );
+}
+
+// -------------------------------
+// Wrapper (NO R3F hooks here)
+// -------------------------------
+
+export default function DungeonRenderView(props: Props) {
+  const pxPerCell = props.zoom ?? 32;
+
+  return (
+    <div style={{ width: "100%", height: "100%" }}>
+      <Canvas
+        orthographic
+        // camera parameters here are just defaults; the rig positions it
+        camera={{
+          position: [0, 0, 10],
+          zoom: 1,
+          near: 0.1,
+          far: 1000,
+        }}
+        gl={{ antialias: false, alpha: false }}
+      >
+        {/* Set a fixed ortho frustum in pixel-world units */}
+        <OrthoFrustum pxPerCell={pxPerCell} />
+        <DungeonRenderScene {...props} />
+      </Canvas>
+    </div>
+  );
+}
+
+// Keeps ortho frustum stable and sized in “pixel world units”
+function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    const cam = camera as THREE.OrthographicCamera;
+
+    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
+    const halfW = size.width / 2;
+    const halfH = size.height / 2;
+
+    cam.left = -halfW;
+    cam.right = halfW;
+    cam.top = halfH;
+    cam.bottom = -halfH;
+
+    cam.near = 0.1;
+    cam.far = 1000;
+
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+  }, [camera, size.width, size.height, pxPerCell]);
+
+  return null;
 }
 </file>
 
