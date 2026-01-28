@@ -43,6 +43,11 @@ export const tileFrag = /* glsl */ `
   uniform float uEnemyBreathAmp;
   uniform float uMonsterTile;
 
+  // R1.5 affordances (inspection-only)
+  uniform vec2  uHoverCell;
+  uniform float uHoverEnabled;
+  uniform float uHoverStrength;
+
   varying vec2 vUv;
 
   // ------------------------------------------------------------
@@ -240,6 +245,30 @@ export const tileFrag = /* glsl */ `
     }
 
     vec3 outRgb = mix(bg, ink, inkA);
+
+    // ------------------------------------------------------------
+    // HOVER OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    // cell is in the flipped grid space already (matches click mapping if we flip u/v in pointer handlers)
+    float hx = 1.0 - step(0.5, abs(cell.x - uHoverCell.x));
+    float hy = 1.0 - step(0.5, abs(cell.y - uHoverCell.y));
+    float isHoverCell = uHoverEnabled * hx * hy;
+
+    if (isHoverCell > 0.0) {
+      // Thin outline inside the cell (local is 0..1 within the cell)
+      float t = 0.04; // thickness in local space; tweak later if needed
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // High-contrast hover color; keep subtle (strength is uniform-tunable)
+      vec3 hoverCol = vec3(0.95);
+      outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
+    }
+
     gl_FragColor = vec4(outRgb, 1.0);
   }
 

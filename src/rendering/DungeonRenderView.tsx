@@ -294,6 +294,10 @@ function DungeonRenderScene(props: Props) {
         uEnemyBreathOmega: { value: 5.0 }, // try 2.0–4.0
         uEnemyBreathAmp: { value: 0.06 }, // try 0.02–0.06
         uMonsterTile: { value: props.monsterTile ?? 0 },
+        // R1.5 affordances: hover outline (inspection-only)
+        uHoverCell: { value: new THREE.Vector2(-1, -1) },
+        uHoverEnabled: { value: 0 },
+        uHoverStrength: { value: 0.25 },
       },
       depthTest: false,
       depthWrite: false,
@@ -495,6 +499,10 @@ function DungeonRenderScene(props: Props) {
         let u = uv.x;
         let v = uv.y;
 
+        // IMPORTANT: match click mapping (flip fixes)
+        if (flipGridX) u = 1 - u;
+        if (flipGridY) v = 1 - v;
+
         u = Math.min(0.999999, Math.max(0, u));
         v = Math.min(0.999999, Math.max(0, v));
 
@@ -506,6 +514,10 @@ function DungeonRenderScene(props: Props) {
         if (last && last.x === cx && last.y === cy) return;
         lastHoverRef.current = { x: cx, y: cy };
 
+        // Shader hover outline uniforms
+        mat.uniforms.uHoverCell.value.set(cx, cy);
+        mat.uniforms.uHoverEnabled.value = 1;
+
         props.onCellHover?.({
           x: cx,
           y: cy,
@@ -515,6 +527,7 @@ function DungeonRenderScene(props: Props) {
       }}
       onPointerOut={() => {
         lastHoverRef.current = null;
+        mat.uniforms.uHoverEnabled.value = 0;
         props.onCellHoverEnd?.();
       }}
       onPointerDown={(e) => {

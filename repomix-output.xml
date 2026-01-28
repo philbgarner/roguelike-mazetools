@@ -6097,6 +6097,246 @@ export function SingleInspectView(props: SingleInspectViewProps) {
 export default SingleInspectView;
 </file>
 
+<file path="package.json">
+{
+  "name": "mazegen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "framer-motion": "^12.29.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}
+</file>
+
+<file path="src/rendering/tiles.ts">
+// src/rendering/tiles.ts
+import * as THREE from "three";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+// FeatureType values are defined in mazeGen.ts as literal union 0..10.
+
+export type TileBuildParams = {
+  wallTile: number;
+  floorTile: number;
+
+  // FeatureType-specific tiles (adjust to your atlas)
+  monsterTile?: number; // FeatureType=1
+  chestTile?: number; // FeatureType=2
+  secretDoorTile?: number; // FeatureType=3
+  doorTile?: number; // FeatureType=4
+  keyTile?: number; // FeatureType=5
+  leverTile?: number; // FeatureType=6
+  plateTile?: number; // FeatureType=7
+  blockTile?: number; // FeatureType=8
+  hiddenPassageTile?: number; // FeatureType=9
+
+  // Hazards (FeatureType=10)
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+};
+
+// 0=base, 1=player, 2=item/interactable, 3=hazard
+export function buildTintMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: Pick<TileBuildParams, "playerX" | "playerY">,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType;
+
+  for (let i = 0; i < out.length; i++) {
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    // hazards get danger tint
+    if (featureType === 10) {
+      out[i] = 3;
+      continue;
+    }
+
+    // interactables/items (tinted consistently for now)
+    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
+    if (
+      featureType === 1 ||
+      featureType === 2 ||
+      featureType === 4 ||
+      featureType === 5 ||
+      featureType === 6 ||
+      featureType === 7 ||
+      featureType === 8 ||
+      featureType === 9
+    ) {
+      out[i] = 2;
+      continue;
+    }
+
+    out[i] = 0;
+  }
+
+  // Player wins
+  if (params.playerX !== undefined && params.playerY !== undefined) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      if (solid[pi] !== 255) out[pi] = 1;
+    }
+  }
+
+  return out;
+}
+
+export function buildCharMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: TileBuildParams,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType; // FeatureType enum
+  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
+
+  for (let i = 0; i < out.length; i++) {
+    // Let shader choose base wall/floor. Only override with a non-zero tile index.
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    let t = 0;
+    switch (featureType) {
+      case 1: // monster (if used)
+        t = params.monsterTile ?? 0;
+        break;
+      case 2: // chest
+        t = params.chestTile ?? 0;
+        break;
+      case 3: // secret door
+        t = params.secretDoorTile ?? 0;
+        break;
+      case 4: // door
+        t = params.doorTile ?? 0;
+        break;
+      case 5: // key
+        t = params.keyTile ?? 0;
+        break;
+      case 6: // lever
+        t = params.leverTile ?? 0;
+        break;
+      case 7: // plate
+        t = params.plateTile ?? 0;
+        break;
+      case 8: // block
+        t = params.blockTile ?? 0;
+        break;
+      case 9: // hidden passage
+        t = params.hiddenPassageTile ?? 0;
+        break;
+      case 10: {
+        const hazardType = hz ? hz[i] : 0;
+        t =
+          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
+          params.hazardDefaultTile ??
+          0;
+        break;
+      }
+      default:
+        t = 0;
+    }
+
+    out[i] = t & 0xff;
+  }
+
+  // --- Player overlay (highest priority) ------------------------------------
+  if (
+    params.playerTile !== undefined &&
+    params.playerX !== undefined &&
+    params.playerY !== undefined
+  ) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      // only place player on non-wall cells
+      if (solid[pi] !== 255) {
+        out[pi] = params.playerTile & 0xff;
+      }
+    }
+  }
+
+  return out;
+}
+
+export function maskToTileTextureR8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Match your generator DataTextures
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  return tex;
+}
+</file>
+
 <file path="src/rendering/tileShader.ts">
 // src/rendering/tileShader.ts
 export const tileVert = /* glsl */ `
@@ -6344,600 +6584,6 @@ export const tileFrag = /* glsl */ `
   }
 
 `;
-</file>
-
-<file path="package.json">
-{
-  "name": "mazegen",
-  "version": "0.0.0",
-  "private": true,
-  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
-  "license": "ISC",
-  "author": "",
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.5.0",
-    "framer-motion": "^12.29.0",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "three": "^0.182.0"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.8",
-    "@types/react-dom": "^19.2.3",
-    "typescript": "~5.9.3",
-    "vite": "^7.2.4"
-  }
-}
-</file>
-
-<file path="src/rendering/tiles.ts">
-// src/rendering/tiles.ts
-import * as THREE from "three";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-// FeatureType values are defined in mazeGen.ts as literal union 0..10.
-
-export type TileBuildParams = {
-  wallTile: number;
-  floorTile: number;
-
-  // FeatureType-specific tiles (adjust to your atlas)
-  monsterTile?: number; // FeatureType=1
-  chestTile?: number; // FeatureType=2
-  secretDoorTile?: number; // FeatureType=3
-  doorTile?: number; // FeatureType=4
-  keyTile?: number; // FeatureType=5
-  leverTile?: number; // FeatureType=6
-  plateTile?: number; // FeatureType=7
-  blockTile?: number; // FeatureType=8
-  hiddenPassageTile?: number; // FeatureType=9
-
-  // Hazards (FeatureType=10)
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
-
-  playerX?: number;
-  playerY?: number;
-  playerTile?: number;
-};
-
-// 0=base, 1=player, 2=item/interactable, 3=hazard
-export function buildTintMask(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  params: Pick<TileBuildParams, "playerX" | "playerY">,
-): Uint8Array {
-  const W = bsp.width;
-  const H = bsp.height;
-  const out = new Uint8Array(W * H);
-
-  const solid = bsp.masks.solid; // 0 floor, 255 wall
-  const ft = content.masks.featureType;
-
-  for (let i = 0; i < out.length; i++) {
-    if (solid[i] === 255) {
-      out[i] = 0;
-      continue;
-    }
-
-    const featureType = ft[i] ?? 0;
-
-    // hazards get danger tint
-    if (featureType === 10) {
-      out[i] = 3;
-      continue;
-    }
-
-    // interactables/items (tinted consistently for now)
-    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
-    if (
-      featureType === 1 ||
-      featureType === 2 ||
-      featureType === 4 ||
-      featureType === 5 ||
-      featureType === 6 ||
-      featureType === 7 ||
-      featureType === 8 ||
-      featureType === 9
-    ) {
-      out[i] = 2;
-      continue;
-    }
-
-    out[i] = 0;
-  }
-
-  // Player wins
-  if (params.playerX !== undefined && params.playerY !== undefined) {
-    const px = params.playerX | 0;
-    const py = params.playerY | 0;
-    if (px >= 0 && px < W && py >= 0 && py < H) {
-      const pi = py * W + px;
-      if (solid[pi] !== 255) out[pi] = 1;
-    }
-  }
-
-  return out;
-}
-
-export function buildCharMask(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  params: TileBuildParams,
-): Uint8Array {
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const out = new Uint8Array(W * H);
-
-  const solid = bsp.masks.solid; // 0 floor, 255 wall
-  const ft = content.masks.featureType; // FeatureType enum
-  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
-
-  for (let i = 0; i < out.length; i++) {
-    // Let shader choose base wall/floor. Only override with a non-zero tile index.
-    if (solid[i] === 255) {
-      out[i] = 0;
-      continue;
-    }
-
-    const featureType = ft[i] ?? 0;
-
-    let t = 0;
-    switch (featureType) {
-      case 1: // monster (if used)
-        t = params.monsterTile ?? 0;
-        break;
-      case 2: // chest
-        t = params.chestTile ?? 0;
-        break;
-      case 3: // secret door
-        t = params.secretDoorTile ?? 0;
-        break;
-      case 4: // door
-        t = params.doorTile ?? 0;
-        break;
-      case 5: // key
-        t = params.keyTile ?? 0;
-        break;
-      case 6: // lever
-        t = params.leverTile ?? 0;
-        break;
-      case 7: // plate
-        t = params.plateTile ?? 0;
-        break;
-      case 8: // block
-        t = params.blockTile ?? 0;
-        break;
-      case 9: // hidden passage
-        t = params.hiddenPassageTile ?? 0;
-        break;
-      case 10: {
-        const hazardType = hz ? hz[i] : 0;
-        t =
-          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
-          params.hazardDefaultTile ??
-          0;
-        break;
-      }
-      default:
-        t = 0;
-    }
-
-    out[i] = t & 0xff;
-  }
-
-  // --- Player overlay (highest priority) ------------------------------------
-  if (
-    params.playerTile !== undefined &&
-    params.playerX !== undefined &&
-    params.playerY !== undefined
-  ) {
-    const px = params.playerX | 0;
-    const py = params.playerY | 0;
-    if (px >= 0 && px < W && py >= 0 && py < H) {
-      const pi = py * W + px;
-      // only place player on non-wall cells
-      if (solid[pi] !== 255) {
-        out[pi] = params.playerTile & 0xff;
-      }
-    }
-  }
-
-  return out;
-}
-
-export function maskToTileTextureR8(
-  mask: Uint8Array,
-  W: number,
-  H: number,
-  name: string,
-): THREE.DataTexture {
-  const tex = new THREE.DataTexture(
-    mask,
-    W,
-    H,
-    THREE.RedFormat,
-    THREE.UnsignedByteType,
-  );
-
-  tex.name = name;
-  tex.needsUpdate = true;
-
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-
-  // Match your generator DataTextures
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.flipY = false;
-
-  return tex;
-}
-</file>
-
-<file path="src/rendering/RENDERING-CONTEXT.md">
----
-
-# RENDERING-CONTEXT.md
-
-## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
-
-**CONTEXT VERSION:** **2026-01-28 (rev H)**
-**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 SHADER SEMANTICS + VISUAL HIERARCHY ESTABLISHED (POLISH IN PROGRESS)**
-
----
-
-## GOAL
-
-Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **custom fragment shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
-
-The result is a first-class **GPU inspection view** that:
-
-* is visually readable at a glance
-* preserves CP437 crispness
-* reflects semantic roles (player, enemies, items, hazards, doors)
-* stays inspection-only (no gameplay coupling yet)
-
----
-
-## NON-GOALS (FOR NOW)
-
-* No new generation controls (Step 7 remains inspection-only).
-* No batch rendering mode.
-* No 3D geometry for walls/floors — **single plane only**.
-* No sprite animation system (all motion is procedural in shader).
-* No runtime-authoritative visuals yet (R2 responsibility).
-
----
-
-## RENDER VIEW CONTRACT
-
-### Location
-
-The render component lives **inside `InspectionShell`** as an alternate view alongside the existing 2D canvas inspection view.
-
-### View Mode
-
-`InspectionShell` provides a local toggle:
-
-* `pane = "content"` → existing 2D canvas inspection
-* `pane = "render"` → R3F tileset renderer
-
-Both panes consume the **same single-seed dungeon + content outputs**.
-
----
-
-## PLAYER / CAMERA MODEL (LOCKED)
-
-### Entities
-
-Render view distinguishes **two inspection-only concepts**:
-
-* **Player cell** `{x,y}`
-
-  * Rendered as a glyph
-  * Initialized to start cell
-  * Does **not** drive camera
-
-* **Focus cell** `{x,y}`
-
-  * Sole camera target
-  * Click-to-focus only
-  * May diverge freely from player
-
-This separation is **intentional and locked**.
-
-### Camera behavior
-
-* Orthographic camera
-* Target driven by focus cell
-* Snap-lerp controller:
-
-  * smooth convergence
-  * deterministic settle
-  * emits `onCameraSettled({x,y})`
-
----
-
-## COORDINATES (AUTHORITATIVE RULE)
-
-* **All grid flips happen in the shader**
-* **Camera never flips grid axes**
-
-  * Only converts y-down grid → y-up world
-
-This rule is locked to avoid compounding transforms.
-
----
-
-## DATA MODEL (TEXTURES)
-
-### Generator textures
-
-* `solid` — wall vs floor
-* content masks:
-
-  * `featureType`
-  * `featureId`
-  * `hazardType`
-  * etc.
-
-### Character / tile index texture (`charTex`)
-
-R8 `DataTexture` encoding which CP437 tile to draw per cell:
-
-* `0` → draw base wall/floor tile
-* `N` → draw atlas tile `N`
-
-This is the **primary bridge** between content generation and rendering.
-
-### Tint channel texture (`tintTex`)
-
-R8 `DataTexture` encoding **semantic roles**:
-
-| Value | Meaning               |
-| ----: | --------------------- |
-|     0 | base (floor / wall)   |
-|     1 | player                |
-|     2 | interactables / items |
-|     3 | hazards               |
-
-Tint IDs are **semantic**, not visual — colors come from theme uniforms.
-
----
-
-## THEMING (LOCKED)
-
-### `RenderTheme`
-
-A data-only object defining semantic color roles and strength multipliers.
-
-* Lives in `renderTheme.ts`
-* Consumed CPU-side → shader uniforms
-* Shader has **no semantic knowledge**
-
-Themes currently defined:
-
-* **Default (CP437 Neutral)**
-* **Danger-Forward Debug**
-
-Themes may control **effect intensity**, not logic.
-
----
-
-## SHADER RESPONSIBILITIES (CURRENT)
-
-The fragment shader now does **substantially more than R1**, while still honoring constraints:
-
-1. Compute cell coords from UV
-2. Classify wall vs floor via `solid`
-3. Render **only exterior wall edges**
-4. Resolve base tile vs char override
-5. Sample atlas (nearest)
-6. Split output into:
-
-   * **background**
-   * **glyph ink (alpha-masked)**
-7. Apply **semantic effects to ink only**
-8. Composite opaque final color
-
-All textures remain `NearestFilter`.
-
----
-
-## SESSION SUMMARY — 2026-01-28 (WHAT WE JUST DID)
-
-### R1.5 — shader semantics & visual hierarchy breakthrough
-
-This session completed a **major qualitative step**:
-
-#### 1. Ink / background separation (LOCKED)
-
-* Atlas alpha now strictly defines **glyph ink**
-* Floors render with a **solid black background**
-* Walls retain tinted background on exterior edges
-* All effects apply to **ink only**, never to background
-
-This unlocked clean, readable effects without muddy tiles.
-
-#### 2. Semantic visual hierarchy established
-
-Each role now has a **distinct motion/energy profile**:
-
-| Role     | Effect                                    |
-| -------- | ----------------------------------------- |
-| Player   | Subtle pulse toward white                 |
-| Monsters | Breathing warp (scale-based) + enemy tint |
-| Items    | Strong metallic sheen band                |
-| Doors    | Edge-only varnish highlight               |
-| Hazards  | Pulsing intensity                         |
-
-This hierarchy is deliberate:
-
-* **items > doors > enemies > player > floor**
-  in visual salience.
-
-#### 3. Monster breathing (procedural warp)
-
-* Monsters no longer use metallic sheen
-* Glyph is gently warped around center
-* Feels “alive” without sprite animation
-* Amplitude and speed are uniform-controlled
-
-#### 4. Door effect re-scoped (IMPORTANT)
-
-* Metallic sheen removed from doors
-* Doors now get:
-
-  * **edge-only highlight**
-  * very subtle temporal shimmer
-* Doors are interactive but **intentionally less loud than items**
-
-This is correct and matches design intent.
-
-#### 5. Effect exclusion rules enforced
-
-* Item metallic sheen explicitly excludes:
-
-  * monsters
-  * doors
-* No overlapping semantic effects
-
-This prevents visual noise and keeps inspection readable.
-
----
-
-## IMPLEMENTATION PLAN STATUS
-
-### Phase R1 — Tileset plane renderer
-
-**CLOSED / STABLE**
-
-No further changes except bug fixes.
-
----
-
-### Phase R1.5 — Interaction, theming, affordances & shader polish
-
-**ACTIVE (ADVANCED)**
-
-**Completed / Locked**
-
-* Click-to-focus camera ✔
-* Player vs focus separation ✔
-* Tint channel texture ✔
-* RenderTheme wiring ✔
-* CP437 canonical atlas ✔
-* Ink vs background split ✔
-* Semantic effect hierarchy ✔
-
-**In progress**
-
-* Door edge highlight tuning
-* Fine control of effect amplitudes per theme
-* Render-pane tooltips & click-to-interact
-* Camera bounds clamping during focus chase
-
----
-
-## UPDATED NEXT STEPS (R1.5 — IMMEDIATE)
-
-### 1. Door highlight tuning (small, important)
-
-* Increase **edge contrast** slightly (not brightness)
-* Prefer:
-
-  * edge darkening + thin highlight
-  * NOT glint bands
-* Doors should read as:
-
-  * solid
-  * physical
-  * interactive
-  * but *not collectible*
-
-This is a polish task, not a redesign.
-
----
-
-### 2. Render-pane inspection affordances
-
-* Hover tooltips in render pane
-* Same semantic info as content pane:
-
-  * feature type / id
-  * hazard type
-  * runtime state
-* Click interactions:
-
-  * doors
-  * levers
-  * plates
-  * blocks
-* Rules:
-
-  * reuse existing inspection logic
-  * render pane must not infer semantics independently
-
----
-
-### 3. Camera bounds enforcement
-
-* Clamp focus during snap-lerp
-* Prevent panning beyond dungeon extents
-* Must remain deterministic
-
----
-
-### 4. FeatureType → glyph audit (final)
-
-* Verify enum ↔ glyph mapping
-* Confirm wall-resident features:
-
-  * secret doors
-  * hidden passages
-* Ensure charTex is authoritative
-
----
-
-## NEXT PHASE (R2 — RUNTIME-DRIVEN VISUALS)
-
-R2 explicitly **does not start yet**, but is now clearly scoped:
-
-* Doors reflect open/closed runtime state
-* Keys disappear when collected
-* Blocks render from runtime positions
-* Hazards reflect `hazardType`
-* Optional low-frequency tile animations
-
-R2 begins **only after** R1.5 interaction parity is complete.
-
----
-
-## DEFINITIONS
-
-* **Cell** — integer grid coordinate `(x,y)`
-* **Atlas tile index** — CP437 glyph selector
-* **R8 DataTexture** — unsigned byte per cell
-* **Ink** — glyph pixels (atlas alpha > 0)
-* **Background** — tile fill beneath ink
-* **Focus cell** — camera target
-* **Player cell** — inspection overlay
-* **Snap-lerp camera** — smooth + deterministic
-
----
 </file>
 
 <file path="src/dungeonState.ts">
@@ -7277,6 +6923,367 @@ export function ensureSecret(state: DungeonRuntimeState, id: number): void {
 export function ensurePlate(state: DungeonRuntimeState, id: number): void {
   if (!state.plates[id]) state.plates[id] = { pressed: false };
 }
+</file>
+
+<file path="src/rendering/RENDERING-CONTEXT.md">
+---
+
+# RENDERING-CONTEXT.md
+
+## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
+
+**CONTEXT VERSION:** **2026-01-28 (rev I)**
+**OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
+**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 SHADER SEMANTICS + VISUAL HIERARCHY ESTABLISHED (POLISH IN PROGRESS)**
+
+---
+
+## GOAL
+
+Add a **Render** view mode inside `InspectionShell` that hosts a **React Three Fiber** scene. The R3F scene draws a **single 2D plane** (one quad) and uses a **custom fragment shader** to render the dungeon as a **tileset**, driven by the generator’s `THREE.DataTexture` outputs.
+
+The result is a first-class **GPU inspection view** that:
+
+* is visually readable at a glance
+* preserves CP437 crispness
+* reflects semantic roles (player, enemies, items, hazards, doors)
+* stays inspection-only (no gameplay coupling yet)
+
+---
+
+## NON-GOALS (FOR NOW)
+
+* No new generation controls (Step 7 remains inspection-only).
+* No batch rendering mode.
+* No 3D geometry for walls/floors — **single plane only**.
+* No sprite animation system (all motion is procedural in shader).
+* No runtime-authoritative visuals yet (R2 responsibility).
+
+---
+
+## RENDER VIEW CONTRACT
+
+### Location
+
+The render component lives **inside `InspectionShell`** as an alternate view alongside the existing 2D canvas inspection view.
+
+### View Mode
+
+`InspectionShell` provides a local toggle:
+
+* `pane = "content"` → existing 2D canvas inspection
+* `pane = "render"` → R3F tileset renderer
+
+Both panes consume the **same single-seed dungeon + content outputs**.
+
+---
+
+## PLAYER / CAMERA MODEL (LOCKED)
+
+### Entities
+
+Render view distinguishes **two inspection-only concepts**:
+
+* **Player cell** `{x,y}`
+
+  * Rendered as a glyph
+  * Initialized to start cell
+  * Does **not** drive camera
+
+* **Focus cell** `{x,y}`
+
+  * Sole camera target
+  * Click-to-focus only
+  * May diverge freely from player
+
+This separation is **intentional and locked**.
+
+### Camera behavior
+
+* Orthographic camera
+* Target driven by focus cell
+* Snap-lerp controller:
+
+  * smooth convergence
+  * deterministic settle
+  * emits `onCameraSettled({x,y})`
+
+---
+
+## COORDINATES (AUTHORITATIVE RULE)
+
+* **All grid flips happen in the shader**
+* **Camera never flips grid axes**
+
+  * Only converts y-down grid → y-up world
+
+This rule is locked to avoid compounding transforms.
+
+---
+
+## DATA MODEL (TEXTURES)
+
+### Generator textures
+
+* `solid` — wall vs floor
+* content masks:
+
+  * `featureType`
+  * `featureId`
+  * `hazardType`
+  * etc.
+
+### Character / tile index texture (`charTex`)
+
+R8 `DataTexture` encoding which CP437 tile to draw per cell:
+
+* `0` → draw base wall/floor tile
+* `N` → draw atlas tile `N`
+
+This is the **primary bridge** between content generation and rendering.
+
+### Tint channel texture (`tintTex`)
+
+R8 `DataTexture` encoding **semantic roles**:
+
+| Value | Meaning               |
+| ----: | --------------------- |
+|     0 | base (floor / wall)   |
+|     1 | player                |
+|     2 | interactables / items |
+|     3 | hazards               |
+
+Tint IDs are **semantic**, not visual — colors come from theme uniforms.
+
+**Important (rev I clarification):**
+
+* **Monsters are currently identified by tile index** (e.g. `tile == uMonsterTile`) and tinted via an **enemy color uniform** (not via a `tintTex` ID).
+* `tintTex` remains authoritative for **player / items / hazards / base** semantics.
+
+---
+
+## THEMING (LOCKED)
+
+### `RenderTheme`
+
+A data-only object defining semantic color roles and strength multipliers.
+
+* Lives in `renderTheme.ts`
+* Consumed CPU-side → shader uniforms
+* Shader has **no semantic knowledge**
+
+Themes currently defined:
+
+* **Default (CP437 Neutral)**
+* **Danger-Forward Debug**
+
+Themes may control **effect intensity**, not logic.
+
+---
+
+## SHADER RESPONSIBILITIES (CURRENT)
+
+The fragment shader now does **substantially more than R1**, while still honoring constraints:
+
+1. Compute cell coords from UV
+2. Classify wall vs floor via `solid`
+3. Render **only exterior wall edges**
+4. Resolve base tile vs char override
+5. Sample atlas (nearest)
+6. Split output into:
+
+   * **background**
+   * **glyph ink (alpha-masked)**
+7. Apply **semantic effects to ink only**
+8. Composite opaque final color
+
+All textures remain `NearestFilter`.
+
+---
+
+## SESSION SUMMARY — 2026-01-28 (WHAT WE JUST DID)
+
+### R1.5 — shader semantics & visual hierarchy breakthrough
+
+This session completed a **major qualitative step**:
+
+#### 1. Ink / background separation (LOCKED)
+
+* Atlas alpha now strictly defines **glyph ink**
+* Floors render with a **solid black background**
+* Walls retain tinted background on exterior edges
+* All effects apply to **ink only**, never to background
+
+This unlocked clean, readable effects without muddy tiles.
+
+#### 2. Semantic visual hierarchy established
+
+Each role now has a **distinct motion/energy profile**:
+
+| Role     | Effect                                    |
+| -------- | ----------------------------------------- |
+| Player   | Subtle pulse toward white                 |
+| Monsters | Breathing warp (scale-based) + enemy tint |
+| Items    | Strong metallic sheen band                |
+| Doors    | Edge-only varnish highlight               |
+| Hazards  | Pulsing intensity                         |
+
+This hierarchy is deliberate:
+
+* **items (highest)** → **doors/enemies (mid, distinct)** → **player (subtle)** → **base tiles**.
+
+#### 3. Monster breathing (procedural warp)
+
+* Monsters no longer use metallic sheen
+* Glyph is gently warped around center
+* Feels “alive” without sprite animation
+* Amplitude and speed are uniform-controlled
+
+#### 4. Door effect re-scoped (IMPORTANT)
+
+* Metallic sheen removed from doors
+* Doors now get:
+
+  * **edge-only highlight**
+  * very subtle temporal shimmer
+* Doors are interactive but **intentionally less loud than items**
+
+**Important (rev I clarification):**
+
+* Door “edge-only highlight” is computed from the **atlas glyph alpha edge** (neighbor alpha taps in atlas UV space), **not** from grid-neighbor cell sampling.
+* Highlight strength is modulated by a slow pulse + mild vertical bias (a “varnish” feel), and mixes ink toward a pale near-white.
+
+#### 5. Effect exclusion rules enforced
+
+* Item metallic sheen explicitly excludes:
+
+  * monsters
+  * doors
+* No overlapping semantic effects
+
+This prevents visual noise and keeps inspection readable.
+
+---
+
+## IMPLEMENTATION PLAN STATUS
+
+### Phase R1 — Tileset plane renderer
+
+**CLOSED / STABLE**
+
+No further changes except bug fixes.
+
+---
+
+### Phase R1.5 — Interaction, theming, affordances & shader polish
+
+**ACTIVE (ADVANCED)**
+
+**Completed / Locked**
+
+* Click-to-focus camera ✔
+* Player vs focus separation ✔
+* Tint channel texture ✔
+* RenderTheme wiring ✔
+* CP437 canonical atlas ✔
+* Ink vs background split ✔
+* Semantic effect hierarchy ✔
+
+**In progress**
+
+* Door edge highlight tuning
+* Fine control of effect amplitudes per theme
+* Render-pane tooltips & click-to-interact
+* Camera bounds clamping during focus chase
+
+---
+
+## UPDATED NEXT STEPS (R1.5 — IMMEDIATE)
+
+### 1. Door highlight tuning (small, important)
+
+* Increase **edge contrast** slightly (not brightness)
+* Prefer:
+
+  * edge darkening + thin highlight
+  * NOT glint bands
+* Doors should read as:
+
+  * solid
+  * physical
+  * interactive
+  * but *not collectible*
+
+This is a polish task, not a redesign.
+
+---
+
+### 2. Render-pane inspection affordances
+
+* Hover tooltips in render pane
+* Same semantic info as content pane:
+
+  * feature type / id
+  * hazard type
+  * runtime state
+* Click interactions:
+
+  * doors
+  * levers
+  * plates
+  * blocks
+* Rules:
+
+  * reuse existing inspection logic
+  * render pane must not infer semantics independently
+
+---
+
+### 3. Camera bounds enforcement
+
+* Clamp focus during snap-lerp
+* Prevent panning beyond dungeon extents
+* Must remain deterministic
+
+---
+
+### 4. FeatureType → glyph audit (final)
+
+* Verify enum ↔ glyph mapping
+* Confirm wall-resident features:
+
+  * secret doors
+  * hidden passages
+* Ensure `charTex` is authoritative
+
+---
+
+## NEXT PHASE (R2 — RUNTIME-DRIVEN VISUALS)
+
+R2 explicitly **does not start yet**, but is now clearly scoped:
+
+* Doors reflect open/closed runtime state
+* Keys disappear when collected
+* Blocks render from runtime positions
+* Hazards reflect `hazardType`
+* Optional low-frequency tile animations
+
+R2 begins **only after** R1.5 interaction parity is complete.
+
+---
+
+## DEFINITIONS
+
+* **Cell** — integer grid coordinate `(x,y)`
+* **Atlas tile index** — CP437 glyph selector
+* **R8 DataTexture** — unsigned byte per cell
+* **Ink** — glyph pixels (atlas alpha > 0)
+* **Background** — tile fill beneath ink
+* **Focus cell** — camera target
+* **Player cell** — inspection overlay
+* **Snap-lerp camera** — smooth + deterministic
+
+---
 </file>
 
 <file path="src/batchStats.ts">
@@ -8805,6 +8812,8 @@ function DungeonRenderScene(props: Props) {
 
   // tint channel texture (R8)
   const tintTex = useMemo(() => {
+    //Enemies/monsters are currently detected by tile == monsterTile and shaded via uEnemyColor (not a tint ID)
+    // Tint channel remains reserved for player/items/hazards.
     const mask = buildTintMask(bsp, content, {
       playerX: props.playerX,
       playerY: props.playerY,
@@ -9228,6 +9237,27 @@ input {
     padding: 0;
     overflow-y: auto;
     max-height: 98vh;
+}
+
+.maze-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Inspection layout: make the right pane truly consume remaining width */
+.maze-app.maze-app--inspect .maze-preview {
+    flex: 1;
+    min-width: 0; /* critical: allows the preview to shrink/grow without overflow */
+}
+
+.maze-app.maze-app--inspect .maze-controls {
+    flex: 0 0 auto;
+}
+
+.maze-app.maze-app--inspect .maze-controls.maze-controls--collapsed {
+    width: 180px;
+    max-width: 180px;
 }
 
 /* Wizard + Execution: single centered large panel */
@@ -10337,6 +10367,8 @@ export function InspectionShell(props: InspectionShellProps) {
   const [layer, setLayer] = useState<Layer>("content");
   const [scale, setScale] = useState(6);
 
+  const [controlsCollapsed, setControlsCollapsed] = useState(false);
+
   const [pane, setPane] = useState<InspectPane>("content");
 
   const [selectedCircuitIndex, setSelectedCircuitIndex] = useState<
@@ -10892,143 +10924,179 @@ export function InspectionShell(props: InspectionShellProps) {
   };
 
   return (
-    <div className="maze-app">
+    <div
+      className={
+        controlsCollapsed
+          ? "maze-app maze-app--inspect maze-app--controls-collapsed"
+          : "maze-app maze-app--inspect"
+      }
+    >
       {/* Left: Inspection controls + diagnostics */}
-      <div className="maze-controls">
+      <div
+        className={
+          controlsCollapsed
+            ? "maze-controls maze-controls--collapsed"
+            : "maze-controls"
+        }
+      >
         <div className="maze-header-row">
-          <h2 className="maze-title">{title}</h2>
-          {props.onRandomizeSeedAndRegenerate && (
-            <button onClick={props.onRandomizeSeedAndRegenerate}>
-              🎲 Randomize Seed + Regenerate
-            </button>
-          )}
-          {!!onBack && (
-            <button
-              className="maze-btn"
-              onClick={onBack}
-              title="Return to wizard"
-            >
-              Back
-            </button>
-          )}
-        </div>
+          {!controlsCollapsed && <h2 className="maze-title">{title}</h2>}
 
-        <div className="maze-controls-row">
-          <button
-            className="maze-btn"
-            onClick={resetRuntime}
-            title="Reset runtime state from current content"
-          >
-            Reset Runtime
-          </button>
+          <div className="maze-header-actions">
+            {!controlsCollapsed && props.onRandomizeSeedAndRegenerate && (
+              <button onClick={props.onRandomizeSeedAndRegenerate}>
+                🎲 Randomize Seed + Regenerate
+              </button>
+            )}
 
-          <button
-            className="maze-btn"
-            onClick={() => {
-              resetRuntime();
-            }}
-            title="Hard reset runtime state (doors/levers/keys/blocks)"
-          >
-            Hard Reset
-          </button>
+            {!!onBack && (
+              <>
+                <button
+                  className="maze-btn"
+                  onClick={() => setControlsCollapsed((v) => !v)}
+                  title={
+                    controlsCollapsed
+                      ? "Show Dungeon Inspection panel"
+                      : "Hide Dungeon Inspection panel"
+                  }
+                >
+                  {controlsCollapsed ? "Show" : "Hide"}
+                </button>
 
-          <button
-            className="maze-btn"
-            onClick={onDownload}
-            disabled={!imgForDownload}
-            title="Download current layer as PNG"
-          >
-            Download PNG
-          </button>
-        </div>
-
-        <div className="maze-grid">
-          <label className="maze-field">
-            <span>Layer</span>
-            <select
-              value={layer}
-              onChange={(e) => setLayer(e.target.value as Layer)}
-            >
-              <option value="content">content</option>
-              <option value="solid">solid</option>
-              <option value="regionId">regionId</option>
-              <option value="distanceToWall">distanceToWall</option>
-              <option value="featureType">featureType</option>
-              <option value="featureId">featureId</option>
-              <option value="featureParam">featureParam</option>
-              <option value="danger">danger</option>
-              <option value="lootTier">lootTier</option>
-              <option value="hazardType">hazardType</option>
-            </select>
-          </label>
-
-          <label className="maze-field">
-            <span>Scale</span>
-            <input
-              type="number"
-              value={scale}
-              min={1}
-              max={32}
-              onChange={(e) =>
-                setScale(clampInt(Number(e.target.value), 1, 32))
-              }
-            />
-          </label>
-
-          <label className="maze-field">
-            <span>Pane</span>
-            <select
-              value={pane}
-              onChange={(e) => setPane(e.target.value as InspectPane)}
-            >
-              <option value="content">content</option>
-              <option value="render">render</option>
-            </select>
-          </label>
-        </div>
-
-        {selectedBlockId != null && (
-          <div style={{ marginTop: 8, opacity: 0.9 }}>
-            Block selected: <b>#{selectedBlockId}</b> — click a target cell to
-            attempt push.
+                <button
+                  className="maze-btn"
+                  onClick={onBack}
+                  title="Return to wizard"
+                >
+                  Back
+                </button>
+              </>
+            )}
           </div>
-        )}
+        </div>
 
-        <div style={{ height: 12 }} />
+        {!controlsCollapsed && (
+          <div className="maze-controls-body">
+            <div className="maze-controls-row">
+              <button
+                className="maze-btn"
+                onClick={resetRuntime}
+                title="Reset runtime state from current content"
+              >
+                Reset Runtime
+              </button>
 
-        <CircuitDiagnosticsSection
-          title="Circuit Diagnostics"
-          circuits={content.meta.circuits}
-          diagnostics={circuitDiagnostics}
-          selectedCircuitIndex={selectedCircuitIndex}
-          onSelectCircuitIndex={setSelectedCircuitIndex}
-          filters={circuitDiagFilters}
-          onChangeFilters={setCircuitDiagFilters}
-          sort={circuitDiagSort}
-          onChangeSort={setCircuitDiagSort}
-          allowJumpLinks={true}
-          showRawJson={false}
-        />
+              <button
+                className="maze-btn"
+                onClick={() => {
+                  resetRuntime();
+                }}
+                title="Hard reset runtime state (doors/levers/keys/blocks)"
+              >
+                Hard Reset
+              </button>
 
-        <div style={{ height: 12 }} />
+              <button
+                className="maze-btn"
+                onClick={onDownload}
+                disabled={!imgForDownload}
+                title="Download current layer as PNG"
+              >
+                Download PNG
+              </button>
+            </div>
 
-        <RoleDiagnosticsSection
-          title="Role Diagnostics"
-          circuits={content.meta.circuits}
-          diagnostics={roleDiagnostics}
-          selectedCircuitIndex={selectedCircuitIndex}
-          onSelectCircuitIndex={setSelectedCircuitIndex}
-          showRawJson={false}
-        />
+            <div className="maze-grid">
+              <label className="maze-field">
+                <span>Layer</span>
+                <select
+                  value={layer}
+                  onChange={(e) => setLayer(e.target.value as Layer)}
+                >
+                  <option value="content">content</option>
+                  <option value="solid">solid</option>
+                  <option value="regionId">regionId</option>
+                  <option value="distanceToWall">distanceToWall</option>
+                  <option value="featureType">featureType</option>
+                  <option value="featureId">featureId</option>
+                  <option value="featureParam">featureParam</option>
+                  <option value="danger">danger</option>
+                  <option value="lootTier">lootTier</option>
+                  <option value="hazardType">hazardType</option>
+                </select>
+              </label>
 
-        {/* Optional: raw circuit debug */}
-        {circuitDebug && (
-          <details style={{ marginTop: 12 }}>
-            <summary style={{ cursor: "pointer" }}>Circuit Debug (raw)</summary>
-            <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(circuitDebug, null, 2)}
-            </pre>
-          </details>
+              <label className="maze-field">
+                <span>Scale</span>
+                <input
+                  type="number"
+                  value={scale}
+                  min={1}
+                  max={32}
+                  onChange={(e) =>
+                    setScale(clampInt(Number(e.target.value), 1, 32))
+                  }
+                />
+              </label>
+
+              <label className="maze-field">
+                <span>Pane</span>
+                <select
+                  value={pane}
+                  onChange={(e) => setPane(e.target.value as InspectPane)}
+                >
+                  <option value="content">content</option>
+                  <option value="render">render</option>
+                </select>
+              </label>
+            </div>
+
+            {selectedBlockId != null && (
+              <div style={{ marginTop: 8, opacity: 0.9 }}>
+                Block selected: <b>#{selectedBlockId}</b> — click a target cell
+                to attempt push.
+              </div>
+            )}
+
+            <div style={{ height: 12 }} />
+
+            <CircuitDiagnosticsSection
+              title="Circuit Diagnostics"
+              circuits={content.meta.circuits}
+              diagnostics={circuitDiagnostics}
+              selectedCircuitIndex={selectedCircuitIndex}
+              onSelectCircuitIndex={setSelectedCircuitIndex}
+              filters={circuitDiagFilters}
+              onChangeFilters={setCircuitDiagFilters}
+              sort={circuitDiagSort}
+              onChangeSort={setCircuitDiagSort}
+              allowJumpLinks={true}
+              showRawJson={false}
+            />
+
+            <div style={{ height: 12 }} />
+
+            <RoleDiagnosticsSection
+              title="Role Diagnostics"
+              circuits={content.meta.circuits}
+              diagnostics={roleDiagnostics}
+              selectedCircuitIndex={selectedCircuitIndex}
+              onSelectCircuitIndex={setSelectedCircuitIndex}
+              showRawJson={false}
+            />
+
+            {/* Optional: raw circuit debug */}
+            {circuitDebug && (
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: "pointer" }}>
+                  Circuit Debug (raw)
+                </summary>
+                <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(circuitDebug, null, 2)}
+                </pre>
+              </details>
+            )}
+          </div>
         )}
       </div>
 
