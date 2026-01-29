@@ -1,5 +1,5 @@
 // src/rendering/DungeonRenderView.tsx
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
@@ -7,6 +7,113 @@ import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
 import { tileFrag, tileVert } from "./tileShader";
 import type { RenderTheme } from "./renderTheme";
 import { THEME_DEFAULT } from "./renderTheme";
+
+function featureTypeName(ft: number) {
+  switch (ft | 0) {
+    case 0:
+      return "none";
+    case 3:
+      return "secret door";
+    case 4:
+      return "door";
+    case 5:
+      return "key";
+    case 6:
+      return "lever";
+    case 7:
+      return "plate";
+    case 8:
+      return "block";
+    case 9:
+      return "hidden passage";
+    case 10:
+      return "hazard";
+    default:
+      return `feature(${ft})`;
+  }
+}
+
+function buildTooltipLines(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  x: number,
+  y: number,
+) {
+  const w = bsp.width;
+  const i = y * w + x;
+
+  // --- BSP masks ---
+  const solid = (bsp.masks?.solid?.[i] ?? 0) ? 1 : 0;
+  const regionId = (bsp.masks?.regionId?.[i] ?? 0) | 0;
+  const dist = (bsp.masks?.distanceToWall?.[i] ?? 0) | 0;
+
+  // --- content masks ---
+  const ft = (content.masks?.featureType?.[i] ?? 0) | 0;
+  const fid = (content.masks?.featureId?.[i] ?? 0) | 0;
+  const fp = (content.masks?.featureParam?.[i] ?? 0) | 0;
+
+  const danger = (content.masks?.danger?.[i] ?? 0) | 0;
+  const loot = (content.masks?.lootTier?.[i] ?? 0) | 0;
+  const hz = (content.masks?.hazardType?.[i] ?? 0) | 0;
+
+  const lines: string[] = [];
+
+  // --- raw (matches InspectionShell style) ---
+  lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+  if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
+  if (hz !== 0) lines.push(`hazardType=${hz}`);
+  if (danger !== 0) lines.push(`danger=${danger}`);
+  if (loot !== 0) lines.push(`lootTier=${loot}`);
+
+  // --- readable section ---
+  if (ft !== 0) {
+    lines.push(""); // spacer
+    lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
+
+    // Circuit membership (no diagnostics here)
+    const circuits: any[] = (content.meta as any)?.circuits ?? [];
+    const memberships: string[] = [];
+
+    const triggerKind =
+      ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
+
+    const targetKind =
+      ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
+
+    for (let ci = 0; ci < circuits.length; ci++) {
+      const c: any = circuits[ci];
+      const cid = (c?.id ?? ci) | 0;
+
+      // triggers
+      if (triggerKind && Array.isArray(c?.triggers)) {
+        for (const t of c.triggers) {
+          if (t?.kind === triggerKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
+            memberships.push(`• circuit[${ci}] id=${cid}: trigger ${t.kind}`);
+            break;
+          }
+        }
+      }
+
+      // targets
+      if (targetKind && Array.isArray(c?.targets)) {
+        for (const t of c.targets) {
+          if (t?.kind === targetKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
+            const eff = t?.effect ? ` ${t.effect}` : "";
+            memberships.push(
+              `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}`,
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    if (memberships.length) lines.push(...memberships);
+    else lines.push(`• circuits: none`);
+  }
+
+  return { lines, ft, fid };
+}
 
 type Props = {
   bsp: BspDungeonOutputs;
@@ -76,6 +183,8 @@ type Props = {
 
   // Return true if you handled the click (interaction), false to fall back to camera focus.
   onCellClick?: (cell: { x: number; y: number }) => boolean;
+
+  handleHoverCell?: (x: number, y: number) => void;
 };
 
 // -------------------------------
@@ -120,6 +229,8 @@ function DungeonRenderScene(props: Props) {
     zoom,
 
     onCameraSettled,
+
+    handleHoverCell,
   } = props;
 
   const W = bsp.width;
@@ -569,11 +680,163 @@ function DungeonRenderScene(props: Props) {
 export default function DungeonRenderView(props: Props) {
   const pxPerCell = props.zoom ?? 32;
 
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
+
+  const [tooltip, setTooltip] = useState<{
+    x: number;
+    y: number;
+    visible: boolean;
+    pending: boolean;
+    lines: string[];
+    clientX: number | null;
+    clientY: number | null;
+  }>({
+    visible: false,
+    pending: false,
+    x: 0,
+    y: 0,
+    lines: [],
+    clientX: null,
+    clientY: null,
+  });
+
+  // ---- Debounce / delay ----
+  const TOOLTIP_DELAY_MS = 120;
+  const hoverTimerRef = useRef<number | null>(null);
+  const lastHoverKeyRef = useRef<string | null>(null);
+
+  function clearHoverTimer() {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => clearHoverTimer();
+  }, []);
+
+  // ---- Tooltip positioning (your adapted version) ----
+  function getTooltipStyle(): React.CSSProperties {
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return { left: 0, top: 0 };
+
+    const rect = wrap.getBoundingClientRect();
+    const wrapW = wrap.clientWidth;
+    const wrapH = wrap.clientHeight;
+
+    const pad = 8;
+    const estTipW = 320;
+    const estTipH = 140;
+
+    const anchorX = tooltip.clientX != null ? tooltip.clientX - rect.left : pad;
+    const anchorY = tooltip.clientY != null ? tooltip.clientY - rect.top : pad;
+
+    let left = anchorX;
+    let top = anchorY + pad;
+
+    left = Math.max(pad, Math.min(left, wrapW - estTipW - pad));
+    if (top + estTipH > wrapH - pad) {
+      top = Math.max(pad, anchorY - estTipH - pad);
+    }
+
+    return { left, top };
+  }
+
+  // ---- Your buildTooltipLines, adapted to THIS component (no runtime/diagnostics) ----
+  function buildTooltipLines(x: number, y: number) {
+    const dungeon = props.bsp;
+    const content = props.content;
+
+    const w = dungeon.width;
+    const i = y * w + x;
+
+    const solid = dungeon.masks.solid[i] ? 1 : 0;
+    const regionId = dungeon.masks.regionId[i] | 0;
+    const dist = dungeon.masks.distanceToWall[i] | 0;
+
+    const ft = content.masks.featureType[i] | 0;
+    const fid = content.masks.featureId[i] | 0;
+    const fp = content.masks.featureParam[i] | 0;
+
+    const danger = content.masks.danger[i] | 0;
+    const loot = content.masks.lootTier[i] | 0;
+    const hz = content.masks.hazardType[i] | 0; // meaningful when ft==10 per repomix
+
+    const lines: string[] = [];
+
+    // --- raw (keep) ---
+    lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+    if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
+    if (hz !== 0) lines.push(`hazardType=${hz}`);
+    if (danger !== 0) lines.push(`danger=${danger}`);
+    if (loot !== 0) lines.push(`lootTier=${loot}`);
+
+    // --- readable section ---
+    if (ft !== 0) {
+      lines.push(""); // spacer line
+      lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
+
+      // --- circuit membership (no diagnostics in render view) ---
+      const circuits = props.content.meta?.circuits ?? [];
+      const memberships: string[] = [];
+
+      const triggerKind =
+        ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
+
+      const targetKind =
+        ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
+
+      for (let ci = 0; ci < circuits.length; ci++) {
+        const c: any = circuits[ci];
+        const cid = (c?.id ?? ci) | 0;
+
+        if (triggerKind && Array.isArray(c?.triggers)) {
+          for (const t of c.triggers) {
+            if (
+              t?.kind === triggerKind &&
+              ((t?.refId ?? -1) | 0) === (fid | 0)
+            ) {
+              memberships.push(`• circuit[${ci}] id=${cid}: trigger ${t.kind}`);
+              break;
+            }
+          }
+        }
+
+        if (targetKind && Array.isArray(c?.targets)) {
+          for (const t of c.targets) {
+            if (
+              t?.kind === targetKind &&
+              ((t?.refId ?? -1) | 0) === (fid | 0)
+            ) {
+              const eff = t?.effect ? ` ${t.effect}` : "";
+              memberships.push(
+                `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}`,
+              );
+              break;
+            }
+          }
+        }
+      }
+
+      //lines.push(memberships.length ? ...memberships : `• circuits: none`);
+      if (memberships.length > 0) {
+        lines.push(...memberships);
+      } else {
+        lines.push("• circuits: none");
+      }
+    }
+
+    return { lines, ft, fid };
+  }
+
   return (
-    <div style={{ width: "100%", height: "100%" }}>
+    <div
+      ref={canvasWrapRef}
+      style={{ width: "100%", height: "100%", position: "relative" }}
+    >
       <Canvas
         orthographic
-        // camera parameters here are just defaults; the rig positions it
         camera={{
           position: [0, 0, 10],
           zoom: 1,
@@ -582,10 +845,72 @@ export default function DungeonRenderView(props: Props) {
         }}
         gl={{ antialias: false, alpha: false }}
       >
-        {/* Set a fixed ortho frustum in pixel-world units */}
         <OrthoFrustum pxPerCell={pxPerCell} />
-        <DungeonRenderScene {...props} />
+        <DungeonRenderScene
+          {...props}
+          onCellHover={({ x, y, clientX, clientY }) => {
+            const key = `${x},${y}`;
+            lastHoverKeyRef.current = key;
+
+            // Arm tooltip (but do not show yet)
+            setTooltip((t) => ({
+              ...t,
+              x,
+              y,
+              clientX,
+              clientY,
+              pending: true,
+              visible: false,
+            }));
+
+            clearHoverTimer();
+
+            hoverTimerRef.current = window.setTimeout(() => {
+              // still on same cell?
+              if (lastHoverKeyRef.current !== key) return;
+
+              const { lines } = buildTooltipLines(x, y);
+
+              setTooltip((t) => ({
+                ...t,
+                x,
+                y,
+                clientX,
+                clientY,
+                lines,
+                pending: false,
+                visible: true,
+              }));
+            }, TOOLTIP_DELAY_MS);
+          }}
+          onCellHoverEnd={() => {
+            lastHoverKeyRef.current = null;
+            clearHoverTimer();
+            setTooltip((t) => ({
+              ...t,
+              visible: false,
+              pending: false,
+              clientX: null,
+              clientY: null,
+            }));
+          }}
+        />
       </Canvas>
+
+      {tooltip.visible && (
+        <div
+          className="maze-tooltip"
+          style={{
+            position: "absolute",
+            ...getTooltipStyle(),
+            pointerEvents: "none",
+          }}
+        >
+          {tooltip.lines.map((ln, idx) => (
+            <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
