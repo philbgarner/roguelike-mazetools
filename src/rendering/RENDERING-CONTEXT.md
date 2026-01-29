@@ -4,9 +4,9 @@
 
 ## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-**CONTEXT VERSION:** **2026-01-29 (rev J)**
+**CONTEXT VERSION:** **2026-01-29 (rev K)**
 **OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 ACTIVE — TOOLTIP POPULATION + DEBOUNCE ONLINE (HOVER STABILITY FIX STILL PENDING)**
+**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 ACTIVE — TOOLTIP POPULATION + DEBOUNCE ONLINE; HOVER STABILITY FIX IMPLEMENTED (AWAITING CONFIRMATION / POLISH)**
 
 ---
 
@@ -176,7 +176,7 @@ All textures remain `NearestFilter`.
 
 ## SESSION SUMMARY — 2026-01-29 (WHAT WE DID)
 
-### R1.5 Step 2.1 — Tooltip wiring + debounce (NEW)
+### R1.5 Step 2.1 — Tooltip wiring + debounce (COMPLETE)
 
 **Intent:**
 Match the inspection view tooltip behavior in the render pane:
@@ -221,45 +221,53 @@ Match the inspection view tooltip behavior in the render pane:
 
 ---
 
-## DIAGNOSIS (LOCKED)
+### R1.5 Step 2.2 — Hover stability fix (IMPLEMENTED)
 
-The remaining hover instability is **not shader logic** and **not tooltip logic**.
+**Intent:**
+Eliminate hover-end thrash caused by snap-lerp camera motion with stationary mouse, so hover outline + debounced tooltip are reliable.
 
-### Root cause (unchanged)
+**What changed (Canvas scene):**
 
-* Hover detection is currently tied to **R3F pointer events**.
-* Camera continues to **snap-lerp after focus changes**.
-* R3F’s internal pointer state becomes **stale** when the mouse is stationary.
-* As the camera moves, raycasts intermittently miss:
+1. **Pointer NDC stored explicitly (authoritative)**
 
-  * `onCellHoverEnd()` fires repeatedly
-  * tooltip timers are canceled before they can fire
+   * On pointer activity we compute NDC `[-1,+1]` using `gl.domElement.getBoundingClientRect()`
+   * Stored in a ref (`pointerNdcRef`) and decoupled from R3F’s internal pointer state
+   * `clientX/clientY` is also stored for tooltip anchoring (`lastClientRef`)
 
-This is a known interaction between moving cameras and event-driven pointer state in R3F.
+2. **Frame-driven raycast**
+
+   * In `useFrame`, we raycast every frame against the plane mesh using stored NDC
+   * Hover is now **camera-motion invariant** because raycast updates continuously while camera moves
+
+3. **Event handlers become metadata-only**
+
+   * `onPointerMove` updates: `pointerInsideRef`, `pointerNdcRef`, `lastClientRef`
+   * `onPointerOut` clears hover state once and calls `onCellHoverEnd`
+   * `onPointerEnter` marks pointer “inside” early (belt-and-suspenders for “enter then stop” cases)
+
+4. **Important mechanical fix**
+
+   * Hover raycasting runs even when camera is not chasing a target (no early return path that disables hover)
+
+**Expected behavior after this patch:**
+
+* Hover outline remains stable while mouse is stationary during camera snap-lerp.
+* Debounced tooltip appears after the delay even if the camera is still moving.
+* Hover change notifications fire only when the hovered cell actually changes (no per-frame spam).
 
 ---
 
-## LOCKED FIX PLAN (NEXT SESSION)
+## DIAGNOSIS (RESOLVED)
 
-### R1.5 Step 2.1 — Hover stability fix (REQUIRED / BLOCKING)
+Previous issue:
 
-**Authoritative solution (locked):**
+* Hover detection tied to R3F pointer events
+* Camera snap-lerp caused stale pointer ray state
+* Ray misses fired `onCellHoverEnd()` repeatedly → timers canceled
 
-* Maintain our **own pointer NDC** (`[-1,+1]` space) in a ref:
+Resolution:
 
-  * updated on `onPointerMove`
-  * derived from `gl.domElement.getBoundingClientRect()`
-* In a `useFrame` loop:
-
-  * raycast every frame using this stored NDC
-  * hover remains stable even when the camera moves
-* `onPointerMove` becomes:
-
-  * metadata capture only (clientX / clientY + NDC update)
-* Hover lifecycle becomes **frame-driven**, not event-driven.
-
-**Why it matters now:**
-Even with debounce, unstable hover end events can still cancel timers; the stability fix ensures debounced tooltips reliably appear when the mouse is stationary during camera motion.
+* Hover is now **frame-driven** from stored pointer NDC (independent of R3F event-driven pointer state)
 
 ---
 
@@ -288,33 +296,41 @@ Even with debounce, unstable hover end events can still cancel timers; the stabi
 * Tooltip placement (canvas-relative) ✔
 * Tooltip line population (mask + circuits) ✔
 * Tooltip debounce/delay ✔
+* **Hover stability fix (frame-driven raycast) ✔ (new)**
 
-**Incomplete (known issue)**
+**Remaining checks / polish**
 
-* Hover stability during camera motion ✖
-  *(diagnosed; fix planned; blocks “tooltip reliability”)*
+* Confirm hover + tooltip remain stable across:
+
+  * continuous camera motion after click-to-focus
+  * high zoom / low zoom
+  * fast mouse movement then stop
+* Optional micro-polish:
+
+  * initialize NDC on pointer enter (if we see “enter-without-move” stale-NDC cases)
+  * de-duplicate tooltip line builder (wrapper vs shared helper) to avoid drift
 
 ---
 
 ## UPDATED NEXT STEPS (IMMEDIATE)
 
-### 1. Apply hover stability fix (BLOCKING)
+### 1. Validate hover stability fix (NOW UNBLOCKED)
 
-* Store pointer NDC on `onPointerMove`
-* Raycast from stored NDC in `useFrame`
-* Remove reliance on R3F’s internal pointer state
-* Confirm:
+Verification checklist:
 
-  * hover outline remains visible while mouse is stationary
-  * debounced tooltip appears after delay while camera continues to move
+* Hover outline does **not** flicker or drop while camera moves
+* Tooltip appears reliably after `TOOLTIP_DELAY_MS` when mouse is stationary
+* `onCellHoverEnd` fires only when leaving the mesh or genuinely losing intersection
+
+If any edge cases remain, they should be **polish**, not architectural.
 
 ---
 
-### 2. Selection affordances (after hover fix)
+### 2. Selection affordances (next)
 
 * Selected block highlight
 * Push target previews
-* All overlay-only (inspection, not gameplay)
+* Overlay-only (inspection, not gameplay)
 
 ---
 

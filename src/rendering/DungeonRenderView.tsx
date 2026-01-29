@@ -440,7 +440,22 @@ function DungeonRenderScene(props: Props) {
   // Smooth camera rig (inside Canvas)
   // -------------------------------
 
-  const { camera, size, viewport } = useThree();
+  const { camera, size, viewport, gl } = useThree();
+  const lastHoverRef = useRef<{ x: number; y: number } | null>(null);
+
+  // --- Hover stability fix (frame-driven raycast) ---
+  const meshRef = useRef<THREE.Mesh | null>(null);
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const pointerNdcRef = useRef(new THREE.Vector2(0, 0)); // [-1,+1]
+  const pointerInsideRef = useRef(false);
+
+  // We still want tooltip anchoring while mouse is stationary.
+  const lastClientRef = useRef<{ clientX: number; clientY: number } | null>(
+    null,
+  );
+
+  // Avoid spamming hover end when we momentarily miss.
+  const hoverActiveRef = useRef(false);
 
   // camera current + target positions in world pixels
   const camWorld = useRef(new THREE.Vector3(0, 0, 10));
@@ -546,100 +561,176 @@ function DungeonRenderScene(props: Props) {
     if (!targetCell) {
       cam.position.copy(camWorld.current);
       cam.updateProjectionMatrix();
-      return;
-    }
+    } else {
+      const { worldX, worldY } = cellToWorldPx(
+        targetCell.x,
+        targetCell.y,
+        W,
+        H,
+        pxPerCell,
+        flipGridX,
+      );
+      targetWorld.current.set(worldX, worldY, 10);
 
-    const { worldX, worldY } = cellToWorldPx(
-      targetCell.x,
-      targetCell.y,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-    targetWorld.current.set(worldX, worldY, 10);
+      // frame-rate independent smoothing
+      const speed = 14; // 10-20 range
+      const t = 1 - Math.exp(-speed * delta);
+      camWorld.current.lerp(targetWorld.current, t);
 
-    // frame-rate independent smoothing
-    const speed = 14; // 10-20 range
-    const t = 1 - Math.exp(-speed * delta);
-    camWorld.current.lerp(targetWorld.current, t);
-
-    cam.position.copy(camWorld.current);
-    cam.updateProjectionMatrix();
-
-    // stop within a few pixels (world units are pixels)
-    const dx = camWorld.current.x - targetWorld.current.x;
-    const dy = camWorld.current.y - targetWorld.current.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // increment frames for this chase
-    const s = settlingRef.current;
-    if (s && s.x === targetCell.x && s.y === targetCell.y) {
-      s.frames += 1;
-    }
-
-    const stopPx = 3;
-    const maxFrames = 90; // ~1.5s @ 60fps
-    const shouldForceSettle = !!s && s.frames >= maxFrames;
-
-    if (dist <= stopPx || shouldForceSettle) {
-      camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
       cam.position.copy(camWorld.current);
       cam.updateProjectionMatrix();
 
-      onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
+      // stop within a few pixels (world units are pixels)
+      const dx = camWorld.current.x - targetWorld.current.x;
+      const dy = camWorld.current.y - targetWorld.current.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
 
-      targetCellRef.current = null;
-      settlingRef.current = null;
+      // increment frames for this chase
+      const s = settlingRef.current;
+      if (s && s.x === targetCell.x && s.y === targetCell.y) {
+        s.frames += 1;
+      }
+
+      const stopPx = 3;
+      const maxFrames = 90; // ~1.5s @ 60fps
+      const shouldForceSettle = !!s && s.frames >= maxFrames;
+
+      if (dist <= stopPx || shouldForceSettle) {
+        camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
+        cam.position.copy(camWorld.current);
+        cam.updateProjectionMatrix();
+
+        onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
+
+        targetCellRef.current = null;
+        settlingRef.current = null;
+      }
+    }
+
+    // -------------------------------
+    // Hover (frame-driven raycast)
+    // -------------------------------
+    if (!pointerInsideRef.current || !meshRef.current) {
+      // If pointer is not inside, ensure hover is cleared once.
+      if (hoverActiveRef.current) {
+        hoverActiveRef.current = false;
+        lastHoverRef.current = null;
+        mat.uniforms.uHoverEnabled.value = 0;
+        props.onCellHoverEnd?.();
+      }
+      return;
+    }
+
+    const rc = raycasterRef.current;
+    rc.setFromCamera(pointerNdcRef.current, camera);
+
+    const hits = rc.intersectObject(meshRef.current, false);
+    if (hits.length === 0 || !hits[0].uv) {
+      // Pointer is inside canvas but ray missed this frame.
+      // Clear hover once, but do NOT thrash.
+      if (hoverActiveRef.current) {
+        hoverActiveRef.current = false;
+        lastHoverRef.current = null;
+        mat.uniforms.uHoverEnabled.value = 0;
+        props.onCellHoverEnd?.();
+      }
+      return;
+    }
+
+    let u = hits[0].uv.x;
+    let v = hits[0].uv.y;
+
+    // IMPORTANT: match click mapping (flip fixes)
+    if (flipGridX) u = 1 - u;
+    if (flipGridY) v = 1 - v;
+
+    u = Math.min(0.999999, Math.max(0, u));
+    v = Math.min(0.999999, Math.max(0, v));
+
+    const cx = Math.floor(u * W);
+    const cy = Math.floor(v * H);
+    if (cx < 0 || cx >= W || cy < 0 || cy >= H) {
+      if (hoverActiveRef.current) {
+        hoverActiveRef.current = false;
+        lastHoverRef.current = null;
+        mat.uniforms.uHoverEnabled.value = 0;
+        props.onCellHoverEnd?.();
+      }
+      return;
+    }
+
+    const last = lastHoverRef.current;
+    if (last && last.x === cx && last.y === cy) {
+      // Still hovering same cell; keep shader enabled.
+      mat.uniforms.uHoverEnabled.value = 1;
+      hoverActiveRef.current = true;
+      return;
+    }
+
+    // New hovered cell
+    lastHoverRef.current = { x: cx, y: cy };
+    hoverActiveRef.current = true;
+
+    mat.uniforms.uHoverCell.value.set(cx, cy);
+    mat.uniforms.uHoverEnabled.value = 1;
+
+    const cc = lastClientRef.current;
+    if (cc) {
+      props.onCellHover?.({
+        x: cx,
+        y: cy,
+        clientX: cc.clientX,
+        clientY: cc.clientY,
+      });
     }
   });
-
-  const lastHoverRef = useRef<{ x: number; y: number } | null>(null);
 
   // -------------------------------
   // Draw the plane (pixel-world units)
   // -------------------------------
   return (
     <mesh
+      ref={meshRef}
       position={[0, 0, 0]}
+      onPointerEnter={(e) => {
+        pointerInsideRef.current = true;
+
+        // initialize tooltip anchor + NDC immediately on enter
+        lastClientRef.current = { clientX: e.clientX, clientY: e.clientY };
+
+        const rect = gl.domElement.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
+        pointerNdcRef.current.set(x * 2 - 1, -(y * 2 - 1));
+      }}
       onPointerMove={(e) => {
         e.stopPropagation();
-        const uv = e.uv;
-        if (!uv) return;
 
-        let u = uv.x;
-        let v = uv.y;
+        // mark pointer inside canvas/mesh
+        pointerInsideRef.current = true;
 
-        // IMPORTANT: match click mapping (flip fixes)
-        if (flipGridX) u = 1 - u;
-        if (flipGridY) v = 1 - v;
+        // tooltip anchor needs stable client coords even while stationary
+        lastClientRef.current = { clientX: e.clientX, clientY: e.clientY };
 
-        u = Math.min(0.999999, Math.max(0, u));
-        v = Math.min(0.999999, Math.max(0, v));
+        // compute NDC from domElement rect (authoritative fix)
+        const rect = gl.domElement.getBoundingClientRect();
 
-        const cx = Math.floor(u * W);
-        const cy = Math.floor(v * H);
-        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
 
-        const last = lastHoverRef.current;
-        if (last && last.x === cx && last.y === cy) return;
-        lastHoverRef.current = { x: cx, y: cy };
-
-        // Shader hover outline uniforms
-        mat.uniforms.uHoverCell.value.set(cx, cy);
-        mat.uniforms.uHoverEnabled.value = 1;
-
-        props.onCellHover?.({
-          x: cx,
-          y: cy,
-          clientX: e.clientX,
-          clientY: e.clientY,
-        });
+        pointerNdcRef.current.set(x * 2 - 1, -(y * 2 - 1));
       }}
       onPointerOut={() => {
-        lastHoverRef.current = null;
-        mat.uniforms.uHoverEnabled.value = 0;
-        props.onCellHoverEnd?.();
+        pointerInsideRef.current = false;
+        lastClientRef.current = null;
+
+        // Clear hover once (frame loop will also guard, but do it immediately)
+        if (hoverActiveRef.current) {
+          hoverActiveRef.current = false;
+          lastHoverRef.current = null;
+          mat.uniforms.uHoverEnabled.value = 0;
+          props.onCellHoverEnd?.();
+        }
       }}
       onPointerDown={(e) => {
         e.stopPropagation();
