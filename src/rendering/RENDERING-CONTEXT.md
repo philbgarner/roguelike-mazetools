@@ -4,9 +4,9 @@
 
 ## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-**CONTEXT VERSION:** **2026-01-28 (rev I)**
+**CONTEXT VERSION:** **2026-01-29 (rev J)**
 **OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 SHADER SEMANTICS + VISUAL HIERARCHY ESTABLISHED (POLISH IN PROGRESS)**
+**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 ACTIVE — TOOLTIP POPULATION + DEBOUNCE ONLINE (HOVER STABILITY FIX STILL PENDING)**
 
 ---
 
@@ -102,7 +102,10 @@ This rule is locked to avoid compounding transforms.
 
   * `featureType`
   * `featureId`
+  * `featureParam`
   * `hazardType`
+  * `danger`
+  * `lootTier`
   * etc.
 
 ### Character / tile index texture (`charTex`)
@@ -127,11 +130,6 @@ R8 `DataTexture` encoding **semantic roles**:
 
 Tint IDs are **semantic**, not visual — colors come from theme uniforms.
 
-**Important (rev I clarification):**
-
-* **Monsters are currently identified by tile index** (e.g. `tile == uMonsterTile`) and tinted via an **enemy color uniform** (not via a `tintTex` ID).
-* `tintTex` remains authoritative for **player / items / hazards / base** semantics.
-
 ---
 
 ## THEMING (LOCKED)
@@ -149,7 +147,10 @@ Themes currently defined:
 * **Default (CP437 Neutral)**
 * **Danger-Forward Debug**
 
-Themes may control **effect intensity**, not logic.
+**Important:** `RenderTheme` currently includes **colors / strength / legend** only.
+No `theme.effects` field exists (avoid adding untyped theme assumptions).
+
+Themes may control **effect intensity** only if we explicitly add fields later; for now hover intensity is a constant uniform.
 
 ---
 
@@ -173,67 +174,92 @@ All textures remain `NearestFilter`.
 
 ---
 
-## SESSION SUMMARY — 2026-01-28 (WHAT WE JUST DID)
+## SESSION SUMMARY — 2026-01-29 (WHAT WE DID)
 
-### R1.5 — shader semantics & visual hierarchy breakthrough
+### R1.5 Step 2.1 — Tooltip wiring + debounce (NEW)
 
-This session completed a **major qualitative step**:
+**Intent:**
+Match the inspection view tooltip behavior in the render pane:
 
-#### 1. Ink / background separation (LOCKED)
+* stable placement relative to the R3F canvas
+* delayed/debounced tooltip show (no flicker while moving)
+* line content populated from masks + circuit membership
 
-* Atlas alpha now strictly defines **glyph ink**
-* Floors render with a **solid black background**
-* Walls retain tinted background on exterior edges
-* All effects apply to **ink only**, never to background
+**What was implemented (Render wrapper):**
 
-This unlocked clean, readable effects without muddy tiles.
+1. **Tooltip anchor positioning**
 
-#### 2. Semantic visual hierarchy established
+   * Added `canvasWrapRef` and made wrapper `position: relative`
+   * Implemented `getTooltipStyle()` that anchors using `clientX/clientY`
+   * `.maze-tooltip` now receives `style={{ position: "absolute", ...getTooltipStyle() }}`
 
-Each role now has a **distinct motion/energy profile**:
+2. **Tooltip content population (`lines[]`)**
 
-| Role     | Effect                                    |
-| -------- | ----------------------------------------- |
-| Player   | Subtle pulse toward white                 |
-| Monsters | Breathing warp (scale-based) + enemy tint |
-| Items    | Strong metallic sheen band                |
-| Doors    | Edge-only varnish highlight               |
-| Hazards  | Pulsing intensity                         |
+   * Implemented `buildTooltipLines(x,y)` in render wrapper (inspection-parity subset)
+   * Populates:
 
-This hierarchy is deliberate:
+     * raw mask line: `(x,y) region dist solid`
+     * feature metadata when present: `featureType featureId param`
+     * hazard/danger/lootTier lines when non-zero
+     * readable section:
 
-* **items (highest)** → **doors/enemies (mid, distinct)** → **player (subtle)** → **base tiles**.
+       * bullet line naming feature type
+       * bullet lines for circuit membership using `content.meta.circuits` (triggers/targets)
+     * Runtime and diagnostics sections are **not** used in render view (R2 responsibility)
 
-#### 3. Monster breathing (procedural warp)
+3. **Debounced tooltip show**
 
-* Monsters no longer use metallic sheen
-* Glyph is gently warped around center
-* Feels “alive” without sprite animation
-* Amplitude and speed are uniform-controlled
+   * Implemented `TOOLTIP_DELAY_MS` + `hoverTimerRef`
+   * On hover, we “arm” the tooltip (`pending: true`) but keep it hidden until the delay elapses
+   * If hover changes cell or ends, timer is canceled
+   * Tooltip is built and shown only if still hovering the same cell after delay
 
-#### 4. Door effect re-scoped (IMPORTANT)
+**Behavioral result:**
 
-* Metallic sheen removed from doors
-* Doors now get:
+* Tooltip no longer flickers while moving the mouse.
+* Tooltip content is computed only for “committed” hovers after the delay.
 
-  * **edge-only highlight**
-  * very subtle temporal shimmer
-* Doors are interactive but **intentionally less loud than items**
+---
 
-**Important (rev I clarification):**
+## DIAGNOSIS (LOCKED)
 
-* Door “edge-only highlight” is computed from the **atlas glyph alpha edge** (neighbor alpha taps in atlas UV space), **not** from grid-neighbor cell sampling.
-* Highlight strength is modulated by a slow pulse + mild vertical bias (a “varnish” feel), and mixes ink toward a pale near-white.
+The remaining hover instability is **not shader logic** and **not tooltip logic**.
 
-#### 5. Effect exclusion rules enforced
+### Root cause (unchanged)
 
-* Item metallic sheen explicitly excludes:
+* Hover detection is currently tied to **R3F pointer events**.
+* Camera continues to **snap-lerp after focus changes**.
+* R3F’s internal pointer state becomes **stale** when the mouse is stationary.
+* As the camera moves, raycasts intermittently miss:
 
-  * monsters
-  * doors
-* No overlapping semantic effects
+  * `onCellHoverEnd()` fires repeatedly
+  * tooltip timers are canceled before they can fire
 
-This prevents visual noise and keeps inspection readable.
+This is a known interaction between moving cameras and event-driven pointer state in R3F.
+
+---
+
+## LOCKED FIX PLAN (NEXT SESSION)
+
+### R1.5 Step 2.1 — Hover stability fix (REQUIRED / BLOCKING)
+
+**Authoritative solution (locked):**
+
+* Maintain our **own pointer NDC** (`[-1,+1]` space) in a ref:
+
+  * updated on `onPointerMove`
+  * derived from `gl.domElement.getBoundingClientRect()`
+* In a `useFrame` loop:
+
+  * raycast every frame using this stored NDC
+  * hover remains stable even when the camera moves
+* `onPointerMove` becomes:
+
+  * metadata capture only (clientX / clientY + NDC update)
+* Hover lifecycle becomes **frame-driven**, not event-driven.
+
+**Why it matters now:**
+Even with debounce, unstable hover end events can still cancel timers; the stability fix ensures debounced tooltips reliably appear when the mouse is stationary during camera motion.
 
 ---
 
@@ -243,13 +269,11 @@ This prevents visual noise and keeps inspection readable.
 
 **CLOSED / STABLE**
 
-No further changes except bug fixes.
-
 ---
 
 ### Phase R1.5 — Interaction, theming, affordances & shader polish
 
-**ACTIVE (ADVANCED)**
+**ACTIVE**
 
 **Completed / Locked**
 
@@ -260,87 +284,58 @@ No further changes except bug fixes.
 * CP437 canonical atlas ✔
 * Ink vs background split ✔
 * Semantic effect hierarchy ✔
+* Hover outline shader logic ✔
+* Tooltip placement (canvas-relative) ✔
+* Tooltip line population (mask + circuits) ✔
+* Tooltip debounce/delay ✔
 
-**In progress**
+**Incomplete (known issue)**
 
-* Door edge highlight tuning
-* Fine control of effect amplitudes per theme
-* Render-pane tooltips & click-to-interact
-* Camera bounds clamping during focus chase
-
----
-
-## UPDATED NEXT STEPS (R1.5 — IMMEDIATE)
-
-### 1. Door highlight tuning (small, important)
-
-* Increase **edge contrast** slightly (not brightness)
-* Prefer:
-
-  * edge darkening + thin highlight
-  * NOT glint bands
-* Doors should read as:
-
-  * solid
-  * physical
-  * interactive
-  * but *not collectible*
-
-This is a polish task, not a redesign.
+* Hover stability during camera motion ✖
+  *(diagnosed; fix planned; blocks “tooltip reliability”)*
 
 ---
 
-### 2. Render-pane inspection affordances
+## UPDATED NEXT STEPS (IMMEDIATE)
 
-* Hover tooltips in render pane
-* Same semantic info as content pane:
+### 1. Apply hover stability fix (BLOCKING)
 
-  * feature type / id
-  * hazard type
-  * runtime state
-* Click interactions:
+* Store pointer NDC on `onPointerMove`
+* Raycast from stored NDC in `useFrame`
+* Remove reliance on R3F’s internal pointer state
+* Confirm:
 
-  * doors
-  * levers
-  * plates
-  * blocks
-* Rules:
-
-  * reuse existing inspection logic
-  * render pane must not infer semantics independently
+  * hover outline remains visible while mouse is stationary
+  * debounced tooltip appears after delay while camera continues to move
 
 ---
 
-### 3. Camera bounds enforcement
+### 2. Selection affordances (after hover fix)
 
-* Clamp focus during snap-lerp
-* Prevent panning beyond dungeon extents
-* Must remain deterministic
+* Selected block highlight
+* Push target previews
+* All overlay-only (inspection, not gameplay)
 
 ---
 
-### 4. FeatureType → glyph audit (final)
+### 3. Door interaction policy (decision point)
 
-* Verify enum ↔ glyph mapping
-* Confirm wall-resident features:
-
-  * secret doors
-  * hidden passages
-* Ensure `charTex` is authoritative
+* Tooltip-only vs forced-open debug toggle
+* Must be explicitly labeled if mutable
 
 ---
 
 ## NEXT PHASE (R2 — RUNTIME-DRIVEN VISUALS)
 
-R2 explicitly **does not start yet**, but is now clearly scoped:
+R2 does **not** begin until R1.5 interaction parity is complete.
 
-* Doors reflect open/closed runtime state
+Planned R2 scope:
+
+* Doors reflect runtime open/closed state
 * Keys disappear when collected
 * Blocks render from runtime positions
-* Hazards reflect `hazardType`
-* Optional low-frequency tile animations
-
-R2 begins **only after** R1.5 interaction parity is complete.
+* Hazard visuals reflect `hazardType`
+* Optional low-frequency tile animation
 
 ---
 
