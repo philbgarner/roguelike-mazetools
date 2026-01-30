@@ -204,6 +204,8 @@ export type WizardAction =
 
   // Step 5
   | { type: "DERIVE_CONTRACT" }
+  // “Fast path”: from any step, build defaults for missing config and run immediately.
+  | { type: "FINISH_RUN" }
 
   // Step 6/7 lifecycle
   | { type: "EXEC_START" }
@@ -308,6 +310,77 @@ export function deriveRunContract(state: WizardState): RunContract | null {
     pattern: state.mode.pattern,
     guarantees,
   };
+}
+
+function materializeMode(state: WizardState): ModeConfig {
+  // If the user has already selected a mode, preserve it, but normalize the parts
+  // so the resulting contract is always well-formed.
+  if (state.mode?.mode === "single") {
+    return {
+      mode: "single",
+      contentStrategy: state.mode.contentStrategy,
+      pattern: normalizePattern(
+        state.mode.pattern ?? (DEFAULT_PATTERN as PatternConfig),
+      ),
+    };
+  }
+
+  if (state.mode?.mode === "batch") {
+    return {
+      mode: "batch",
+      batch: normalizeBatch(state.mode.batch ?? (DEFAULT_BATCH as BatchConfig)),
+      pattern: normalizePattern(
+        state.mode.pattern ?? (DEFAULT_PATTERN as PatternConfig),
+      ),
+    };
+  }
+
+  // If mode is not chosen yet, default to the fastest “starting dungeon” path:
+  // single + atomic content. Patterns still exist in the contract for later use.
+  return {
+    mode: "single",
+    contentStrategy: "atomic",
+    pattern: normalizePattern(DEFAULT_PATTERN as PatternConfig),
+  };
+}
+
+function buildContract(
+  world: WorldConfig,
+  bsp: BspConfig,
+  mode: ModeConfig,
+): RunContract {
+  const guarantees = [
+    "deterministic",
+    "best-effort (never aborts)",
+    "patterns may skip; failures are diagnostics, not fatal",
+    "Option A geometry recompute post-patterns",
+  ];
+
+  if (mode.mode === "single") {
+    return {
+      mode: "single",
+      world,
+      bsp,
+      contentStrategy: mode.contentStrategy,
+      pattern: mode.pattern,
+      guarantees,
+    };
+  }
+
+  return {
+    mode: "batch",
+    world,
+    bsp,
+    batch: mode.batch,
+    pattern: mode.pattern,
+    guarantees,
+  };
+}
+
+function initialProgressFor(contract: RunContract): ExecProgress {
+  return contract.mode === "single"
+    ? { kind: "single", status: "starting" }
+    : { kind: "batch", done: 0, total: contract.batch.runs };
 }
 
 function clearResults(state: WizardState): WizardState {
@@ -476,7 +549,31 @@ export function wizardReducer(
         mode,
       };
     }
+    case "FINISH_RUN": {
+      // Fast path: from any step (>=1) run immediately using:
+      // - user edits so far
+      // - defaults for anything not yet edited/visited
+      if (!state.world) return state;
 
+      const world = normalizeWorld(state.world);
+      const bsp = normalizeBsp((state.bsp ?? DEFAULT_BSP) as BspConfig);
+      const mode = materializeMode(state);
+
+      const contract = buildContract(world, bsp, mode);
+
+      return {
+        ...state,
+        // Materialize these so the wizard panels reflect what actually ran.
+        world,
+        bsp,
+        mode,
+        contract,
+        step: 6,
+        progress: initialProgressFor(contract),
+        result: null,
+        error: "",
+      };
+    }
     case "DERIVE_CONTRACT": {
       // Step 5: compute the immutable run contract (read-only confirmation step)
       const contract = deriveRunContract(state);
@@ -497,10 +594,7 @@ export function wizardReducer(
       return {
         ...state,
         step: 6,
-        progress:
-          state.contract.mode === "single"
-            ? { kind: "single", status: "starting" }
-            : { kind: "batch", done: 0, total: state.contract.batch.runs },
+        progress: initialProgressFor(state.contract),
         result: null,
         error: "",
       };

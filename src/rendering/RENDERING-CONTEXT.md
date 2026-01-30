@@ -4,9 +4,9 @@
 
 ## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-**CONTEXT VERSION:** **2026-01-29 (rev K)**
+**CONTEXT VERSION:** **2026-01-29 (rev L)**
 **OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 ACTIVE — TOOLTIP POPULATION + DEBOUNCE ONLINE; HOVER STABILITY FIX IMPLEMENTED (AWAITING CONFIRMATION / POLISH)**
+**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 ACTIVE — TOOLTIP POPULATION + DEBOUNCE ONLINE; HOVER STABILITY FIX IMPLEMENTED (AWAITING CONFIRMATION / POLISH); WIZARD “FINISH & RUN” FAST-PATH SPEC LOCKED**
 
 ---
 
@@ -25,11 +25,12 @@ The result is a first-class **GPU inspection view** that:
 
 ## NON-GOALS (FOR NOW)
 
-* No new generation controls (Step 7 remains inspection-only).
-* No batch rendering mode.
+* No new generation controls inside Step 7 (inspection remains inspection-only).
+* No batch rendering mode in the render pane.
 * No 3D geometry for walls/floors — **single plane only**.
 * No sprite animation system (all motion is procedural in shader).
 * No runtime-authoritative visuals yet (R2 responsibility).
+* No coupling to wizard UI controls beyond the **stable “single-seed inspection payload” contract**.
 
 ---
 
@@ -47,6 +48,29 @@ The render component lives **inside `InspectionShell`** as an alternate view alo
 * `pane = "render"` → R3F tileset renderer
 
 Both panes consume the **same single-seed dungeon + content outputs**.
+
+---
+
+## UPSTREAM WIZARD CONTRACT (RELEVANT TO RENDERING)
+
+Render view assumes the wizard produces a **single-seed inspection payload** that includes:
+
+* `bsp` outputs (geometry masks/textures)
+* `content` outputs (feature/hazard/loot masks, meta circuits)
+* the inspection shell is mounted only after generation completes
+
+### Wizard fast-path: “Finish & Run” (LOCKED)
+
+To speed up reaching Step 7, the wizard supports **Finish & Run** from any panel:
+
+* Clicking **Finish & Run** is equivalent to Confirm → Run:
+
+  * materializes a complete run contract from current edits + defaults
+  * begins execution immediately (Step 6)
+  * lands in Step 7 inspection when complete
+
+**Important:** This is a **wizard concern**, not a rendering concern.
+Render view must remain agnostic: it only consumes the resulting single-seed outputs once mounted.
 
 ---
 

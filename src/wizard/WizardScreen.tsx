@@ -354,6 +354,14 @@ function Step1World(props: {
         <div style={{ flex: 1 }} />
         <button
           disabled={!state.world}
+          onClick={() => dispatch({ type: "FINISH_RUN" })}
+          style={{ fontWeight: 800 }}
+          title="Run immediately using your current edits and defaults for unvisited steps."
+        >
+          Finish &amp; Run
+        </button>
+        <button
+          disabled={!state.world}
           onClick={() => dispatch({ type: "SET_STEP", step: 2 })}
         >
           Next → Step 2
@@ -389,6 +397,13 @@ function Step2Bsp(props: {
           ← Back
         </button>
         <div style={{ flex: 1 }} />
+        <button
+          disabled={!state.world}
+          onClick={() => dispatch({ type: "FINISH_RUN" })}
+          style={{ fontWeight: 800 }}
+        >
+          Finish &amp; Run
+        </button>
         <button
           onClick={() =>
             dispatch({ type: "SET_BSP", bsp: DEFAULT_BSP as BspConfig })
@@ -625,6 +640,13 @@ function Step4Options(props: {
           ← Back
         </button>
         <div style={{ flex: 1 }} />
+        <button
+          disabled={!state.world}
+          onClick={() => dispatch({ type: "FINISH_RUN" })}
+          style={{ fontWeight: 800 }}
+        >
+          Finish &amp; Run
+        </button>
         <button onClick={resetPattern}>Reset Pattern Defaults</button>
       </Row>
 
@@ -892,7 +914,8 @@ function Step5Confirm(props: {
       ) : (
         <>
           <div style={{ opacity: 0.8, marginBottom: 8 }}>
-            Execution may only begin from this step.
+            Execution may begin from this step, or via “Finish &amp; Run” from
+            any step.
           </div>
 
           <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
@@ -900,6 +923,14 @@ function Step5Confirm(props: {
           </pre>
 
           <Row>
+            <button
+              disabled={!state.world}
+              onClick={() => dispatch({ type: "FINISH_RUN" })}
+              style={{ fontWeight: 800, marginRight: 8 }}
+              title="Run immediately using your current edits and defaults for unvisited steps."
+            >
+              Finish &amp; Run
+            </button>
             <button
               disabled={!canRun}
               onClick={() => {
