@@ -154,6 +154,8 @@ type Props = {
   playerX?: number;
   playerY?: number;
   playerTile?: number;
+  selectedX?: number;
+  selectedY?: number;
 
   // R2 groundwork: tint colors (multiply atlas RGB)
   floorColor?: [number, number, number, number]; // rgba 0..1
@@ -409,6 +411,9 @@ function DungeonRenderScene(props: Props) {
         uHoverCell: { value: new THREE.Vector2(-1, -1) },
         uHoverEnabled: { value: 0 },
         uHoverStrength: { value: 0.25 },
+        uSelectedCell: { value: new THREE.Vector2(-1, -1) },
+        uSelectedEnabled: { value: 0 },
+        uSelectedStrength: { value: 0.55 }, // stronger than hover
       },
       depthTest: false,
       depthWrite: false,
@@ -543,6 +548,15 @@ function DungeonRenderScene(props: Props) {
       }
     }
   }, [focusX, focusY]);
+
+  useEffect(() => {
+    const sx = props.selectedX ?? -1;
+    const sy = props.selectedY ?? -1;
+    const enabled = sx >= 0 && sy >= 0 ? 1 : 0;
+
+    mat.uniforms.uSelectedCell.value.set(sx, sy);
+    mat.uniforms.uSelectedEnabled.value = enabled;
+  }, [mat, props.selectedX, props.selectedY]);
 
   useEffect(() => {
     return () => {

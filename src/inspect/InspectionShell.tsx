@@ -1142,6 +1142,8 @@ export function InspectionShell(props: InspectionShellProps) {
     else downloadDataUrl(filename, dataUrl);
   };
 
+  const sel = selectedBlockId != null ? runtime.blocks[selectedBlockId] : null;
+
   return (
     <div
       className={
@@ -1502,6 +1504,8 @@ export function InspectionShell(props: InspectionShellProps) {
               flipAtlasY={false}
               flipGridX={false}
               flipGridY={true}
+              selectedX={sel ? sel.x : -1}
+              selectedY={sel ? sel.y : -1}
               onCellHover={({ x, y, clientX, clientY }) => {
                 const last = lastHoverCellRef.current;
                 if (last && last.x === x && last.y === y) return;

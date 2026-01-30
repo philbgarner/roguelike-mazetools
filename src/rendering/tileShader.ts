@@ -48,6 +48,12 @@ export const tileFrag = /* glsl */ `
   uniform float uHoverEnabled;
   uniform float uHoverStrength;
 
+  // R1.5 selection affordance (inspection-only)
+  uniform vec2  uSelectedCell;
+  uniform float uSelectedEnabled;
+  uniform float uSelectedStrength;
+
+
   varying vec2 vUv;
 
   // ------------------------------------------------------------
@@ -245,6 +251,29 @@ export const tileFrag = /* glsl */ `
     }
 
     vec3 outRgb = mix(bg, ink, inkA);
+
+    // ------------------------------------------------------------
+    // SELECTED OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    float sx = 1.0 - step(0.5, abs(cell.x - uSelectedCell.x));
+    float sy = 1.0 - step(0.5, abs(cell.y - uSelectedCell.y));
+    float isSelectedCell = uSelectedEnabled * sx * sy;
+
+    if (isSelectedCell > 0.0) {
+      // Thicker than hover
+      float t = 0.07;
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // Use item color (theme-derived) so we don't hardcode a new RGB
+      vec3 selCol = uItemColor.rgb;
+      outRgb = mix(outRgb, selCol, edge * uSelectedStrength);
+    }
+
 
     // ------------------------------------------------------------
     // HOVER OUTLINE (R1.5) — inspection affordance
