@@ -882,8 +882,8 @@ export default function DungeonRenderView(props: Props) {
     if (top + estTipH > wrapH - pad) {
       top = Math.max(pad, anchorY - estTipH - pad);
     }
-
-    return { left, top };
+    console.log("tooltip style", left, top, 999);
+    return { left, top, zIndex: 999 };
   }
 
   // ---- Your buildTooltipLines, adapted to THIS component (no runtime/diagnostics) ----
@@ -972,7 +972,7 @@ export default function DungeonRenderView(props: Props) {
 
     return { lines, ft, fid };
   }
-
+  console.log("tooltip.visible", tooltip.visible);
   return (
     <div
       ref={canvasWrapRef}
@@ -993,6 +993,19 @@ export default function DungeonRenderView(props: Props) {
           {...props}
           onCellHover={({ x, y, clientX, clientY }) => {
             const key = `${x},${y}`;
+
+            // If we're still hovering the same cell, just keep the anchor fresh.
+            // DO NOT clear/re-arm the timer (or you'll starve the debounce forever).
+            if (lastHoverKeyRef.current === key) {
+              setTooltip((t) => ({
+                ...t,
+                clientX,
+                clientY,
+              }));
+              return;
+            }
+
+            // New hovered cell
             lastHoverKeyRef.current = key;
 
             // Arm tooltip (but do not show yet)
