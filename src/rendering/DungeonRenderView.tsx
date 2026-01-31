@@ -550,13 +550,22 @@ function DungeonRenderScene(props: Props) {
   }, [focusX, focusY]);
 
   useEffect(() => {
-    const sx = props.selectedX ?? -1;
-    const sy = props.selectedY ?? -1;
-    const enabled = sx >= 0 && sy >= 0 ? 1 : 0;
+    const rawX = props.selectedX ?? -1;
+    const rawY = props.selectedY ?? -1;
+
+    if (rawX < 0 || rawY < 0) {
+      mat.uniforms.uSelectedEnabled.value = 0;
+      mat.uniforms.uSelectedCell.value.set(-1, -1);
+      return;
+    }
+
+    // Convert logical grid coords -> shader cell coords (which are flipped when flipGridX/Y are true)
+    const sx = flipGridX ? W - 1 - rawX : rawX;
+    const sy = flipGridY ? H - 1 - rawY : rawY;
 
     mat.uniforms.uSelectedCell.value.set(sx, sy);
-    mat.uniforms.uSelectedEnabled.value = enabled;
-  }, [mat, props.selectedX, props.selectedY]);
+    mat.uniforms.uSelectedEnabled.value = 1;
+  }, [mat, props.selectedX, props.selectedY, flipGridX, flipGridY, W, H]);
 
   useEffect(() => {
     return () => {
@@ -632,6 +641,9 @@ function DungeonRenderScene(props: Props) {
         mat.uniforms.uHoverEnabled.value = 0;
         props.onCellHoverEnd?.();
       }
+      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+      mat.uniforms.uSelectedEnabled.value = 1;
+      mat.uniforms.uSelectedStrength.value = 1.0;
       return;
     }
 
@@ -648,6 +660,9 @@ function DungeonRenderScene(props: Props) {
         mat.uniforms.uHoverEnabled.value = 0;
         props.onCellHoverEnd?.();
       }
+      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+      mat.uniforms.uSelectedEnabled.value = 1;
+      mat.uniforms.uSelectedStrength.value = 1.0;
       return;
     }
 
@@ -670,16 +685,39 @@ function DungeonRenderScene(props: Props) {
         mat.uniforms.uHoverEnabled.value = 0;
         props.onCellHoverEnd?.();
       }
+      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+      mat.uniforms.uSelectedEnabled.value = 1;
+      mat.uniforms.uSelectedStrength.value = 1.0;
       return;
     }
 
     const last = lastHoverRef.current;
-    if (last && last.x === cx && last.y === cy) {
-      // Still hovering same cell; keep shader enabled.
-      mat.uniforms.uHoverEnabled.value = 1;
-      hoverActiveRef.current = true;
-      return;
+    const sameCell = !!last && last.x === cx && last.y === cy;
+
+    // Always keep hover “on” when we have a valid hit.
+    hoverActiveRef.current = true;
+    mat.uniforms.uHoverEnabled.value = 1;
+
+    // Only update the hover cell uniform + callbacks when it changes.
+    if (!sameCell) {
+      lastHoverRef.current = { x: cx, y: cy };
+      mat.uniforms.uHoverCell.value.set(cx, cy);
+
+      const cc = lastClientRef.current;
+      if (cc) {
+        props.onCellHover?.({
+          x: cx,
+          y: cy,
+          clientX: cc.clientX,
+          clientY: cc.clientY,
+        });
+      }
     }
+
+    // --- OPTIONAL DEBUG: mirror hover -> selected continuously (sanity test) ---
+    mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+    mat.uniforms.uSelectedEnabled.value = 1;
+    mat.uniforms.uSelectedStrength.value = 0.7;
 
     // New hovered cell
     lastHoverRef.current = { x: cx, y: cy };

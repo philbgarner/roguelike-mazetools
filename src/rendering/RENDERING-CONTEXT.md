@@ -4,9 +4,9 @@
 
 ## RENDERING CONTEXT — INSPECTION SHELL RENDER PIPELINE (R3F)
 
-**CONTEXT VERSION:** **2026-01-29 (rev L)**
+**CONTEXT VERSION:** **2026-01-30 (rev M)**
 **OWNER AREA:** Milestone 5 — UI Wizard Refactor (Step 7 Inspection) → Rendering Pane
-**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 ACTIVE — TOOLTIP POPULATION + DEBOUNCE ONLINE; HOVER STABILITY FIX IMPLEMENTED (AWAITING CONFIRMATION / POLISH); WIZARD “FINISH & RUN” FAST-PATH SPEC LOCKED**
+**STATUS:** **PHASE R1 CLOSED; PHASE R1.5 ACTIVE — TOOLTIPS, HOVER, AND SELECTION AFFORDANCES ONLINE; OVERLAY + INTERACTION PARITY NEXT**
 
 ---
 
@@ -171,10 +171,8 @@ Themes currently defined:
 * **Default (CP437 Neutral)**
 * **Danger-Forward Debug**
 
-**Important:** `RenderTheme` currently includes **colors / strength / legend** only.
-No `theme.effects` field exists (avoid adding untyped theme assumptions).
-
-Themes may control **effect intensity** only if we explicitly add fields later; for now hover intensity is a constant uniform.
+**Important:** `RenderTheme` currently includes **colors / strength / legend only**.
+No `theme.effects` field exists.
 
 ---
 
@@ -193,105 +191,48 @@ The fragment shader now does **substantially more than R1**, while still honorin
    * **glyph ink (alpha-masked)**
 7. Apply **semantic effects to ink only**
 8. Composite opaque final color
+9. Apply **inspection affordances** (hover, selection)
 
 All textures remain `NearestFilter`.
 
 ---
 
-## SESSION SUMMARY — 2026-01-29 (WHAT WE DID)
+## SESSION SUMMARY — 2026-01-30 (WHAT WE DID)
 
-### R1.5 Step 2.1 — Tooltip wiring + debounce (COMPLETE)
+### R1.5 Step 2.2 — Hover stability fix (CONFIRMED)
+
+* Hover is now **frame-driven** via stored pointer NDC + per-frame raycast.
+* Early-return control flow was removed to ensure **continuous visual updates**.
+* Callbacks remain edge-triggered; uniforms remain coherent every frame.
+
+This is now considered **architecturally correct and locked**.
+
+---
+
+### R1.5 Step 3.1 — Selected cell outline (COMPLETE)
 
 **Intent:**
-Match the inspection view tooltip behavior in the render pane:
+Provide a persistent, high-priority visual indication of the currently selected block in the render pane.
 
-* stable placement relative to the R3F canvas
-* delayed/debounced tooltip show (no flicker while moving)
-* line content populated from masks + circuit membership
+**What was implemented:**
 
-**What was implemented (Render wrapper):**
+* Shader-level **selected outline**:
 
-1. **Tooltip anchor positioning**
+  * thicker than hover outline
+  * higher visual priority
+  * theme-derived color (interactable channel)
+* Selection is driven from `InspectionShell` state (`selectedBlockId → runtime cell`).
+* Uniform updates are **continuous**, not gated by hover events.
 
-   * Added `canvasWrapRef` and made wrapper `position: relative`
-   * Implemented `getTooltipStyle()` that anchors using `clientX/clientY`
-   * `.maze-tooltip` now receives `style={{ position: "absolute", ...getTooltipStyle() }}`
+**Key rule (LOCKED):**
 
-2. **Tooltip content population (`lines[]`)**
-
-   * Implemented `buildTooltipLines(x,y)` in render wrapper (inspection-parity subset)
-   * Populates:
-
-     * raw mask line: `(x,y) region dist solid`
-     * feature metadata when present: `featureType featureId param`
-     * hazard/danger/lootTier lines when non-zero
-     * readable section:
-
-       * bullet line naming feature type
-       * bullet lines for circuit membership using `content.meta.circuits` (triggers/targets)
-     * Runtime and diagnostics sections are **not** used in render view (R2 responsibility)
-
-3. **Debounced tooltip show**
-
-   * Implemented `TOOLTIP_DELAY_MS` + `hoverTimerRef`
-   * On hover, we “arm” the tooltip (`pending: true`) but keep it hidden until the delay elapses
-   * If hover changes cell or ends, timer is canceled
-   * Tooltip is built and shown only if still hovering the same cell after delay
+> Hover and selection visuals are **frame-driven** and must not be gated by early-return control flow.
+> Only callbacks may be edge-triggered.
 
 **Behavioral result:**
 
-* Tooltip no longer flickers while moving the mouse.
-* Tooltip content is computed only for “committed” hovers after the delay.
-
----
-
-### R1.5 Step 2.2 — Hover stability fix (IMPLEMENTED)
-
-**Intent:**
-Eliminate hover-end thrash caused by snap-lerp camera motion with stationary mouse, so hover outline + debounced tooltip are reliable.
-
-**What changed (Canvas scene):**
-
-1. **Pointer NDC stored explicitly (authoritative)**
-
-   * On pointer activity we compute NDC `[-1,+1]` using `gl.domElement.getBoundingClientRect()`
-   * Stored in a ref (`pointerNdcRef`) and decoupled from R3F’s internal pointer state
-   * `clientX/clientY` is also stored for tooltip anchoring (`lastClientRef`)
-
-2. **Frame-driven raycast**
-
-   * In `useFrame`, we raycast every frame against the plane mesh using stored NDC
-   * Hover is now **camera-motion invariant** because raycast updates continuously while camera moves
-
-3. **Event handlers become metadata-only**
-
-   * `onPointerMove` updates: `pointerInsideRef`, `pointerNdcRef`, `lastClientRef`
-   * `onPointerOut` clears hover state once and calls `onCellHoverEnd`
-   * `onPointerEnter` marks pointer “inside” early (belt-and-suspenders for “enter then stop” cases)
-
-4. **Important mechanical fix**
-
-   * Hover raycasting runs even when camera is not chasing a target (no early return path that disables hover)
-
-**Expected behavior after this patch:**
-
-* Hover outline remains stable while mouse is stationary during camera snap-lerp.
-* Debounced tooltip appears after the delay even if the camera is still moving.
-* Hover change notifications fire only when the hovered cell actually changes (no per-frame spam).
-
----
-
-## DIAGNOSIS (RESOLVED)
-
-Previous issue:
-
-* Hover detection tied to R3F pointer events
-* Camera snap-lerp caused stale pointer ray state
-* Ray misses fired `onCellHoverEnd()` repeatedly → timers canceled
-
-Resolution:
-
-* Hover is now **frame-driven** from stored pointer NDC (independent of R3F event-driven pointer state)
+* Selected block remains clearly visible regardless of camera motion.
+* Hover outline can overlap but never visually overrides selection.
 
 ---
 
@@ -317,51 +258,49 @@ Resolution:
 * Ink vs background split ✔
 * Semantic effect hierarchy ✔
 * Hover outline shader logic ✔
-* Tooltip placement (canvas-relative) ✔
-* Tooltip line population (mask + circuits) ✔
-* Tooltip debounce/delay ✔
-* **Hover stability fix (frame-driven raycast) ✔ (new)**
+* Hover stability fix (frame-driven raycast) ✔
+* Tooltip placement + debounce ✔
+* Tooltip content parity (inspection subset) ✔
+* **Selected outline (shader-driven) ✔ (new)**
 
-**Remaining checks / polish**
+---
 
-* Confirm hover + tooltip remain stable across:
+## DECISIONS LOCKED (2026-01-30)
 
-  * continuous camera motion after click-to-focus
-  * high zoom / low zoom
-  * fast mouse movement then stop
-* Optional micro-polish:
+1. **Selection outline uses subtle time-based pulsing**
 
-  * initialize NDC on pointer enter (if we see “enter-without-move” stale-NDC cases)
-  * de-duplicate tooltip line builder (wrapper vs shared helper) to avoid drift
+   * Implemented in shader (no sprites, no geometry).
+
+2. **Push previews will use an overlay channel**
+
+   * Separate from `tintTex`
+   * Render-only, inspection-only
+
+3. **Render-pane interaction parity is desired**
+
+   * Clicking an adjacent cell while a block is selected attempts a push
+   * Uses the same runtime logic as the 2D inspection view
 
 ---
 
 ## UPDATED NEXT STEPS (IMMEDIATE)
 
-### 1. Validate hover stability fix (NOW UNBLOCKED)
+### R1.5 Step 3.2 — Overlay channel (NEXT)
 
-Verification checklist:
+* Introduce `overlayTex` (R8) for inspection affordances:
 
-* Hover outline does **not** flicker or drop while camera moves
-* Tooltip appears reliably after `TOOLTIP_DELAY_MS` when mouse is stationary
-* `onCellHoverEnd` fires only when leaving the mesh or genuinely losing intersection
-
-If any edge cases remain, they should be **polish**, not architectural.
-
----
-
-### 2. Selection affordances (next)
-
-* Selected block highlight
-* Push target previews
-* Overlay-only (inspection, not gameplay)
+  * selected cell (optional future)
+  * push-valid targets
+  * push-blocked targets
+* Overlay is **visual-only**, no semantic meaning.
 
 ---
 
-### 3. Door interaction policy (decision point)
+### R1.5 Step 3.3 — Render-pane interaction parity
 
-* Tooltip-only vs forced-open debug toggle
-* Must be explicitly labeled if mutable
+* Click adjacent cell → attempt block push
+* Selection + push behavior mirrors 2D inspection
+* Must be explicitly inspection-only (debug affordance)
 
 ---
 
