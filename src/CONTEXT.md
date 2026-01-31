@@ -1,9 +1,3 @@
-Absolutely — here’s a **clean, updated re-emit of `CONTEXT.md`** that records **today’s work**, clarifies the **randomize-seed regeneration path**, and situates us clearly in the **overall project plan**.
-
-I’ve bumped the revision to **rev W** to reflect substantive UI + execution-flow changes, while keeping the same date.
-
----
-
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
 **CONTEXT VERSION:** **2026-01-24 (rev W)**
@@ -160,7 +154,6 @@ Fully enforced in the wizard reducer and routing logic.
 
 * `InspectionShell` confirmed **pure and runtime-only**
 * Click-to-interact semantics corrected:
-
   * lever toggle (runtime only)
   * key collect
   * block select + push
@@ -170,10 +163,9 @@ Fully enforced in the wizard reducer and routing logic.
 * Canvas hit-testing corrected to canvas-relative
 * Legend and color mappings verified accurate
 
-### Execution Loop Stabilization (NEW)
+### Execution Loop Stabilization
 
 * Added **seed-only regeneration path** from inspection:
-
   * Randomize seed
   * Preserve all wizard choices
   * Tear down inspection
@@ -181,28 +173,46 @@ Fully enforced in the wizard reducer and routing logic.
   * Return automatically to Step 7
 
 * Key architectural clarifications:
-
   * `InspectionShell` emits **intent only** (no dispatch)
   * Wizard reducer owns all execution control
   * Regeneration flows through the **same execution path** as Step 5
 
 * Reducer + routing fixes:
-
   * `INVALIDATE_RESULTS` action added and standardized
   * `REROLL_SEED` action updates `world.seed` and patches `contract.world.seed`
   * `EXEC_START` reliably re-runs generation using preserved contract
 
 This closes a critical UX gap while preserving all Milestone 5 non-goals.
 
+### Pattern Reliability Improvements (NEW — Phase 2.5)
+
+* **Lever → Hidden Pocket pattern** (`applyLeverRevealsHiddenPocketPattern`) hardened against its dominant failure modes:
+  * Previously failed immediately if a single connector candidate validated poorly.
+  * Now **tries multiple shuffled candidates** (`options.maxAttempts`) before giving up.
+* Added **preview-first validation**:
+  * Carving + fixtures are simulated on copies of masks.
+  * Reachability is evaluated **pre-reveal** and **post-reveal** before committing.
+  * Pattern commits only if:
+    * pocket goal is unreachable pre-reveal, and
+    * reachable post-reveal.
+* Preview validation now places:
+  * hidden passage fixture on the connector tile, and
+  * lever fixture at the candidate lever position,
+  ensuring preview reachability matches runtime semantics.
+* ID allocation during preview no longer consumes real IDs; IDs are allocated only on successful commit.
+* Failure reasons are now more informative (pre-reachable, post-unreachable, lever placement failure), improving batch diagnostics.
+
+This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**: retry locally, preserve semantics, and surface diagnostics instead of aborting.
+
 ---
 
 ## CURRENT STATE SUMMARY
 
 * Milestone 4 is closed and untouched
-* Milestone 5 Phase 2.5 generator logic unchanged
-* Wizard → Execution → Inspection loop is now **fully closed**
-* Inspection supports safe, explicit regeneration without hidden behavior
-* UI and execution boundaries are contract-accurate and invariant-safe
+* Milestone 5 Phase 2.5 generator logic remains best-effort
+* Wizard → Execution → Inspection loop is **fully closed**
+* Pattern reliability is improving via **preview + retry**, not relaxed rules
+* UI, execution, and generator boundaries remain invariant-safe
 
 ---
 
@@ -211,7 +221,6 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 ### UI (Stabilization & Polish)
 
 1. Minor UX polish:
-
    * inline validation hints
    * clearer invalidation messaging
    * disable regen button during execution
@@ -220,7 +229,8 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 
 ### Generator — Milestone 5 Phase 2.5
 
-1. Implement **clean lever reachability preview** (diagnostic only)
+1. **Validate hidden-pocket preview logic in batch**
+   * confirm failure modes collapse as expected
 2. Run 1000+ seed batch comparison vs baseline
 3. Record stability metrics and intent-misalignment deltas
 
@@ -236,7 +246,6 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 * **Milestone 1–3:** Geometry, runtime state, and circuit execution — complete
 * **Milestone 4:** Composition patterns + progression grammar — complete
 * **Milestone 5:** Intent steering and policy formation — *current focus*
-
   * Phase 2.5: diagnostics + soft pressure (active)
   * Phase 3: weighted steering
   * Phase 4: selective hard constraints
@@ -250,12 +259,3 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 * Intent must be explicit before execution
 * Diagnostics remain authoritative
 * Escalation only after measured stability
-
----
-
-If you want, next we can:
-
-* lock down **lever-reachability diagnostics schema**, or
-* run a **baseline vs regen stress test** to validate seed-randomization stability.
-
-You’re in a very strong position now — the loop is finally airtight.
