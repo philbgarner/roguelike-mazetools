@@ -4236,16 +4236,52 @@ function Section(props: { title: string; children: React.ReactNode }) {
 function LabeledField(props: {
   label: string;
   hint?: string;
+  tooltip?: string;
   children: React.ReactNode;
 }) {
   return (
     <div style={{ flex: 1, minWidth: 220 }}>
-      <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>
+      <div
+        style={{
+          fontSize: 12,
+          opacity: 0.8,
+          marginBottom: 4,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
         <b>{props.label}</b>
+
+        {props.tooltip ? (
+          <span
+            title={props.tooltip}
+            style={{
+              display: "inline-flex",
+              width: 16,
+              height: 16,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 999,
+              border: "1px solid rgba(255,255,255,0.22)",
+              background: "rgba(255,255,255,0.06)",
+              cursor: "help",
+              fontSize: 11,
+              lineHeight: "16px",
+              userSelect: "none",
+              opacity: 0.9,
+            }}
+            aria-label={`${props.label} help`}
+          >
+            i
+          </span>
+        ) : null}
+
         {props.hint ? (
-          <span style={{ opacity: 0.75 }}> — {props.hint}</span>
+          <span style={{ opacity: 0.75 }}>— {props.hint}</span>
         ) : null}
       </div>
+
       {props.children}
     </div>
   );
@@ -4589,7 +4625,11 @@ function Step2Bsp(props: {
       </Row>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <LabeledField label="maxDepth" hint="split depth cap">
+        <LabeledField
+          label="maxDepth"
+          hint="split depth cap"
+          tooltip="Maximum BSP recursion depth. Higher = more partitions (more rooms/corridors), but can get more fragmented/noisy."
+        >
           <NumInput
             value={bsp.maxDepth}
             min={2}
@@ -4598,7 +4638,11 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="splitPadding" hint="min spacing near splits">
+        <LabeledField
+          label="splitPadding"
+          hint="min spacing near splits"
+          tooltip="Extra padding enforced around split lines. Higher = fewer skinny partitions and less edge-hugging rooms."
+        >
           <NumInput
             value={bsp.splitPadding}
             min={0}
@@ -4607,7 +4651,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="minLeafSize">
+        <LabeledField
+          label="minLeafSize"
+          tooltip="Minimum size of a BSP leaf region (in tiles). Prevents splitting into tiny regions that can't host useful rooms."
+        >
           <NumInput
             value={bsp.minLeafSize}
             min={8}
@@ -4616,7 +4663,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="maxLeafSize">
+        <LabeledField
+          label="maxLeafSize"
+          tooltip="Maximum size of a BSP leaf region (in tiles). Regions larger than this tend to be split again (unless maxDepth stops it)."
+        >
           <NumInput
             value={bsp.maxLeafSize}
             min={10}
@@ -4625,7 +4675,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="roomPadding">
+        <LabeledField
+          label="roomPadding"
+          tooltip="Clearance between a room rectangle and its containing leaf bounds. Higher = thicker walls/negative space around rooms."
+        >
           <NumInput
             value={bsp.roomPadding}
             min={0}
@@ -4634,7 +4687,11 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="roomFillLeafChance" hint="0..1">
+        <LabeledField
+          label="roomFillLeafChance"
+          hint="0..1"
+          tooltip="Probability that a leaf gets a room. Lower = more empty leaves (more corridor/negative space). Higher = denser room placement."
+        >
           <NumInput
             value={bsp.roomFillLeafChance}
             min={0}
@@ -4646,7 +4703,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="minRoomSize">
+        <LabeledField
+          label="minRoomSize"
+          tooltip="Minimum room side length (tiles). Prevents tiny closets unless your design wants them."
+        >
           <NumInput
             value={bsp.minRoomSize}
             min={3}
@@ -4655,7 +4715,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="maxRoomSize">
+        <LabeledField
+          label="maxRoomSize"
+          tooltip="Maximum room side length (tiles). Caps how large a room can be inside a leaf (even if the leaf is bigger)."
+        >
           <NumInput
             value={bsp.maxRoomSize}
             min={4}
@@ -4664,7 +4727,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="corridorWidth">
+        <LabeledField
+          label="corridorWidth"
+          tooltip="Corridor thickness in tiles. 1 = classic tight corridors; 2+ = chunkier hallways, easier navigation, more open feel."
+        >
           <NumInput
             value={bsp.corridorWidth}
             min={1}
@@ -4673,7 +4739,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="keepOuterWalls">
+        <LabeledField
+          label="keepOuterWalls"
+          tooltip="If enabled, the generator keeps a solid border around the map edges (no carve-through to the outside). Useful for containment and nicer silhouettes."
+        >
           <div
             style={{
               padding: 8,
@@ -11859,6 +11928,19 @@ export default function DungeonRenderView(props: Props) {
           {...props}
           onCellHover={({ x, y, clientX, clientY }) => {
             const key = `${x},${y}`;
+
+            // If we're still hovering the same cell, just keep the anchor fresh.
+            // DO NOT clear/re-arm the timer (or you'll starve the debounce forever).
+            if (lastHoverKeyRef.current === key) {
+              setTooltip((t) => ({
+                ...t,
+                clientX,
+                clientY,
+              }));
+              return;
+            }
+
+            // New hovered cell
             lastHoverKeyRef.current = key;
 
             // Arm tooltip (but do not show yet)
@@ -13632,16 +13714,28 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
     if (!didCarve) continue;
 
-    // if preview passes:
-    const secretId = allocId();
+    // Preview ids must NOT consume allocId() (avoid burning scarce ids on failed previews).
+    // Pick an unused id in the copied fid2 buffer.
+    const previewId = findUnusedId255(fid2);
+    if (previewId === 0) continue;
 
-    const leverId = secretId; // keep aligned
+    const revealedPost = new Set<number>([previewId]);
 
-    // remove previewId + the first revealed set entirely
+    // Place hidden passage fixture at connector (this is what blocks pre-reveal).
+    const cI = idxOf(W, picked.cx, picked.cy);
+    ft2[cI] = 9; // hidden passage
+    fid2[cI] = previewId;
+    fparam2[cI] = 0;
 
-    // after you pick secretId:
-    const revealedPost = new Set<number>([secretId]);
+    // Place lever fixture (doesn't affect reachability, but keeps the preview faithful).
+    const lI = idxOf(W, leverSpot.x, leverSpot.y);
+    ft2[lI] = 6;
+    fid2[lI] = previewId;
+    fparam2[lI] = 0;
 
+    // Compute reachability AFTER the hidden fixture exists:
+    // - pre: connector blocks (hidden unrevealed)
+    // - post: connector passable (hidden revealed)
     const reachPre = computeReachable(
       { width: W, height: H, masks: { solid: solid2 } } as any,
       ft2,
@@ -13657,18 +13751,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
       start,
       revealedPost,
     );
-
-    // Place hidden passage fixture at connector
-    const cI = idxOf(W, picked.cx, picked.cy);
-    ft2[cI] = 9; // hidden passage
-    fid2[cI] = secretId;
-    fparam2[cI] = 0;
-
-    // Place lever fixture
-    const lI = idxOf(W, leverSpot.x, leverSpot.y);
-    ft2[lI] = 6;
-    fid2[lI] = leverId;
-    fparam2[lI] = 0;
 
     // Validate reachability
     const goal = findPocketGoal({ x: picked.px, y: picked.py }, pocketSize);
@@ -13708,6 +13790,9 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     }
 
     // ---- COMMIT ----
+    // Now that preview validated, allocate the real id(s).
+    const secretId = allocId();
+    const leverId = secretId; // keep aligned
     carvePocketAndConnector(
       dungeon,
       { x: picked.cx, y: picked.cy },
@@ -13796,6 +13881,22 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
+
+/**
+ * Find an unused id in 1..255 based on an existing featureId buffer.
+ * Returns 0 if all ids appear used (extremely unlikely).
+ */
+function findUnusedId255(featureId: Uint8Array): number {
+  // Track usage of 1..255. (0 means "no feature")
+  const used = new Uint8Array(256);
+  for (let i = 0; i < featureId.length; i++) {
+    used[featureId[i] | 0] = 1;
+  }
+  for (let id = 1; id <= 255; id++) {
+    if (!used[id]) return id;
+  }
+  return 0;
+}
 
 function computeShortestPathDistance(
   dungeon: BspDungeonOutputs,
@@ -15863,11 +15964,41 @@ function findCorridorConnectingRooms(
   return null;
 }
 
+function hasAdjacentDoor(p: Point) {
+  // FeatureType 4 = door (floor tile)
+  const nbs = [
+    { x: p.x + 1, y: p.y },
+    { x: p.x - 1, y: p.y },
+    { x: p.x, y: p.y + 1 },
+    { x: p.x, y: p.y - 1 },
+  ];
+
+  for (const nb of nbs) {
+    if (!inBounds(nb.x, nb.y, W, H)) continue;
+    const j = nb.y * W + nb.x;
+    if (featureType[j] === 4) return true;
+  }
+  return false;
+}
+
+function isGoodFloor(p: Point) {
+  if (!inBounds(p.x, p.y, W, H)) return false;
+  const i = p.y * W + p.x;
+  if (solid[i] !== 0) return false; // must be floor
+  if (distWall[i] < 1) return false; // avoid hugging walls
+
+  // NEW: prevent adjacent doors
+  if (hasAdjacentDoor(p)) return false;
+
+  return true;
+}
+
 // Build candidate points along two L-shaped Manhattan paths.
 // We choose the first point that is floor and (preferably) corridor (regionId == 0).
 function pickDoorTileOnCorridor(
   dungeon: BspDungeonOutputs,
   corridor: { a: Point; b: Point },
+  featureType: Uint8Array,
 ): Point | null {
   const { width: W, height: H } = dungeon;
   const solid = dungeon.masks.solid;

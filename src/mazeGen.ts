@@ -1297,11 +1297,41 @@ function findCorridorConnectingRooms(
   return null;
 }
 
+function hasAdjacentDoor(p: Point) {
+  // FeatureType 4 = door (floor tile)
+  const nbs = [
+    { x: p.x + 1, y: p.y },
+    { x: p.x - 1, y: p.y },
+    { x: p.x, y: p.y + 1 },
+    { x: p.x, y: p.y - 1 },
+  ];
+
+  for (const nb of nbs) {
+    if (!inBounds(nb.x, nb.y, W, H)) continue;
+    const j = nb.y * W + nb.x;
+    if (featureType[j] === 4) return true;
+  }
+  return false;
+}
+
+function isGoodFloor(p: Point) {
+  if (!inBounds(p.x, p.y, W, H)) return false;
+  const i = p.y * W + p.x;
+  if (solid[i] !== 0) return false; // must be floor
+  if (distWall[i] < 1) return false; // avoid hugging walls
+
+  // NEW: prevent adjacent doors
+  if (hasAdjacentDoor(p)) return false;
+
+  return true;
+}
+
 // Build candidate points along two L-shaped Manhattan paths.
 // We choose the first point that is floor and (preferably) corridor (regionId == 0).
 function pickDoorTileOnCorridor(
   dungeon: BspDungeonOutputs,
   corridor: { a: Point; b: Point },
+  featureType: Uint8Array,
 ): Point | null {
   const { width: W, height: H } = dungeon;
   const solid = dungeon.masks.solid;

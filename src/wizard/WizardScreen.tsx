@@ -61,16 +61,52 @@ function Section(props: { title: string; children: React.ReactNode }) {
 function LabeledField(props: {
   label: string;
   hint?: string;
+  tooltip?: string;
   children: React.ReactNode;
 }) {
   return (
     <div style={{ flex: 1, minWidth: 220 }}>
-      <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>
+      <div
+        style={{
+          fontSize: 12,
+          opacity: 0.8,
+          marginBottom: 4,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
         <b>{props.label}</b>
+
+        {props.tooltip ? (
+          <span
+            title={props.tooltip}
+            style={{
+              display: "inline-flex",
+              width: 16,
+              height: 16,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 999,
+              border: "1px solid rgba(255,255,255,0.22)",
+              background: "rgba(255,255,255,0.06)",
+              cursor: "help",
+              fontSize: 11,
+              lineHeight: "16px",
+              userSelect: "none",
+              opacity: 0.9,
+            }}
+            aria-label={`${props.label} help`}
+          >
+            i
+          </span>
+        ) : null}
+
         {props.hint ? (
-          <span style={{ opacity: 0.75 }}> — {props.hint}</span>
+          <span style={{ opacity: 0.75 }}>— {props.hint}</span>
         ) : null}
       </div>
+
       {props.children}
     </div>
   );
@@ -414,7 +450,11 @@ function Step2Bsp(props: {
       </Row>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <LabeledField label="maxDepth" hint="split depth cap">
+        <LabeledField
+          label="maxDepth"
+          hint="split depth cap"
+          tooltip="Maximum BSP recursion depth. Higher = more partitions (more rooms/corridors), but can get more fragmented/noisy."
+        >
           <NumInput
             value={bsp.maxDepth}
             min={2}
@@ -423,7 +463,11 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="splitPadding" hint="min spacing near splits">
+        <LabeledField
+          label="splitPadding"
+          hint="min spacing near splits"
+          tooltip="Extra padding enforced around split lines. Higher = fewer skinny partitions and less edge-hugging rooms."
+        >
           <NumInput
             value={bsp.splitPadding}
             min={0}
@@ -432,7 +476,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="minLeafSize">
+        <LabeledField
+          label="minLeafSize"
+          tooltip="Minimum size of a BSP leaf region (in tiles). Prevents splitting into tiny regions that can't host useful rooms."
+        >
           <NumInput
             value={bsp.minLeafSize}
             min={8}
@@ -441,7 +488,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="maxLeafSize">
+        <LabeledField
+          label="maxLeafSize"
+          tooltip="Maximum size of a BSP leaf region (in tiles). Regions larger than this tend to be split again (unless maxDepth stops it)."
+        >
           <NumInput
             value={bsp.maxLeafSize}
             min={10}
@@ -450,7 +500,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="roomPadding">
+        <LabeledField
+          label="roomPadding"
+          tooltip="Clearance between a room rectangle and its containing leaf bounds. Higher = thicker walls/negative space around rooms."
+        >
           <NumInput
             value={bsp.roomPadding}
             min={0}
@@ -459,7 +512,11 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="roomFillLeafChance" hint="0..1">
+        <LabeledField
+          label="roomFillLeafChance"
+          hint="0..1"
+          tooltip="Probability that a leaf gets a room. Lower = more empty leaves (more corridor/negative space). Higher = denser room placement."
+        >
           <NumInput
             value={bsp.roomFillLeafChance}
             min={0}
@@ -471,7 +528,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="minRoomSize">
+        <LabeledField
+          label="minRoomSize"
+          tooltip="Minimum room side length (tiles). Prevents tiny closets unless your design wants them."
+        >
           <NumInput
             value={bsp.minRoomSize}
             min={3}
@@ -480,7 +540,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="maxRoomSize">
+        <LabeledField
+          label="maxRoomSize"
+          tooltip="Maximum room side length (tiles). Caps how large a room can be inside a leaf (even if the leaf is bigger)."
+        >
           <NumInput
             value={bsp.maxRoomSize}
             min={4}
@@ -489,7 +552,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="corridorWidth">
+        <LabeledField
+          label="corridorWidth"
+          tooltip="Corridor thickness in tiles. 1 = classic tight corridors; 2+ = chunkier hallways, easier navigation, more open feel."
+        >
           <NumInput
             value={bsp.corridorWidth}
             min={1}
@@ -498,7 +564,10 @@ function Step2Bsp(props: {
           />
         </LabeledField>
 
-        <LabeledField label="keepOuterWalls">
+        <LabeledField
+          label="keepOuterWalls"
+          tooltip="If enabled, the generator keeps a solid border around the map edges (no carve-through to the outside). Useful for containment and nicer silhouettes."
+        >
           <div
             style={{
               padding: 8,

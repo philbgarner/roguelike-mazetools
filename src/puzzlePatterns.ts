@@ -1678,16 +1678,28 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 
     if (!didCarve) continue;
 
-    // if preview passes:
-    const secretId = allocId();
+    // Preview ids must NOT consume allocId() (avoid burning scarce ids on failed previews).
+    // Pick an unused id in the copied fid2 buffer.
+    const previewId = findUnusedId255(fid2);
+    if (previewId === 0) continue;
 
-    const leverId = secretId; // keep aligned
+    const revealedPost = new Set<number>([previewId]);
 
-    // remove previewId + the first revealed set entirely
+    // Place hidden passage fixture at connector (this is what blocks pre-reveal).
+    const cI = idxOf(W, picked.cx, picked.cy);
+    ft2[cI] = 9; // hidden passage
+    fid2[cI] = previewId;
+    fparam2[cI] = 0;
 
-    // after you pick secretId:
-    const revealedPost = new Set<number>([secretId]);
+    // Place lever fixture (doesn't affect reachability, but keeps the preview faithful).
+    const lI = idxOf(W, leverSpot.x, leverSpot.y);
+    ft2[lI] = 6;
+    fid2[lI] = previewId;
+    fparam2[lI] = 0;
 
+    // Compute reachability AFTER the hidden fixture exists:
+    // - pre: connector blocks (hidden unrevealed)
+    // - post: connector passable (hidden revealed)
     const reachPre = computeReachable(
       { width: W, height: H, masks: { solid: solid2 } } as any,
       ft2,
@@ -1703,18 +1715,6 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
       start,
       revealedPost,
     );
-
-    // Place hidden passage fixture at connector
-    const cI = idxOf(W, picked.cx, picked.cy);
-    ft2[cI] = 9; // hidden passage
-    fid2[cI] = secretId;
-    fparam2[cI] = 0;
-
-    // Place lever fixture
-    const lI = idxOf(W, leverSpot.x, leverSpot.y);
-    ft2[lI] = 6;
-    fid2[lI] = leverId;
-    fparam2[lI] = 0;
 
     // Validate reachability
     const goal = findPocketGoal({ x: picked.px, y: picked.py }, pocketSize);
@@ -1754,6 +1754,9 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
     }
 
     // ---- COMMIT ----
+    // Now that preview validated, allocate the real id(s).
+    const secretId = allocId();
+    const leverId = secretId; // keep aligned
     carvePocketAndConnector(
       dungeon,
       { x: picked.cx, y: picked.cy },
@@ -1842,6 +1845,22 @@ export function applyLeverRevealsHiddenPocketPattern(args: {
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
+
+/**
+ * Find an unused id in 1..255 based on an existing featureId buffer.
+ * Returns 0 if all ids appear used (extremely unlikely).
+ */
+function findUnusedId255(featureId: Uint8Array): number {
+  // Track usage of 1..255. (0 means "no feature")
+  const used = new Uint8Array(256);
+  for (let i = 0; i < featureId.length; i++) {
+    used[featureId[i] | 0] = 1;
+  }
+  for (let id = 1; id <= 255; id++) {
+    if (!used[id]) return id;
+  }
+  return 0;
+}
 
 function computeShortestPathDistance(
   dungeon: BspDungeonOutputs,
