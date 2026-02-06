@@ -1,10 +1,10 @@
 // src/patternDoorPlacement.ts
 //
-// Shared policy helper for door/gate placement used by patterns.
-// Enforces: trigger room must be earlier in the room graph than the gated side.
+// Shared policy helper for door/gate placement in patterns.
+// Enforces: trigger room must be earlier (closer to entrance) than gated room.
 //
-// This module is intentionally policy-oriented (graph/BFS ordering).
-// doorSites.ts remains spatial-only (throat selection / jambs / adjacency checks).
+// Spatial validity (door sits on a valid corridor site, jambs, no-adjacent-door, etc.)
+// stays in doorSites.ts. This file only adds *ordering*.
 
 import type { BspDungeonOutputs } from "./mazeGen";
 import { findDoorSiteCandidatesAndStatsFromCorridors } from "./doorSites";
@@ -13,33 +13,27 @@ export type PatternRng = {
   nextInt(lo: number, hi: number): number; // inclusive
 };
 
-export type OrderedDoorPick = {
-  ok: true;
+export type DoorSiteCandidate = {
   x: number;
   y: number;
-
-  // Earlier room: where trigger must be placed (lever/plate/etc)
-  triggerRoomId: number;
-
-  // Later room: the gated side (progression)
-  gateRoomId: number;
-
-  // BFS distance of the gated room from the entrance room
-  gateDepth: number;
-
-  // Diagnostics passthrough (optional)
-  stats?: unknown;
+  roomA: number;
+  roomB: number;
 };
 
-export type OrderedDoorPickFail = {
-  ok: false;
-  reason:
-    | "NoCandidates"
-    | "NoEntranceDist"
-    | "UnorderedCandidateOnly"
-    | "ExhaustedAttempts";
-  stats?: unknown;
-};
+export function orientRoomsByDistance(
+  roomA: number,
+  roomB: number,
+  roomDistance: Map<number, number>,
+): { triggerRoomId: number; gateRoomId: number; gateDepth: number } | null {
+  const da = roomDistance.get(roomA);
+  const db = roomDistance.get(roomB);
+  if (da === undefined || db === undefined) return null;
+  if (da === db) return null;
+
+  if (da < db)
+    return { triggerRoomId: roomA, gateRoomId: roomB, gateDepth: db };
+  return { triggerRoomId: roomB, gateRoomId: roomA, gateDepth: da };
+}
 
 function buildRoomGraphFromCorridors(
   dungeon: BspDungeonOutputs,
@@ -49,60 +43,64 @@ function buildRoomGraphFromCorridors(
   const H = dungeon.height;
   const regionId = dungeon.masks.regionId;
 
-  // local nearest-room helper (same semantics as doorSites; keep here to avoid cycles)
   function idxOf(x: number, y: number) {
     return y * W + x;
   }
   function inBounds(x: number, y: number) {
     return x >= 0 && y >= 0 && x < W && y < H;
   }
-  function findNearestRoomId(x: number, y: number): number {
-    if (inBounds(x, y)) {
-      const v = regionId[idxOf(x, y)] | 0;
+
+  function findNearestRoomId(p: { x: number; y: number }): number {
+    const cx = p.x | 0;
+    const cy = p.y | 0;
+
+    if (inBounds(cx, cy)) {
+      const v = regionId[idxOf(cx, cy)] | 0;
       if (v !== 0) return v;
     }
+
     for (let r = 1; r <= maxRadius; r++) {
-      const x0 = x - r;
-      const x1 = x + r;
-      const y0 = y - r;
-      const y1 = y + r;
-      for (let xx = x0; xx <= x1; xx++) {
-        for (const yy of [y0, y1]) {
-          if (!inBounds(xx, yy)) continue;
-          const v = regionId[idxOf(xx, yy)] | 0;
+      const x0 = cx - r;
+      const x1 = cx + r;
+      const y0 = cy - r;
+      const y1 = cy + r;
+
+      for (let x = x0; x <= x1; x++) {
+        for (const y of [y0, y1]) {
+          if (!inBounds(x, y)) continue;
+          const v = regionId[idxOf(x, y)] | 0;
           if (v !== 0) return v;
         }
       }
-      for (let yy = y0 + 1; yy <= y1 - 1; yy++) {
-        for (const xx of [x0, x1]) {
-          if (!inBounds(xx, yy)) continue;
-          const v = regionId[idxOf(xx, yy)] | 0;
+      for (let y = y0 + 1; y <= y1 - 1; y++) {
+        for (const x of [x0, x1]) {
+          if (!inBounds(x, y)) continue;
+          const v = regionId[idxOf(x, y)] | 0;
           if (v !== 0) return v;
         }
       }
     }
+
     return 0;
   }
 
-  const graph = new Map<number, Set<number>>();
+  const g = new Map<number, Set<number>>();
 
-  // Ensure each room is present
-  for (let i = 0; i < dungeon.meta.rooms.length; i++) {
-    graph.set(i + 1, new Set());
-  }
+  // ensure all rooms exist as nodes
+  for (let i = 0; i < dungeon.meta.rooms.length; i++) g.set(i + 1, new Set());
 
   for (const c of dungeon.meta.corridors) {
-    const ra = findNearestRoomId(c.a.x | 0, c.a.y | 0);
-    const rb = findNearestRoomId(c.b.x | 0, c.b.y | 0);
-    if (ra === 0 || rb === 0 || ra === rb) continue;
+    const a = findNearestRoomId(c.a);
+    const b = findNearestRoomId(c.b);
+    if (a === 0 || b === 0 || a === b) continue;
 
-    if (!graph.has(ra)) graph.set(ra, new Set());
-    if (!graph.has(rb)) graph.set(rb, new Set());
-    graph.get(ra)!.add(rb);
-    graph.get(rb)!.add(ra);
+    if (!g.has(a)) g.set(a, new Set());
+    if (!g.has(b)) g.set(b, new Set());
+    g.get(a)!.add(b);
+    g.get(b)!.add(a);
   }
 
-  return graph;
+  return g;
 }
 
 function bfsRoomDistances(
@@ -131,30 +129,100 @@ function bfsRoomDistances(
   return dist;
 }
 
-export function pickOrderedDoorSite(args: {
+export function pickOrderedDoorSiteFromCandidates(args: {
+  rng: PatternRng;
+  candidates: DoorSiteCandidate[];
+  roomDistance: Map<number, number>;
+
+  // Optional hard constraints (useful for intro-gate patterns etc.)
+  requireTriggerRoomId?: number;
+  requireGateRoomId?: number;
+}):
+  | {
+      ok: true;
+      x: number;
+      y: number;
+      triggerRoomId: number;
+      gateRoomId: number;
+      gateDepth: number;
+    }
+  | { ok: false; reason: "NoOrderedCandidate" } {
+  const {
+    rng,
+    candidates,
+    roomDistance,
+    requireTriggerRoomId,
+    requireGateRoomId,
+  } = args;
+
+  const ordered: Array<
+    DoorSiteCandidate & { trig: number; gate: number; depth: number }
+  > = [];
+
+  for (const c of candidates) {
+    const o = orientRoomsByDistance(c.roomA, c.roomB, roomDistance);
+    if (!o) continue;
+    if (
+      requireTriggerRoomId !== undefined &&
+      o.triggerRoomId !== requireTriggerRoomId
+    )
+      continue;
+    if (requireGateRoomId !== undefined && o.gateRoomId !== requireGateRoomId)
+      continue;
+    ordered.push({
+      ...c,
+      trig: o.triggerRoomId,
+      gate: o.gateRoomId,
+      depth: o.gateDepth,
+    });
+  }
+
+  if (!ordered.length) return { ok: false, reason: "NoOrderedCandidate" };
+
+  const pick = ordered[rng.nextInt(0, ordered.length - 1)]!;
+  return {
+    ok: true,
+    x: pick.x,
+    y: pick.y,
+    triggerRoomId: pick.trig,
+    gateRoomId: pick.gate,
+    gateDepth: pick.depth,
+  };
+}
+
+export function pickOrderedDoorSiteFromCorridors(args: {
   rng: PatternRng;
   dungeon: BspDungeonOutputs;
   featureType: Uint8Array;
-
   entranceRoomId: number;
 
-  // Keep aligned with doorSites defaults, but explicit here for stability
+  // forwarded to doorSites
   maxRadius?: number;
-  maxAttempts?: number;
-
-  // Passed through to doorSites:
   minDistToWall?: number;
   preferCorridor?: boolean;
-  trimEnds?: number; // (doorSites throat-only makes this mostly irrelevant)
-  duplicateBias?: number; // for weighting; we usually want 1
-}): OrderedDoorPick | OrderedDoorPickFail {
+  trimEnds?: number;
+  duplicateBias?: number;
+}):
+  | {
+      ok: true;
+      x: number;
+      y: number;
+      triggerRoomId: number;
+      gateRoomId: number;
+      gateDepth: number;
+      stats: unknown;
+    }
+  | {
+      ok: false;
+      reason: "NoCandidates" | "NoDistances" | "NoOrderedCandidate";
+      stats?: unknown;
+    } {
   const {
     rng,
     dungeon,
     featureType,
     entranceRoomId,
     maxRadius = 10,
-    maxAttempts = 80,
     minDistToWall = 1,
     preferCorridor = true,
     trimEnds = 0,
@@ -173,50 +241,19 @@ export function pickOrderedDoorSite(args: {
     },
   );
 
-  if (candidates.length === 0) {
-    return { ok: false, reason: "NoCandidates", stats };
-  }
+  if (!candidates.length) return { ok: false, reason: "NoCandidates", stats };
 
   const graph = buildRoomGraphFromCorridors(dungeon, maxRadius);
   const dist = bfsRoomDistances(graph, entranceRoomId);
+  if (!dist.size) return { ok: false, reason: "NoDistances", stats };
 
-  if (!dist.has(entranceRoomId)) {
-    // Should never happen, but keep explicit.
-    return { ok: false, reason: "NoEntranceDist", stats };
-  }
-
-  // Filter to candidates that have strict ordering.
-  const ordered = candidates.filter((c) => {
-    const da = dist.get(c.roomA);
-    const db = dist.get(c.roomB);
-    if (da === undefined || db === undefined) return false;
-    return da !== db;
+  const pick = pickOrderedDoorSiteFromCandidates({
+    rng,
+    candidates,
+    roomDistance: dist,
   });
 
-  if (ordered.length === 0) {
-    return { ok: false, reason: "UnorderedCandidateOnly", stats };
-  }
+  if (!pick.ok) return { ok: false, reason: "NoOrderedCandidate", stats };
 
-  // Try a few random draws (preserves best-effort + randomness without biasing too hard).
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const c = ordered[rng.nextInt(0, ordered.length - 1)]!;
-    const da = dist.get(c.roomA)!;
-    const db = dist.get(c.roomB)!;
-
-    const triggerRoomId = da < db ? c.roomA : c.roomB;
-    const gateRoomId = da < db ? c.roomB : c.roomA;
-    const gateDepth = dist.get(gateRoomId) ?? 0;
-
-    return {
-      ok: true,
-      x: c.x,
-      y: c.y,
-      triggerRoomId,
-      gateRoomId,
-      gateDepth,
-      stats,
-    };
-  }
-
-  return { ok: false, reason: "ExhaustedAttempts", stats };
+  return { ...pick, ok: true, stats };
 }

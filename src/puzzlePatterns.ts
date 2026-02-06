@@ -36,7 +36,10 @@ import type {
   LeverBehindOwnGateDiagV1,
 } from "./batchStats";
 import { graphEdgeId } from "./graphEdgeId";
-import { pickOrderedDoorSite } from "./patternDoorPlacement";
+import {
+  orientRoomsByDistance,
+  pickOrderedDoorSiteFromCorridors,
+} from "./patternDoorPlacement";
 
 type Point = { x: number; y: number };
 
