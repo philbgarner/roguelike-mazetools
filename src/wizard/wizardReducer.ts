@@ -137,7 +137,7 @@ export const DEFAULT_BSP: BspConfig = {
   maxLeafSize: 28,
   splitPadding: 2,
 
-  roomPadding: 1,
+  roomPadding: 4,
   minRoomSize: 5,
   maxRoomSize: 12,
   roomFillLeafChance: 0.9,

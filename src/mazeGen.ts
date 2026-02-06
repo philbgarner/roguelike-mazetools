@@ -1936,6 +1936,7 @@ export function generateDungeonContent(
             rng: patternRng,
             dungeon,
             rooms,
+            entranceRoomId,
             featureType,
             featureId,
             featureParam,

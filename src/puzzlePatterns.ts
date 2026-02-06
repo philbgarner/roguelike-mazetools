@@ -900,8 +900,17 @@ export function applyGateThenOptionalRewardPattern(args: {
       const da = roomDistance.get(a) ?? 9999;
       const db = roomDistance.get(b) ?? 9999;
 
-      const shallowRoomId = da <= db ? a : b;
-      const deepRoomId = da <= db ? b : a;
+      const oGate = orientRoomsByDistance(
+        gateSite.roomA,
+        gateSite.roomB,
+        roomDistance,
+      );
+      if (!oGate) {
+        failGateOccupied++;
+        continue;
+      }
+      const shallowRoomId = oGate.triggerRoomId; // earlier side: lever must be here
+      const deepRoomId = oGate.gateRoomId; // later side: gated side
 
       // Try BOTH endpoints: deep then shallow.
       const anchorPlans = [
@@ -997,6 +1006,25 @@ export function applyGateThenOptionalRewardPattern(args: {
           );
 
           for (let si = 0; si < maxBranchSiteTries; si++) {
+            const oBranch = orientRoomsByDistance(
+              p.anchor,
+              branchRoomId,
+              roomDistance,
+            );
+            if (!oBranch) {
+              failNoBranchDoorSites++;
+              continue;
+            }
+            // Require: trigger is the anchor (plate lives here), gate is the branch room
+            if (
+              oBranch.triggerRoomId !== p.anchor ||
+              oBranch.gateRoomId !== branchRoomId
+            ) {
+              // branch room is not deeper than anchor; skip this branch
+              failNoBranchDoorSites++;
+              continue;
+            }
+
             const branchSite = branchSites[si]!;
             const branchDi = idxOf(dungeon.width, branchSite.x, branchSite.y);
             if ((ft[branchDi] | 0) !== 0) {
@@ -1093,12 +1121,12 @@ export function applyGateThenOptionalRewardPattern(args: {
               id: gateId,
               x: gateSite.x,
               y: gateSite.y,
-              roomA: gateSite.roomA,
-              roomB: gateSite.roomB,
+              roomA: shallowRoomId,
+              roomB: deepRoomId,
               kind: 2,
-              depth: 0,
+              depth: oGate.gateDepth,
             });
-            noteDoorEdgePlacement(gateSite.roomA, gateSite.roomB);
+            noteDoorEdgePlacement(shallowRoomId, deepRoomId);
 
             // 2) Lever fixture
             const gateLi = idxOf(dungeon.width, leverP.x, leverP.y);
@@ -1132,12 +1160,12 @@ export function applyGateThenOptionalRewardPattern(args: {
               id: branchId,
               x: branchSite.x,
               y: branchSite.y,
-              roomA: branchSite.roomA,
-              roomB: branchSite.roomB,
+              roomA: oBranch.triggerRoomId, // == p.anchor
+              roomB: oBranch.gateRoomId, // == branchRoomId
               kind: 0 as DoorKind,
-              depth: 0,
+              depth: oBranch.gateDepth,
             });
-            noteDoorEdgePlacement(branchSite.roomA, branchSite.roomB);
+            noteDoorEdgePlacement(oBranch.triggerRoomId, oBranch.gateRoomId);
 
             // 4) Plate fixture (id = branchId)
             const pi = idxOf(dungeon.width, plateP.x, plateP.y);
@@ -2505,6 +2533,9 @@ export function applyPlateOpensDoorPattern(args: {
   dungeon: BspDungeonOutputs;
   rooms: BspDungeonOutputs["meta"]["rooms"];
 
+  // NEW: required to enforce "trigger earlier than gate"
+  entranceRoomId: number;
+
   featureType: Uint8Array;
   featureId: Uint8Array;
   featureParam: Uint8Array;
@@ -2521,6 +2552,7 @@ export function applyPlateOpensDoorPattern(args: {
     rng,
     dungeon,
     rooms,
+    entranceRoomId,
     featureType: ft,
     featureId: fid,
     featureParam: fparam,
@@ -2534,6 +2566,7 @@ export function applyPlateOpensDoorPattern(args: {
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 80);
   const inverted = !!args.options?.inverted;
 
+  // We still use the corridor candidate pool (spatial validity is in doorSites.ts)
   const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
     dungeon,
     ft,
@@ -2556,17 +2589,15 @@ export function applyPlateOpensDoorPattern(args: {
   }
 
   // A1: relaxed fallback pool (helps rare “single chokepoint tile” degeneracy).
-  // We keep it cheap: same function, but more permissive knobs.
   const relaxed = findDoorSiteCandidatesAndStatsFromCorridors(dungeon, ft, {
     minDistToWall: 1,
     preferCorridor: true,
-    trimEnds: 0, // key change
+    trimEnds: 0,
     duplicateBias: 1,
-    maxRadius: 12, // small bump; still cheap
+    maxRadius: 12,
   });
 
   // Merge unique relaxed candidates into the main candidate list.
-  // Key by (x,y,roomA,roomB) so we don't blow up duplicates.
   const seenKey = new Set<string>();
   for (const s of candidates) {
     const lo = Math.min(s.roomA, s.roomB);
@@ -2582,12 +2613,39 @@ export function applyPlateOpensDoorPattern(args: {
     candidates.push(s);
   }
 
+  // NEW: central policy pick — returns (x,y) plus oriented rooms:
+  // triggerRoomId = earlier, gateRoomId = later, gateDepth = BFS distance.
+  const pick = pickOrderedDoorSiteFromCorridors({
+    rng,
+    dungeon,
+    featureType: ft,
+    entranceRoomId,
+    maxRadius: 10,
+    minDistToWall: 1,
+    preferCorridor: true,
+    trimEnds: 0,
+    duplicateBias: 1,
+  });
+
+  if (!pick.ok) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: `No ordered door site (${pick.reason}).`,
+      stats: { doorSites: stats },
+    };
+  }
+
+  // Try to actually place (tile might be occupied by a previous pattern)
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const site = candidates[rng.nextInt(0, candidates.length - 1)]!;
     const circuitId = allocId();
 
-    const di = idxOf(dungeon.width, site.x, site.y);
-    if ((ft[di] | 0) !== 0) continue;
+    const di = idxOf(dungeon.width, pick.x, pick.y);
+    if ((ft[di] | 0) !== 0) {
+      // If occupied, we cannot “re-pick” without reintroducing duplication.
+      // Keep best-effort: just fail this pattern.
+      break;
+    }
 
     // Place door fixture
     ft[di] = 4;
@@ -2596,17 +2654,18 @@ export function applyPlateOpensDoorPattern(args: {
 
     doors.push({
       id: circuitId,
-      x: site.x,
-      y: site.y,
-      roomA: site.roomA,
-      roomB: site.roomB,
+      x: pick.x,
+      y: pick.y,
+      // IMPORTANT: oriented rooms (trigger earlier than gate)
+      roomA: pick.triggerRoomId,
+      roomB: pick.gateRoomId,
       kind: 0 as DoorKind,
-      depth: 0,
+      depth: pick.gateDepth,
     });
 
-    // Place plate in roomA
-    const roomA = rooms[site.roomA - 1];
-    if (!roomA) {
+    // Place plate + block in the TRIGGER (earlier) room.
+    const plateRoom = rooms[pick.triggerRoomId - 1];
+    if (!plateRoom) {
       // rollback door
       ft[di] = 0;
       fid[di] = 0;
@@ -2615,7 +2674,7 @@ export function applyPlateOpensDoorPattern(args: {
       continue;
     }
 
-    const plateP = sampleRoomFloorNoFeatures(rng, dungeon, roomA, ft);
+    const plateP = sampleRoomFloorNoFeatures(rng, dungeon, plateRoom, ft);
     if (!plateP) {
       // rollback door
       ft[di] = 0;
@@ -2641,7 +2700,7 @@ export function applyPlateOpensDoorPattern(args: {
       id: circuitId,
       x: plateP.x,
       y: plateP.y,
-      roomId: site.roomA,
+      roomId: pick.triggerRoomId,
       mode: plateCfg.mode,
       activatedByPlayer: plateCfg.activatedByPlayer,
       activatedByBlock: plateCfg.activatedByBlock,
@@ -2677,7 +2736,7 @@ export function applyPlateOpensDoorPattern(args: {
       id: blockId,
       x: blockP.x,
       y: blockP.y,
-      roomId: site.roomA,
+      roomId: pick.triggerRoomId,
       weightClass: 0,
     });
 
