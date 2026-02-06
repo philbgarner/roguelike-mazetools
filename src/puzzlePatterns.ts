@@ -2202,6 +2202,62 @@ export function findNearestRoomId(
   return 0;
 }
 
+function buildRoomGraphFromCorridorsForPatterns(
+  dungeon: BspDungeonOutputs,
+  maxRadius = 10,
+): Map<number, Set<number>> {
+  const W = dungeon.width;
+  const H = dungeon.height;
+  const regionId = dungeon.masks.regionId;
+
+  const graph = new Map<number, Set<number>>();
+
+  // Ensure all rooms appear as nodes
+  for (let i = 0; i < dungeon.meta.rooms.length; i++) {
+    const id = i + 1;
+    graph.set(id, new Set<number>());
+  }
+
+  for (const c of dungeon.meta.corridors) {
+    const ra = findNearestRoomId(regionId, W, H, c.a, maxRadius);
+    const rb = findNearestRoomId(regionId, W, H, c.b, maxRadius);
+    if (ra === 0 || rb === 0) continue;
+    if (ra === rb) continue;
+
+    if (!graph.has(ra)) graph.set(ra, new Set());
+    if (!graph.has(rb)) graph.set(rb, new Set());
+    graph.get(ra)!.add(rb);
+    graph.get(rb)!.add(ra);
+  }
+
+  return graph;
+}
+
+function bfsRoomDistancesForPatterns(
+  graph: Map<number, Set<number>>,
+  startRoomId: number,
+): Map<number, number> {
+  const dist = new Map<number, number>();
+  const q: number[] = [];
+
+  dist.set(startRoomId, 0);
+  q.push(startRoomId);
+
+  while (q.length) {
+    const cur = q.shift()!;
+    const dcur = dist.get(cur)!;
+    const nbs = graph.get(cur);
+    if (!nbs) continue;
+    for (const nb of nbs) {
+      if (dist.has(nb)) continue;
+      dist.set(nb, dcur + 1);
+      q.push(nb);
+    }
+  }
+
+  return dist;
+}
+
 function sampleReachableRoomFloorNoFeatures(
   rng: PatternRng,
   dungeon: BspDungeonOutputs,
@@ -2325,7 +2381,7 @@ export function applyLeverOpensDoorPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2, // IMPORTANT: ignore first/last N tiles
+      trimEnds: 2, // (doorSites.ts now uses throat-only; trimEnds is effectively ignored)
       duplicateBias: 1,
       maxRadius: 10,
     },
@@ -2346,12 +2402,24 @@ export function applyLeverOpensDoorPattern(args: {
     return { ok: false, didCarve: false, reason: "No entrance start tile." };
   }
 
+  // Enforce ordering: lever must be earlier than the gated door.
+  const roomGraph = buildRoomGraphFromCorridorsForPatterns(dungeon, 10);
+  const roomDist = bfsRoomDistancesForPatterns(roomGraph, entranceRoomId);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const site = candidates[rng.nextInt(0, candidates.length - 1)]!;
     const doorId = allocId();
 
     const di = idxOf(dungeon.width, site.x, site.y);
     if ((ft[di] | 0) !== 0) continue;
+
+    const dA = roomDist.get(site.roomA);
+    const dB = roomDist.get(site.roomB);
+    if (dA === undefined || dB === undefined) continue;
+    if (dA === dB) continue; // no clear "earlier" side; skip
+
+    const leverRoomId = dA < dB ? site.roomA : site.roomB;
+    const gateRoomId = dA < dB ? site.roomB : site.roomA;
+    const gateDepth = roomDist.get(gateRoomId) ?? 0;
 
     // Place the door fixture
     ft[di] = 4;
@@ -2362,15 +2430,15 @@ export function applyLeverOpensDoorPattern(args: {
       id: doorId,
       x: site.x,
       y: site.y,
-      roomA: site.roomA,
-      roomB: site.roomB,
+      roomA: leverRoomId, // earlier side
+      roomB: gateRoomId, // later side
       kind: 2,
-      depth: 0,
+      depth: gateDepth,
     });
 
-    // Place lever inside roomA
-    const roomA = rooms[site.roomA - 1] ?? entranceRoom;
-    if (!roomA) {
+    // Place lever inside the *earlier* room.
+    const leverRoom = rooms[leverRoomId - 1] ?? entranceRoom;
+    if (!leverRoom) {
       // rollback door
       ft[di] = 0;
       fid[di] = 0;
@@ -2379,7 +2447,7 @@ export function applyLeverOpensDoorPattern(args: {
       continue;
     }
 
-    const leverP = sampleRoomFloorNoFeatures(rng, dungeon, roomA, ft);
+    const leverP = sampleRoomFloorNoFeatures(rng, dungeon, leverRoom, ft);
     if (!leverP) {
       // rollback door
       ft[di] = 0;
@@ -2394,7 +2462,12 @@ export function applyLeverOpensDoorPattern(args: {
     fid[li] = doorId;
     fparam[li] = 0;
 
-    levers.push({ id: doorId, x: leverP.x, y: leverP.y, roomId: site.roomA });
+    levers.push({
+      id: doorId,
+      x: leverP.x,
+      y: leverP.y,
+      roomId: leverRoomId,
+    });
 
     circuitsById.set(doorId, {
       id: doorId,
