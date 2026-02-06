@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-24 (rev X)**
+**CONTEXT VERSION:** **2026-01-24 (rev Y)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED**
+**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR IN PROGRESS**
 
 ---
 
@@ -150,7 +150,7 @@ Fully enforced in the wizard reducer and routing logic.
 
 ---
 
-## IMPLEMENTATION PROGRESS (REV X)
+## IMPLEMENTATION PROGRESS (REV X → REV Y)
 
 ### Inspection UX (Step 7)
 
@@ -217,6 +217,65 @@ This aligns diagnostics, inspector behavior, and documentation, and prevents fut
 
 ---
 
+### Door Placement Contract Update (NEW — Rev Y)
+
+Door placement was producing **doors in sequence inside corridors**, including adjacent doors and mid-corridor placements.
+
+**Updated door placement constraints (minimal, localized bugfix intent):**
+
+* A candidate door location must be rejected if it is **adjacent (4-neighborhood) to an existing door**.
+* A candidate must have **two wall (solid) tiles** on either:
+
+  * **east + west**, or
+  * **north + south**
+
+  (i.e. a valid “throat”/frame for a door).
+* Doors must be placed at **corridor ends on room boundaries**, not in corridor interior:
+
+  * valid placements occur at the **room boundary/edge throat** where a corridor meets a room
+  * corridor interior segments are **not** valid door locations
+
+This aligns door placement with the corridor→room chokepoint invariant and prevents mid-corridor door chains.
+
+---
+
+### Ordered Trigger → Gate Invariant (NEW — Rev Y)
+
+A regression was identified where some patterns could place the **trigger (lever/plate)** in a room that is **not earlier** than the **gate/door** it controls.
+
+**New invariant (soft-enforced, but treated as a correctness contract for patterns):**
+
+* For any “trigger opens gate” structure, the trigger must live in the **earlier** side of the room graph, and the gated content must be on the **later** side.
+
+Concretely:
+
+* Door meta is recorded as:
+
+  * `roomA = triggerRoomId` (earlier)
+  * `roomB = gateRoomId` (later)
+  * `depth = gateDepth` (distance of gated side)
+
+This supports progression grammar and prevents “lever behind its own gate” regressions.
+
+---
+
+### DRY Refactor: Centralized Door Placement Helpers (NEW — Rev Y)
+
+To prevent patterns from re-implementing door orientation/ordering (and regressing each other), door placement logic is being consolidated into shared helpers:
+
+* `patternDoorPlacement.ts` provides:
+
+  * `orientRoomsByDistance(a, b, roomDistance)` → returns `{ triggerRoomId, gateRoomId, gateDepth }`
+  * `pickOrderedDoorSiteFromCorridors(...)` → selects a corridor/room-boundary door site and returns an ordered `{ x, y, triggerRoomId, gateRoomId, gateDepth }`
+
+Patterns that place doors (and trigger fixtures like plates/levers) are being updated to call these helpers so that:
+
+* ordering is uniform and repeatable
+* patterns stop drifting in subtle ways
+* door/trigger placement stays consistent with corridor throat rules
+
+---
+
 ### Pattern Reliability Improvements (Phase 2.5)
 
 * **Lever → Hidden Pocket pattern** (`applyLeverRevealsHiddenPocketPattern`) hardened against its dominant failure modes:
@@ -250,7 +309,8 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 * Wizard → Execution → Inspection loop is **fully closed**
 * Circuit diagnostics identity is now **structurally correct and UI-safe**
 * Pattern reliability is improving via **preview + retry**, not relaxed rules
-* UI, execution, and generator boundaries remain invariant-safe
+* Door placement is now being tightened to corridor→room boundary throats (no mid-corridor chains)
+* Patterns are being refactored to centralize ordered trigger→gate placement and prevent regressions
 
 ---
 
@@ -268,15 +328,23 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 
 ### Generator — Milestone 5 Phase 2.5
 
-1. **Validate circuit diagnostics in batch**
+1. **Validate door throat placement in batch**
+
+   * confirm doors no longer appear mid-corridor or adjacent
+   * confirm doors align to corridor→room boundary throats only
+2. **Validate ordered trigger→gate invariant across all door patterns**
+
+   * ensure triggers consistently occur in earlier rooms than gated doors
+   * watch for regressions in IntroGate / LeverOpensDoor / PlateOpensDoor / GateThenOptionalReward
+3. **Validate circuit diagnostics in batch**
 
    * confirm no remaining ID/index mismatches
    * verify cycle membership + signal dependency rendering at scale
-2. **Validate hidden-pocket preview logic in batch**
+4. **Validate hidden-pocket preview logic in batch**
 
    * confirm failure modes collapse as expected
-3. Run 1000+ seed batch comparison vs baseline
-4. Record stability metrics and intent-misalignment deltas
+5. Run 1000+ seed batch comparison vs baseline
+6. Record stability metrics and intent-misalignment deltas
 
 ### Milestone 5 Roadmap
 

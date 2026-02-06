@@ -494,7 +494,6 @@ export function applyIntroGatePattern(args: {
     };
   }
 
-  // Reachability with doors closed (soft enforcement surface)
   const reachClosed0 = computeReachable(dungeon, ft, fid, start, new Set());
 
   const mainEdges: RoomEdge[] = [];
@@ -502,7 +501,6 @@ export function applyIntroGatePattern(args: {
     mainEdges.push(normEdge(mainPathRoomIds[i]!, mainPathRoomIds[i + 1]!));
   }
 
-  // Prefer shallow edges, but still randomize within a small prefix
   mainEdges.sort((a, b) => {
     const da = Math.max(roomDistance.get(a.a) ?? 0, roomDistance.get(a.b) ?? 0);
     const db = Math.max(roomDistance.get(b.a) ?? 0, roomDistance.get(b.b) ?? 0);
@@ -525,63 +523,48 @@ export function applyIntroGatePattern(args: {
     if (!sites || sites.length === 0) continue;
 
     const site = sites[rng.nextInt(0, sites.length - 1)]!;
+    const o = orientRoomsByDistance(site.roomA, site.roomB, roomDistance);
+    if (!o) continue; // no consistent ordering (unreachable room or equal depth)
+
     const doorId = allocId();
 
     const di = idxOf(dungeon.width, site.x, site.y);
     if ((ft[di] | 0) !== 0) continue;
 
-    // Place door (lever door)
+    // Place door
     ft[di] = 4;
     fid[di] = doorId;
     fparam[di] = 2;
-
-    const depth =
-      Math.max(
-        roomDistance.get(site.roomA) ?? 0,
-        roomDistance.get(site.roomB) ?? 0,
-      ) | 0;
 
     doors.push({
       id: doorId,
       x: site.x,
       y: site.y,
-      roomA: site.roomA,
-      roomB: site.roomB,
+      roomA: o.triggerRoomId, // earlier side
+      roomB: o.gateRoomId, // later side
       kind: 2,
-      depth,
+      depth: o.gateDepth,
     });
 
-    const roomA = rooms[site.roomA - 1] ?? entranceRoom;
-    const roomB = rooms[site.roomB - 1] ?? entranceRoom;
+    // Enforce: lever must be reachable with doors closed AND must be in trigger room
+    const leverRoom = rooms[o.triggerRoomId - 1] ?? entranceRoom;
+    if (!leverRoom) {
+      // rollback door
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      continue;
+    }
 
-    // Soft enforcement: lever must be reachable with doors closed
-    const leverP =
-      sampleReachableRoomFloorNoFeatures(
-        rng,
-        dungeon,
-        roomA,
-        ft,
-        reachClosed0,
-        140,
-      ) ??
-      sampleReachableRoomFloorNoFeatures(
-        rng,
-        dungeon,
-        roomB,
-        ft,
-        reachClosed0,
-        140,
-      ) ??
-      (entranceRoom
-        ? sampleReachableRoomFloorNoFeatures(
-            rng,
-            dungeon,
-            entranceRoom,
-            ft,
-            reachClosed0,
-            180,
-          )
-        : null);
+    const leverP = sampleReachableRoomFloorNoFeatures(
+      rng,
+      dungeon,
+      leverRoom,
+      ft,
+      reachClosed0,
+      180,
+    );
 
     if (!leverP) {
       // rollback door
@@ -597,9 +580,12 @@ export function applyIntroGatePattern(args: {
     fid[li] = doorId;
     fparam[li] = 0;
 
-    const leverRoomId =
-      whichRoomIdForPoint(dungeon, leverP.x, leverP.y) || entranceRoomId;
-    levers.push({ id: doorId, x: leverP.x, y: leverP.y, roomId: leverRoomId });
+    levers.push({
+      id: doorId,
+      x: leverP.x,
+      y: leverP.y,
+      roomId: o.triggerRoomId,
+    });
 
     circuitsById.set(doorId, {
       id: doorId,
@@ -2407,13 +2393,14 @@ export function applyLeverOpensDoorPattern(args: {
   } = args;
 
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
+
   const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
     dungeon,
     ft,
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2, // (doorSites.ts now uses throat-only; trimEnds is effectively ignored)
+      trimEnds: 2,
       duplicateBias: 1,
       maxRadius: 10,
     },
@@ -2428,48 +2415,51 @@ export function applyLeverOpensDoorPattern(args: {
     };
   }
 
-  const entranceRoom = rooms[entranceRoomId - 1] ?? rooms[0];
-  const start = entranceRoom ? findAnyFloorInRect(dungeon, entranceRoom) : null;
-  if (!start) {
-    return { ok: false, didCarve: false, reason: "No entrance start tile." };
+  const pick = pickOrderedDoorSiteFromCorridors({
+    rng,
+    dungeon,
+    featureType: ft,
+    entranceRoomId,
+    maxRadius: 10,
+    minDistToWall: 1,
+    preferCorridor: true,
+    trimEnds: 0,
+    duplicateBias: 1,
+  });
+
+  if (!pick.ok) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: `Lever pattern: no ordered door site (${pick.reason}).`,
+      stats: { doorSites: stats },
+    };
   }
 
-  // Enforce ordering: lever must be earlier than the gated door.
-  const roomGraph = buildRoomGraphFromCorridorsForPatterns(dungeon, 10);
-  const roomDist = bfsRoomDistancesForPatterns(roomGraph, entranceRoomId);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const site = candidates[rng.nextInt(0, candidates.length - 1)]!;
     const doorId = allocId();
 
-    const di = idxOf(dungeon.width, site.x, site.y);
-    if ((ft[di] | 0) !== 0) continue;
+    const di = idxOf(dungeon.width, pick.x, pick.y);
+    if ((ft[di] | 0) !== 0) break;
 
-    const dA = roomDist.get(site.roomA);
-    const dB = roomDist.get(site.roomB);
-    if (dA === undefined || dB === undefined) continue;
-    if (dA === dB) continue; // no clear "earlier" side; skip
-
-    const leverRoomId = dA < dB ? site.roomA : site.roomB;
-    const gateRoomId = dA < dB ? site.roomB : site.roomA;
-    const gateDepth = roomDist.get(gateRoomId) ?? 0;
-
-    // Place the door fixture
+    // Place door
     ft[di] = 4;
     fid[di] = doorId;
-    fparam[di] = 2; // "kind" hint (debug/visual only)
+    fparam[di] = 2;
 
     doors.push({
       id: doorId,
-      x: site.x,
-      y: site.y,
-      roomA: leverRoomId, // earlier side
-      roomB: gateRoomId, // later side
+      x: pick.x,
+      y: pick.y,
+      roomA: pick.triggerRoomId, // earlier
+      roomB: pick.gateRoomId, // later
       kind: 2,
-      depth: gateDepth,
+      depth: pick.gateDepth,
     });
 
-    // Place lever inside the *earlier* room.
-    const leverRoom = rooms[leverRoomId - 1] ?? entranceRoom;
+    // Place lever in earlier room
+    const leverRoom =
+      rooms[pick.triggerRoomId - 1] ?? rooms[entranceRoomId - 1] ?? rooms[0];
     if (!leverRoom) {
       // rollback door
       ft[di] = 0;
@@ -2498,7 +2488,7 @@ export function applyLeverOpensDoorPattern(args: {
       id: doorId,
       x: leverP.x,
       y: leverP.y,
-      roomId: leverRoomId,
+      roomId: pick.triggerRoomId,
     });
 
     circuitsById.set(doorId, {
@@ -2508,8 +2498,6 @@ export function applyLeverOpensDoorPattern(args: {
       triggers: [{ kind: "LEVER", refId: doorId }],
       targets: [{ kind: "DOOR", refId: doorId, effect: "TOGGLE" }],
     });
-
-    void computeReachable(dungeon, ft, fid, start, new Set());
 
     return { ok: true, didCarve: false, stats: { doorSites: stats } };
   }
