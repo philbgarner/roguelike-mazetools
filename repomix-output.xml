@@ -4172,1027 +4172,6 @@ export const CP437_TILES = {
 } as const;
 </file>
 
-<file path="src/wizard/WizardScreen.tsx">
-// src/wizard/WizardScreen.tsx
-import React, { useMemo, useEffect } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-
-import {
-  DEFAULT_BSP,
-  DEFAULT_BATCH,
-  DEFAULT_PATTERN,
-  type WizardAction,
-  type WizardState,
-  type WorldConfig,
-  type BspConfig,
-  type BatchConfig,
-  type PatternConfig,
-  type ContentStrategy,
-} from "./wizardReducer";
-
-const stepMotion = {
-  initial: { opacity: 0, x: 10 },
-  animate: { opacity: 1, x: 0, transition: { duration: 0.16 } },
-  exit: { opacity: 0, x: -10, transition: { duration: 0.12 } },
-};
-
-function clampInt(v: number, lo: number, hi: number): number {
-  if (!Number.isFinite(v)) return lo;
-  return Math.max(lo, Math.min(hi, Math.floor(v)));
-}
-
-function Row(p: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      {...p}
-      style={{
-        display: "flex",
-        gap: 10,
-        alignItems: "center",
-        marginBottom: 10,
-        ...(p.style ?? {}),
-      }}
-    />
-  );
-}
-
-function Section(props: { title: string; children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        border: "1px solid rgba(255,255,255,0.12)",
-        borderRadius: 14,
-        padding: 12,
-        background: "rgba(255,255,255,0.03)",
-        marginBottom: 12,
-      }}
-    >
-      <div style={{ fontWeight: 800, marginBottom: 10 }}>{props.title}</div>
-      {props.children}
-    </div>
-  );
-}
-
-function LabeledField(props: {
-  label: string;
-  hint?: string;
-  tooltip?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ flex: 1, minWidth: 220 }}>
-      <div
-        style={{
-          fontSize: 12,
-          opacity: 0.8,
-          marginBottom: 4,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        <b>{props.label}</b>
-
-        {props.tooltip ? (
-          <span
-            title={props.tooltip}
-            style={{
-              display: "inline-flex",
-              width: 16,
-              height: 16,
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 999,
-              border: "1px solid rgba(255,255,255,0.22)",
-              background: "rgba(255,255,255,0.06)",
-              cursor: "help",
-              fontSize: 11,
-              lineHeight: "16px",
-              userSelect: "none",
-              opacity: 0.9,
-            }}
-            aria-label={`${props.label} help`}
-          >
-            i
-          </span>
-        ) : null}
-
-        {props.hint ? (
-          <span style={{ opacity: 0.75 }}>— {props.hint}</span>
-        ) : null}
-      </div>
-
-      {props.children}
-    </div>
-  );
-}
-
-function NumInput(props: {
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <input
-      type="number"
-      value={Number.isFinite(props.value) ? props.value : props.min}
-      min={props.min}
-      max={props.max}
-      step={props.step ?? 1}
-      onChange={(e) => props.onChange(Number(e.target.value))}
-      style={{
-        width: "100%",
-        padding: "9px 10px",
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.05)",
-        color: "rgba(255,255,255,0.92)",
-      }}
-    />
-  );
-}
-
-function TextInput(props: { value: string; onChange: (v: string) => void }) {
-  return (
-    <input
-      value={props.value}
-      onChange={(e) => props.onChange(e.target.value)}
-      style={{
-        width: "100%",
-        padding: "9px 10px",
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.05)",
-        color: "rgba(255,255,255,0.92)",
-      }}
-    />
-  );
-}
-
-function Toggle(props: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}) {
-  return (
-    <label
-      style={{
-        display: "flex",
-        gap: 10,
-        alignItems: "center",
-        cursor: "pointer",
-      }}
-    >
-      <input
-        type="checkbox"
-        checked={props.checked}
-        onChange={(e) => props.onChange(e.target.checked)}
-      />
-      <span>{props.label}</span>
-    </label>
-  );
-}
-
-export default function WizardScreen(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-  previewContract: any;
-}) {
-  const { state, dispatch, previewContract } = props;
-
-  const canStep2 = !!state.world;
-  const canStep3 = !!state.world && !!state.bsp;
-  const canStep4 = !!state.world && !!state.bsp && !!state.mode;
-  const canStep5 = canStep4;
-
-  const stepKey = useMemo(
-    () => `step-${state.step}-${state.mode?.mode ?? "none"}`,
-    [state.step, state.mode?.mode],
-  );
-
-  return (
-    <div className="maze-controls">
-      <div className="maze-header-row">
-        <h2 className="maze-title">World Creation Wizard</h2>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => dispatch({ type: "RESET_ALL" })}>Reset</button>
-        </div>
-      </div>
-
-      <div style={{ opacity: 0.8, marginBottom: 10 }}>
-        Step <b>{state.step}</b> / 5
-      </div>
-
-      {!!state.error && (
-        <div
-          style={{
-            padding: 10,
-            border: "1px solid rgba(251,113,133,0.6)",
-            borderRadius: 12,
-            marginBottom: 12,
-          }}
-        >
-          <b>Execution error:</b> {state.error}
-          <div style={{ height: 8 }} />
-          <button onClick={() => dispatch({ type: "EXEC_CLEAR_ERROR" })}>
-            Clear
-          </button>
-        </div>
-      )}
-
-      <WizardStepper
-        step={state.step}
-        canStep2={canStep2}
-        canStep3={canStep3}
-        canStep4={canStep4}
-        canStep5={canStep5}
-        onGo={(s) => dispatch({ type: "SET_STEP", step: s })}
-      />
-
-      <div style={{ height: 12 }} />
-
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div key={stepKey} {...stepMotion}>
-          {state.step === 1 && <Step1World state={state} dispatch={dispatch} />}
-          {state.step === 2 && <Step2Bsp state={state} dispatch={dispatch} />}
-          {state.step === 3 && <Step3Mode state={state} dispatch={dispatch} />}
-          {state.step === 4 && (
-            <Step4Options state={state} dispatch={dispatch} />
-          )}
-          {state.step === 5 && (
-            <Step5Confirm
-              state={state}
-              dispatch={dispatch}
-              previewContract={previewContract}
-              canRun={canStep5}
-            />
-          )}
-        </motion.div>
-      </AnimatePresence>
-
-      <div style={{ opacity: 0.7, marginTop: 10 }}>
-        Wizard steps enforce the invalidation matrix: upstream edits clear
-        downstream state immediately.
-      </div>
-    </div>
-  );
-}
-
-// --- Stepper --------------------------------------------------------------
-
-function WizardStepper(props: {
-  step: number;
-  canStep2: boolean;
-  canStep3: boolean;
-  canStep4: boolean;
-  canStep5: boolean;
-  onGo: (s: 1 | 2 | 3 | 4 | 5) => void;
-}) {
-  const { step, canStep2, canStep3, canStep4, canStep5, onGo } = props;
-
-  const Btn = (p: {
-    n: 1 | 2 | 3 | 4 | 5;
-    enabled: boolean;
-    label: string;
-  }) => (
-    <button
-      onClick={() => (p.enabled ? onGo(p.n) : null)}
-      disabled={!p.enabled}
-      style={{
-        opacity: step === p.n ? 1 : 0.85,
-        fontWeight: step === p.n ? 800 : 600,
-      }}
-    >
-      {p.label}
-    </button>
-  );
-
-  return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <Btn n={1} enabled={true} label="1 World" />
-      <Btn n={2} enabled={canStep2} label="2 BSP" />
-      <Btn n={3} enabled={canStep3} label="3 Mode" />
-      <Btn n={4} enabled={canStep4} label="4 Options" />
-      <Btn n={5} enabled={canStep5} label="5 Confirm" />
-    </div>
-  );
-}
-
-// --- Step 1 ---------------------------------------------------------------
-
-function Step1World(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-}) {
-  const { state, dispatch } = props;
-
-  const world: WorldConfig = state.world ?? {
-    seed: "demo",
-    width: 64,
-    height: 64,
-  };
-
-  const setWorld = (patch: Partial<WorldConfig>) => {
-    const next: WorldConfig = {
-      seed: patch.seed ?? world.seed,
-      width: patch.width ?? world.width,
-      height: patch.height ?? world.height,
-    };
-    dispatch({ type: "SET_WORLD", world: next });
-  };
-
-  const randomSeed = () => {
-    const s = `seed-${Math.floor(Date.now() / 1000)}`;
-    setWorld({ seed: s });
-  };
-
-  useEffect(() => {
-    if (!state.world) {
-      dispatch({
-        type: "SET_WORLD",
-        world: { seed: "demo", width: 64, height: 64 },
-      });
-    }
-  }, [state.world, dispatch]);
-
-  return (
-    <Section title="Step 1 — World Seed & Dimensions">
-      <Row>
-        <LabeledField label="Seed" hint="manual or randomize">
-          <TextInput
-            value={world.seed}
-            onChange={(v) => setWorld({ seed: v })}
-          />
-        </LabeledField>
-        <div style={{ width: 10 }} />
-        <button onClick={randomSeed}>Randomize</button>
-      </Row>
-
-      <Row>
-        <LabeledField label="Width" hint="tiles">
-          <NumInput
-            value={world.width}
-            min={24}
-            max={256}
-            onChange={(v) => setWorld({ width: clampInt(v, 24, 256) })}
-          />
-        </LabeledField>
-        <LabeledField label="Height" hint="tiles">
-          <NumInput
-            value={world.height}
-            min={24}
-            max={256}
-            onChange={(v) => setWorld({ height: clampInt(v, 24, 256) })}
-          />
-        </LabeledField>
-      </Row>
-
-      <Row style={{ opacity: 0.75 }}>
-        No generation occurs in this step. You are only defining deterministic
-        inputs.
-      </Row>
-
-      <Row>
-        <button
-          onClick={() =>
-            dispatch({ type: "SET_BSP", bsp: DEFAULT_BSP as BspConfig })
-          }
-        >
-          Use BSP defaults
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          disabled={!state.world}
-          onClick={() => dispatch({ type: "FINISH_RUN" })}
-          style={{ fontWeight: 800 }}
-          title="Run immediately using your current edits and defaults for unvisited steps."
-        >
-          Finish &amp; Run
-        </button>
-        <button
-          disabled={!state.world}
-          onClick={() => dispatch({ type: "SET_STEP", step: 2 })}
-        >
-          Next → Step 2
-        </button>
-      </Row>
-    </Section>
-  );
-}
-
-// --- Step 2 ---------------------------------------------------------------
-
-function Step2Bsp(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-}) {
-  const { state, dispatch } = props;
-
-  useEffect(() => {
-    if (state.world && !state.bsp) {
-      dispatch({ type: "SET_BSP", bsp: DEFAULT_BSP as BspConfig });
-    }
-  }, [state.world, state.bsp, dispatch]);
-
-  const bsp: BspConfig = state.bsp ?? (DEFAULT_BSP as BspConfig);
-  const setBsp = (patch: Partial<BspConfig>) => {
-    dispatch({ type: "SET_BSP", bsp: { ...bsp, ...patch } });
-  };
-
-  return (
-    <Section title="Step 2 — BSP Geometry Settings">
-      <Row>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 1 })}>
-          ← Back
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          disabled={!state.world}
-          onClick={() => dispatch({ type: "FINISH_RUN" })}
-          style={{ fontWeight: 800 }}
-        >
-          Finish &amp; Run
-        </button>
-        <button
-          onClick={() =>
-            dispatch({ type: "SET_BSP", bsp: DEFAULT_BSP as BspConfig })
-          }
-        >
-          Reset BSP Defaults
-        </button>
-      </Row>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <LabeledField
-          label="maxDepth"
-          hint="split depth cap"
-          tooltip="Maximum BSP recursion depth. Higher = more partitions (more rooms/corridors), but can get more fragmented/noisy."
-        >
-          <NumInput
-            value={bsp.maxDepth}
-            min={2}
-            max={12}
-            onChange={(v) => setBsp({ maxDepth: clampInt(v, 2, 12) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="splitPadding"
-          hint="min spacing near splits"
-          tooltip="Extra padding enforced around split lines. Higher = fewer skinny partitions and less edge-hugging rooms."
-        >
-          <NumInput
-            value={bsp.splitPadding}
-            min={0}
-            max={6}
-            onChange={(v) => setBsp({ splitPadding: clampInt(v, 0, 6) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="minLeafSize"
-          tooltip="Minimum size of a BSP leaf region (in tiles). Prevents splitting into tiny regions that can't host useful rooms."
-        >
-          <NumInput
-            value={bsp.minLeafSize}
-            min={8}
-            max={64}
-            onChange={(v) => setBsp({ minLeafSize: clampInt(v, 8, 64) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="maxLeafSize"
-          tooltip="Maximum size of a BSP leaf region (in tiles). Regions larger than this tend to be split again (unless maxDepth stops it)."
-        >
-          <NumInput
-            value={bsp.maxLeafSize}
-            min={10}
-            max={96}
-            onChange={(v) => setBsp({ maxLeafSize: clampInt(v, 10, 96) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="roomPadding"
-          tooltip="Clearance between a room rectangle and its containing leaf bounds. Higher = thicker walls/negative space around rooms."
-        >
-          <NumInput
-            value={bsp.roomPadding}
-            min={0}
-            max={6}
-            onChange={(v) => setBsp({ roomPadding: clampInt(v, 0, 6) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="roomFillLeafChance"
-          hint="0..1"
-          tooltip="Probability that a leaf gets a room. Lower = more empty leaves (more corridor/negative space). Higher = denser room placement."
-        >
-          <NumInput
-            value={bsp.roomFillLeafChance}
-            min={0}
-            max={1}
-            step={0.05}
-            onChange={(v) =>
-              setBsp({ roomFillLeafChance: Math.max(0, Math.min(1, v)) })
-            }
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="minRoomSize"
-          tooltip="Minimum room side length (tiles). Prevents tiny closets unless your design wants them."
-        >
-          <NumInput
-            value={bsp.minRoomSize}
-            min={3}
-            max={24}
-            onChange={(v) => setBsp({ minRoomSize: clampInt(v, 3, 24) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="maxRoomSize"
-          tooltip="Maximum room side length (tiles). Caps how large a room can be inside a leaf (even if the leaf is bigger)."
-        >
-          <NumInput
-            value={bsp.maxRoomSize}
-            min={4}
-            max={32}
-            onChange={(v) => setBsp({ maxRoomSize: clampInt(v, 4, 32) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="corridorWidth"
-          tooltip="Corridor thickness in tiles. 1 = classic tight corridors; 2+ = chunkier hallways, easier navigation, more open feel."
-        >
-          <NumInput
-            value={bsp.corridorWidth}
-            min={1}
-            max={4}
-            onChange={(v) => setBsp({ corridorWidth: clampInt(v, 1, 4) })}
-          />
-        </LabeledField>
-
-        <LabeledField
-          label="keepOuterWalls"
-          tooltip="If enabled, the generator keeps a solid border around the map edges (no carve-through to the outside). Useful for containment and nicer silhouettes."
-        >
-          <div
-            style={{
-              padding: 8,
-              border: "1px solid rgba(255,255,255,0.14)",
-              borderRadius: 12,
-            }}
-          >
-            <Toggle
-              checked={bsp.keepOuterWalls}
-              onChange={(v) => setBsp({ keepOuterWalls: v })}
-              label="Keep outer walls"
-            />
-          </div>
-        </LabeledField>
-      </div>
-
-      <Row style={{ opacity: 0.75 }}>
-        This defines geometry only. No content or puzzles are implied by this
-        step.
-      </Row>
-
-      <Row>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 1 })}>
-          ← Back
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          disabled={!state.world || !state.bsp}
-          onClick={() => dispatch({ type: "SET_STEP", step: 3 })}
-        >
-          Next → Step 3
-        </button>
-      </Row>
-    </Section>
-  );
-}
-
-// --- Step 3 ---------------------------------------------------------------
-
-function Step3Mode(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-}) {
-  const { state, dispatch } = props;
-
-  return (
-    <Section title="Step 3 — Generation Mode Selection">
-      <Row>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 2 })}>
-          ← Back
-        </button>
-      </Row>
-
-      <Row>
-        <button
-          onClick={() =>
-            dispatch({ type: "SET_MODE_SINGLE", contentStrategy: "atomic" })
-          }
-          style={{ fontWeight: state.mode?.mode === "single" ? 900 : 600 }}
-        >
-          Single Seed Generation
-        </button>
-        <button
-          onClick={() => dispatch({ type: "SET_MODE_BATCH" })}
-          style={{ fontWeight: state.mode?.mode === "batch" ? 900 : 600 }}
-        >
-          Batch Run
-        </button>
-      </Row>
-
-      <Row style={{ opacity: 0.75 }}>
-        Single produces an inspectable dungeon. Batch produces summary-only
-        diagnostics (no map).
-      </Row>
-
-      <Row>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 2 })}>
-          ← Back
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          disabled={!state.mode}
-          onClick={() => dispatch({ type: "SET_STEP", step: 4 })}
-        >
-          Next → Step 4
-        </button>
-      </Row>
-    </Section>
-  );
-}
-
-// --- Step 4 ---------------------------------------------------------------
-
-function Step4Options(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-}) {
-  const { state, dispatch } = props;
-  const mode = state.mode;
-
-  if (!mode) {
-    return (
-      <Section title="Step 4 — Options">
-        <div style={{ opacity: 0.75 }}>Select a mode in Step 3 first.</div>
-        <Row>
-          <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
-            ← Back
-          </button>
-        </Row>
-      </Section>
-    );
-  }
-
-  const pattern: PatternConfig =
-    mode.pattern ?? (DEFAULT_PATTERN as PatternConfig);
-
-  const setPattern = (patch: Partial<PatternConfig>) => {
-    dispatch({ type: "SET_PATTERN", patch });
-  };
-
-  const resetPattern = () =>
-    dispatch({
-      type: "SET_PATTERN",
-      patch: { ...(DEFAULT_PATTERN as PatternConfig) },
-    });
-
-  const setSingleStrategy = (contentStrategy: ContentStrategy) => {
-    dispatch({ type: "SET_SINGLE_CONTENT_STRATEGY", contentStrategy });
-  };
-
-  const setBatch = (batch: BatchConfig) => {
-    dispatch({ type: "SET_BATCH", batch });
-  };
-
-  return (
-    <Section title="Step 4 — Content Strategy / Batch Parameters">
-      <Row>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
-          ← Back
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          disabled={!state.world}
-          onClick={() => dispatch({ type: "FINISH_RUN" })}
-          style={{ fontWeight: 800 }}
-        >
-          Finish &amp; Run
-        </button>
-        <button onClick={resetPattern}>Reset Pattern Defaults</button>
-      </Row>
-
-      {mode.mode === "single" ? (
-        <>
-          <Section title="Single Seed: Content Strategy">
-            <Row>
-              <button
-                onClick={() => setSingleStrategy("atomic")}
-                style={{
-                  fontWeight: mode.contentStrategy === "atomic" ? 900 : 600,
-                }}
-              >
-                Atomic Content Only
-              </button>
-
-              <button
-                onClick={() => setSingleStrategy("patterns")}
-                style={{
-                  fontWeight: mode.contentStrategy === "patterns" ? 900 : 600,
-                }}
-              >
-                Run Composition Patterns
-              </button>
-            </Row>
-
-            <Row style={{ opacity: 0.75 }}>
-              Atomic places fixtures without composition patterns. Patterns may
-              skip; generation remains best-effort.
-            </Row>
-          </Section>
-        </>
-      ) : (
-        <>
-          <Section title="Batch: Parameters (summary-only)">
-            <Row>
-              <button onClick={() => setBatch(DEFAULT_BATCH as BatchConfig)}>
-                Use default batch params
-              </button>
-            </Row>
-
-            <Row>
-              <LabeledField label="runs">
-                <NumInput
-                  value={mode.batch.runs}
-                  min={10}
-                  max={5000}
-                  onChange={(v) =>
-                    setBatch({ ...mode.batch, runs: clampInt(v, 10, 5000) })
-                  }
-                />
-              </LabeledField>
-
-              <LabeledField label="seedPrefix">
-                <TextInput
-                  value={mode.batch.seedPrefix}
-                  onChange={(v) => setBatch({ ...mode.batch, seedPrefix: v })}
-                />
-              </LabeledField>
-
-              <LabeledField label="startIndex">
-                <NumInput
-                  value={mode.batch.startIndex}
-                  min={0}
-                  max={999999}
-                  onChange={(v) =>
-                    setBatch({
-                      ...mode.batch,
-                      startIndex: clampInt(v, 0, 999999),
-                    })
-                  }
-                />
-              </LabeledField>
-            </Row>
-
-            <Row>
-              <Toggle
-                checked={mode.batch.summaryOnly}
-                onChange={(v) => setBatch({ ...mode.batch, summaryOnly: v })}
-                label="Summary only (no per-seed inspection)"
-              />
-            </Row>
-          </Section>
-        </>
-      )}
-
-      <Section title="Pattern Configuration">
-        <div style={{ opacity: 0.75, marginBottom: 10 }}>
-          Patterns apply when enabled (single: only if strategy=patterns; batch:
-          always used by harness).
-        </div>
-
-        <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
-        >
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 12,
-            }}
-          >
-            <Toggle
-              checked={pattern.includeLeverHiddenPocket}
-              onChange={(v) => setPattern({ includeLeverHiddenPocket: v })}
-              label="Include: leverHiddenPocket"
-            />
-            <div style={{ height: 8 }} />
-            <LabeledField label="leverHiddenPocketSize">
-              <NumInput
-                value={pattern.leverHiddenPocketSize}
-                min={3}
-                max={12}
-                onChange={(v) =>
-                  setPattern({ leverHiddenPocketSize: clampInt(v, 3, 12) })
-                }
-              />
-            </LabeledField>
-          </div>
-
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 12,
-            }}
-          >
-            <Toggle
-              checked={pattern.includeLeverOpensDoor}
-              onChange={(v) => setPattern({ includeLeverOpensDoor: v })}
-              label="Include: leverOpensDoor"
-            />
-            <div style={{ height: 8 }} />
-            <LabeledField label="leverOpensDoorCount">
-              <NumInput
-                value={pattern.leverOpensDoorCount}
-                min={0}
-                max={6}
-                onChange={(v) =>
-                  setPattern({ leverOpensDoorCount: clampInt(v, 0, 6) })
-                }
-              />
-            </LabeledField>
-          </div>
-
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 12,
-            }}
-          >
-            <Toggle
-              checked={pattern.includePlateOpensDoor}
-              onChange={(v) => setPattern({ includePlateOpensDoor: v })}
-              label="Include: plateOpensDoor"
-            />
-            <div style={{ height: 8 }} />
-            <LabeledField label="plateOpensDoorCount">
-              <NumInput
-                value={pattern.plateOpensDoorCount}
-                min={0}
-                max={6}
-                onChange={(v) =>
-                  setPattern({ plateOpensDoorCount: clampInt(v, 0, 6) })
-                }
-              />
-            </LabeledField>
-          </div>
-
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 12,
-            }}
-          >
-            <Toggle
-              checked={pattern.includeIntroGate}
-              onChange={(v) => setPattern({ includeIntroGate: v })}
-              label="Include: intro gate"
-            />
-            <div style={{ height: 8 }} />
-            <LabeledField label="patternMaxAttempts">
-              <NumInput
-                value={pattern.patternMaxAttempts}
-                min={10}
-                max={200}
-                onChange={(v) =>
-                  setPattern({ patternMaxAttempts: clampInt(v, 10, 200) })
-                }
-              />
-            </LabeledField>
-          </div>
-
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 12,
-            }}
-          >
-            <Toggle
-              checked={pattern.includePhase3Compositions}
-              onChange={(v) => setPattern({ includePhase3Compositions: v })}
-              label="Include: Phase 3 compositions"
-            />
-            <div style={{ height: 8 }} />
-            <LabeledField label="gateThenOptionalRewardCount">
-              <NumInput
-                value={pattern.gateThenOptionalRewardCount}
-                min={0}
-                max={4}
-                onChange={(v) =>
-                  setPattern({ gateThenOptionalRewardCount: clampInt(v, 0, 4) })
-                }
-              />
-            </LabeledField>
-          </div>
-        </div>
-      </Section>
-
-      <Row>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
-          ← Back
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={() => {
-            dispatch({ type: "DERIVE_CONTRACT" });
-            dispatch({ type: "SET_STEP", step: 5 });
-          }}
-        >
-          Next → Step 5 (Run Summary)
-        </button>
-      </Row>
-    </Section>
-  );
-}
-
-// --- Step 5 ---------------------------------------------------------------
-
-function Step5Confirm(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-  previewContract: any;
-  canRun: boolean;
-}) {
-  const { state, dispatch, previewContract, canRun } = props;
-
-  return (
-    <Section title="Step 5 — Run Summary & Confirmation (MANDATORY)">
-      <Row>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 4 })}>
-          ← Back
-        </button>
-        <div style={{ flex: 1 }} />
-        <button onClick={() => dispatch({ type: "RESET_ALL" })}>Reset</button>
-      </Row>
-
-      {!previewContract ? (
-        <div style={{ opacity: 0.75 }}>
-          Incomplete configuration (Steps 1–4).
-        </div>
-      ) : (
-        <>
-          <div style={{ opacity: 0.8, marginBottom: 8 }}>
-            Execution may begin from this step, or via “Finish &amp; Run” from
-            any step.
-          </div>
-
-          <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
-            {JSON.stringify(previewContract, null, 2)}
-          </pre>
-
-          <Row>
-            <button
-              disabled={!state.world}
-              onClick={() => dispatch({ type: "FINISH_RUN" })}
-              style={{ fontWeight: 800, marginRight: 8 }}
-              title="Run immediately using your current edits and defaults for unvisited steps."
-            >
-              Finish &amp; Run
-            </button>
-            <button
-              disabled={!canRun}
-              onClick={() => {
-                dispatch({ type: "DERIVE_CONTRACT" });
-                dispatch({ type: "EXEC_START" });
-              }}
-              style={{ fontWeight: 900 }}
-            >
-              Run
-            </button>
-          </Row>
-        </>
-      )}
-    </Section>
-  );
-}
-</file>
-
 <file path="src/doorSites.ts">
 // src/doorSites.ts
 //
@@ -6288,6 +5267,1027 @@ export function wizardReducer(
     default:
       return state;
   }
+}
+</file>
+
+<file path="src/wizard/WizardScreen.tsx">
+// src/wizard/WizardScreen.tsx
+import React, { useMemo, useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+
+import {
+  DEFAULT_BSP,
+  DEFAULT_BATCH,
+  DEFAULT_PATTERN,
+  type WizardAction,
+  type WizardState,
+  type WorldConfig,
+  type BspConfig,
+  type BatchConfig,
+  type PatternConfig,
+  type ContentStrategy,
+} from "./wizardReducer";
+
+const stepMotion = {
+  initial: { opacity: 0, x: 10 },
+  animate: { opacity: 1, x: 0, transition: { duration: 0.16 } },
+  exit: { opacity: 0, x: -10, transition: { duration: 0.12 } },
+};
+
+function clampInt(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return Math.max(lo, Math.min(hi, Math.floor(v)));
+}
+
+function Row(p: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      {...p}
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        marginBottom: 10,
+        ...(p.style ?? {}),
+      }}
+    />
+  );
+}
+
+function Section(props: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 14,
+        padding: 12,
+        background: "rgba(255,255,255,0.03)",
+        marginBottom: 12,
+      }}
+    >
+      <div style={{ fontWeight: 800, marginBottom: 10 }}>{props.title}</div>
+      {props.children}
+    </div>
+  );
+}
+
+function LabeledField(props: {
+  label: string;
+  hint?: string;
+  tooltip?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ flex: 1, minWidth: 220 }}>
+      <div
+        style={{
+          fontSize: 12,
+          opacity: 0.8,
+          marginBottom: 4,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <b>{props.label}</b>
+
+        {props.tooltip ? (
+          <span
+            title={props.tooltip}
+            style={{
+              display: "inline-flex",
+              width: 16,
+              height: 16,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 999,
+              border: "1px solid rgba(255,255,255,0.22)",
+              background: "rgba(255,255,255,0.06)",
+              cursor: "help",
+              fontSize: 11,
+              lineHeight: "16px",
+              userSelect: "none",
+              opacity: 0.9,
+            }}
+            aria-label={`${props.label} help`}
+          >
+            i
+          </span>
+        ) : null}
+
+        {props.hint ? (
+          <span style={{ opacity: 0.75 }}>— {props.hint}</span>
+        ) : null}
+      </div>
+
+      {props.children}
+    </div>
+  );
+}
+
+function NumInput(props: {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <input
+      type="number"
+      value={Number.isFinite(props.value) ? props.value : props.min}
+      min={props.min}
+      max={props.max}
+      step={props.step ?? 1}
+      onChange={(e) => props.onChange(Number(e.target.value))}
+      style={{
+        width: "100%",
+        padding: "9px 10px",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.14)",
+        background: "rgba(255,255,255,0.05)",
+        color: "rgba(255,255,255,0.92)",
+      }}
+    />
+  );
+}
+
+function TextInput(props: { value: string; onChange: (v: string) => void }) {
+  return (
+    <input
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+      style={{
+        width: "100%",
+        padding: "9px 10px",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.14)",
+        background: "rgba(255,255,255,0.05)",
+        color: "rgba(255,255,255,0.92)",
+      }}
+    />
+  );
+}
+
+function Toggle(props: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        cursor: "pointer",
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={props.checked}
+        onChange={(e) => props.onChange(e.target.checked)}
+      />
+      <span>{props.label}</span>
+    </label>
+  );
+}
+
+export default function WizardScreen(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+  previewContract: any;
+}) {
+  const { state, dispatch, previewContract } = props;
+
+  const canStep2 = !!state.world;
+  const canStep3 = !!state.world && !!state.bsp;
+  const canStep4 = !!state.world && !!state.bsp && !!state.mode;
+  const canStep5 = canStep4;
+
+  const stepKey = useMemo(
+    () => `step-${state.step}-${state.mode?.mode ?? "none"}`,
+    [state.step, state.mode?.mode],
+  );
+
+  return (
+    <div className="maze-controls">
+      <div className="maze-header-row">
+        <h2 className="maze-title">World Creation Wizard</h2>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => dispatch({ type: "RESET_ALL" })}>Reset</button>
+        </div>
+      </div>
+
+      <div style={{ opacity: 0.8, marginBottom: 10 }}>
+        Step <b>{state.step}</b> / 5
+      </div>
+
+      {!!state.error && (
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid rgba(251,113,133,0.6)",
+            borderRadius: 12,
+            marginBottom: 12,
+          }}
+        >
+          <b>Execution error:</b> {state.error}
+          <div style={{ height: 8 }} />
+          <button onClick={() => dispatch({ type: "EXEC_CLEAR_ERROR" })}>
+            Clear
+          </button>
+        </div>
+      )}
+
+      <WizardStepper
+        step={state.step}
+        canStep2={canStep2}
+        canStep3={canStep3}
+        canStep4={canStep4}
+        canStep5={canStep5}
+        onGo={(s) => dispatch({ type: "SET_STEP", step: s })}
+      />
+
+      <div style={{ height: 12 }} />
+
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div key={stepKey} {...stepMotion}>
+          {state.step === 1 && <Step1World state={state} dispatch={dispatch} />}
+          {state.step === 2 && <Step2Bsp state={state} dispatch={dispatch} />}
+          {state.step === 3 && <Step3Mode state={state} dispatch={dispatch} />}
+          {state.step === 4 && (
+            <Step4Options state={state} dispatch={dispatch} />
+          )}
+          {state.step === 5 && (
+            <Step5Confirm
+              state={state}
+              dispatch={dispatch}
+              previewContract={previewContract}
+              canRun={canStep5}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      <div style={{ opacity: 0.7, marginTop: 10 }}>
+        Wizard steps enforce the invalidation matrix: upstream edits clear
+        downstream state immediately.
+      </div>
+    </div>
+  );
+}
+
+// --- Stepper --------------------------------------------------------------
+
+function WizardStepper(props: {
+  step: number;
+  canStep2: boolean;
+  canStep3: boolean;
+  canStep4: boolean;
+  canStep5: boolean;
+  onGo: (s: 1 | 2 | 3 | 4 | 5) => void;
+}) {
+  const { step, canStep2, canStep3, canStep4, canStep5, onGo } = props;
+
+  const Btn = (p: {
+    n: 1 | 2 | 3 | 4 | 5;
+    enabled: boolean;
+    label: string;
+  }) => (
+    <button
+      onClick={() => (p.enabled ? onGo(p.n) : null)}
+      disabled={!p.enabled}
+      style={{
+        opacity: step === p.n ? 1 : 0.85,
+        fontWeight: step === p.n ? 800 : 600,
+      }}
+    >
+      {p.label}
+    </button>
+  );
+
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <Btn n={1} enabled={true} label="1 World" />
+      <Btn n={2} enabled={canStep2} label="2 BSP" />
+      <Btn n={3} enabled={canStep3} label="3 Mode" />
+      <Btn n={4} enabled={canStep4} label="4 Options" />
+      <Btn n={5} enabled={canStep5} label="5 Confirm" />
+    </div>
+  );
+}
+
+// --- Step 1 ---------------------------------------------------------------
+
+function Step1World(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+
+  const world: WorldConfig = state.world ?? {
+    seed: "demo",
+    width: 64,
+    height: 64,
+  };
+
+  const setWorld = (patch: Partial<WorldConfig>) => {
+    const next: WorldConfig = {
+      seed: patch.seed ?? world.seed,
+      width: patch.width ?? world.width,
+      height: patch.height ?? world.height,
+    };
+    dispatch({ type: "SET_WORLD", world: next });
+  };
+
+  const randomSeed = () => {
+    const s = `seed-${Math.floor(Date.now() / 1000)}`;
+    setWorld({ seed: s });
+  };
+
+  useEffect(() => {
+    if (!state.world) {
+      dispatch({
+        type: "SET_WORLD",
+        world: { seed: "demo", width: 64, height: 64 },
+      });
+    }
+  }, [state.world, dispatch]);
+
+  return (
+    <Section title="Step 1 — World Seed & Dimensions">
+      <Row>
+        <LabeledField label="Seed" hint="manual or randomize">
+          <TextInput
+            value={world.seed}
+            onChange={(v) => setWorld({ seed: v })}
+          />
+        </LabeledField>
+        <div style={{ width: 10 }} />
+        <button onClick={randomSeed}>Randomize</button>
+      </Row>
+
+      <Row>
+        <LabeledField label="Width" hint="tiles">
+          <NumInput
+            value={world.width}
+            min={24}
+            max={256}
+            onChange={(v) => setWorld({ width: clampInt(v, 24, 256) })}
+          />
+        </LabeledField>
+        <LabeledField label="Height" hint="tiles">
+          <NumInput
+            value={world.height}
+            min={24}
+            max={256}
+            onChange={(v) => setWorld({ height: clampInt(v, 24, 256) })}
+          />
+        </LabeledField>
+      </Row>
+
+      <Row style={{ opacity: 0.75 }}>
+        No generation occurs in this step. You are only defining deterministic
+        inputs.
+      </Row>
+
+      <Row>
+        <button
+          onClick={() =>
+            dispatch({ type: "SET_BSP", bsp: DEFAULT_BSP as BspConfig })
+          }
+        >
+          Use BSP defaults
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          disabled={!state.world}
+          onClick={() => dispatch({ type: "FINISH_RUN" })}
+          style={{ fontWeight: 800 }}
+          title="Run immediately using your current edits and defaults for unvisited steps."
+        >
+          Finish &amp; Run
+        </button>
+        <button
+          disabled={!state.world}
+          onClick={() => dispatch({ type: "SET_STEP", step: 2 })}
+        >
+          Next → Step 2
+        </button>
+      </Row>
+    </Section>
+  );
+}
+
+// --- Step 2 ---------------------------------------------------------------
+
+function Step2Bsp(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+
+  useEffect(() => {
+    if (state.world && !state.bsp) {
+      dispatch({ type: "SET_BSP", bsp: DEFAULT_BSP as BspConfig });
+    }
+  }, [state.world, state.bsp, dispatch]);
+
+  const bsp: BspConfig = state.bsp ?? (DEFAULT_BSP as BspConfig);
+  const setBsp = (patch: Partial<BspConfig>) => {
+    dispatch({ type: "SET_BSP", bsp: { ...bsp, ...patch } });
+  };
+
+  return (
+    <Section title="Step 2 — BSP Geometry Settings">
+      <Row>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 1 })}>
+          ← Back
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          disabled={!state.world}
+          onClick={() => dispatch({ type: "FINISH_RUN" })}
+          style={{ fontWeight: 800 }}
+        >
+          Finish &amp; Run
+        </button>
+        <button
+          onClick={() =>
+            dispatch({ type: "SET_BSP", bsp: DEFAULT_BSP as BspConfig })
+          }
+        >
+          Reset BSP Defaults
+        </button>
+      </Row>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <LabeledField
+          label="maxDepth"
+          hint="split depth cap"
+          tooltip="Maximum BSP recursion depth. Higher = more partitions (more rooms/corridors), but can get more fragmented/noisy."
+        >
+          <NumInput
+            value={bsp.maxDepth}
+            min={2}
+            max={12}
+            onChange={(v) => setBsp({ maxDepth: clampInt(v, 2, 12) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="splitPadding"
+          hint="min spacing near splits"
+          tooltip="Extra padding enforced around split lines. Higher = fewer skinny partitions and less edge-hugging rooms."
+        >
+          <NumInput
+            value={bsp.splitPadding}
+            min={0}
+            max={6}
+            onChange={(v) => setBsp({ splitPadding: clampInt(v, 0, 6) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="minLeafSize"
+          tooltip="Minimum size of a BSP leaf region (in tiles). Prevents splitting into tiny regions that can't host useful rooms."
+        >
+          <NumInput
+            value={bsp.minLeafSize}
+            min={8}
+            max={64}
+            onChange={(v) => setBsp({ minLeafSize: clampInt(v, 8, 64) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="maxLeafSize"
+          tooltip="Maximum size of a BSP leaf region (in tiles). Regions larger than this tend to be split again (unless maxDepth stops it)."
+        >
+          <NumInput
+            value={bsp.maxLeafSize}
+            min={10}
+            max={96}
+            onChange={(v) => setBsp({ maxLeafSize: clampInt(v, 10, 96) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="roomPadding"
+          tooltip="Clearance between a room rectangle and its containing leaf bounds. Higher = thicker walls/negative space around rooms."
+        >
+          <NumInput
+            value={bsp.roomPadding}
+            min={0}
+            max={6}
+            onChange={(v) => setBsp({ roomPadding: clampInt(v, 0, 6) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="roomFillLeafChance"
+          hint="0..1"
+          tooltip="Probability that a leaf gets a room. Lower = more empty leaves (more corridor/negative space). Higher = denser room placement."
+        >
+          <NumInput
+            value={bsp.roomFillLeafChance}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(v) =>
+              setBsp({ roomFillLeafChance: Math.max(0, Math.min(1, v)) })
+            }
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="minRoomSize"
+          tooltip="Minimum room side length (tiles). Prevents tiny closets unless your design wants them."
+        >
+          <NumInput
+            value={bsp.minRoomSize}
+            min={3}
+            max={24}
+            onChange={(v) => setBsp({ minRoomSize: clampInt(v, 3, 24) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="maxRoomSize"
+          tooltip="Maximum room side length (tiles). Caps how large a room can be inside a leaf (even if the leaf is bigger)."
+        >
+          <NumInput
+            value={bsp.maxRoomSize}
+            min={4}
+            max={32}
+            onChange={(v) => setBsp({ maxRoomSize: clampInt(v, 4, 32) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="corridorWidth"
+          tooltip="Corridor thickness in tiles. 1 = classic tight corridors; 2+ = chunkier hallways, easier navigation, more open feel."
+        >
+          <NumInput
+            value={bsp.corridorWidth}
+            min={1}
+            max={4}
+            onChange={(v) => setBsp({ corridorWidth: clampInt(v, 1, 4) })}
+          />
+        </LabeledField>
+
+        <LabeledField
+          label="keepOuterWalls"
+          tooltip="If enabled, the generator keeps a solid border around the map edges (no carve-through to the outside). Useful for containment and nicer silhouettes."
+        >
+          <div
+            style={{
+              padding: 8,
+              border: "1px solid rgba(255,255,255,0.14)",
+              borderRadius: 12,
+            }}
+          >
+            <Toggle
+              checked={bsp.keepOuterWalls}
+              onChange={(v) => setBsp({ keepOuterWalls: v })}
+              label="Keep outer walls"
+            />
+          </div>
+        </LabeledField>
+      </div>
+
+      <Row style={{ opacity: 0.75 }}>
+        This defines geometry only. No content or puzzles are implied by this
+        step.
+      </Row>
+
+      <Row>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 1 })}>
+          ← Back
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          disabled={!state.world || !state.bsp}
+          onClick={() => dispatch({ type: "SET_STEP", step: 3 })}
+        >
+          Next → Step 3
+        </button>
+      </Row>
+    </Section>
+  );
+}
+
+// --- Step 3 ---------------------------------------------------------------
+
+function Step3Mode(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+
+  return (
+    <Section title="Step 3 — Generation Mode Selection">
+      <Row>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 2 })}>
+          ← Back
+        </button>
+      </Row>
+
+      <Row>
+        <button
+          onClick={() =>
+            dispatch({ type: "SET_MODE_SINGLE", contentStrategy: "atomic" })
+          }
+          style={{ fontWeight: state.mode?.mode === "single" ? 900 : 600 }}
+        >
+          Single Seed Generation
+        </button>
+        <button
+          onClick={() => dispatch({ type: "SET_MODE_BATCH" })}
+          style={{ fontWeight: state.mode?.mode === "batch" ? 900 : 600 }}
+        >
+          Batch Run
+        </button>
+      </Row>
+
+      <Row style={{ opacity: 0.75 }}>
+        Single produces an inspectable dungeon. Batch produces summary-only
+        diagnostics (no map).
+      </Row>
+
+      <Row>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 2 })}>
+          ← Back
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          disabled={!state.mode}
+          onClick={() => dispatch({ type: "SET_STEP", step: 4 })}
+        >
+          Next → Step 4
+        </button>
+      </Row>
+    </Section>
+  );
+}
+
+// --- Step 4 ---------------------------------------------------------------
+
+function Step4Options(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+  const mode = state.mode;
+
+  if (!mode) {
+    return (
+      <Section title="Step 4 — Options">
+        <div style={{ opacity: 0.75 }}>Select a mode in Step 3 first.</div>
+        <Row>
+          <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
+            ← Back
+          </button>
+        </Row>
+      </Section>
+    );
+  }
+
+  const pattern: PatternConfig =
+    mode.pattern ?? (DEFAULT_PATTERN as PatternConfig);
+
+  const setPattern = (patch: Partial<PatternConfig>) => {
+    dispatch({ type: "SET_PATTERN", patch });
+  };
+
+  const resetPattern = () =>
+    dispatch({
+      type: "SET_PATTERN",
+      patch: { ...(DEFAULT_PATTERN as PatternConfig) },
+    });
+
+  const setSingleStrategy = (contentStrategy: ContentStrategy) => {
+    dispatch({ type: "SET_SINGLE_CONTENT_STRATEGY", contentStrategy });
+  };
+
+  const setBatch = (batch: BatchConfig) => {
+    dispatch({ type: "SET_BATCH", batch });
+  };
+
+  return (
+    <Section title="Step 4 — Content Strategy / Batch Parameters">
+      <Row>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
+          ← Back
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          disabled={!state.world}
+          onClick={() => dispatch({ type: "FINISH_RUN" })}
+          style={{ fontWeight: 800 }}
+        >
+          Finish &amp; Run
+        </button>
+        <button onClick={resetPattern}>Reset Pattern Defaults</button>
+      </Row>
+
+      {mode.mode === "single" ? (
+        <>
+          <Section title="Single Seed: Content Strategy">
+            <Row>
+              <button
+                onClick={() => setSingleStrategy("atomic")}
+                style={{
+                  fontWeight: mode.contentStrategy === "atomic" ? 900 : 600,
+                }}
+              >
+                Atomic Content Only
+              </button>
+
+              <button
+                onClick={() => setSingleStrategy("patterns")}
+                style={{
+                  fontWeight: mode.contentStrategy === "patterns" ? 900 : 600,
+                }}
+              >
+                Run Composition Patterns
+              </button>
+            </Row>
+
+            <Row style={{ opacity: 0.75 }}>
+              Atomic places fixtures without composition patterns. Patterns may
+              skip; generation remains best-effort.
+            </Row>
+          </Section>
+        </>
+      ) : (
+        <>
+          <Section title="Batch: Parameters (summary-only)">
+            <Row>
+              <button onClick={() => setBatch(DEFAULT_BATCH as BatchConfig)}>
+                Use default batch params
+              </button>
+            </Row>
+
+            <Row>
+              <LabeledField label="runs">
+                <NumInput
+                  value={mode.batch.runs}
+                  min={10}
+                  max={5000}
+                  onChange={(v) =>
+                    setBatch({ ...mode.batch, runs: clampInt(v, 10, 5000) })
+                  }
+                />
+              </LabeledField>
+
+              <LabeledField label="seedPrefix">
+                <TextInput
+                  value={mode.batch.seedPrefix}
+                  onChange={(v) => setBatch({ ...mode.batch, seedPrefix: v })}
+                />
+              </LabeledField>
+
+              <LabeledField label="startIndex">
+                <NumInput
+                  value={mode.batch.startIndex}
+                  min={0}
+                  max={999999}
+                  onChange={(v) =>
+                    setBatch({
+                      ...mode.batch,
+                      startIndex: clampInt(v, 0, 999999),
+                    })
+                  }
+                />
+              </LabeledField>
+            </Row>
+
+            <Row>
+              <Toggle
+                checked={mode.batch.summaryOnly}
+                onChange={(v) => setBatch({ ...mode.batch, summaryOnly: v })}
+                label="Summary only (no per-seed inspection)"
+              />
+            </Row>
+          </Section>
+        </>
+      )}
+
+      <Section title="Pattern Configuration">
+        <div style={{ opacity: 0.75, marginBottom: 10 }}>
+          Patterns apply when enabled (single: only if strategy=patterns; batch:
+          always used by harness).
+        </div>
+
+        <div
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
+        >
+          <div
+            style={{
+              padding: 10,
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 12,
+            }}
+          >
+            <Toggle
+              checked={pattern.includeLeverHiddenPocket}
+              onChange={(v) => setPattern({ includeLeverHiddenPocket: v })}
+              label="Include: leverHiddenPocket"
+            />
+            <div style={{ height: 8 }} />
+            <LabeledField label="leverHiddenPocketSize">
+              <NumInput
+                value={pattern.leverHiddenPocketSize}
+                min={3}
+                max={12}
+                onChange={(v) =>
+                  setPattern({ leverHiddenPocketSize: clampInt(v, 3, 12) })
+                }
+              />
+            </LabeledField>
+          </div>
+
+          <div
+            style={{
+              padding: 10,
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 12,
+            }}
+          >
+            <Toggle
+              checked={pattern.includeLeverOpensDoor}
+              onChange={(v) => setPattern({ includeLeverOpensDoor: v })}
+              label="Include: leverOpensDoor"
+            />
+            <div style={{ height: 8 }} />
+            <LabeledField label="leverOpensDoorCount">
+              <NumInput
+                value={pattern.leverOpensDoorCount}
+                min={0}
+                max={6}
+                onChange={(v) =>
+                  setPattern({ leverOpensDoorCount: clampInt(v, 0, 6) })
+                }
+              />
+            </LabeledField>
+          </div>
+
+          <div
+            style={{
+              padding: 10,
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 12,
+            }}
+          >
+            <Toggle
+              checked={pattern.includePlateOpensDoor}
+              onChange={(v) => setPattern({ includePlateOpensDoor: v })}
+              label="Include: plateOpensDoor"
+            />
+            <div style={{ height: 8 }} />
+            <LabeledField label="plateOpensDoorCount">
+              <NumInput
+                value={pattern.plateOpensDoorCount}
+                min={0}
+                max={6}
+                onChange={(v) =>
+                  setPattern({ plateOpensDoorCount: clampInt(v, 0, 6) })
+                }
+              />
+            </LabeledField>
+          </div>
+
+          <div
+            style={{
+              padding: 10,
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 12,
+            }}
+          >
+            <Toggle
+              checked={pattern.includeIntroGate}
+              onChange={(v) => setPattern({ includeIntroGate: v })}
+              label="Include: intro gate"
+            />
+            <div style={{ height: 8 }} />
+            <LabeledField label="patternMaxAttempts">
+              <NumInput
+                value={pattern.patternMaxAttempts}
+                min={10}
+                max={200}
+                onChange={(v) =>
+                  setPattern({ patternMaxAttempts: clampInt(v, 10, 200) })
+                }
+              />
+            </LabeledField>
+          </div>
+
+          <div
+            style={{
+              padding: 10,
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 12,
+            }}
+          >
+            <Toggle
+              checked={pattern.includePhase3Compositions}
+              onChange={(v) => setPattern({ includePhase3Compositions: v })}
+              label="Include: Phase 3 compositions"
+            />
+            <div style={{ height: 8 }} />
+            <LabeledField label="gateThenOptionalRewardCount">
+              <NumInput
+                value={pattern.gateThenOptionalRewardCount}
+                min={0}
+                max={4}
+                onChange={(v) =>
+                  setPattern({ gateThenOptionalRewardCount: clampInt(v, 0, 4) })
+                }
+              />
+            </LabeledField>
+          </div>
+        </div>
+      </Section>
+
+      <Row>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
+          ← Back
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => {
+            dispatch({ type: "DERIVE_CONTRACT" });
+            dispatch({ type: "SET_STEP", step: 5 });
+          }}
+        >
+          Next → Step 5 (Run Summary)
+        </button>
+      </Row>
+    </Section>
+  );
+}
+
+// --- Step 5 ---------------------------------------------------------------
+
+function Step5Confirm(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+  previewContract: any;
+  canRun: boolean;
+}) {
+  const { state, dispatch, previewContract, canRun } = props;
+
+  return (
+    <Section title="Step 5 — Run Summary & Confirmation (MANDATORY)">
+      <Row>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 4 })}>
+          ← Back
+        </button>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => dispatch({ type: "RESET_ALL" })}>Reset</button>
+      </Row>
+
+      {!previewContract ? (
+        <div style={{ opacity: 0.75 }}>
+          Incomplete configuration (Steps 1–4).
+        </div>
+      ) : (
+        <>
+          <div style={{ opacity: 0.8, marginBottom: 8 }}>
+            Execution may begin from this step, or via “Finish &amp; Run” from
+            any step.
+          </div>
+
+          <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
+            {JSON.stringify(previewContract, null, 2)}
+          </pre>
+
+          <Row>
+            <button
+              disabled={!state.world}
+              onClick={() => dispatch({ type: "FINISH_RUN" })}
+              style={{ fontWeight: 800, marginRight: 8 }}
+              title="Run immediately using your current edits and defaults for unvisited steps."
+            >
+              Finish &amp; Run
+            </button>
+            <button
+              disabled={!canRun}
+              onClick={() => {
+                dispatch({ type: "DERIVE_CONTRACT" });
+                dispatch({ type: "EXEC_START" });
+              }}
+              style={{ fontWeight: 900 }}
+            >
+              Run
+            </button>
+          </Row>
+        </>
+      )}
+    </Section>
+  );
 }
 </file>
 
@@ -14664,6 +14664,451 @@ export function applyPlateOpensDoorPattern(args: {
 }
 </file>
 
+<file path="src/App.tsx">
+// src/App.tsx
+import React, { useEffect, useMemo, useReducer } from "react";
+import "./styles.css";
+import { computeStartCell } from "./inspect/computeStartCell";
+import { AnimatePresence, motion } from "framer-motion";
+
+import SingleInspectView from "./inspect/SingleInspectView";
+import BatchResultsView from "./inspect/BatchResultsView";
+
+import {
+  wizardReducer,
+  initialWizardState,
+  deriveRunContract,
+  type WizardState,
+  type WizardAction,
+} from "./wizard/wizardReducer";
+
+import { generateBspDungeon, generateDungeonContent } from "./mazeGen";
+import {
+  initDungeonRuntimeState,
+  derivePlatesFromBlocks,
+} from "./dungeonState";
+import { evaluateCircuits } from "./evaluateCircuits";
+import { aggregateBatchRuns, type BatchRunInput } from "./batchStats";
+import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
+
+import WizardScreen from "./wizard/WizardScreen";
+
+// --- Thin Shell Router --------------------------------------------------------
+
+const screenMotion = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.18 } },
+  exit: { opacity: 0, y: -8, transition: { duration: 0.14 } },
+};
+
+export default function App() {
+  const [state, dispatch] = useReducer(
+    wizardReducer,
+    undefined,
+    initialWizardState,
+  );
+
+  // Step 5 wants a read-only preview; we compute a "would-be contract" even if
+  // state.contract isn't derived yet.
+  const previewContract = useMemo(() => {
+    return state.contract ?? deriveRunContract(state);
+  }, [state]);
+
+  // Derive a stable "screen key" for transitions.
+  const screenKey = useMemo(() => {
+    if (state.step <= 5)
+      return `wizard-${state.step}-${state.mode?.mode ?? "none"}`;
+    if (state.step === 6) return "exec";
+    return `inspect-${state.result?.kind ?? "none"}`;
+  }, [state.step, state.mode?.mode, state.result?.kind]);
+
+  const centered = state.step <= 6; // wizard + execution are centered panels
+
+  return (
+    <div className={`maze-app ${centered ? "maze-app--centered" : ""}`}>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div key={screenKey} {...screenMotion} style={{ width: "100%" }}>
+          {state.step <= 5 ? (
+            <WizardScreen
+              state={state}
+              dispatch={dispatch}
+              previewContract={previewContract}
+            />
+          ) : state.step === 6 ? (
+            <ExecutionView state={state} dispatch={dispatch} />
+          ) : (
+            <InspectionRouter state={state} dispatch={dispatch} />
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// --- Step 6 Execution View ----------------------------------------------------
+
+function ExecutionView(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      const contract = state.contract;
+      if (!contract) {
+        dispatch({
+          type: "EXEC_ERROR",
+          error:
+            "Missing contract (Step 5 must derive contract before execution).",
+        });
+        return;
+      }
+
+      try {
+        if (contract.mode === "single") {
+          dispatch({
+            type: "EXEC_PROGRESS",
+            progress: { kind: "single", status: "running" },
+          });
+
+          const opts = {
+            width: contract.world.width,
+            height: contract.world.height,
+            seed: contract.world.seed,
+            ...contract.bsp,
+          };
+
+          const dungeon = generateBspDungeon(opts);
+
+          // IMPORTANT: generateDungeonContent expects ContentOptions-ish fields.
+          // (It can accept string seed; it gets hashed internally.)
+          const p = contract.pattern;
+
+          const contentOpts =
+            contract.contentStrategy === "atomic"
+              ? {
+                  seed: contract.world.seed as any,
+
+                  includeLeverHiddenPocket: false,
+                  leverHiddenPocketSize: p.leverHiddenPocketSize,
+
+                  includeLeverOpensDoor: false,
+                  leverOpensDoorCount: p.leverOpensDoorCount,
+
+                  includePlateOpensDoor: false,
+                  plateOpensDoorCount: p.plateOpensDoorCount,
+
+                  includeIntroGate: false,
+
+                  patternMaxAttempts: p.patternMaxAttempts,
+
+                  includePhase3Compositions: false,
+                  gateThenOptionalRewardCount: 0,
+                }
+              : {
+                  seed: contract.world.seed as any,
+
+                  includeLeverHiddenPocket: p.includeLeverHiddenPocket,
+                  leverHiddenPocketSize: p.leverHiddenPocketSize,
+
+                  includeLeverOpensDoor: p.includeLeverOpensDoor,
+                  leverOpensDoorCount: p.leverOpensDoorCount,
+
+                  includePlateOpensDoor: p.includePlateOpensDoor,
+                  plateOpensDoorCount: p.plateOpensDoorCount,
+
+                  includeIntroGate: p.includeIntroGate,
+
+                  patternMaxAttempts: p.patternMaxAttempts,
+
+                  includePhase3Compositions: p.includePhase3Compositions,
+                  gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
+                };
+
+          const content = generateDungeonContent(dungeon, contentOpts);
+
+          // Normalize arrays that downstream code iterates
+          if (!content.meta) content.meta = {} as any;
+          if (!Array.isArray((content.meta as any).plates))
+            (content.meta as any).plates = [];
+          if (!Array.isArray((content.meta as any).circuits))
+            (content.meta as any).circuits = [];
+
+          // Init runtime
+          let rt0 = initDungeonRuntimeState(content);
+
+          // derivePlatesFromBlocks RETURNS the next state in this repo
+          rt0 = derivePlatesFromBlocks(rt0, content);
+
+          // Correct signature: (runtime, circuits)
+          const eval0 = evaluateCircuits(rt0, content.meta.circuits);
+
+          // Metrics want diagnostics, not eval result
+          const diag0 = (eval0 as any).diagnostics ?? null;
+          const metrics0 = computeGlobalCircuitMetrics(diag0);
+          const startCell0 = computeStartCell(dungeon, content);
+
+          if (cancelled) return;
+
+          dispatch({
+            type: "EXEC_DONE",
+            result: {
+              kind: "single",
+              seed: String(contract.world.seed),
+              seedUsed: String(dungeon.meta?.seedUsed ?? ""),
+
+              dungeon,
+              content,
+
+              runtime0: rt0,
+
+              startCell0,
+
+              // Keep whatever your inspection expects:
+              circuitEval0: eval0,
+              // If your UI expects debug, keep debug here:
+              circuitDebug0: (eval0 as any).debug ?? null,
+            },
+          });
+
+          return;
+        }
+
+        // --- Batch mode ------------------------------------------------------
+        const total = contract.batch.runs;
+        dispatch({
+          type: "EXEC_PROGRESS",
+          progress: { kind: "batch", done: 0, total },
+        });
+
+        const runs: BatchRunInput[] = [];
+
+        // Let the UI paint once before the heavy loop
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+        const updateEvery = Math.max(1, Math.floor(total / 50));
+
+        for (let i = 0; i < total; i++) {
+          if (cancelled) return;
+
+          const seedStr = `${contract.batch.seedPrefix}-${contract.batch.startIndex + i}`;
+
+          const opts = {
+            width: contract.world.width,
+            height: contract.world.height,
+            seed: seedStr,
+            ...contract.bsp,
+          };
+
+          const dungeon = generateBspDungeon(opts);
+
+          const p = contract.pattern;
+
+          const content = generateDungeonContent(dungeon, {
+            seed: seedStr as any,
+            includeLeverHiddenPocket: p.includeLeverHiddenPocket,
+            leverHiddenPocketSize: p.leverHiddenPocketSize,
+            includeLeverOpensDoor: p.includeLeverOpensDoor,
+            leverOpensDoorCount: p.leverOpensDoorCount,
+            includePlateOpensDoor: p.includePlateOpensDoor,
+            plateOpensDoorCount: p.plateOpensDoorCount,
+            includeIntroGate: p.includeIntroGate,
+            patternMaxAttempts: p.patternMaxAttempts,
+            includePhase3Compositions: p.includePhase3Compositions,
+            gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
+          });
+
+          if (!content.meta) content.meta = {} as any;
+          if (!Array.isArray((content.meta as any).plates))
+            (content.meta as any).plates = [];
+          if (!Array.isArray((content.meta as any).circuits))
+            (content.meta as any).circuits = [];
+
+          let rt0 = initDungeonRuntimeState(content);
+          rt0 = derivePlatesFromBlocks(rt0, content);
+
+          const eval0 = evaluateCircuits(rt0, content.meta.circuits);
+          const diag0 = (eval0 as any).diagnostics ?? null;
+          const metrics0 = computeGlobalCircuitMetrics(diag0);
+
+          runs.push({
+            seed: seedStr,
+            seedUsed: dungeon.meta.seedUsed,
+            rooms: dungeon.meta.rooms.length,
+            corridors: dungeon.meta.corridors.length,
+            patternDiagnostics: content.meta.patternDiagnostics ?? [],
+            circuitMetrics: metrics0
+              ? ({ schemaVersion: 1, ...metrics0 } as any)
+              : null,
+          });
+
+          if (i % updateEvery === 0 || i === total - 1) {
+            dispatch({
+              type: "EXEC_PROGRESS",
+              progress: { kind: "batch", done: i + 1, total },
+            });
+            await new Promise<void>((r) => requestAnimationFrame(() => r()));
+          }
+        }
+
+        const summary = aggregateBatchRuns(runs);
+        const json = JSON.stringify(summary, null, 2);
+
+        if (cancelled) return;
+
+        dispatch({
+          type: "EXEC_DONE",
+          result: { kind: "batch", summary, summaryJson: json },
+        });
+      } catch (err: any) {
+        if (cancelled) return;
+        dispatch({ type: "EXEC_ERROR", error: String(err?.message ?? err) });
+      }
+    }
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.contract, dispatch]);
+
+  return (
+    <div className="maze-controls">
+      <h2 className="maze-title">Dungeon Creation</h2>
+
+      <div style={{ opacity: 0.75, marginBottom: 10 }}>
+        Execution phase is configuration-free. No inspection UI is mounted here.
+      </div>
+
+      {state.error ? (
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid rgba(251,113,133,0.6)",
+            borderRadius: 12,
+          }}
+        >
+          <b>Execution error:</b> {state.error}
+          <div style={{ height: 10 }} />
+          <button onClick={() => dispatch({ type: "EXEC_CLEAR_ERROR" })}>
+            Clear error
+          </button>
+          <div style={{ height: 10 }} />
+          <button onClick={() => dispatch({ type: "SET_STEP", step: 5 })}>
+            ← Back to Confirm
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 12,
+          }}
+        >
+          {state.progress?.kind === "single" ? (
+            <div>
+              Status: <b>{state.progress.status}</b>
+            </div>
+          ) : state.progress?.kind === "batch" ? (
+            <div>
+              Batch progress: <b>{state.progress.done}</b> /{" "}
+              <b>{state.progress.total}</b>
+            </div>
+          ) : (
+            <div>Starting…</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Step 7 Inspection Router ------------------------------------------------
+
+function InspectionRouter(props: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { state, dispatch } = props;
+
+  const result = state.result;
+  if (!result) {
+    return (
+      <div className="maze-controls">
+        <h2 className="maze-title">No Result</h2>
+        <button onClick={() => dispatch({ type: "SET_STEP", step: 1 })}>
+          Back to Wizard
+        </button>
+      </div>
+    );
+  }
+
+  if (result.kind === "single") {
+    return (
+      <SingleInspectView
+        onRandomizeSeedAndRegenerate={() => {
+          // Keep all wizard choices; change only seed; re-run immediately.
+          const seed = `seed-${Math.floor(Date.now() / 1000)}-${Math.floor(
+            Math.random() * 1000,
+          )}`;
+
+          dispatch({ type: "REROLL_SEED", seed });
+
+          // REROLL_SEED patches contract if it exists, so EXEC_START can run immediately.
+          // But guard just in case contract is missing for some edge reason:
+          if (!state.contract) {
+            dispatch({ type: "DERIVE_CONTRACT" });
+          }
+
+          dispatch({ type: "EXEC_START" });
+        }}
+        payload={{
+          dungeon: result.dungeon,
+          content: result.content,
+          runtime0: result.runtime0,
+          startCell0: (result as any).startCell0, // until your Wizard result type is updated
+          seed: result.seed,
+          seedUsed: result.seedUsed,
+          circuitDiagnostics0:
+            (result.circuitEval0 as any)?.diagnostics ?? null,
+          circuitDebug0: (result.circuitDebug0 as any) ?? null,
+        }}
+        onBack={() => {
+          dispatch({ type: "INVALIDATE_RESULTS" });
+          dispatch({ type: "SET_STEP", step: 1 });
+        }}
+      />
+    );
+  }
+
+  const batchSeedPrefix =
+    state.contract && state.contract.mode === "batch"
+      ? state.contract.batch.seedPrefix
+      : undefined;
+
+  return (
+    <BatchResultsView
+      payload={{
+        summary: result.summary,
+        summaryJson: result.summaryJson,
+        runs: result.summary?.runs ?? undefined,
+        seedPrefix: batchSeedPrefix,
+      }}
+      onBack={() => {
+        dispatch({ type: "INVALIDATE_RESULTS" });
+        dispatch({ type: "SET_STEP", step: 1 });
+      }}
+      title="Batch Results — Summary Only"
+    />
+  );
+}
+</file>
+
 <file path="src/mazeGen.ts">
 // src/mazeGen.ts
 //
@@ -16888,458 +17333,7 @@ export function generateDungeonContent(
 }
 </file>
 
-<file path="src/App.tsx">
-// src/App.tsx
-import React, { useEffect, useMemo, useReducer } from "react";
-import "./styles.css";
-import { computeStartCell } from "./inspect/computeStartCell";
-import { AnimatePresence, motion } from "framer-motion";
-
-import SingleInspectView from "./inspect/SingleInspectView";
-import BatchResultsView from "./inspect/BatchResultsView";
-
-import {
-  wizardReducer,
-  initialWizardState,
-  deriveRunContract,
-  type WizardState,
-  type WizardAction,
-} from "./wizard/wizardReducer";
-
-import { generateBspDungeon, generateDungeonContent } from "./mazeGen";
-import {
-  initDungeonRuntimeState,
-  derivePlatesFromBlocks,
-} from "./dungeonState";
-import { evaluateCircuits } from "./evaluateCircuits";
-import { aggregateBatchRuns, type BatchRunInput } from "./batchStats";
-import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
-
-import WizardScreen from "./wizard/WizardScreen";
-
-// --- Thin Shell Router --------------------------------------------------------
-
-const screenMotion = {
-  initial: { opacity: 0, y: 8 },
-  animate: { opacity: 1, y: 0, transition: { duration: 0.18 } },
-  exit: { opacity: 0, y: -8, transition: { duration: 0.14 } },
-};
-
-export default function App() {
-  const [state, dispatch] = useReducer(
-    wizardReducer,
-    undefined,
-    initialWizardState,
-  );
-
-  // Step 5 wants a read-only preview; we compute a "would-be contract" even if
-  // state.contract isn't derived yet.
-  const previewContract = useMemo(() => {
-    return state.contract ?? deriveRunContract(state);
-  }, [state]);
-
-  // Derive a stable "screen key" for transitions.
-  const screenKey = useMemo(() => {
-    if (state.step <= 5)
-      return `wizard-${state.step}-${state.mode?.mode ?? "none"}`;
-    if (state.step === 6) return "exec";
-    return `inspect-${state.result?.kind ?? "none"}`;
-  }, [state.step, state.mode?.mode, state.result?.kind]);
-
-  const centered = state.step <= 6; // wizard + execution are centered panels
-
-  return (
-    <div className={`maze-app ${centered ? "maze-app--centered" : ""}`}>
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div key={screenKey} {...screenMotion} style={{ width: "100%" }}>
-          {state.step <= 5 ? (
-            <WizardScreen
-              state={state}
-              dispatch={dispatch}
-              previewContract={previewContract}
-            />
-          ) : state.step === 6 ? (
-            <ExecutionView state={state} dispatch={dispatch} />
-          ) : (
-            <InspectionRouter state={state} dispatch={dispatch} />
-          )}
-        </motion.div>
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// --- Step 6 Execution View ----------------------------------------------------
-
-function ExecutionView(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-}) {
-  const { state, dispatch } = props;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      const contract = state.contract;
-      if (!contract) {
-        dispatch({
-          type: "EXEC_ERROR",
-          error:
-            "Missing contract (Step 5 must derive contract before execution).",
-        });
-        return;
-      }
-
-      try {
-        if (contract.mode === "single") {
-          dispatch({
-            type: "EXEC_PROGRESS",
-            progress: { kind: "single", status: "running" },
-          });
-
-          const opts = {
-            width: contract.world.width,
-            height: contract.world.height,
-            seed: contract.world.seed,
-            ...contract.bsp,
-          };
-
-          const dungeon = generateBspDungeon(opts);
-
-          // IMPORTANT: generateDungeonContent expects ContentOptions-ish fields.
-          // (It can accept string seed; it gets hashed internally.)
-          const p = contract.pattern;
-
-          const contentOpts =
-            contract.contentStrategy === "atomic"
-              ? {
-                  seed: contract.world.seed as any,
-
-                  includeLeverHiddenPocket: false,
-                  leverHiddenPocketSize: p.leverHiddenPocketSize,
-
-                  includeLeverOpensDoor: false,
-                  leverOpensDoorCount: p.leverOpensDoorCount,
-
-                  includePlateOpensDoor: false,
-                  plateOpensDoorCount: p.plateOpensDoorCount,
-
-                  includeIntroGate: false,
-
-                  patternMaxAttempts: p.patternMaxAttempts,
-
-                  includePhase3Compositions: false,
-                  gateThenOptionalRewardCount: 0,
-                }
-              : {
-                  seed: contract.world.seed as any,
-
-                  includeLeverHiddenPocket: p.includeLeverHiddenPocket,
-                  leverHiddenPocketSize: p.leverHiddenPocketSize,
-
-                  includeLeverOpensDoor: p.includeLeverOpensDoor,
-                  leverOpensDoorCount: p.leverOpensDoorCount,
-
-                  includePlateOpensDoor: p.includePlateOpensDoor,
-                  plateOpensDoorCount: p.plateOpensDoorCount,
-
-                  includeIntroGate: p.includeIntroGate,
-
-                  patternMaxAttempts: p.patternMaxAttempts,
-
-                  includePhase3Compositions: p.includePhase3Compositions,
-                  gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
-                };
-
-          const content = generateDungeonContent(dungeon, contentOpts);
-
-          // Normalize arrays that downstream code iterates
-          if (!content.meta) content.meta = {} as any;
-          if (!Array.isArray((content.meta as any).plates))
-            (content.meta as any).plates = [];
-          if (!Array.isArray((content.meta as any).circuits))
-            (content.meta as any).circuits = [];
-
-          // Init runtime
-          let rt0 = initDungeonRuntimeState(content);
-
-          // derivePlatesFromBlocks RETURNS the next state in this repo
-          rt0 = derivePlatesFromBlocks(rt0, content);
-
-          // Correct signature: (runtime, circuits)
-          const eval0 = evaluateCircuits(rt0, content.meta.circuits);
-
-          // Metrics want diagnostics, not eval result
-          const diag0 = (eval0 as any).diagnostics ?? null;
-          const metrics0 = computeGlobalCircuitMetrics(diag0);
-          const startCell0 = computeStartCell(dungeon, content);
-
-          if (cancelled) return;
-
-          dispatch({
-            type: "EXEC_DONE",
-            result: {
-              kind: "single",
-              seed: String(contract.world.seed),
-              seedUsed: String(dungeon.meta?.seedUsed ?? ""),
-
-              dungeon,
-              content,
-
-              runtime0: rt0,
-
-              startCell0,
-
-              // Keep whatever your inspection expects:
-              circuitEval0: eval0,
-              // If your UI expects debug, keep debug here:
-              circuitDebug0: (eval0 as any).debug ?? null,
-            },
-          });
-
-          return;
-        }
-
-        // --- Batch mode ------------------------------------------------------
-        const total = contract.batch.runs;
-        dispatch({
-          type: "EXEC_PROGRESS",
-          progress: { kind: "batch", done: 0, total },
-        });
-
-        const runs: BatchRunInput[] = [];
-
-        // Let the UI paint once before the heavy loop
-        await new Promise<void>((r) => requestAnimationFrame(() => r()));
-
-        const updateEvery = Math.max(1, Math.floor(total / 50));
-
-        for (let i = 0; i < total; i++) {
-          if (cancelled) return;
-
-          const seedStr = `${contract.batch.seedPrefix}-${contract.batch.startIndex + i}`;
-
-          const opts = {
-            width: contract.world.width,
-            height: contract.world.height,
-            seed: seedStr,
-            ...contract.bsp,
-          };
-
-          const dungeon = generateBspDungeon(opts);
-
-          const p = contract.pattern;
-
-          const content = generateDungeonContent(dungeon, {
-            seed: seedStr as any,
-            includeLeverHiddenPocket: p.includeLeverHiddenPocket,
-            leverHiddenPocketSize: p.leverHiddenPocketSize,
-            includeLeverOpensDoor: p.includeLeverOpensDoor,
-            leverOpensDoorCount: p.leverOpensDoorCount,
-            includePlateOpensDoor: p.includePlateOpensDoor,
-            plateOpensDoorCount: p.plateOpensDoorCount,
-            includeIntroGate: p.includeIntroGate,
-            patternMaxAttempts: p.patternMaxAttempts,
-            includePhase3Compositions: p.includePhase3Compositions,
-            gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
-          });
-
-          if (!content.meta) content.meta = {} as any;
-          if (!Array.isArray((content.meta as any).plates))
-            (content.meta as any).plates = [];
-          if (!Array.isArray((content.meta as any).circuits))
-            (content.meta as any).circuits = [];
-
-          let rt0 = initDungeonRuntimeState(content);
-          rt0 = derivePlatesFromBlocks(rt0, content);
-
-          const eval0 = evaluateCircuits(rt0, content.meta.circuits);
-          const diag0 = (eval0 as any).diagnostics ?? null;
-          const metrics0 = computeGlobalCircuitMetrics(diag0);
-
-          runs.push({
-            seed: seedStr,
-            seedUsed: dungeon.meta.seedUsed,
-            rooms: dungeon.meta.rooms.length,
-            corridors: dungeon.meta.corridors.length,
-            patternDiagnostics: content.meta.patternDiagnostics ?? [],
-            circuitMetrics: metrics0
-              ? ({ schemaVersion: 1, ...metrics0 } as any)
-              : null,
-          });
-
-          if (i % updateEvery === 0 || i === total - 1) {
-            dispatch({
-              type: "EXEC_PROGRESS",
-              progress: { kind: "batch", done: i + 1, total },
-            });
-            await new Promise<void>((r) => requestAnimationFrame(() => r()));
-          }
-        }
-
-        const summary = aggregateBatchRuns(runs);
-        const json = JSON.stringify(summary, null, 2);
-
-        if (cancelled) return;
-
-        dispatch({
-          type: "EXEC_DONE",
-          result: { kind: "batch", summary, summaryJson: json },
-        });
-      } catch (err: any) {
-        if (cancelled) return;
-        dispatch({ type: "EXEC_ERROR", error: String(err?.message ?? err) });
-      }
-    }
-
-    run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [state.contract, dispatch]);
-
-  return (
-    <div className="maze-controls">
-      <h2 className="maze-title">Dungeon Creation</h2>
-
-      <div style={{ opacity: 0.75, marginBottom: 10 }}>
-        Execution phase is configuration-free. No inspection UI is mounted here.
-      </div>
-
-      {state.error ? (
-        <div
-          style={{
-            padding: 10,
-            border: "1px solid rgba(251,113,133,0.6)",
-            borderRadius: 12,
-          }}
-        >
-          <b>Execution error:</b> {state.error}
-          <div style={{ height: 10 }} />
-          <button onClick={() => dispatch({ type: "EXEC_CLEAR_ERROR" })}>
-            Clear error
-          </button>
-          <div style={{ height: 10 }} />
-          <button onClick={() => dispatch({ type: "SET_STEP", step: 5 })}>
-            ← Back to Confirm
-          </button>
-        </div>
-      ) : (
-        <div
-          style={{
-            padding: 10,
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 12,
-          }}
-        >
-          {state.progress?.kind === "single" ? (
-            <div>
-              Status: <b>{state.progress.status}</b>
-            </div>
-          ) : state.progress?.kind === "batch" ? (
-            <div>
-              Batch progress: <b>{state.progress.done}</b> /{" "}
-              <b>{state.progress.total}</b>
-            </div>
-          ) : (
-            <div>Starting…</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// --- Step 7 Inspection Router ------------------------------------------------
-
-function InspectionRouter(props: {
-  state: WizardState;
-  dispatch: React.Dispatch<WizardAction>;
-}) {
-  const { state, dispatch } = props;
-
-  const result = state.result;
-  if (!result) {
-    return (
-      <div className="maze-controls">
-        <h2 className="maze-title">No Result</h2>
-        <button onClick={() => dispatch({ type: "SET_STEP", step: 1 })}>
-          Back to Wizard
-        </button>
-      </div>
-    );
-  }
-
-  if (result.kind === "single") {
-    return (
-      <SingleInspectView
-        onRandomizeSeedAndRegenerate={() => {
-          // Keep all wizard choices; change only seed; re-run immediately.
-          const seed = `seed-${Math.floor(Date.now() / 1000)}-${Math.floor(
-            Math.random() * 1000,
-          )}`;
-
-          dispatch({ type: "REROLL_SEED", seed });
-
-          // REROLL_SEED patches contract if it exists, so EXEC_START can run immediately.
-          // But guard just in case contract is missing for some edge reason:
-          if (!state.contract) {
-            dispatch({ type: "DERIVE_CONTRACT" });
-          }
-
-          dispatch({ type: "EXEC_START" });
-        }}
-        payload={{
-          dungeon: result.dungeon,
-          content: result.content,
-          runtime0: result.runtime0,
-          startCell0: (result as any).startCell0, // until your Wizard result type is updated
-          seed: result.seed,
-          seedUsed: result.seedUsed,
-          circuitDiagnostics0:
-            (result.circuitEval0 as any)?.diagnostics ?? null,
-          circuitDebug0: (result.circuitDebug0 as any) ?? null,
-        }}
-        onBack={() => {
-          dispatch({ type: "INVALIDATE_RESULTS" });
-          dispatch({ type: "SET_STEP", step: 1 });
-        }}
-      />
-    );
-  }
-
-  const batchSeedPrefix =
-    state.contract && state.contract.mode === "batch"
-      ? state.contract.batch.seedPrefix
-      : undefined;
-
-  return (
-    <BatchResultsView
-      payload={{
-        summary: result.summary,
-        summaryJson: result.summaryJson,
-        runs: result.summary?.runs ?? undefined,
-        seedPrefix: batchSeedPrefix,
-      }}
-      onBack={() => {
-        dispatch({ type: "INVALIDATE_RESULTS" });
-        dispatch({ type: "SET_STEP", step: 1 });
-      }}
-      title="Batch Results — Summary Only"
-    />
-  );
-}
-</file>
-
 <file path="src/CONTEXT.md">
-Absolutely — here’s a **clean, updated re-emit of `CONTEXT.md`** that records **today’s work**, clarifies the **randomize-seed regeneration path**, and situates us clearly in the **overall project plan**.
-
-I’ve bumped the revision to **rev W** to reflect substantive UI + execution-flow changes, while keeping the same date.
-
----
-
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
 **CONTEXT VERSION:** **2026-01-24 (rev W)**
@@ -17496,7 +17490,6 @@ Fully enforced in the wizard reducer and routing logic.
 
 * `InspectionShell` confirmed **pure and runtime-only**
 * Click-to-interact semantics corrected:
-
   * lever toggle (runtime only)
   * key collect
   * block select + push
@@ -17506,10 +17499,9 @@ Fully enforced in the wizard reducer and routing logic.
 * Canvas hit-testing corrected to canvas-relative
 * Legend and color mappings verified accurate
 
-### Execution Loop Stabilization (NEW)
+### Execution Loop Stabilization
 
 * Added **seed-only regeneration path** from inspection:
-
   * Randomize seed
   * Preserve all wizard choices
   * Tear down inspection
@@ -17517,28 +17509,46 @@ Fully enforced in the wizard reducer and routing logic.
   * Return automatically to Step 7
 
 * Key architectural clarifications:
-
   * `InspectionShell` emits **intent only** (no dispatch)
   * Wizard reducer owns all execution control
   * Regeneration flows through the **same execution path** as Step 5
 
 * Reducer + routing fixes:
-
   * `INVALIDATE_RESULTS` action added and standardized
   * `REROLL_SEED` action updates `world.seed` and patches `contract.world.seed`
   * `EXEC_START` reliably re-runs generation using preserved contract
 
 This closes a critical UX gap while preserving all Milestone 5 non-goals.
 
+### Pattern Reliability Improvements (NEW — Phase 2.5)
+
+* **Lever → Hidden Pocket pattern** (`applyLeverRevealsHiddenPocketPattern`) hardened against its dominant failure modes:
+  * Previously failed immediately if a single connector candidate validated poorly.
+  * Now **tries multiple shuffled candidates** (`options.maxAttempts`) before giving up.
+* Added **preview-first validation**:
+  * Carving + fixtures are simulated on copies of masks.
+  * Reachability is evaluated **pre-reveal** and **post-reveal** before committing.
+  * Pattern commits only if:
+    * pocket goal is unreachable pre-reveal, and
+    * reachable post-reveal.
+* Preview validation now places:
+  * hidden passage fixture on the connector tile, and
+  * lever fixture at the candidate lever position,
+  ensuring preview reachability matches runtime semantics.
+* ID allocation during preview no longer consumes real IDs; IDs are allocated only on successful commit.
+* Failure reasons are now more informative (pre-reachable, post-unreachable, lever placement failure), improving batch diagnostics.
+
+This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**: retry locally, preserve semantics, and surface diagnostics instead of aborting.
+
 ---
 
 ## CURRENT STATE SUMMARY
 
 * Milestone 4 is closed and untouched
-* Milestone 5 Phase 2.5 generator logic unchanged
-* Wizard → Execution → Inspection loop is now **fully closed**
-* Inspection supports safe, explicit regeneration without hidden behavior
-* UI and execution boundaries are contract-accurate and invariant-safe
+* Milestone 5 Phase 2.5 generator logic remains best-effort
+* Wizard → Execution → Inspection loop is **fully closed**
+* Pattern reliability is improving via **preview + retry**, not relaxed rules
+* UI, execution, and generator boundaries remain invariant-safe
 
 ---
 
@@ -17547,7 +17557,6 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 ### UI (Stabilization & Polish)
 
 1. Minor UX polish:
-
    * inline validation hints
    * clearer invalidation messaging
    * disable regen button during execution
@@ -17556,7 +17565,8 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 
 ### Generator — Milestone 5 Phase 2.5
 
-1. Implement **clean lever reachability preview** (diagnostic only)
+1. **Validate hidden-pocket preview logic in batch**
+   * confirm failure modes collapse as expected
 2. Run 1000+ seed batch comparison vs baseline
 3. Record stability metrics and intent-misalignment deltas
 
@@ -17572,7 +17582,6 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 * **Milestone 1–3:** Geometry, runtime state, and circuit execution — complete
 * **Milestone 4:** Composition patterns + progression grammar — complete
 * **Milestone 5:** Intent steering and policy formation — *current focus*
-
   * Phase 2.5: diagnostics + soft pressure (active)
   * Phase 3: weighted steering
   * Phase 4: selective hard constraints
@@ -17586,15 +17595,6 @@ This closes a critical UX gap while preserving all Milestone 5 non-goals.
 * Intent must be explicit before execution
 * Diagnostics remain authoritative
 * Escalation only after measured stability
-
----
-
-If you want, next we can:
-
-* lock down **lever-reachability diagnostics schema**, or
-* run a **baseline vs regen stress test** to validate seed-randomization stability.
-
-You’re in a very strong position now — the loop is finally airtight.
 </file>
 
 </files>

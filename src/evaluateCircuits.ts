@@ -57,6 +57,7 @@ export type CircuitEvalDiagnostics = {
   // Order + per-circuit detail
   evalOrder: number[]; // list of circuitIndex in evaluation sequence
   perCircuit: CircuitChainingDiag[];
+  // NOTE: circuitIndex values in this file refer to *meta.circuits array indices* (not ids).
 
   // Cycle reporting (SCC groups)
   cycles: CycleGroupDiag[];
@@ -101,7 +102,7 @@ export type SignalRef = {
   // Your existing SIGNAL trigger uses a name and a mode.
   // Make the ref explicit + stable for display and aggregation.
   key: string; // canonical string key (see below)
-  fromCircuitIndex: number; // who produces the signal
+  fromCircuitIndex: number; // index into meta.circuits[] (producer)
   name: "ACTIVE" | "SATISFIED" | "SATISFIED_RISE";
 };
 
@@ -140,7 +141,10 @@ function cloneState<S>(s: S): S {
  */
 type SignalName = "ACTIVE" | "SATISFIED" | "SATISFIED_RISE";
 
-function topoSortCircuitsWithMeta(circuits: CircuitDef[]): {
+function topoSortCircuitsWithMeta(
+  circuits: CircuitDef[],
+  idToIndex: Record<number, number>,
+): {
   order: CircuitDef[];
   orderIds: number[];
   evalOrderIndexById: Record<number, number>;
@@ -571,6 +575,14 @@ export function evaluateCircuits(
 ): CircuitEvalResult {
   const list = Array.isArray(circuits) ? circuits : [];
 
+  // --- Stable identity for diagnostics/UI ---
+  // Diagnostics must refer to circuits by *array index* into meta.circuits[],
+  // not by circuit id. The UI assumes `circuits[circuitIndex]` is valid.
+  const idToIndex: Record<number, number> = {};
+  for (let i = 0; i < list.length; i++) {
+    idToIndex[list[i].id | 0] = i;
+  }
+
   const next = cloneState(current);
   const debug: CircuitEvalDebug = {};
 
@@ -592,7 +604,7 @@ export function evaluateCircuits(
     inCycleById,
     blockedByCycleById,
     cycleGroups,
-  } = topoSortCircuitsWithMeta(list);
+  } = topoSortCircuitsWithMeta(list, idToIndex);
 
   // ---- Build chaining-aware diagnostics (no gameplay impact)
   const circuitIdsStable = list
@@ -621,7 +633,7 @@ export function evaluateCircuits(
     if (blockedByCycle) blockedByCycleCount++;
 
     return {
-      circuitIndex: id,
+      circuitIndex: idToIndex[id] ?? -1,
       evalOrderIndex: evalOrderIndexById[id] ?? -1,
       signalDepCount,
       signalDeps,
@@ -635,14 +647,14 @@ export function evaluateCircuits(
 
   const cycles: CycleGroupDiag[] = cycleGroups.map((g, i) => ({
     cycleIndex: i,
-    members: g.members.slice(), // already sorted
-    outboundTo: g.outboundTo.slice(), // already sorted
+    members: g.members.map((id) => idToIndex[id] ?? -1),
+    outboundTo: g.outboundTo.map((id) => idToIndex[id] ?? -1),
   }));
 
   const diagnostics: CircuitEvalDiagnostics = {
     circuitCount: list.length,
     signalEdgeCount,
-    evalOrder: orderIds.slice(),
+    evalOrder: orderIds.map((cid) => idToIndex[cid] ?? -1),
     perCircuit,
     cycles,
     summary: {

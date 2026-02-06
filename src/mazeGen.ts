@@ -1285,8 +1285,8 @@ function findCorridorConnectingRooms(
   roomA: number,
   roomB: number,
 ): { a: Point; b: Point } | null {
-  const { width: W, height: H } = dungeon;
   const regionId = dungeon.masks.regionId;
+  const { width: W, height: H } = dungeon;
 
   for (const c of dungeon.meta.corridors) {
     const ra = findNearestRoomId(regionId, W, H, c.a, 10);
@@ -1294,102 +1294,6 @@ function findCorridorConnectingRooms(
     if ((ra === roomA && rb === roomB) || (ra === roomB && rb === roomA))
       return c;
   }
-  return null;
-}
-
-function hasAdjacentDoor(p: Point) {
-  // FeatureType 4 = door (floor tile)
-  const nbs = [
-    { x: p.x + 1, y: p.y },
-    { x: p.x - 1, y: p.y },
-    { x: p.x, y: p.y + 1 },
-    { x: p.x, y: p.y - 1 },
-  ];
-
-  for (const nb of nbs) {
-    if (!inBounds(nb.x, nb.y, W, H)) continue;
-    const j = nb.y * W + nb.x;
-    if (featureType[j] === 4) return true;
-  }
-  return false;
-}
-
-function isGoodFloor(p: Point) {
-  if (!inBounds(p.x, p.y, W, H)) return false;
-  const i = p.y * W + p.x;
-  if (solid[i] !== 0) return false; // must be floor
-  if (distWall[i] < 1) return false; // avoid hugging walls
-
-  // NEW: prevent adjacent doors
-  if (hasAdjacentDoor(p)) return false;
-
-  return true;
-}
-
-// Build candidate points along two L-shaped Manhattan paths.
-// We choose the first point that is floor and (preferably) corridor (regionId == 0).
-function pickDoorTileOnCorridor(
-  dungeon: BspDungeonOutputs,
-  corridor: { a: Point; b: Point },
-  featureType: Uint8Array,
-): Point | null {
-  const { width: W, height: H } = dungeon;
-  const solid = dungeon.masks.solid;
-  const regionId = dungeon.masks.regionId;
-  const distWall = dungeon.masks.distanceToWall;
-
-  const a = corridor.a;
-  const b = corridor.b;
-
-  const corner1: Point = { x: a.x, y: b.y };
-  const corner2: Point = { x: b.x, y: a.y };
-
-  function pathPoints(p0: Point, p1: Point, p2: Point): Point[] {
-    const pts: Point[] = [];
-    // p0 -> p1 (axis-aligned)
-    if (p0.x === p1.x) {
-      const sy = p0.y <= p1.y ? 1 : -1;
-      for (let y = p0.y; y !== p1.y + sy; y += sy) pts.push({ x: p0.x, y });
-    } else {
-      const sx = p0.x <= p1.x ? 1 : -1;
-      for (let x = p0.x; x !== p1.x + sx; x += sx) pts.push({ x, y: p0.y });
-    }
-    // p1 -> p2
-    if (p1.x === p2.x) {
-      const sy = p1.y <= p2.y ? 1 : -1;
-      for (let y = p1.y; y !== p2.y + sy; y += sy) pts.push({ x: p2.x, y });
-    } else {
-      const sx = p1.x <= p2.x ? 1 : -1;
-      for (let x = p1.x; x !== p2.x + sx; x += sx) pts.push({ x, y: p2.y });
-    }
-    return pts;
-  }
-
-  const candidates = [pathPoints(a, corner1, b), pathPoints(a, corner2, b)];
-
-  function isGoodFloor(p: Point) {
-    if (!inBounds(p.x, p.y, W, H)) return false;
-    const i = p.y * W + p.x;
-    if (solid[i] !== 0) return false; // must be floor
-    if (distWall[i] < 1) return false; // avoid hugging walls
-    return true;
-  }
-
-  // Prefer corridor floor tiles (regionId == 0), fall back to any floor.
-  for (const pts of candidates) {
-    for (const p of pts) {
-      if (!isGoodFloor(p)) continue;
-      const i = p.y * W + p.x;
-      if (regionId[i] === 0) return p;
-    }
-  }
-  for (const pts of candidates) {
-    for (const p of pts) {
-      if (!isGoodFloor(p)) continue;
-      return p;
-    }
-  }
-
   return null;
 }
 

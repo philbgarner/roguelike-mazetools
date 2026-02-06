@@ -1,10 +1,12 @@
+---
+
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-24 (rev W)**
+**CONTEXT VERSION:** **2026-01-24 (rev X)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED**
+**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED**
 
 ---
 
@@ -148,12 +150,13 @@ Fully enforced in the wizard reducer and routing logic.
 
 ---
 
-## IMPLEMENTATION PROGRESS (REV W)
+## IMPLEMENTATION PROGRESS (REV X)
 
 ### Inspection UX (Step 7)
 
 * `InspectionShell` confirmed **pure and runtime-only**
 * Click-to-interact semantics corrected:
+
   * lever toggle (runtime only)
   * key collect
   * block select + push
@@ -166,6 +169,7 @@ Fully enforced in the wizard reducer and routing logic.
 ### Execution Loop Stabilization
 
 * Added **seed-only regeneration path** from inspection:
+
   * Randomize seed
   * Preserve all wizard choices
   * Tear down inspection
@@ -173,34 +177,67 @@ Fully enforced in the wizard reducer and routing logic.
   * Return automatically to Step 7
 
 * Key architectural clarifications:
+
   * `InspectionShell` emits **intent only** (no dispatch)
   * Wizard reducer owns all execution control
   * Regeneration flows through the **same execution path** as Step 5
 
 * Reducer + routing fixes:
+
   * `INVALIDATE_RESULTS` action added and standardized
   * `REROLL_SEED` action updates `world.seed` and patches `contract.world.seed`
   * `EXEC_START` reliably re-runs generation using preserved contract
 
 This closes a critical UX gap while preserving all Milestone 5 non-goals.
 
-### Pattern Reliability Improvements (NEW — Phase 2.5)
+---
+
+### Circuit Diagnostics Identity Correction (NEW — Rev X)
+
+A latent mismatch between **circuit IDs** and **array indices** in circuit diagnostics was identified and corrected.
+
+**Previous behavior (incorrect):**
+
+* `evaluateCircuits()` emitted `circuitIndex` values that were actually **circuit IDs**
+* UI inspection code correctly assumed `circuitIndex` meant **index into `meta.circuits[]`**
+* Result: circuit inspector selection failed silently (details panel empty)
+
+**Current behavior (correct, locked):**
+
+* All circuit diagnostics now use **array indices into `content.meta.circuits[]`** as their stable external identity:
+
+  * `CircuitChainingDiag.circuitIndex`
+  * `SignalRef.fromCircuitIndex`
+  * `evalOrder[]`
+  * `CycleGroupDiag.members[]`
+  * `CycleGroupDiag.outboundTo[]`
+* Internal evaluation logic may continue to operate on circuit IDs, but **diagnostics and UI-facing data are index-based by contract**
+
+This aligns diagnostics, inspector behavior, and documentation, and prevents future regressions.
+
+---
+
+### Pattern Reliability Improvements (Phase 2.5)
 
 * **Lever → Hidden Pocket pattern** (`applyLeverRevealsHiddenPocketPattern`) hardened against its dominant failure modes:
-  * Previously failed immediately if a single connector candidate validated poorly.
-  * Now **tries multiple shuffled candidates** (`options.maxAttempts`) before giving up.
+
+  * Previously failed immediately if a single connector candidate validated poorly
+  * Now **tries multiple shuffled candidates** (`options.maxAttempts`) before giving up
 * Added **preview-first validation**:
-  * Carving + fixtures are simulated on copies of masks.
-  * Reachability is evaluated **pre-reveal** and **post-reveal** before committing.
+
+  * Carving + fixtures are simulated on copies of masks
+  * Reachability evaluated **pre-reveal** and **post-reveal** before committing
   * Pattern commits only if:
+
     * pocket goal is unreachable pre-reveal, and
-    * reachable post-reveal.
+    * reachable post-reveal
 * Preview validation now places:
+
   * hidden passage fixture on the connector tile, and
   * lever fixture at the candidate lever position,
-  ensuring preview reachability matches runtime semantics.
-* ID allocation during preview no longer consumes real IDs; IDs are allocated only on successful commit.
-* Failure reasons are now more informative (pre-reachable, post-unreachable, lever placement failure), improving batch diagnostics.
+    ensuring preview reachability matches runtime semantics
+* ID allocation during preview no longer consumes real IDs
+* Failure reasons are now more informative, improving batch diagnostics
 
 This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**: retry locally, preserve semantics, and surface diagnostics instead of aborting.
 
@@ -211,6 +248,7 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 * Milestone 4 is closed and untouched
 * Milestone 5 Phase 2.5 generator logic remains best-effort
 * Wizard → Execution → Inspection loop is **fully closed**
+* Circuit diagnostics identity is now **structurally correct and UI-safe**
 * Pattern reliability is improving via **preview + retry**, not relaxed rules
 * UI, execution, and generator boundaries remain invariant-safe
 
@@ -221,6 +259,7 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 ### UI (Stabilization & Polish)
 
 1. Minor UX polish:
+
    * inline validation hints
    * clearer invalidation messaging
    * disable regen button during execution
@@ -229,10 +268,15 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 
 ### Generator — Milestone 5 Phase 2.5
 
-1. **Validate hidden-pocket preview logic in batch**
+1. **Validate circuit diagnostics in batch**
+
+   * confirm no remaining ID/index mismatches
+   * verify cycle membership + signal dependency rendering at scale
+2. **Validate hidden-pocket preview logic in batch**
+
    * confirm failure modes collapse as expected
-2. Run 1000+ seed batch comparison vs baseline
-3. Record stability metrics and intent-misalignment deltas
+3. Run 1000+ seed batch comparison vs baseline
+4. Record stability metrics and intent-misalignment deltas
 
 ### Milestone 5 Roadmap
 
@@ -246,6 +290,7 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 * **Milestone 1–3:** Geometry, runtime state, and circuit execution — complete
 * **Milestone 4:** Composition patterns + progression grammar — complete
 * **Milestone 5:** Intent steering and policy formation — *current focus*
+
   * Phase 2.5: diagnostics + soft pressure (active)
   * Phase 3: weighted steering
   * Phase 4: selective hard constraints
@@ -259,3 +304,5 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 * Intent must be explicit before execution
 * Diagnostics remain authoritative
 * Escalation only after measured stability
+
+---
