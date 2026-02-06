@@ -215,6 +215,47 @@ function pickDoorTileOnCorridorPathWithStats(
       stats.pointsRejectedOccupied += 1;
       return "occupied";
     }
+
+    // Door fixture type (see puzzlePatterns.ts usage): ft == 4
+    const DOOR_FT = 4;
+
+    // Reject if an adjacent tile already has a door (prevents side-by-side doors).
+    // (4-neighborhood only; diagonals ignored)
+    const n4 = [
+      { x: p.x - 1, y: p.y },
+      { x: p.x + 1, y: p.y },
+      { x: p.x, y: p.y - 1 },
+      { x: p.x, y: p.y + 1 },
+    ];
+    for (const q of n4) {
+      if (!inBounds(W, H, q.x, q.y)) continue;
+      const qi = idxOf(W, q.x, q.y);
+      if ((featureType[qi] | 0) === DOOR_FT) {
+        stats.pointsRejectedOccupied += 1;
+        return "occupied";
+      }
+    }
+
+    // Require "jambs": there must be solid walls on either E+W OR N+S.
+    // This avoids doors placed in open blobs / 2-wide corridors / weird adjacency.
+    // If any neighbor is OOB, treat as invalid (conservative).
+    if (
+      !inBounds(W, H, p.x - 1, p.y) ||
+      !inBounds(W, H, p.x + 1, p.y) ||
+      !inBounds(W, H, p.x, p.y - 1) ||
+      !inBounds(W, H, p.x, p.y + 1)
+    ) {
+      return "oob";
+    }
+    const w = solid[idxOf(W, p.x - 1, p.y)] !== 0;
+    const e = solid[idxOf(W, p.x + 1, p.y)] !== 0;
+    const n = solid[idxOf(W, p.x, p.y - 1)] !== 0;
+    const s = solid[idxOf(W, p.x, p.y + 1)] !== 0;
+    if (!((w && e) || (n && s))) {
+      stats.pointsRejectedWall += 1;
+      return "wall";
+    }
+
     if (distWall[i] < opts.minDistToWall) {
       stats.pointsRejectedDistToWall += 1;
       return "dist";
