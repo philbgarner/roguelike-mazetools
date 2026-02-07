@@ -337,7 +337,7 @@ export const DEFAULT_ROLE_THRESHOLDS_V1: RoleThresholdsV1 = {
 // ---- Phase 3 (Milestone 4): Role-aware composition patterns ----
 
 export type GateThenOptionalRewardPatternOptions = {
-  requireThroat: boolean;
+  requireThroat?: boolean;
   maxAttempts?: number;
   rewardLootTier?: number; // default 2
 };
@@ -464,10 +464,10 @@ export function applyIntroGatePattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2,
+      trimEnds: 0,
       duplicateBias: 1,
       maxRadius: 10,
-      requireThroat: (options && options.requireThroat) ?? false,
+      requireThroat: (options && options.requireThroat) ?? true,
     },
   );
 
@@ -721,10 +721,10 @@ export function applyGateThenOptionalRewardPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2,
+      trimEnds: 0,
       duplicateBias: 1,
       maxRadius: 10,
-      requireThroat: (options && options.requireThroat) ?? false,
+      requireThroat: (options && options.requireThroat) ?? true,
     },
   );
 
@@ -2453,10 +2453,10 @@ export function applyLeverOpensDoorPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2,
+      trimEnds: 0,
       duplicateBias: 1,
       maxRadius: 10,
-      requireThroat: (options && options.requireThroat) ?? false,
+      requireThroat: (options && options.requireThroat) ?? true,
     },
   );
 
@@ -2611,7 +2611,7 @@ export function applyPlateOpensDoorPattern(args: {
 
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 80);
   const inverted = !!args.options?.inverted;
-  const requireThroat = (options && options.requireThroat) ?? false;
+  const requireThroat = (options && options.requireThroat) ?? true;
 
   // We still use the corridor candidate pool (spatial validity is in doorSites.ts)
   const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
@@ -2620,7 +2620,7 @@ export function applyPlateOpensDoorPattern(args: {
     {
       minDistToWall: 1,
       preferCorridor: true,
-      trimEnds: 2,
+      trimEnds: 0,
       duplicateBias: 1,
       maxRadius: 10,
       requireThroat,

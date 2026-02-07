@@ -407,7 +407,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
   const W = dungeon.width;
   const H = dungeon.height;
   const regionId = dungeon.masks.regionId;
-  const requireThroat = (opts && opts.requireThroat) ?? false;
+  const requireThroat = (opts && opts.requireThroat) ?? true;
 
   const maxRadius = opts?.maxRadius ?? 10;
   const minDistToWall = opts?.minDistToWall ?? 1;
