@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-24 (rev Y)**
+**CONTEXT VERSION:** **2026-01-24 (rev Y+)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR IN PROGRESS**
+**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED**
 
 ---
 
@@ -211,6 +211,7 @@ A latent mismatch between **circuit IDs** and **array indices** in circuit diagn
   * `evalOrder[]`
   * `CycleGroupDiag.members[]`
   * `CycleGroupDiag.outboundTo[]`
+
 * Internal evaluation logic may continue to operate on circuit IDs, but **diagnostics and UI-facing data are index-based by contract**
 
 This aligns diagnostics, inspector behavior, and documentation, and prevents future regressions.
@@ -223,13 +224,15 @@ Door placement was producing **doors in sequence inside corridors**, including a
 
 **Updated door placement constraints (minimal, localized bugfix intent):**
 
-* A candidate door location must be rejected if it is **adjacent (4-neighborhood) to an existing door**.
+* A candidate door location must be rejected if it is **adjacent (4-neighborhood) to an existing door**
+
 * A candidate must have **two wall (solid) tiles** on either:
 
   * **east + west**, or
   * **north + south**
 
-  (i.e. a valid “throat”/frame for a door).
+  (i.e. a valid “throat”/frame for a door)
+
 * Doors must be placed at **corridor ends on room boundaries**, not in corridor interior:
 
   * valid placements occur at the **room boundary/edge throat** where a corridor meets a room
@@ -261,44 +264,81 @@ This supports progression grammar and prevents “lever behind its own gate” r
 
 ### DRY Refactor: Centralized Door Placement Helpers (NEW — Rev Y)
 
-To prevent patterns from re-implementing door orientation/ordering (and regressing each other), door placement logic is being consolidated into shared helpers:
+To prevent patterns from re-implementing door orientation and ordering logic (and silently regressing each other), door placement behavior is being consolidated into shared helpers:
 
 * `patternDoorPlacement.ts` provides:
 
-  * `orientRoomsByDistance(a, b, roomDistance)` → returns `{ triggerRoomId, gateRoomId, gateDepth }`
-  * `pickOrderedDoorSiteFromCorridors(...)` → selects a corridor/room-boundary door site and returns an ordered `{ x, y, triggerRoomId, gateRoomId, gateDepth }`
+  * `orientRoomsByDistance(a, b, roomDistance)`
+    → returns `{ triggerRoomId, gateRoomId, gateDepth }`
 
-Patterns that place doors (and trigger fixtures like plates/levers) are being updated to call these helpers so that:
+  * `pickOrderedDoorSiteFromCorridors(...)`
+    → selects a corridor/room-boundary throat and returns an ordered
+    `{ x, y, triggerRoomId, gateRoomId, gateDepth }`
+
+Patterns that place doors and trigger fixtures (levers, plates, blocks) are being updated to call these helpers so that:
 
 * ordering is uniform and repeatable
-* patterns stop drifting in subtle ways
-* door/trigger placement stays consistent with corridor throat rules
+* patterns no longer drift in subtle ways
+* door and trigger placement remains consistent with corridor throat rules
 
 ---
 
-### Pattern Reliability Improvements (Phase 2.5)
+### Scene-Graph Ordering Normalization (NEW — Rev Y+)
 
-* **Lever → Hidden Pocket pattern** (`applyLeverRevealsHiddenPocketPattern`) hardened against its dominant failure modes:
+A subtle but critical regression class was identified:
+even when **trigger → gate ordering was logically correct**, the **effective scene-graph / runtime ordering** could still be incorrect if patterns appended placement metadata in inconsistent order.
 
-  * Previously failed immediately if a single connector candidate validated poorly
-  * Now **tries multiple shuffled candidates** (`options.maxAttempts`) before giving up
-* Added **preview-first validation**:
+This produced rare but real issues where:
 
-  * Carving + fixtures are simulated on copies of masks
-  * Reachability evaluated **pre-reveal** and **post-reveal** before committing
-  * Pattern commits only if:
+* a gate could be instantiated or evaluated before its trigger
+* inspection ordering appeared inconsistent with progression intent
+* regressions could occur silently despite correct placement
 
-    * pocket goal is unreachable pre-reveal, and
-    * reachable post-reveal
-* Preview validation now places:
+#### Structural Fix (Minimal, Best-Effort)
 
-  * hidden passage fixture on the connector tile, and
-  * lever fixture at the candidate lever position,
-    ensuring preview reachability matches runtime semantics
-* ID allocation during preview no longer consumes real IDs
-* Failure reasons are now more informative, improving batch diagnostics
+A **single post-generation normalization pass** has been added to `generateDungeonContent()`:
 
-This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**: retry locally, preserve semantics, and surface diagnostics instead of aborting.
+* All placement metadata arrays are **bucketed and re-emitted** by **room graph distance** (`roomDistance`)
+* Ordering is stable within a room and deterministic across runs
+* No pattern logic is required to “remember” ordering
+
+Specifically:
+
+* `monsters`
+* `chests`
+* `secrets`
+* `keys`
+* `levers`
+* `plates`
+* `blocks`
+* `hidden`
+* `hazards`
+
+are sorted by `roomDistance[roomId]`.
+
+`doors` are sorted by **gate-side depth**:
+
+* `roomB` (gated room) distance
+* `gateDepth` as a deterministic tie-breaker
+
+This guarantees:
+
+* triggers always precede their linked gates in emitted metadata
+* runtime and inspection ordering aligns with progression grammar
+* patterns remain best-effort and unconstrained in insertion order
+
+No generation is blocked; ordering is normalized after the fact.
+
+#### Diagnostic Guard (Soft)
+
+A non-fatal verifier checks that:
+
+* `roomDistance[roomA] ≤ roomDistance[roomB]` for every door record
+
+Violations are surfaced as diagnostics or warnings and never abort generation.
+
+This preserves Milestone 5 policy:
+**diagnose first, steer second, harden only after measured stability.**
 
 ---
 
@@ -307,10 +347,11 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 * Milestone 4 is closed and untouched
 * Milestone 5 Phase 2.5 generator logic remains best-effort
 * Wizard → Execution → Inspection loop is **fully closed**
-* Circuit diagnostics identity is now **structurally correct and UI-safe**
+* Circuit diagnostics identity is **structurally correct and UI-safe**
 * Pattern reliability is improving via **preview + retry**, not relaxed rules
-* Door placement is now being tightened to corridor→room boundary throats (no mid-corridor chains)
-* Patterns are being refactored to centralize ordered trigger→gate placement and prevent regressions
+* Door placement is constrained to **corridor → room boundary throats**
+* Trigger → gate ordering is explicit, recorded, and enforced
+* Scene-graph ordering is **globally normalized by room depth**
 
 ---
 
@@ -323,7 +364,9 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
    * inline validation hints
    * clearer invalidation messaging
    * disable regen button during execution
+
 2. Optional: expose additional execution metadata in Step 5 summary
+
 3. Keyboard + accessibility affordances (non-policy)
 
 ### Generator — Milestone 5 Phase 2.5
@@ -331,37 +374,40 @@ This brings the pattern in line with **Milestone 5 soft-enforcement philosophy**
 1. **Validate door throat placement in batch**
 
    * confirm doors no longer appear mid-corridor or adjacent
-   * confirm doors align to corridor→room boundary throats only
-2. **Validate ordered trigger→gate invariant across all door patterns**
+   * confirm doors align to corridor → room boundary throats only
+
+2. **Validate ordered trigger → gate invariant across all door patterns**
 
    * ensure triggers consistently occur in earlier rooms than gated doors
    * watch for regressions in IntroGate / LeverOpensDoor / PlateOpensDoor / GateThenOptionalReward
+
 3. **Validate circuit diagnostics in batch**
 
    * confirm no remaining ID/index mismatches
-   * verify cycle membership + signal dependency rendering at scale
+   * verify cycle membership and signal dependency rendering at scale
+
 4. **Validate hidden-pocket preview logic in batch**
 
    * confirm failure modes collapse as expected
+
 5. Run 1000+ seed batch comparison vs baseline
+
 6. Record stability metrics and intent-misalignment deltas
-
-### Milestone 5 Roadmap
-
-* **Phase 3:** Stronger soft steering (intent-pressure weighting)
-* **Phase 4:** Candidate hard rules (only after proven stability)
 
 ---
 
 ## GENERAL PROJECT PLAN (HIGH LEVEL)
 
 * **Milestone 1–3:** Geometry, runtime state, and circuit execution — complete
-* **Milestone 4:** Composition patterns + progression grammar — complete
-* **Milestone 5:** Intent steering and policy formation — *current focus*
 
-  * Phase 2.5: diagnostics + soft pressure (active)
+* **Milestone 4:** Composition patterns + progression grammar — complete
+
+* **Milestone 5:** Intent steering and policy formation — current focus
+
+  * Phase 2.5: diagnostics + soft pressure
   * Phase 3: weighted steering
   * Phase 4: selective hard constraints
+
 * **Milestone 6 (Future):** Authorial controls, difficulty bands, pacing targets
 
 ---

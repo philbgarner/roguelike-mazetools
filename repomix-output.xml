@@ -15305,8 +15305,6 @@ function ExecutionView(props: {
 
               runtime0: rt0,
 
-              startCell0,
-
               // Keep whatever your inspection expects:
               circuitEval0: eval0,
               // If your UI expects debug, keep debug here:
@@ -17601,7 +17599,7 @@ export function generateDungeonContent(
   for (let i = 0; i < W * H; i++) {
     if (featureType[i] === 9 && featureId[i] === 0) {
       throw new Error(
-        `generateDungeonContent(): hidden passage at idx=${i} is on a wall tile (solid=255)`,
+        `generateDungeonContent(): hidden passage at idx=${i} has featureId=0 (missing secretId wiring)`,
       );
     }
   }
@@ -17617,6 +17615,98 @@ export function generateDungeonContent(
       }
     }
   }
+
+  function stableBucketBy<T>(items: T[], keyOf: (t: T) => number): T[] {
+    // Bucket approach (stable within bucket).
+    const buckets = new Map<number, T[]>();
+    for (const it of items) {
+      const k = keyOf(it);
+      const b = buckets.get(k);
+      if (b) b.push(it);
+      else buckets.set(k, [it]);
+    }
+
+    const keys = Array.from(buckets.keys()).sort((a, b) => a - b);
+
+    const out: T[] = [];
+    for (const k of keys) out.push(...(buckets.get(k) ?? []));
+    return out;
+  }
+
+  function distKey(roomDistance: Map<number, number>, roomId: number): number {
+    const d = roomDistance.get(roomId);
+    return d === undefined ? 999999 : d;
+  }
+
+  const monstersSorted = stableBucketBy(monsters, (m) =>
+    distKey(roomDistance, m.roomId),
+  );
+  const chestsSorted = stableBucketBy(chests, (c) =>
+    distKey(roomDistance, c.roomId),
+  );
+  const secretsSorted = stableBucketBy(secrets, (s) =>
+    distKey(roomDistance, s.roomId),
+  );
+  const keysSorted = stableBucketBy(keys, (k) =>
+    distKey(roomDistance, k.roomId),
+  );
+  const leversSorted = stableBucketBy(levers, (l) =>
+    distKey(roomDistance, l.roomId),
+  );
+  const platesSorted = stableBucketBy(plates, (p) =>
+    distKey(roomDistance, p.roomId),
+  );
+  const blocksSorted = stableBucketBy(blocks, (b) =>
+    distKey(roomDistance, b.roomId),
+  );
+  const hiddenSorted = stableBucketBy(hidden, (h) =>
+    distKey(roomDistance, h.roomId),
+  );
+  const hazardsSorted = stableBucketBy(hazards, (h) =>
+    distKey(roomDistance, h.roomId),
+  );
+
+  const doorsSorted = stableBucketBy(
+    doors,
+    (d) => distKey(roomDistance, d.roomB) * 1000 + (d.depth | 0),
+  );
+
+  const meta: ContentOutputs["meta"] = {
+    seedUsed,
+    roomGraph,
+    entranceRoomId,
+    farthestRoomId,
+    roomDistance,
+    mainPathRoomIds,
+    rooms,
+    monsters: monstersSorted,
+    chests: chestsSorted,
+    secrets: secretsSorted,
+    doors: doorsSorted,
+    keys: keysSorted,
+    levers: leversSorted,
+    plates: platesSorted,
+    blocks: blocksSorted,
+    hidden: hiddenSorted,
+    hazards: hazardsSorted,
+    circuits,
+    patternDiagnostics: diagnostics,
+    circuitRoles,
+  };
+
+  function assertTriggerRoomBeforeGateRoom(meta: ContentOutputs["meta"]) {
+    for (const d of meta.doors) {
+      const da = meta.roomDistance.get(d.roomA) ?? 999999;
+      const db = meta.roomDistance.get(d.roomB) ?? 999999;
+      if (da > db) {
+        console.warn(
+          `[content] door id=${d.id} has roomA deeper than roomB (A=${d.roomA}@${da}, B=${d.roomB}@${db})`,
+        );
+      }
+    }
+  }
+
+  assertTriggerRoomBeforeGateRoom(meta);
 
   return {
     width: W,
@@ -17652,28 +17742,7 @@ export function generateDungeonContent(
       },
     },
 
-    meta: {
-      seedUsed,
-      roomGraph,
-      entranceRoomId,
-      farthestRoomId,
-      roomDistance,
-      mainPathRoomIds,
-      monsters,
-      chests,
-      secrets,
-      doors,
-      keys,
-      levers,
-      plates,
-      blocks,
-      hidden,
-      hazards,
-      circuits,
-      rooms,
-      patternDiagnostics: diagnostics,
-      circuitRoles,
-    },
+    meta,
   };
 }
 </file>
