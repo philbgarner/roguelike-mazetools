@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-01-24 (rev Y+)**
+**CONTEXT VERSION:** **2026-02-07 (rev Z)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED**
+**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED; DOOR-SITE VALIDATION UNIFIED (NO LEGACY NON-VALIDATING PATHS); GATETHENOPTIONALREWARD LEVER FALLBACK ONLINE**
 
 ---
 
@@ -150,21 +150,29 @@ Fully enforced in the wizard reducer and routing logic.
 
 ---
 
-## IMPLEMENTATION PROGRESS (REV X → REV Y)
+## IMPLEMENTATION PROGRESS (REV X → REV Z)
 
 ### Inspection UX (Step 7)
 
 * `InspectionShell` confirmed **pure and runtime-only**
+
 * Click-to-interact semantics corrected:
 
   * lever toggle (runtime only)
   * key collect
   * block select + push
+
 * FeatureType mappings canonicalized and enforced
+
 * Circuit membership shown **exactly** from `CircuitDef.triggers[] / targets[]`
+
 * Tooltip content upgraded to semantic + runtime-aware truth
+
 * Canvas hit-testing corrected to canvas-relative
+
 * Legend and color mappings verified accurate
+
+---
 
 ### Execution Loop Stabilization
 
@@ -283,6 +291,59 @@ Patterns that place doors and trigger fixtures (levers, plates, blocks) are bein
 
 ---
 
+### Door-Site Validation Unification (NEW — Rev Z)
+
+A subtle regression vector remained: two door-site APIs existed, and one could bypass the full validator.
+
+**Previous behavior (unsafe):**
+
+* A legacy non-stats door-site picker could return a tile that did not enforce:
+
+  * corridor↔room boundary throat constraint
+  * jamb framing constraint
+  * adjacent-door constraint
+
+This risked reintroducing corridor-interior placements via an accidental call site.
+
+**Current behavior (correct, locked):**
+
+* The legacy non-validating door-site API has been removed.
+
+* All door-site enumeration flows through the single validated path that emits `DoorSiteStats`, including:
+
+  * `pointsRejectedThroat`
+  * `pointsRejectedOccupied`
+  * `pointsRejectedWall`
+  * `tilesUnique`
+
+* The throat requirement remains **default-on** (`requireThroat` is optional and defaults to true), so patterns must opt out explicitly (only for controlled experiments).
+
+This makes door placement invariants non-bypassable by construction.
+
+---
+
+### GateThenOptionalReward: Lever Placement Fallback (NEW — Rev Z)
+
+Batch metrics showed that `gateThenOptionalReward` failures were dominated by:
+
+* “could not place lever in shallow room”
+
+This was a locality artifact: the gate edge’s shallow endpoint room may be small, crowded, or already constrained under closed-door reachability.
+
+**Structural adjustment (Phase 2.5, still policy-safe):**
+
+* Lever placement now:
+
+  1. **prefers** the shallow endpoint room (earliest side of the main-path gate),
+  2. but falls back to a bounded search of **any earlier reachable room** (`roomDistance < gateRoomDistance`)
+     when shallow-room placement fails.
+
+This preserves the ordered trigger→gate invariant while reducing best-effort skips caused by early-room tile scarcity.
+
+Diagnostics record lever fallback usage/failure so batch runs can quantify the impact without hardening behavior.
+
+---
+
 ### Scene-Graph Ordering Normalization (NEW — Rev Y+)
 
 A subtle but critical regression class was identified:
@@ -352,6 +413,8 @@ This preserves Milestone 5 policy:
 * Door placement is constrained to **corridor → room boundary throats**
 * Trigger → gate ordering is explicit, recorded, and enforced
 * Scene-graph ordering is **globally normalized by room depth**
+* Door-site validation is unified: no legacy non-validating code paths remain
+* `gateThenOptionalReward` lever placement no longer hard-fails solely due to shallow-room scarcity
 
 ---
 
@@ -375,6 +438,7 @@ This preserves Milestone 5 policy:
 
    * confirm doors no longer appear mid-corridor or adjacent
    * confirm doors align to corridor → room boundary throats only
+   * confirm no remaining door-site selection bypass exists (stats path is sole path)
 
 2. **Validate ordered trigger → gate invariant across all door patterns**
 
@@ -386,13 +450,19 @@ This preserves Milestone 5 policy:
    * confirm no remaining ID/index mismatches
    * verify cycle membership and signal dependency rendering at scale
 
-4. **Validate hidden-pocket preview logic in batch**
+4. **Validate `gateThenOptionalReward` reliability under pressure**
+
+   * measure reduction in “lever in shallow room” failures
+   * measure fallback frequency and confirm it does not increase lever-behind-own-gate rate
+   * confirm branch door sites remain available with throat constraint enabled
+
+5. **Validate hidden-pocket preview logic in batch**
 
    * confirm failure modes collapse as expected
 
-5. Run 1000+ seed batch comparison vs baseline
+6. Run 1000+ seed batch comparison vs baseline
 
-6. Record stability metrics and intent-misalignment deltas
+7. Record stability metrics and intent-misalignment deltas
 
 ---
 

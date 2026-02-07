@@ -183,7 +183,7 @@ function pickDoorTileOnCorridorPathWithStats(
 ): {
   tile: Point | null;
   preferCorridorHit: boolean;
-  hadAnyCandidate: boolean;
+  hadAnyAcceptableCandidate: boolean;
 } {
   const W = dungeon.width;
   const H = dungeon.height;
@@ -262,7 +262,7 @@ function pickDoorTileOnCorridorPathWithStats(
 
     // We allow the door tile to be on either the corridor side (regionId==0)
     // or the room boundary side (regionId>0), but it must sit at the interface.
-    if (opts.requireThroat !== false) {
+    if (opts.requireThroat) {
       const selfRid = regionId[i] | 0;
 
       // If jambs are E+W, the open axis is Y (north/south).
@@ -316,7 +316,7 @@ function pickDoorTileOnCorridorPathWithStats(
     return "ok";
   }
 
-  let hadAnyCandidate = false;
+  let hadAnyAcceptableCandidate = false;
 
   if (opts.preferCorridor) {
     for (const raw of candidates) {
@@ -324,10 +324,14 @@ function pickDoorTileOnCorridorPathWithStats(
       for (const p of pts) {
         const r = classify(p);
         if (r !== "ok") continue;
-        hadAnyCandidate = true;
+        hadAnyAcceptableCandidate = true;
         if (regionId[idxOf(W, p.x, p.y)] === 0) {
           stats.preferCorridorHits += 1;
-          return { tile: p, preferCorridorHit: true, hadAnyCandidate: true };
+          return {
+            tile: p,
+            preferCorridorHit: true,
+            hadAnyAcceptableCandidate: true,
+          };
         }
       }
     }
@@ -338,55 +342,16 @@ function pickDoorTileOnCorridorPathWithStats(
     for (const p of pts) {
       const r = classify(p);
       if (r !== "ok") continue;
-      hadAnyCandidate = true;
-      return { tile: p, preferCorridorHit: false, hadAnyCandidate: true };
+      hadAnyAcceptableCandidate = true;
+      return {
+        tile: p,
+        preferCorridorHit: false,
+        hadAnyAcceptableCandidate: true,
+      };
     }
   }
 
-  return { tile: null, preferCorridorHit: false, hadAnyCandidate };
-}
-
-export function findDoorSiteCandidatesFromCorridors(
-  dungeon: BspDungeonOutputs,
-  featureType: Uint8Array,
-  opts?: {
-    maxRadius?: number;
-    minDistToWall?: number;
-    preferCorridor?: boolean;
-    trimEnds?: number;
-    duplicateBias?: number;
-  },
-) {
-  const W = dungeon.width;
-  const H = dungeon.height;
-  const regionId = dungeon.masks.regionId;
-
-  const maxRadius = opts?.maxRadius ?? 10;
-  const minDistToWall = opts?.minDistToWall ?? 1;
-  const preferCorridor = opts?.preferCorridor ?? true;
-  const trimEnds = opts?.trimEnds ?? 2;
-  const duplicateBias = opts?.duplicateBias ?? 2;
-
-  const out: { x: number; y: number; roomA: number; roomB: number }[] = [];
-
-  for (const c of dungeon.meta.corridors) {
-    const roomA = findNearestRoomId(regionId, W, H, c.a, maxRadius);
-    const roomB = findNearestRoomId(regionId, W, H, c.b, maxRadius);
-    if (roomA === 0 || roomB === 0 || roomA === roomB) continue;
-
-    const tile = pickDoorTileOnCorridorPath(dungeon, featureType, c.a, c.b, {
-      minDistToWall,
-      preferCorridor,
-      trimEnds,
-    });
-    if (!tile) continue;
-
-    for (let i = 0; i < duplicateBias; i++) {
-      out.push({ x: tile.x, y: tile.y, roomA, roomB });
-    }
-  }
-
-  return out;
+  return { tile: null, preferCorridorHit: false, hadAnyAcceptableCandidate };
 }
 
 export function findDoorSiteCandidatesAndStatsFromCorridors(
@@ -412,7 +377,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
   const maxRadius = opts?.maxRadius ?? 10;
   const minDistToWall = opts?.minDistToWall ?? 1;
   const preferCorridor = opts?.preferCorridor ?? true;
-  const trimEnds = opts?.trimEnds ?? 2;
+  const trimEnds = opts?.trimEnds ?? 0;
   const duplicateBias = opts?.duplicateBias ?? 2;
 
   const stats: DoorSiteStats = {
@@ -466,7 +431,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
       stats,
     );
 
-    if (picked.hadAnyCandidate) stats.corridorsWithAnyCandidate += 1;
+    if (picked.hadAnyAcceptableCandidate) stats.corridorsWithAnyCandidate += 1;
     if (!picked.tile) continue;
 
     stats.corridorsYieldedTile += 1;

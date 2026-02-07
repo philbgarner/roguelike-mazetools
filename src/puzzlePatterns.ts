@@ -337,7 +337,7 @@ export const DEFAULT_ROLE_THRESHOLDS_V1: RoleThresholdsV1 = {
 // ---- Phase 3 (Milestone 4): Role-aware composition patterns ----
 
 export type GateThenOptionalRewardPatternOptions = {
-  requireThroat?: boolean;
+  requireThroat: true; // avoid relaxed pool condition.
   maxAttempts?: number;
   rewardLootTier?: number; // default 2
 };
