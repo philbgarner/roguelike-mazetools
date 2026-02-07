@@ -238,6 +238,7 @@ export function pickOrderedDoorSiteFromCorridors(args: {
       preferCorridor,
       trimEnds,
       duplicateBias,
+      requireThroat: true,
     },
   );
 

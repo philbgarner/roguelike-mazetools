@@ -1053,6 +1053,7 @@ export type ContentOptions = {
   chestsTargetCount?: number;
   secretRoomChance?: number;
   maxLootTier?: number;
+  requireThroat?: boolean;
 
   // Milestone 3 toggles
   includeLeverHiddenPocket?: boolean;
@@ -1547,6 +1548,8 @@ export function generateDungeonContent(
 
     maxLootTier: opts?.maxLootTier ?? 5,
 
+    requireThroat: true, // Door location selection should be throat of corridor and room boundary.
+
     // Milestone 3
     includeAsciiOverlay: opts?.includeAsciiOverlay ?? true,
     includeLeverHiddenPocket: opts?.includeLeverHiddenPocket ?? false,
@@ -1872,7 +1875,10 @@ export function generateDungeonContent(
             circuitRoles,
 
             allocId: () => clamp255(nextId++),
-            options: { maxAttempts: options.patternMaxAttempts },
+            options: {
+              maxAttempts: options.patternMaxAttempts,
+              requireThroat: options.requireThroat,
+            },
           }),
       });
     }
@@ -1920,7 +1926,10 @@ export function generateDungeonContent(
             levers,
             circuitsById,
             allocId: () => clamp255(nextId++),
-            options: { maxAttempts: options.patternMaxAttempts },
+            options: {
+              maxAttempts: options.patternMaxAttempts,
+              requireThroat: options.requireThroat,
+            },
           }),
       });
     }
@@ -1945,7 +1954,10 @@ export function generateDungeonContent(
             blocks,
             circuitsById,
             allocId: () => clamp255(nextId++),
-            options: { maxAttempts: options.patternMaxAttempts },
+            options: {
+              maxAttempts: options.patternMaxAttempts,
+              requireThroat: options.requireThroat,
+            },
           }),
       });
     }
@@ -1984,7 +1996,10 @@ export function generateDungeonContent(
             circuitRoles,
 
             allocId: () => clamp255(nextId++),
-            options: { maxAttempts: options.patternMaxAttempts },
+            options: {
+              maxAttempts: options.patternMaxAttempts,
+              requireThroat: options.requireThroat,
+            },
           }),
       });
     }

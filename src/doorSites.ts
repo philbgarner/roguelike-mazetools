@@ -23,6 +23,7 @@ export type DoorSiteStats = {
   pointsConsidered: number;
   pointsRejectedWall: number;
   pointsRejectedOccupied: number;
+  pointsRejectedThroat: number;
   pointsRejectedDistToWall: number;
   pointsAccepted: number;
 
@@ -176,6 +177,7 @@ function pickDoorTileOnCorridorPathWithStats(
     minDistToWall: number;
     preferCorridor: boolean;
     trimEnds: number;
+    requireThroat: boolean; // When true, require door to be a corridor...room boundary throat.
   },
   stats: DoorSiteStats,
 ): {
@@ -202,7 +204,9 @@ function pickDoorTileOnCorridorPathWithStats(
     return pts.slice(trim, pts.length - trim);
   }
 
-  function classify(p: Point): "ok" | "wall" | "occupied" | "dist" | "oob" {
+  function classify(
+    p: Point,
+  ): "ok" | "wall" | "occupied" | "dist" | "oob" | "throat" {
     stats.pointsConsidered += 1;
     if (!inBounds(W, H, p.x, p.y)) return "oob";
 
@@ -254,6 +258,53 @@ function pickDoorTileOnCorridorPathWithStats(
     if (!((w && e) || (n && s))) {
       stats.pointsRejectedWall += 1;
       return "wall";
+    }
+
+    // We allow the door tile to be on either the corridor side (regionId==0)
+    // or the room boundary side (regionId>0), but it must sit at the interface.
+    if (opts.requireThroat !== false) {
+      const selfRid = regionId[i] | 0;
+
+      // If jambs are E+W, the open axis is Y (north/south).
+      // If jambs are N+S, the open axis is X (east/west).
+      const openY = w && e && !(n && s);
+      const openX = n && s && !(w && e);
+
+      // If ambiguous (both true), be conservative: require that EITHER axis is a valid throat.
+      const checkOpenAxis = (axis: "x" | "y"): boolean => {
+        let aRid = 0,
+          bRid = 0;
+        if (axis === "x") {
+          aRid = regionId[idxOf(W, p.x - 1, p.y)] | 0;
+          bRid = regionId[idxOf(W, p.x + 1, p.y)] | 0;
+        } else {
+          aRid = regionId[idxOf(W, p.x, p.y - 1)] | 0;
+          bRid = regionId[idxOf(W, p.x, p.y + 1)] | 0;
+        }
+
+        // Reject corridor interior: corridor on both sides along open axis.
+        if (aRid === 0 && bRid === 0) return false;
+
+        // Accept only corridor↔room boundary interface.
+        // - If door tile is corridor-side (selfRid==0): one neighbor corridor, one neighbor room.
+        // - If door tile is room-side (selfRid>0): one neighbor corridor, one neighbor same room.
+        if (selfRid === 0) {
+          return (aRid === 0 && bRid > 0) || (bRid === 0 && aRid > 0);
+        }
+        return (
+          (aRid === 0 && bRid === selfRid) || (bRid === 0 && aRid === selfRid)
+        );
+      };
+
+      const ok =
+        (openX && checkOpenAxis("x")) ||
+        (openY && checkOpenAxis("y")) ||
+        (!openX && !openY && (checkOpenAxis("x") || checkOpenAxis("y")));
+
+      if (!ok) {
+        stats.pointsRejectedThroat += 1;
+        return "throat";
+      }
     }
 
     if (distWall[i] < opts.minDistToWall) {
@@ -342,6 +393,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
   dungeon: BspDungeonOutputs,
   featureType: Uint8Array,
   opts?: {
+    requireThroat: boolean;
     maxRadius?: number;
     minDistToWall?: number;
     preferCorridor?: boolean;
@@ -355,6 +407,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
   const W = dungeon.width;
   const H = dungeon.height;
   const regionId = dungeon.masks.regionId;
+  const requireThroat = (opts && opts.requireThroat) ?? false;
 
   const maxRadius = opts?.maxRadius ?? 10;
   const minDistToWall = opts?.minDistToWall ?? 1;
@@ -370,6 +423,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
     pointsConsidered: 0,
     pointsRejectedWall: 0,
     pointsRejectedOccupied: 0,
+    pointsRejectedThroat: 0,
     pointsRejectedDistToWall: 0,
     pointsAccepted: 0,
     corridorsWithAnyCandidate: 0,
@@ -407,6 +461,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
         minDistToWall,
         preferCorridor,
         trimEnds,
+        requireThroat,
       },
       stats,
     );

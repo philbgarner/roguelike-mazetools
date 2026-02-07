@@ -116,6 +116,7 @@ export type CircuitRoleRecordV1 = {
 };
 
 export type IntroGatePatternOptions = {
+  requireThroat: boolean;
   maxAttempts?: number;
 };
 
@@ -336,6 +337,7 @@ export const DEFAULT_ROLE_THRESHOLDS_V1: RoleThresholdsV1 = {
 // ---- Phase 3 (Milestone 4): Role-aware composition patterns ----
 
 export type GateThenOptionalRewardPatternOptions = {
+  requireThroat: boolean;
   maxAttempts?: number;
   rewardLootTier?: number; // default 2
 };
@@ -451,6 +453,7 @@ export function applyIntroGatePattern(args: {
     circuitsById,
     circuitRoles,
     allocId,
+    options,
   } = args;
 
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
@@ -464,6 +467,7 @@ export function applyIntroGatePattern(args: {
       trimEnds: 2,
       duplicateBias: 1,
       maxRadius: 10,
+      requireThroat: (options && options.requireThroat) ?? false,
     },
   );
 
@@ -667,6 +671,7 @@ export function applyGateThenOptionalRewardPattern(args: {
     circuitsById,
     circuitRoles,
     allocId,
+    options,
   } = args;
 
   const rewardTier = clamp255(args.options?.rewardLootTier ?? 2);
@@ -719,6 +724,7 @@ export function applyGateThenOptionalRewardPattern(args: {
       trimEnds: 2,
       duplicateBias: 1,
       maxRadius: 10,
+      requireThroat: (options && options.requireThroat) ?? false,
     },
   );
 
@@ -2148,10 +2154,12 @@ function chooseLeverSpot(
 // ============================================================================
 
 export type LeverOpensDoorPatternOptions = {
+  requireThroat: boolean;
   maxAttempts?: number;
 };
 
 export type PlateOpensDoorPatternOptions = {
+  requireThroat: boolean;
   maxAttempts?: number;
   inverted?: boolean;
 };
@@ -2390,6 +2398,7 @@ export function applyLeverOpensDoorPattern(args: {
     levers,
     circuitsById,
     allocId,
+    options,
   } = args;
 
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 60);
@@ -2403,6 +2412,7 @@ export function applyLeverOpensDoorPattern(args: {
       trimEnds: 2,
       duplicateBias: 1,
       maxRadius: 10,
+      requireThroat: (options && options.requireThroat) ?? false,
     },
   );
 
@@ -2552,10 +2562,12 @@ export function applyPlateOpensDoorPattern(args: {
     blocks,
     circuitsById,
     allocId,
+    options,
   } = args;
 
   const maxAttempts = Math.max(1, args.options?.maxAttempts ?? 80);
   const inverted = !!args.options?.inverted;
+  const requireThroat = (options && options.requireThroat) ?? false;
 
   // We still use the corridor candidate pool (spatial validity is in doorSites.ts)
   const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
@@ -2567,6 +2579,7 @@ export function applyPlateOpensDoorPattern(args: {
       trimEnds: 2,
       duplicateBias: 1,
       maxRadius: 10,
+      requireThroat,
     },
   );
 
@@ -2586,6 +2599,7 @@ export function applyPlateOpensDoorPattern(args: {
     trimEnds: 0,
     duplicateBias: 1,
     maxRadius: 12,
+    requireThroat,
   });
 
   // Merge unique relaxed candidates into the main candidate list.
