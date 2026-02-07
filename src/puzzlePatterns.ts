@@ -855,6 +855,7 @@ export function applyGateThenOptionalRewardPattern(args: {
   let failNoBranchDoorSites = 0;
   let failBranchOccupied = 0;
   let failLever = 0;
+  let failLeverFallback = 0;
   let failPlate = 0;
   let failBlockAdj = 0;
   let failChest = 0;
@@ -1042,19 +1043,58 @@ export function applyGateThenOptionalRewardPattern(args: {
               continue;
             }
 
-            const leverP = trySample(8, () =>
-              sampleReachableRoomFloorNoFeatures(
-                rng,
-                dungeon,
-                shallowRoom,
-                ft,
-                reachClosed0,
-              ),
-            );
+            // --- Lever placement (prefer shallowRoom; fallback to any earlier reachable room) ---
+            const leverTry = (room: (typeof rooms)[number]) =>
+              trySample(6, () =>
+                sampleReachableRoomFloorNoFeatures(
+                  rng,
+                  dungeon,
+                  room,
+                  ft,
+                  reachClosed0,
+                ),
+              );
+
+            let leverP = leverTry(shallowRoom);
+
             if (!leverP) {
-              // No reachable lever tile in shallowRoom (with current doors closed).
-              // This is exactly the “blocked by other door” scenario — skip this attempt.
+              // Soft fallback (Phase 2.5): still enforce trigger<gate by roomDistance,
+              // but don't require the lever be in the shallow endpoint room.
+              const gateDist = roomDistance.get(deepRoomId) ?? 9999;
+
+              // Candidate rooms: any room strictly earlier than the gated side.
+              // (Also require the room exists and has some reachable, feature-free floor.)
+              const candidateRoomIds: number[] = [];
+              for (let rid = 1; rid <= rooms.length; rid++) {
+                if (rid === deepRoomId) continue;
+                const d = roomDistance.get(rid) ?? 9999;
+                if (d >= gateDist) continue; // must be earlier than gated side
+                candidateRoomIds.push(rid);
+              }
+
+              // Prefer closer-to-entrance rooms; randomize within each distance bucket.
+              candidateRoomIds.sort((ra, rb) => {
+                const da = roomDistance.get(ra) ?? 9999;
+                const db = roomDistance.get(rb) ?? 9999;
+                if (da !== db) return da - db;
+                return (
+                  rng.nextInt(0, 1_000_000_000) - rng.nextInt(0, 1_000_000_000)
+                );
+              });
+
+              // Try a bounded number of rooms for determinism / performance.
+              const maxRoomsToTry = Math.min(10, candidateRoomIds.length);
+              for (let t = 0; t < maxRoomsToTry && !leverP; t++) {
+                const rid = candidateRoomIds[t]!;
+                const r = rooms[rid - 1];
+                if (!r) continue;
+                leverP = leverTry(r);
+              }
+            }
+
+            if (!leverP) {
               failLever++;
+              failLeverFallback++;
               continue;
             }
 
@@ -1378,6 +1418,7 @@ export function applyGateThenOptionalRewardPattern(args: {
     ` branchSameAsGate=${failBranchSameAsGate}` +
     ` gateElim=${failGateEliminatesAllBranchSites}` +
     ` leverFail=${failLever}` +
+    ` leverFallbackFail=${failLeverFallback}` +
     ` plateFail=${failPlate}` +
     ` blockAdjFail=${failBlockAdj}` +
     ` chestFail=${failChest}` +
@@ -1411,7 +1452,10 @@ export function applyGateThenOptionalRewardPattern(args: {
       reason =
         "Failed: off-main neighbors exist, but no corridor branch door sites exist.";
     else if (max === failLever && max > 0)
-      reason = "Failed: could not place lever in shallow room.";
+      reason =
+        failLeverFallback > 0
+          ? "Failed: could not place lever in any earlier reachable room."
+          : "Failed: could not place lever in shallow room.";
     else if (max === failPlate && max > 0)
       reason = "Failed: could not place plate in plate room.";
     else if (max === failBlockAdj && max > 0)
