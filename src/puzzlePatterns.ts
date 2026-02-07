@@ -116,7 +116,7 @@ export type CircuitRoleRecordV1 = {
 };
 
 export type IntroGatePatternOptions = {
-  requireThroat: boolean;
+  requireThroat?: boolean;
   maxAttempts?: number;
 };
 
@@ -2198,12 +2198,12 @@ function chooseLeverSpot(
 // ============================================================================
 
 export type LeverOpensDoorPatternOptions = {
-  requireThroat: boolean;
+  requireThroat?: boolean;
   maxAttempts?: number;
 };
 
 export type PlateOpensDoorPatternOptions = {
-  requireThroat: boolean;
+  requireThroat?: boolean;
   maxAttempts?: number;
   inverted?: boolean;
 };

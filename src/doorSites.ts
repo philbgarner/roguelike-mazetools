@@ -177,7 +177,7 @@ function pickDoorTileOnCorridorPathWithStats(
     minDistToWall: number;
     preferCorridor: boolean;
     trimEnds: number;
-    requireThroat: boolean; // When true, require door to be a corridor...room boundary throat.
+    requireThroat?: boolean; // When true, require door to be a corridor...room boundary throat.
   },
   stats: DoorSiteStats,
 ): {
@@ -393,7 +393,7 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
   dungeon: BspDungeonOutputs,
   featureType: Uint8Array,
   opts?: {
-    requireThroat: boolean;
+    requireThroat?: boolean;
     maxRadius?: number;
     minDistToWall?: number;
     preferCorridor?: boolean;
