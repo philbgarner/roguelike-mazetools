@@ -198,8 +198,6 @@ function ExecutionView(props: {
 
               runtime0: rt0,
 
-              startCell0,
-
               // Keep whatever your inspection expects:
               circuitEval0: eval0,
               // If your UI expects debug, keep debug here:
