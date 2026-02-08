@@ -7050,664 +7050,6 @@ export const tileFrag = /* glsl */ `
 `;
 </file>
 
-<file path="src/batchStats.ts">
-// src/batchStats.ts
-//
-// Batch runner aggregation helpers.
-// This file is intentionally framework-agnostic (no React) so it can be reused
-// by UI panels, scripts, or future CLI harnesses.
-//
-
-import type { DoorSiteStatsBundle } from "./doorSites";
-
-export type SampleFailureSeedV1 = {
-  schemaVersion: 1;
-  seed: string;
-  seedUsed: number;
-  reason: string;
-  // parsed out of "(edgeConsidered=.. gateElim=..)" when present
-  edgeStats?: Record<string, number>;
-};
-
-export type SampleLeverCaseSeedV1 = {
-  schemaVersion: 1;
-  seed: string;
-  seedUsed: number;
-  gateDoorId: number;
-  leverId: number;
-  leverX: number;
-  leverY: number;
-
-  reachableWithGateClosed: boolean;
-  reachableIfGateWereOpen: boolean;
-  reachableIfAllDoorsWereOpen: boolean;
-
-  isBehindOwnGate: boolean;
-  blockedByOtherDoor: boolean;
-  unreachableEvenIfAllDoorsOpen: boolean;
-};
-
-export type LeverBehindOwnGateDiagV1 = {
-  schemaVersion: 1;
-  gateDoorId: number; // the door id the lever controls (same id for this pattern)
-  leverId: number; // lever fixture id (same id for this pattern)
-  leverX: number;
-  leverY: number;
-
-  // Reachability of the lever from entrance with all doors closed:
-  reachableWithGateClosed: boolean;
-
-  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
-  reachableIfGateWereOpen: boolean;
-
-  // The actual diagnostic flag we care about:
-  isBehindOwnGate: boolean;
-  reachableIfAllDoorsWereOpen: boolean;
-  blockedByOtherDoor: boolean;
-  unreachableEvenIfAllDoorsOpen: boolean;
-};
-
-export type GateEdgeReuseDiagV1 = {
-  schemaVersion: 1;
-
-  // Total doors placed by the pattern run (typically 0, 1, or 2)
-  doorsPlaced: number;
-
-  // Unique graph edges among those doors
-  uniqueEdgesPlaced: number;
-
-  // Count of doors whose edge was already occupied BEFORE this pattern committed
-  reusedExistingCount: number;
-
-  // Count of doors that reuse an edge already placed earlier in THIS pattern commit
-  // (should usually be 0; helpful as a sanity check)
-  reusedInternalCount: number;
-
-  // Small list of edgeIds that were reused (best-effort; keep short)
-  reusedEdgeIds: string[];
-};
-
-export type PatternDiag = {
-  name: string;
-  ok: boolean;
-  didCarve: boolean;
-  reason?: string;
-  ms?: number;
-  stats?: DoorSiteStatsBundle;
-  reachability?: ReachabilityStats;
-  gateEdgeReuse?: GateEdgeReuseDiagV1;
-  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
-};
-
-export type Point = { x: number; y: number };
-
-export type ReachabilityStats = {
-  start: Point;
-  connector: Point;
-  pocketCenter: Point;
-  goal: Point;
-  reachablePre: boolean;
-  reachablePost: boolean;
-  shortestPathPost: number | null;
-};
-
-export type CircuitBatchMetrics = {
-  schemaVersion: 1;
-
-  circuitCount: number;
-  signalEdgeCount: number;
-
-  maxTopoDepth: number;
-  avgTopoDepth: number;
-
-  circuitsWithSignalDeps: number;
-  pctWithSignalDeps: number; // 0..1
-
-  cycleGroupCount: number;
-  cycleCircuitCount: number;
-
-  blockedByCycleCount: number;
-
-  largestCycleSize: number;
-};
-
-export type BatchRunInput = {
-  seed: string;
-  seedUsed: number;
-  rooms: number;
-  corridors: number;
-  patternDiagnostics: PatternDiag[];
-  circuitMetrics: CircuitBatchMetrics | null;
-};
-
-export type BatchPatternSummary = {
-  name: string;
-  runs: number;
-  ok: number;
-  fail: number;
-  okRate: number; // 0..1
-  carved: number;
-  carvedRate: number; // 0..1
-  msTotal: number;
-  msAvg: number;
-  reasons: Record<string, number>;
-  topReasons: Array<[string, number]>;
-  doorSitesAvg?: Record<string, number>;
-  // Optional: reachability diagnostics (present when any run reported it)
-  reachabilityPreReachable?: number;
-  reachabilityPreReachableRate?: number; // 0..1
-  reachabilityPostUnreachable?: number;
-  reachabilityPostUnreachableRate?: number; // 0..1
-  shortestPathPostAvg?: number;
-
-  // Optional: graph-edge reuse diagnostics (present when any run reported it)
-  gateEdgeReuseAvg?: {
-    runsWithDiag: number;
-    pctRunsWithDiag: number; // 0..1
-
-    doorsPlacedAvg: number;
-    uniqueEdgesPlacedAvg: number;
-
-    reusedExistingCountAvg: number;
-    reusedInternalCountAvg: number;
-
-    runsWithExistingReuse: number;
-    pctRunsWithExistingReuse: number; // 0..1
-  };
-
-  leverAccessAvg?: {
-    runsWithDiag: number;
-    pctRunsWithDiag: number; // 0..1
-
-    // A) Lever is behind *its own* gate (opening only that gate makes it reachable)
-    leverBehindOwnGateCount: number;
-    pctLeverBehindOwnGate: number; // 0..1
-
-    // B) Lever becomes reachable if ALL doors are opened, but NOT if only its own gate is opened
-    // => blocked by some other door(s)
-    leverBlockedByOtherDoorCount: number;
-    pctLeverBlockedByOtherDoor: number; // 0..1
-
-    // C) Lever is unreachable even if all doors are opened
-    // => topology/disconnect/walls/hidden etc.
-    leverUnreachableEvenIfAllDoorsOpenCount: number;
-    pctLeverUnreachableEvenIfAllDoorsOpen: number; // 0..1
-
-    // (Optional but useful) Old signal: unreachable even when only gate is opened (other doors still closed)
-    leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
-    pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
-  };
-
-  samples?: {
-    failureSeeds?: SampleFailureSeedV1[];
-    leverBehindOwnGateSeeds?: SampleLeverCaseSeedV1[];
-    leverBlockedByOtherDoorSeeds?: SampleLeverCaseSeedV1[];
-  };
-};
-
-export type BatchSummary = {
-  runs: number;
-  roomsAvg: number;
-  corridorsAvg: number;
-  patterns: BatchPatternSummary[];
-
-  circuits?: {
-    runsWithMetrics: number;
-
-    circuitCountAvg: number;
-    signalEdgeCountAvg: number;
-
-    maxTopoDepthAvg: number;
-    avgTopoDepthAvg: number;
-
-    circuitsWithSignalDepsAvg: number;
-    pctWithSignalDepsAvg: number;
-
-    cycleGroupCountAvg: number;
-    cycleCircuitCountAvg: number;
-
-    blockedByCycleCountAvg: number;
-
-    largestCycleSizeAvg: number;
-  };
-};
-
-function safeNum(v: unknown): number {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
-function parseParenKeyVals(reason: string): Record<string, number> | undefined {
-  const m = reason.match(/\(([^)]*)\)\s*$/);
-  if (!m) return undefined;
-  const body = m[1];
-  const out: Record<string, number> = {};
-  for (const part of body.split(/\s+/g)) {
-    const kv = part.split("=");
-    if (kv.length !== 2) continue;
-    const k = kv[0].trim();
-    const v = Number(kv[1]);
-    if (!k) continue;
-    if (Number.isFinite(v)) out[k] = v;
-  }
-  return Object.keys(out).length ? out : undefined;
-}
-
-export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
-  const totalRuns = runs.length;
-
-  let roomsSum = 0;
-  let corridorsSum = 0;
-  let circuitRuns = 0;
-
-  let circuitCountSum = 0;
-  let signalEdgeCountSum = 0;
-
-  let maxTopoDepthSum = 0;
-  let avgTopoDepthSum = 0;
-
-  let circuitsWithSignalDepsSum = 0;
-  let pctWithSignalDepsSum = 0;
-
-  let cycleGroupCountSum = 0;
-  let cycleCircuitCountSum = 0;
-
-  let blockedByCycleCountSum = 0;
-
-  let largestCycleSizeSum = 0;
-
-  function makeAcc() {
-    return {
-      runs: 0,
-      ok: 0,
-      fail: 0,
-      carved: 0,
-      msTotal: 0,
-      reasons: {} as Record<string, number>,
-      doorSitesSum: {} as Record<string, number>,
-      doorSitesCount: 0,
-      reachabilityCount: 0,
-      reachabilityPreReachable: 0,
-      reachabilityPostUnreachable: 0,
-      shortestPathPostSum: 0,
-      shortestPathPostCount: 0,
-      gateEdgeReuseCount: 0,
-      gateDoorsPlacedSum: 0,
-      gateUniqueEdgesSum: 0,
-      gateReusedExistingSum: 0,
-      gateReusedInternalSum: 0,
-      gateRunsWithExistingReuse: 0,
-      leverAccessDiagCount: 0,
-      leverBehindOwnGateCount: 0,
-      leverBlockedByOtherDoorCount: 0,
-      leverUnreachableEvenIfAllDoorsOpenCount: 0,
-      leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
-      // --- sample seed capture (capped) ---
-      sampleFailureSeeds: [] as SampleFailureSeedV1[],
-      sampleLeverBehindOwnGateSeeds: [] as SampleLeverCaseSeedV1[],
-      sampleLeverBlockedByOtherDoorSeeds: [] as SampleLeverCaseSeedV1[],
-    };
-  }
-
-  const byPattern = new Map<
-    string,
-    {
-      runs: number;
-      ok: number;
-      fail: number;
-      carved: number;
-      msTotal: number;
-      reasons: Record<string, number>;
-      doorSitesSum: Record<string, number>;
-      doorSitesCount: number;
-      reachabilityCount: number;
-      reachabilityPreReachable: number;
-      reachabilityPostUnreachable: number;
-      shortestPathPostSum: number;
-      shortestPathPostCount: number;
-      gateEdgeReuseCount: number;
-      gateDoorsPlacedSum: number;
-      gateUniqueEdgesSum: number;
-      gateReusedExistingSum: number;
-      gateReusedInternalSum: number;
-      gateRunsWithExistingReuse: number;
-      leverAccessDiagCount: number;
-      leverBehindOwnGateCount: number;
-      leverBlockedByOtherDoorCount: number;
-      leverUnreachableEvenIfAllDoorsOpenCount: number;
-      leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
-
-      sampleFailureSeeds: SampleFailureSeedV1[];
-      sampleLeverBehindOwnGateSeeds: SampleLeverCaseSeedV1[];
-      sampleLeverBlockedByOtherDoorSeeds: SampleLeverCaseSeedV1[];
-    }
-  >();
-
-  for (const r of runs) {
-    roomsSum += safeNum(r.rooms);
-    corridorsSum += safeNum(r.corridors);
-
-    for (const d of r.patternDiagnostics ?? []) {
-      const name = String(d.name ?? "unknown");
-      let next = byPattern.get(name);
-      if (!next) {
-        next = makeAcc();
-        byPattern.set(name, next);
-      }
-
-      // --- Sample seed capture (Phase 2.5 drilldowns) -----------------------
-
-      // 1) gateThenOptionalReward failures (want ~4)
-      if (name === "gateThenOptionalReward" && !d.ok) {
-        if (next.sampleFailureSeeds.length < 4) {
-          const reason = String(d.reason ?? "Failed");
-          next.sampleFailureSeeds.push({
-            schemaVersion: 1,
-            seed: r.seed,
-            seedUsed: r.seedUsed,
-            reason,
-            edgeStats: parseParenKeyVals(reason),
-          });
-        }
-      }
-
-      // 2) lever behind own gate (want ~10)
-      const leverDiag = (d as any).leverBehindOwnGate as
-        | LeverBehindOwnGateDiagV1
-        | undefined;
-
-      if (name === "gateThenOptionalReward" && leverDiag) {
-        if (
-          leverDiag.isBehindOwnGate &&
-          next.sampleLeverBehindOwnGateSeeds.length < 10
-        ) {
-          next.sampleLeverBehindOwnGateSeeds.push({
-            schemaVersion: 1,
-            seed: r.seed,
-            seedUsed: r.seedUsed,
-            gateDoorId: leverDiag.gateDoorId,
-            leverId: leverDiag.leverId,
-            leverX: leverDiag.leverX,
-            leverY: leverDiag.leverY,
-            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
-            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
-            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
-            isBehindOwnGate: leverDiag.isBehindOwnGate,
-            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
-            unreachableEvenIfAllDoorsOpen:
-              leverDiag.unreachableEvenIfAllDoorsOpen,
-          });
-        }
-
-        // 3) blocked by other door (want ~10)
-        if (
-          leverDiag.blockedByOtherDoor &&
-          next.sampleLeverBlockedByOtherDoorSeeds.length < 10
-        ) {
-          next.sampleLeverBlockedByOtherDoorSeeds.push({
-            schemaVersion: 1,
-            seed: r.seed,
-            seedUsed: r.seedUsed,
-            gateDoorId: leverDiag.gateDoorId,
-            leverId: leverDiag.leverId,
-            leverX: leverDiag.leverX,
-            leverY: leverDiag.leverY,
-            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
-            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
-            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
-            isBehindOwnGate: leverDiag.isBehindOwnGate,
-            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
-            unreachableEvenIfAllDoorsOpen:
-              leverDiag.unreachableEvenIfAllDoorsOpen,
-          });
-        }
-      }
-
-      next.runs += 1;
-      if (d.ok) next.ok += 1;
-      else next.fail += 1;
-
-      if (d.didCarve) next.carved += 1;
-
-      const ms = safeNum(d.ms);
-      if (ms > 0) next.msTotal += ms;
-
-      if (!d.ok) {
-        const reason = String(d.reason ?? "unknown");
-        next.reasons[reason] = (next.reasons[reason] ?? 0) + 1;
-      }
-
-      const ds = d.stats?.doorSites;
-      if (ds) {
-        next.doorSitesCount += 1;
-        for (const [k, v] of Object.entries(ds)) {
-          const n = safeNum(v);
-          next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
-        }
-      }
-      const rs = d.reachability;
-      if (rs) {
-        next.reachabilityCount += 1;
-        if (rs.reachablePre) next.reachabilityPreReachable += 1;
-        if (!rs.reachablePost) next.reachabilityPostUnreachable += 1;
-
-        const sp = rs.shortestPathPost;
-        if (typeof sp === "number" && Number.isFinite(sp) && sp >= 0) {
-          next.shortestPathPostSum += sp;
-          next.shortestPathPostCount += 1;
-        }
-      }
-
-      const gr = d.gateEdgeReuse;
-      if (gr) {
-        next.gateEdgeReuseCount += 1;
-        next.gateDoorsPlacedSum += safeNum(gr.doorsPlaced);
-        next.gateUniqueEdgesSum += safeNum(gr.uniqueEdgesPlaced);
-        next.gateReusedExistingSum += safeNum(gr.reusedExistingCount);
-        next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
-        if ((gr.reusedExistingCount | 0) > 0)
-          next.gateRunsWithExistingReuse += 1;
-      }
-      const lb = d.leverBehindOwnGate;
-      if (lb) {
-        next.leverAccessDiagCount += 1;
-
-        if (lb.isBehindOwnGate) next.leverBehindOwnGateCount += 1;
-
-        if (lb.blockedByOtherDoor) next.leverBlockedByOtherDoorCount += 1;
-
-        if (lb.unreachableEvenIfAllDoorsOpen)
-          next.leverUnreachableEvenIfAllDoorsOpenCount += 1;
-
-        // Keep the old diagnostic bucket (but renamed to reflect what it really means)
-        if (!lb.reachableIfGateWereOpen)
-          next.leverUnreachableWithGateOpenButOtherDoorsClosedCount += 1;
-      }
-
-      byPattern.set(name, next);
-    }
-
-    const cm = r.circuitMetrics;
-    if (cm) {
-      circuitRuns += 1;
-
-      circuitCountSum += safeNum(cm.circuitCount);
-      signalEdgeCountSum += safeNum(cm.signalEdgeCount);
-
-      maxTopoDepthSum += safeNum(cm.maxTopoDepth);
-      avgTopoDepthSum += safeNum(cm.avgTopoDepth);
-
-      circuitsWithSignalDepsSum += safeNum(cm.circuitsWithSignalDeps);
-      pctWithSignalDepsSum += safeNum(cm.pctWithSignalDeps);
-
-      cycleGroupCountSum += safeNum(cm.cycleGroupCount);
-      cycleCircuitCountSum += safeNum(cm.cycleCircuitCount);
-
-      blockedByCycleCountSum += safeNum(cm.blockedByCycleCount);
-
-      largestCycleSizeSum += safeNum(cm.largestCycleSize);
-    }
-  }
-
-  const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([name, acc]) => {
-      const okRate = acc.runs ? acc.ok / acc.runs : 0;
-      const carvedRate = acc.runs ? acc.carved / acc.runs : 0;
-      const msAvg = acc.runs ? acc.msTotal / acc.runs : 0;
-
-      const topReasons = Object.entries(acc.reasons)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-
-      let doorSitesAvg: Record<string, number> | undefined = undefined;
-      if (acc.doorSitesCount > 0) {
-        doorSitesAvg = {};
-        for (const [k, sum] of Object.entries(acc.doorSitesSum)) {
-          doorSitesAvg[k] = round2(sum / acc.doorSitesCount);
-        }
-      }
-
-      const hasReach = acc.reachabilityCount > 0;
-      const reachabilityPreReachableRate = hasReach
-        ? acc.reachabilityPreReachable / acc.reachabilityCount
-        : 0;
-      const reachabilityPostUnreachableRate = hasReach
-        ? acc.reachabilityPostUnreachable / acc.reachabilityCount
-        : 0;
-      const shortestPathPostAvg = acc.shortestPathPostCount
-        ? acc.shortestPathPostSum / acc.shortestPathPostCount
-        : 0;
-
-      const out: BatchPatternSummary = {
-        name,
-        runs: acc.runs,
-        ok: acc.ok,
-        fail: acc.fail,
-        okRate: round2(okRate),
-        carved: acc.carved,
-        carvedRate: round2(carvedRate),
-        msTotal: Math.round(acc.msTotal),
-        msAvg: round2(msAvg),
-        reasons: acc.reasons,
-        topReasons,
-        doorSitesAvg,
-      };
-
-      if (hasReach) {
-        out.reachabilityPreReachable = acc.reachabilityPreReachable;
-        out.reachabilityPreReachableRate = round2(reachabilityPreReachableRate);
-        out.reachabilityPostUnreachable = acc.reachabilityPostUnreachable;
-        out.reachabilityPostUnreachableRate = round2(
-          reachabilityPostUnreachableRate,
-        );
-        if (acc.shortestPathPostCount > 0) {
-          out.shortestPathPostAvg = round2(shortestPathPostAvg);
-        }
-      }
-
-      if (acc.gateEdgeReuseCount > 0) {
-        const runsWithDiag = acc.gateEdgeReuseCount;
-        const doorsPlacedAvg = acc.gateDoorsPlacedSum / runsWithDiag;
-        const uniqueEdgesPlacedAvg = acc.gateUniqueEdgesSum / runsWithDiag;
-        const reusedExistingCountAvg = acc.gateReusedExistingSum / runsWithDiag;
-        const reusedInternalCountAvg = acc.gateReusedInternalSum / runsWithDiag;
-
-        out.gateEdgeReuseAvg = {
-          runsWithDiag,
-          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
-
-          doorsPlacedAvg: round2(doorsPlacedAvg),
-          uniqueEdgesPlacedAvg: round2(uniqueEdgesPlacedAvg),
-
-          reusedExistingCountAvg: round2(reusedExistingCountAvg),
-          reusedInternalCountAvg: round2(reusedInternalCountAvg),
-
-          runsWithExistingReuse: acc.gateRunsWithExistingReuse,
-          pctRunsWithExistingReuse: round2(
-            runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
-          ),
-        };
-      }
-
-      if (acc.leverAccessDiagCount > 0) {
-        const runsWithDiag = acc.leverAccessDiagCount;
-
-        out.leverAccessAvg = {
-          runsWithDiag,
-          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
-
-          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
-          pctLeverBehindOwnGate: round2(
-            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
-          ),
-
-          leverBlockedByOtherDoorCount: acc.leverBlockedByOtherDoorCount,
-          pctLeverBlockedByOtherDoor: round2(
-            runsWithDiag ? acc.leverBlockedByOtherDoorCount / runsWithDiag : 0,
-          ),
-
-          leverUnreachableEvenIfAllDoorsOpenCount:
-            acc.leverUnreachableEvenIfAllDoorsOpenCount,
-          pctLeverUnreachableEvenIfAllDoorsOpen: round2(
-            runsWithDiag
-              ? acc.leverUnreachableEvenIfAllDoorsOpenCount / runsWithDiag
-              : 0,
-          ),
-
-          leverUnreachableWithGateOpenButOtherDoorsClosedCount:
-            acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount,
-          pctLeverUnreachableWithGateOpenButOtherDoorsClosed: round2(
-            runsWithDiag
-              ? acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount /
-                  runsWithDiag
-              : 0,
-          ),
-        };
-      }
-
-      return out;
-    });
-
-  const circuits =
-    circuitRuns > 0
-      ? {
-          runsWithMetrics: circuitRuns,
-
-          circuitCountAvg: round2(circuitCountSum / circuitRuns),
-          signalEdgeCountAvg: round2(signalEdgeCountSum / circuitRuns),
-
-          maxTopoDepthAvg: round2(maxTopoDepthSum / circuitRuns),
-          avgTopoDepthAvg: round2(avgTopoDepthSum / circuitRuns),
-
-          circuitsWithSignalDepsAvg: round2(
-            circuitsWithSignalDepsSum / circuitRuns,
-          ),
-          pctWithSignalDepsAvg: round2(pctWithSignalDepsSum / circuitRuns),
-
-          cycleGroupCountAvg: round2(cycleGroupCountSum / circuitRuns),
-          cycleCircuitCountAvg: round2(cycleCircuitCountSum / circuitRuns),
-
-          blockedByCycleCountAvg: round2(blockedByCycleCountSum / circuitRuns),
-
-          largestCycleSizeAvg: round2(largestCycleSizeSum / circuitRuns),
-        }
-      : undefined;
-
-  return {
-    runs: totalRuns,
-    roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
-    corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
-    patterns,
-    circuits,
-  };
-}
-</file>
-
 <file path="src/doorSites.ts">
 // src/doorSites.ts
 //
@@ -8908,6 +8250,677 @@ export function evaluateCircuits(
   }
 
   return { next, debug, diagnostics };
+}
+</file>
+
+<file path="src/batchStats.ts">
+// src/batchStats.ts
+//
+// Batch runner aggregation helpers.
+// This file is intentionally framework-agnostic (no React) so it can be reused
+// by UI panels, scripts, or future CLI harnesses.
+//
+
+import type { DoorSiteStatsBundle } from "./doorSites";
+
+export type SampleFailureSeedV1 = {
+  schemaVersion: 1;
+  seed: string;
+  seedUsed: number;
+  reason: string;
+  // parsed out of "(edgeConsidered=.. gateElim=..)" when present
+  edgeStats?: Record<string, number>;
+};
+
+export type SampleLeverCaseSeedV1 = {
+  schemaVersion: 1;
+  seed: string;
+  seedUsed: number;
+  gateDoorId: number;
+  leverId: number;
+  leverX: number;
+  leverY: number;
+
+  reachableWithGateClosed: boolean;
+  reachableIfGateWereOpen: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+
+  isBehindOwnGate: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
+export type LeverBehindOwnGateDiagV1 = {
+  schemaVersion: 1;
+  gateDoorId: number; // the door id the lever controls (same id for this pattern)
+  leverId: number; // lever fixture id (same id for this pattern)
+  leverX: number;
+  leverY: number;
+
+  // Reachability of the lever from entrance with all doors closed:
+  reachableWithGateClosed: boolean;
+
+  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
+  reachableIfGateWereOpen: boolean;
+
+  // The actual diagnostic flag we care about:
+  isBehindOwnGate: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
+export type GateEdgeReuseDiagV1 = {
+  schemaVersion: 1;
+
+  // Total doors placed by the pattern run (typically 0, 1, or 2)
+  doorsPlaced: number;
+
+  // Unique graph edges among those doors
+  uniqueEdgesPlaced: number;
+
+  // Count of doors whose edge was already occupied BEFORE this pattern committed
+  reusedExistingCount: number;
+
+  // Count of doors that reuse an edge already placed earlier in THIS pattern commit
+  // (should usually be 0; helpful as a sanity check)
+  reusedInternalCount: number;
+
+  // Small list of edgeIds that were reused (best-effort; keep short)
+  reusedEdgeIds: string[];
+};
+
+export type PatternDiag = {
+  name: string;
+  ok: boolean;
+  didCarve: boolean;
+  reason?: string;
+  ms?: number;
+  stats?: DoorSiteStatsBundle;
+  reachability?: ReachabilityStats;
+  gateEdgeReuse?: GateEdgeReuseDiagV1;
+  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
+};
+
+export type Point = { x: number; y: number };
+
+export type ReachabilityStats = {
+  start: Point;
+  connector: Point;
+  pocketCenter: Point;
+  goal: Point;
+  reachablePre: boolean;
+  reachablePost: boolean;
+  shortestPathPost: number | null;
+};
+
+export type CircuitBatchMetrics = {
+  schemaVersion: 1;
+
+  circuitCount: number;
+  signalEdgeCount: number;
+
+  maxTopoDepth: number;
+  avgTopoDepth: number;
+
+  circuitsWithSignalDeps: number;
+  pctWithSignalDeps: number; // 0..1
+
+  cycleGroupCount: number;
+  cycleCircuitCount: number;
+
+  blockedByCycleCount: number;
+
+  largestCycleSize: number;
+};
+
+export type BatchRunInput = {
+  seed: string;
+  seedUsed: number;
+  rooms: number;
+  corridors: number;
+  patternDiagnostics: PatternDiag[];
+  circuitMetrics: CircuitBatchMetrics | null;
+};
+
+export type BatchPatternSummary = {
+  name: string;
+  runs: number;
+  ok: number;
+  fail: number;
+  okRate: number; // 0..1
+  carved: number;
+  carvedRate: number; // 0..1
+  msTotal: number;
+  msAvg: number;
+  reasons: Record<string, number>;
+  topReasons: Array<[string, number]>;
+  doorSitesAvg?: Record<string, number>;
+  // Optional: reachability diagnostics (present when any run reported it)
+  reachabilityPreReachable?: number;
+  reachabilityPreReachableRate?: number; // 0..1
+  reachabilityPostUnreachable?: number;
+  reachabilityPostUnreachableRate?: number; // 0..1
+  shortestPathPostAvg?: number;
+
+  // Optional: graph-edge reuse diagnostics (present when any run reported it)
+  gateEdgeReuseAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    doorsPlacedAvg: number;
+    uniqueEdgesPlacedAvg: number;
+
+    reusedExistingCountAvg: number;
+    reusedInternalCountAvg: number;
+
+    runsWithExistingReuse: number;
+    pctRunsWithExistingReuse: number; // 0..1
+  };
+
+  leverAccessAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    // A) Lever is behind *its own* gate (opening only that gate makes it reachable)
+    leverBehindOwnGateCount: number;
+    pctLeverBehindOwnGate: number; // 0..1
+
+    // B) Lever becomes reachable if ALL doors are opened, but NOT if only its own gate is opened
+    // => blocked by some other door(s)
+    leverBlockedByOtherDoorCount: number;
+    pctLeverBlockedByOtherDoor: number; // 0..1
+
+    // C) Lever is unreachable even if all doors are opened
+    // => topology/disconnect/walls/hidden etc.
+    leverUnreachableEvenIfAllDoorsOpenCount: number;
+    pctLeverUnreachableEvenIfAllDoorsOpen: number; // 0..1
+
+    // (Optional but useful) Old signal: unreachable even when only gate is opened (other doors still closed)
+    leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+    pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
+  };
+
+  samples?: {
+    failureSeeds?: SampleFailureSeedV1[];
+    leverBehindOwnGateSeeds?: SampleLeverCaseSeedV1[];
+    leverBlockedByOtherDoorSeeds?: SampleLeverCaseSeedV1[];
+  };
+};
+
+export type BatchSummary = {
+  runs: number;
+  roomsAvg: number;
+  corridorsAvg: number;
+  patterns: BatchPatternSummary[];
+
+  circuits?: {
+    runsWithMetrics: number;
+
+    circuitCountAvg: number;
+    signalEdgeCountAvg: number;
+
+    maxTopoDepthAvg: number;
+    avgTopoDepthAvg: number;
+
+    circuitsWithSignalDepsAvg: number;
+    pctWithSignalDepsAvg: number;
+
+    cycleGroupCountAvg: number;
+    cycleCircuitCountAvg: number;
+
+    blockedByCycleCountAvg: number;
+
+    largestCycleSizeAvg: number;
+  };
+};
+
+function safeNum(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function parseParenKeyVals(reason: string): Record<string, number> | undefined {
+  const m = reason.match(/\(([^)]*)\)\s*$/);
+  if (!m) return undefined;
+  const body = m[1];
+  const out: Record<string, number> = {};
+  for (const part of body.split(/\s+/g)) {
+    const kv = part.split("=");
+    if (kv.length !== 2) continue;
+    const k = kv[0].trim();
+    const v = Number(kv[1]);
+    if (!k) continue;
+    if (Number.isFinite(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
+  const totalRuns = runs.length;
+
+  let roomsSum = 0;
+  let corridorsSum = 0;
+  let circuitRuns = 0;
+
+  let circuitCountSum = 0;
+  let signalEdgeCountSum = 0;
+
+  let maxTopoDepthSum = 0;
+  let avgTopoDepthSum = 0;
+
+  let circuitsWithSignalDepsSum = 0;
+  let pctWithSignalDepsSum = 0;
+
+  let cycleGroupCountSum = 0;
+  let cycleCircuitCountSum = 0;
+
+  let blockedByCycleCountSum = 0;
+
+  let largestCycleSizeSum = 0;
+
+  function makeAcc() {
+    return {
+      runs: 0,
+      ok: 0,
+      fail: 0,
+      carved: 0,
+      msTotal: 0,
+      reasons: {} as Record<string, number>,
+      doorSitesSum: {} as Record<string, number>,
+      doorSitesCount: 0,
+      reachabilityCount: 0,
+      reachabilityPreReachable: 0,
+      reachabilityPostUnreachable: 0,
+      shortestPathPostSum: 0,
+      shortestPathPostCount: 0,
+      gateEdgeReuseCount: 0,
+      gateDoorsPlacedSum: 0,
+      gateUniqueEdgesSum: 0,
+      gateReusedExistingSum: 0,
+      gateReusedInternalSum: 0,
+      gateRunsWithExistingReuse: 0,
+      leverAccessDiagCount: 0,
+      leverBehindOwnGateCount: 0,
+      leverBlockedByOtherDoorCount: 0,
+      leverUnreachableEvenIfAllDoorsOpenCount: 0,
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
+      // --- sample seed capture (capped) ---
+      sampleFailureSeeds: [] as SampleFailureSeedV1[],
+      sampleLeverBehindOwnGateSeeds: [] as SampleLeverCaseSeedV1[],
+      sampleLeverBlockedByOtherDoorSeeds: [] as SampleLeverCaseSeedV1[],
+    };
+  }
+
+  const byPattern = new Map<
+    string,
+    {
+      runs: number;
+      ok: number;
+      fail: number;
+      carved: number;
+      msTotal: number;
+      reasons: Record<string, number>;
+      doorSitesSum: Record<string, number>;
+      doorSitesCount: number;
+      reachabilityCount: number;
+      reachabilityPreReachable: number;
+      reachabilityPostUnreachable: number;
+      shortestPathPostSum: number;
+      shortestPathPostCount: number;
+      gateEdgeReuseCount: number;
+      gateDoorsPlacedSum: number;
+      gateUniqueEdgesSum: number;
+      gateReusedExistingSum: number;
+      gateReusedInternalSum: number;
+      gateRunsWithExistingReuse: number;
+      leverAccessDiagCount: number;
+      leverBehindOwnGateCount: number;
+      leverBlockedByOtherDoorCount: number;
+      leverUnreachableEvenIfAllDoorsOpenCount: number;
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+
+      sampleFailureSeeds: SampleFailureSeedV1[];
+      sampleLeverBehindOwnGateSeeds: SampleLeverCaseSeedV1[];
+      sampleLeverBlockedByOtherDoorSeeds: SampleLeverCaseSeedV1[];
+    }
+  >();
+
+  for (const r of runs) {
+    roomsSum += safeNum(r.rooms);
+    corridorsSum += safeNum(r.corridors);
+
+    for (const d of r.patternDiagnostics ?? []) {
+      const name = String(d.name ?? "unknown");
+      let next = byPattern.get(name);
+      if (!next) {
+        next = makeAcc();
+        byPattern.set(name, next);
+      }
+
+      // --- Sample seed capture (Phase 2.5 drilldowns) -----------------------
+
+      // 1) gateThenOptionalReward failures (want ~4)
+      if (name === "gateThenOptionalReward" && !d.ok) {
+        if (next.sampleFailureSeeds.length < 4) {
+          const reason = String(d.reason ?? "Failed");
+          next.sampleFailureSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            reason,
+            edgeStats: parseParenKeyVals(reason),
+          });
+        }
+      }
+
+      // 2) lever behind own gate (want ~10)
+      const leverDiag = (d as any).leverBehindOwnGate as
+        | LeverBehindOwnGateDiagV1
+        | undefined;
+
+      if (name === "gateThenOptionalReward" && leverDiag) {
+        if (
+          leverDiag.isBehindOwnGate &&
+          next.sampleLeverBehindOwnGateSeeds.length < 10
+        ) {
+          next.sampleLeverBehindOwnGateSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            gateDoorId: leverDiag.gateDoorId,
+            leverId: leverDiag.leverId,
+            leverX: leverDiag.leverX,
+            leverY: leverDiag.leverY,
+            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
+            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
+            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
+            isBehindOwnGate: leverDiag.isBehindOwnGate,
+            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
+            unreachableEvenIfAllDoorsOpen:
+              leverDiag.unreachableEvenIfAllDoorsOpen,
+          });
+        }
+
+        // 3) blocked by other door (want ~10)
+        if (
+          leverDiag.blockedByOtherDoor &&
+          next.sampleLeverBlockedByOtherDoorSeeds.length < 10
+        ) {
+          next.sampleLeverBlockedByOtherDoorSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            gateDoorId: leverDiag.gateDoorId,
+            leverId: leverDiag.leverId,
+            leverX: leverDiag.leverX,
+            leverY: leverDiag.leverY,
+            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
+            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
+            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
+            isBehindOwnGate: leverDiag.isBehindOwnGate,
+            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
+            unreachableEvenIfAllDoorsOpen:
+              leverDiag.unreachableEvenIfAllDoorsOpen,
+          });
+        }
+      }
+
+      next.runs += 1;
+      if (d.ok) next.ok += 1;
+      else next.fail += 1;
+
+      if (d.didCarve) next.carved += 1;
+
+      const ms = safeNum(d.ms);
+      if (ms > 0) next.msTotal += ms;
+
+      if (!d.ok) {
+        const reason = String(d.reason ?? "unknown");
+        next.reasons[reason] = (next.reasons[reason] ?? 0) + 1;
+      }
+
+      const ds = d.stats?.doorSites;
+      if (ds) {
+        next.doorSitesCount += 1;
+        for (const [k, v] of Object.entries(ds)) {
+          const n = safeNum(v);
+          next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
+        }
+      }
+      const rs = d.reachability;
+      if (rs) {
+        next.reachabilityCount += 1;
+        if (rs.reachablePre) next.reachabilityPreReachable += 1;
+        if (!rs.reachablePost) next.reachabilityPostUnreachable += 1;
+
+        const sp = rs.shortestPathPost;
+        if (typeof sp === "number" && Number.isFinite(sp) && sp >= 0) {
+          next.shortestPathPostSum += sp;
+          next.shortestPathPostCount += 1;
+        }
+      }
+
+      const gr = d.gateEdgeReuse;
+      if (gr) {
+        next.gateEdgeReuseCount += 1;
+        next.gateDoorsPlacedSum += safeNum(gr.doorsPlaced);
+        next.gateUniqueEdgesSum += safeNum(gr.uniqueEdgesPlaced);
+        next.gateReusedExistingSum += safeNum(gr.reusedExistingCount);
+        next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
+        if ((gr.reusedExistingCount | 0) > 0)
+          next.gateRunsWithExistingReuse += 1;
+      }
+      const lb = d.leverBehindOwnGate;
+      if (lb) {
+        next.leverAccessDiagCount += 1;
+
+        if (lb.isBehindOwnGate) next.leverBehindOwnGateCount += 1;
+
+        if (lb.blockedByOtherDoor) next.leverBlockedByOtherDoorCount += 1;
+
+        if (lb.unreachableEvenIfAllDoorsOpen)
+          next.leverUnreachableEvenIfAllDoorsOpenCount += 1;
+
+        // Keep the old diagnostic bucket (but renamed to reflect what it really means)
+        if (!lb.reachableIfGateWereOpen)
+          next.leverUnreachableWithGateOpenButOtherDoorsClosedCount += 1;
+      }
+
+      byPattern.set(name, next);
+    }
+
+    const cm = r.circuitMetrics;
+    if (cm) {
+      circuitRuns += 1;
+
+      circuitCountSum += safeNum(cm.circuitCount);
+      signalEdgeCountSum += safeNum(cm.signalEdgeCount);
+
+      maxTopoDepthSum += safeNum(cm.maxTopoDepth);
+      avgTopoDepthSum += safeNum(cm.avgTopoDepth);
+
+      circuitsWithSignalDepsSum += safeNum(cm.circuitsWithSignalDeps);
+      pctWithSignalDepsSum += safeNum(cm.pctWithSignalDeps);
+
+      cycleGroupCountSum += safeNum(cm.cycleGroupCount);
+      cycleCircuitCountSum += safeNum(cm.cycleCircuitCount);
+
+      blockedByCycleCountSum += safeNum(cm.blockedByCycleCount);
+
+      largestCycleSizeSum += safeNum(cm.largestCycleSize);
+    }
+  }
+
+  const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, acc]) => {
+      const okRate = acc.runs ? acc.ok / acc.runs : 0;
+      const carvedRate = acc.runs ? acc.carved / acc.runs : 0;
+      const msAvg = acc.runs ? acc.msTotal / acc.runs : 0;
+
+      const topReasons = Object.entries(acc.reasons)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+      let doorSitesAvg: Record<string, number> | undefined = undefined;
+      if (acc.doorSitesCount > 0) {
+        doorSitesAvg = {};
+        for (const [k, sum] of Object.entries(acc.doorSitesSum)) {
+          doorSitesAvg[k] = round2(sum / acc.doorSitesCount);
+        }
+      }
+
+      const hasReach = acc.reachabilityCount > 0;
+      const reachabilityPreReachableRate = hasReach
+        ? acc.reachabilityPreReachable / acc.reachabilityCount
+        : 0;
+      const reachabilityPostUnreachableRate = hasReach
+        ? acc.reachabilityPostUnreachable / acc.reachabilityCount
+        : 0;
+      const shortestPathPostAvg = acc.shortestPathPostCount
+        ? acc.shortestPathPostSum / acc.shortestPathPostCount
+        : 0;
+
+      const out: BatchPatternSummary = {
+        name,
+        runs: acc.runs,
+        ok: acc.ok,
+        fail: acc.fail,
+        okRate: round2(okRate),
+        carved: acc.carved,
+        carvedRate: round2(carvedRate),
+        msTotal: Math.round(acc.msTotal),
+        msAvg: round2(msAvg),
+        reasons: acc.reasons,
+        topReasons,
+        doorSitesAvg,
+      };
+
+      if (hasReach) {
+        out.reachabilityPreReachable = acc.reachabilityPreReachable;
+        out.reachabilityPreReachableRate = round2(reachabilityPreReachableRate);
+        out.reachabilityPostUnreachable = acc.reachabilityPostUnreachable;
+        out.reachabilityPostUnreachableRate = round2(
+          reachabilityPostUnreachableRate,
+        );
+        if (acc.shortestPathPostCount > 0) {
+          out.shortestPathPostAvg = round2(shortestPathPostAvg);
+        }
+      }
+
+      if (acc.gateEdgeReuseCount > 0) {
+        const runsWithDiag = acc.gateEdgeReuseCount;
+        const doorsPlacedAvg = acc.gateDoorsPlacedSum / runsWithDiag;
+        const uniqueEdgesPlacedAvg = acc.gateUniqueEdgesSum / runsWithDiag;
+        const reusedExistingCountAvg = acc.gateReusedExistingSum / runsWithDiag;
+        const reusedInternalCountAvg = acc.gateReusedInternalSum / runsWithDiag;
+
+        out.gateEdgeReuseAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          doorsPlacedAvg: round2(doorsPlacedAvg),
+          uniqueEdgesPlacedAvg: round2(uniqueEdgesPlacedAvg),
+
+          reusedExistingCountAvg: round2(reusedExistingCountAvg),
+          reusedInternalCountAvg: round2(reusedInternalCountAvg),
+
+          runsWithExistingReuse: acc.gateRunsWithExistingReuse,
+          pctRunsWithExistingReuse: round2(
+            runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
+          ),
+        };
+      }
+
+      if (acc.leverAccessDiagCount > 0) {
+        const runsWithDiag = acc.leverAccessDiagCount;
+
+        out.leverAccessAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
+          pctLeverBehindOwnGate: round2(
+            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
+          ),
+
+          leverBlockedByOtherDoorCount: acc.leverBlockedByOtherDoorCount,
+          pctLeverBlockedByOtherDoor: round2(
+            runsWithDiag ? acc.leverBlockedByOtherDoorCount / runsWithDiag : 0,
+          ),
+
+          leverUnreachableEvenIfAllDoorsOpenCount:
+            acc.leverUnreachableEvenIfAllDoorsOpenCount,
+          pctLeverUnreachableEvenIfAllDoorsOpen: round2(
+            runsWithDiag
+              ? acc.leverUnreachableEvenIfAllDoorsOpenCount / runsWithDiag
+              : 0,
+          ),
+
+          leverUnreachableWithGateOpenButOtherDoorsClosedCount:
+            acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount,
+          pctLeverUnreachableWithGateOpenButOtherDoorsClosed: round2(
+            runsWithDiag
+              ? acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount /
+                  runsWithDiag
+              : 0,
+          ),
+        };
+      }
+
+      // Emit sample seed drilldowns (if any were captured)
+      if (
+        acc.sampleFailureSeeds.length ||
+        acc.sampleLeverBehindOwnGateSeeds.length ||
+        acc.sampleLeverBlockedByOtherDoorSeeds.length
+      ) {
+        out.samples = {
+          failureSeeds: acc.sampleFailureSeeds,
+          leverBehindOwnGateSeeds: acc.sampleLeverBehindOwnGateSeeds,
+          leverBlockedByOtherDoorSeeds: acc.sampleLeverBlockedByOtherDoorSeeds,
+        };
+      }
+
+      return out;
+    });
+
+  const circuits =
+    circuitRuns > 0
+      ? {
+          runsWithMetrics: circuitRuns,
+
+          circuitCountAvg: round2(circuitCountSum / circuitRuns),
+          signalEdgeCountAvg: round2(signalEdgeCountSum / circuitRuns),
+
+          maxTopoDepthAvg: round2(maxTopoDepthSum / circuitRuns),
+          avgTopoDepthAvg: round2(avgTopoDepthSum / circuitRuns),
+
+          circuitsWithSignalDepsAvg: round2(
+            circuitsWithSignalDepsSum / circuitRuns,
+          ),
+          pctWithSignalDepsAvg: round2(pctWithSignalDepsSum / circuitRuns),
+
+          cycleGroupCountAvg: round2(cycleGroupCountSum / circuitRuns),
+          cycleCircuitCountAvg: round2(cycleCircuitCountSum / circuitRuns),
+
+          blockedByCycleCountAvg: round2(blockedByCycleCountSum / circuitRuns),
+
+          largestCycleSizeAvg: round2(largestCycleSizeSum / circuitRuns),
+        }
+      : undefined;
+
+  return {
+    runs: totalRuns,
+    roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
+    corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
+    patterns,
+    circuits,
+  };
 }
 </file>
 
@@ -17971,11 +17984,11 @@ export function applyPlateOpensDoorPattern(args: {
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-07 (rev Z)**
+**CONTEXT VERSION:** **2026-02-08 (rev AA)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED; DOOR-SITE VALIDATION UNIFIED (NO LEGACY NON-VALIDATING PATHS); GATETHENOPTIONALREWARD LEVER FALLBACK ONLINE**
+**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED; DOOR-SITE VALIDATION UNIFIED (NO LEGACY NON-VALIDATING PATHS); GATETHENOPTIONALREWARD LEVER FALLBACK ONLINE; BATCH SAMPLE-SEED CAPTURE ONLINE (FAILURES + LEVER ACCESS CASES)**
 
 ---
 
@@ -18119,7 +18132,7 @@ Fully enforced in the wizard reducer and routing logic.
 
 ---
 
-## IMPLEMENTATION PROGRESS (REV X → REV Z)
+## IMPLEMENTATION PROGRESS (REV X → REV AA)
 
 ### Inspection UX (Step 7)
 
@@ -18372,6 +18385,34 @@ This preserves Milestone 5 policy:
 
 ---
 
+### Batch Sample-Seed Capture for Targeted Reproduction (NEW — Rev AA)
+
+A Phase 2.5 diagnostics gap remained: aggregated batch summaries identified failure modes and rates, but did not provide a deterministic bridge back to **specific repro seeds**.
+
+**New capability (diagnostics-only, no policy change):**
+
+* Batch aggregation now captures **sample seeds** (capped lists) for selected high-value cases and emits them into the batch “summary-only” JSON under `patterns[].samples`.
+
+For `gateThenOptionalReward`, the batch summary now includes:
+
+* `samples.failureSeeds[]` (up to 4)
+
+  * `{ seed, seedUsed, reason, edgeStats }`
+  * `edgeStats` is parsed from the reason string `(edgeConsidered=… gateElim=… etc)` to provide immediate selection context.
+
+* `samples.leverBehindOwnGateSeeds[]` (up to 10)
+
+  * deterministic repro seeds for the “lever unreachable unless its gate is opened” class.
+
+* `samples.leverBlockedByOtherDoorSeeds[]` (up to 10)
+
+  * deterministic repro seeds for the “lever blocked by a different closed door” class.
+
+This makes Phase 2.5 iteration measurable and reproducible:
+**batch → pick seed → single-run inspection → fix → re-batch**.
+
+---
+
 ## CURRENT STATE SUMMARY
 
 * Milestone 4 is closed and untouched
@@ -18384,6 +18425,7 @@ This preserves Milestone 5 policy:
 * Scene-graph ordering is **globally normalized by room depth**
 * Door-site validation is unified: no legacy non-validating code paths remain
 * `gateThenOptionalReward` lever placement no longer hard-fails solely due to shallow-room scarcity
+* Batch runs now surface **sample repro seeds** for rare failures and lever-access anomalies
 
 ---
 
@@ -18425,13 +18467,73 @@ This preserves Milestone 5 policy:
    * measure fallback frequency and confirm it does not increase lever-behind-own-gate rate
    * confirm branch door sites remain available with throat constraint enabled
 
-5. **Validate hidden-pocket preview logic in batch**
+5. **Diagnose and decompose lever-access anomalies using sample seeds (NEW)**
+
+   Using `patterns[].samples.*Seeds[]` from batch output:
+
+   * Re-run selected sample seeds in **Single Seed** mode.
+   * Confirm each case classifies correctly:
+
+     * “behind own gate” cases should show:
+
+       * `reachableWithGateClosed=false`
+       * `reachableIfGateWereOpen=true`
+       * `reachableIfAllDoorsWereOpen=true`
+     * “blocked by other door” cases should show:
+
+       * `reachableWithGateClosed=false`
+       * `reachableIfGateWereOpen=false`
+       * `reachableIfAllDoorsWereOpen=true`
+
+   Goal: convert aggregate rates into concrete, explainable structural causes.
+
+6. **Richen diagnostics to make root-cause visible without manual inference (NEW)**
+
+   Extend pattern diagnostics (especially `gateThenOptionalReward` and its lever-access diag payload) to include:
+
+   **A) Failure-edge trace (for `gateThenOptionalReward` failures)**
+
+   * Emit a compact list of considered main-path edges (capped) including:
+
+     * edge endpoints (room ids)
+     * distances of endpoints
+     * whether off-main branch neighbors exist
+     * count of branch neighbors
+     * whether any branch door site candidates exist under current constraints
+
+   Purpose: distinguish “no branches exist” from “branches exist but door-site constraints eliminate all branch sites.”
+
+   **B) Lever-access root cause (for lever anomalies)**
+
+   Expand lever-access diagnostics to include:
+
+   * `leverRoomId`
+   * gate door endpoints (`gateRoomA`, `gateRoomB`) or equivalent door meta join fields
+   * for “blocked by other door” cases:
+
+     * `blockingDoorId` (the earliest closed door whose opening changes reachability)
+   * for “behind own gate” cases:
+
+     * a boolean like `pathCrossesGateDoor` (whether any shortest/first-found path to the lever crosses the gate door)
+     * optionally, a minimal witness path summary (capped) or a “cut” witness (e.g., which door edge separates reachable set)
+
+   Purpose: determine whether “behind own gate” is:
+
+   * true ordering regression,
+   * graph-cut inevitability under door closures,
+   * or a diagnostic closure-model artifact.
+
+   **C) Closure-model label (optional but contract-clarifying)**
+
+   * Record which door-closure assumption was used for each reachability test in the diag payload.
+
+7. **Validate hidden-pocket preview logic in batch**
 
    * confirm failure modes collapse as expected
 
-6. Run 1000+ seed batch comparison vs baseline
+8. Run 1000+ seed batch comparison vs baseline
 
-7. Record stability metrics and intent-misalignment deltas
+9. Record stability metrics and intent-misalignment deltas
 
 ---
 

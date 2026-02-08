@@ -22,6 +22,18 @@ export type SampleLeverCaseSeedV1 = {
   seedUsed: number;
   gateDoorId: number;
   leverId: number;
+
+  // Gate join fields (for fast root-cause inspection without inference)
+  gateRoomA: number;
+  gateRoomB: number;
+  leverRoomId: number;
+
+  // Closure model used for these booleans (explicit contract label)
+  closureModel: string;
+
+  // Only meaningful when blockedByOtherDoor === true (0/undefined = unknown)
+  blockingDoorId?: number;
+
   leverX: number;
   leverY: number;
 
@@ -40,6 +52,17 @@ export type LeverBehindOwnGateDiagV1 = {
   leverId: number; // lever fixture id (same id for this pattern)
   leverX: number;
   leverY: number;
+
+  // Gate join fields (avoid UI-side inference / ambiguity)
+  gateRoomA: number;
+  gateRoomB: number;
+  leverRoomId: number;
+
+  // Closure model used for these booleans (explicit contract label)
+  closureModel: string;
+
+  // Only meaningful when blockedByOtherDoor === true (0/undefined = unknown)
+  blockingDoorId?: number;
 
   // Reachability of the lever from entrance with all doors closed:
   reachableWithGateClosed: boolean;
@@ -378,6 +401,11 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
             seedUsed: r.seedUsed,
             gateDoorId: leverDiag.gateDoorId,
             leverId: leverDiag.leverId,
+            gateRoomA: leverDiag.gateRoomA,
+            gateRoomB: leverDiag.gateRoomB,
+            leverRoomId: leverDiag.leverRoomId,
+            closureModel: leverDiag.closureModel,
+            blockingDoorId: leverDiag.blockingDoorId,
             leverX: leverDiag.leverX,
             leverY: leverDiag.leverY,
             reachableWithGateClosed: leverDiag.reachableWithGateClosed,
@@ -401,6 +429,11 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
             seedUsed: r.seedUsed,
             gateDoorId: leverDiag.gateDoorId,
             leverId: leverDiag.leverId,
+            gateRoomA: leverDiag.gateRoomA,
+            gateRoomB: leverDiag.gateRoomB,
+            leverRoomId: leverDiag.leverRoomId,
+            closureModel: leverDiag.closureModel,
+            blockingDoorId: leverDiag.blockingDoorId,
             leverX: leverDiag.leverX,
             leverY: leverDiag.leverY,
             reachableWithGateClosed: leverDiag.reachableWithGateClosed,

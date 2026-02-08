@@ -1,6 +1,7 @@
 // src/puzzlePatterns.ts
 //
 // Milestone 3: generalized puzzle pattern placement.
+// Phase 2.5: richer lever-access diagnostics (blockingDoorId + closureModel + gate join fields)
 //
 // Pattern (Variant A):
 // - Carve a small unreachable “pocket” behind a connector tile.
@@ -1147,6 +1148,13 @@ export function applyGateThenOptionalRewardPattern(args: {
             const blockId = allocId();
             const chestId = allocId();
 
+            // Keep meta/diagnostics consistent with the actual tile.
+            const leverRoomIdCommitted = whichRoomIdForPoint(
+              dungeon,
+              leverP.x,
+              leverP.y,
+            );
+
             // 1) Gate door on main edge
             ft[gateDi] = 4;
             fid[gateDi] = gateId;
@@ -1173,7 +1181,7 @@ export function applyGateThenOptionalRewardPattern(args: {
               id: gateId,
               x: leverP.x,
               y: leverP.y,
-              roomId: shallowRoomId,
+              roomId: leverRoomIdCommitted,
             });
 
             circuitsById.set(gateId, {
@@ -1268,6 +1276,11 @@ export function applyGateThenOptionalRewardPattern(args: {
             const W = dungeon.width;
 
             const leverI = idxOf(W, leverP.x, leverP.y);
+            const gateRoomA = shallowRoomId;
+            const gateRoomB = deepRoomId;
+            const leverRoomId =
+              // Prefer your helper (handles corridor/room-id nuances safely)
+              whichRoomIdForPoint(dungeon, leverP.x, leverP.y) | 0;
 
             // A) Reachability with doors closed (baseline)
             const reachClosed = computeReachable(
@@ -1348,12 +1361,87 @@ export function applyGateThenOptionalRewardPattern(args: {
               reachableIfAllDoorsWereOpen && !reachableIfGateWereOpen;
             const unreachableEvenIfAllDoorsOpen = !reachableIfAllDoorsWereOpen;
 
+            // Closure-model label: make reachability assumptions explicit and stable
+            const closureModel =
+              "computeReachable: doors(ft==4 && id!=0) block; gateOpenOnly clears only gate door tile; allDoorsOpen clears all door tiles";
+
+            // If blockedByOtherDoor, try to identify a specific blocking door id:
+            // deterministic, best-effort, capped by early exit.
+            let blockingDoorId: number | undefined = undefined;
+            if (blockedByOtherDoor) {
+              const solid = dungeon.masks.solid;
+              const H = dungeon.height;
+
+              const isFrontierDoor = (di: number) => {
+                // Door tile itself is not reachable because doors block;
+                // we consider it a frontier if any neighbor floor is reachable in reachClosed.
+                const x = di % W;
+                const y = (di / W) | 0;
+                const nbrs = [
+                  { x: x + 1, y },
+                  { x: x - 1, y },
+                  { x, y: y + 1 },
+                  { x, y: y - 1 },
+                ];
+                for (const n of nbrs) {
+                  if (!inBounds(W, H, n.x, n.y)) continue;
+                  const ni = idxOf(W, n.x, n.y);
+                  if (solid[ni] === 255) continue;
+                  if (reachClosed[ni]) return true;
+                }
+                return false;
+              };
+
+              // Scan doors in stable tile-index order (deterministic).
+              // Only test frontier doors to keep this cheap.
+              for (let i = 0; i < ft.length; i++) {
+                if ((ft[i] | 0) !== 4) continue;
+                const did = fid[i] | 0;
+                if (did === 0) continue;
+                if (did === gateId) continue; // not the gate door itself
+                if (!isFrontierDoor(i)) continue;
+                const prevFt = ft[i]!;
+                const prevFid = fid[i]!;
+                const prevFparam = fparam[i]!;
+
+                // Temporarily clear just this candidate door tile
+                ft[i] = 0;
+                fid[i] = 0;
+                fparam[i] = 0;
+
+                const reachDoorOpen = computeReachable(
+                  dungeon,
+                  ft,
+                  fid,
+                  start,
+                  new Set(),
+                );
+                const okNow = !!reachDoorOpen[leverI];
+
+                // Restore candidate door tile
+                ft[i] = prevFt;
+                fid[i] = prevFid;
+                fparam[i] = prevFparam;
+
+                if (okNow) {
+                  blockingDoorId = did;
+                  break;
+                }
+              }
+            }
+
             const leverBehindOwnGate: LeverBehindOwnGateDiagV1 = {
               schemaVersion: 1,
               gateDoorId: gateId,
               leverId: gateId,
               leverX: leverP.x,
               leverY: leverP.y,
+
+              gateRoomA,
+              gateRoomB,
+              leverRoomId,
+              closureModel,
+              blockingDoorId,
 
               reachableWithGateClosed,
               reachableIfGateWereOpen,
