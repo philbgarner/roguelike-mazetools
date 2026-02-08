@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-08 (rev AA)**
+**CONTEXT VERSION:** **2026-02-08 (rev AB)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED; DOOR-SITE VALIDATION UNIFIED (NO LEGACY NON-VALIDATING PATHS); GATETHENOPTIONALREWARD LEVER FALLBACK ONLINE; BATCH SAMPLE-SEED CAPTURE ONLINE (FAILURES + LEVER ACCESS CASES)**
+**CURRENT PHASE:** **Milestone 5 — Phase 3 Weighted Steering (SOFT POLICY, SEED CURATION-AWARE)**
+**PHASE STATUS:** **PHASE 2.5 CLOSED (DIAGNOSTICS COMPLETE; RELIABILITY MEASURED; LOW-RATE FAILURES ACCEPTED VIA SEED CURATION); PHASE 3 ACTIVE — WEIGHTED STEERING + POLICY SHAPING NEXT**
 
 ---
 
@@ -150,7 +150,7 @@ Fully enforced in the wizard reducer and routing logic.
 
 ---
 
-## IMPLEMENTATION PROGRESS (REV X → REV AA)
+## IMPLEMENTATION PROGRESS (REV X → REV AB)
 
 ### Inspection UX (Step 7)
 
@@ -431,23 +431,135 @@ This makes Phase 2.5 iteration measurable and reproducible:
 
 ---
 
+### Lever-Access Root-Cause Diagnostics (NEW — Rev AB)
+
+Phase 2.5 surfaced that “lever access anomalies” were measurable, but needed richer join fields to make root cause visible without manual inference.
+
+**New fields added to lever-access diagnostics (no policy change; diagnostics-only):**
+
+* Gate join fields:
+
+  * `gateRoomA`
+  * `gateRoomB`
+
+  These mirror the door meta join fields for the main-path gate door and allow immediate correlation with `roomDistance` and the room graph.
+
+* Lever join field:
+
+  * `leverRoomId`
+
+  This removes ambiguity when a lever is placed via fallback rules (or if tile-to-room mapping changes).
+
+* Closure-model label:
+
+  * `closureModel` (string)
+
+  This makes the reachability assumptions explicit (doors closed vs “gate open only” vs “all doors open”) so the meaning of each boolean is stable and contract-readable.
+
+* Blocking door identification:
+
+  * `blockingDoorId` (optional, best-effort)
+
+  Emitted only for the “blocked by other door” classification, as the earliest identified closed door whose opening makes the lever reachable under the fixed closure model.
+
+This supports Phase 3 steering because we now have actionable diagnostics to measure whether weights reduce true structural anomalies rather than re-labeling them.
+
+---
+
 ## CURRENT STATE SUMMARY
 
 * Milestone 4 is closed and untouched
-* Milestone 5 Phase 2.5 generator logic remains best-effort
+
+* Milestone 5 **Phase 2.5 is CLOSED**: diagnostics-first soft enforcement shipped; reliability measured at scale
+
 * Wizard → Execution → Inspection loop is **fully closed**
+
 * Circuit diagnostics identity is **structurally correct and UI-safe**
-* Pattern reliability is improving via **preview + retry**, not relaxed rules
-* Door placement is constrained to **corridor → room boundary throats**
-* Trigger → gate ordering is explicit, recorded, and enforced
-* Scene-graph ordering is **globally normalized by room depth**
-* Door-site validation is unified: no legacy non-validating code paths remain
-* `gateThenOptionalReward` lever placement no longer hard-fails solely due to shallow-room scarcity
-* Batch runs now surface **sample repro seeds** for rare failures and lever-access anomalies
+
+* Door placement is constrained to **corridor → room boundary throats** and is non-bypassable (validated-only path)
+
+* Trigger → gate ordering is explicit, recorded, and enforced; scene-graph ordering is **globally normalized by room depth**
+
+* `gateThenOptionalReward` lever placement includes an **earlier-room fallback** to avoid shallow-room tile scarcity
+
+* Lever-access diagnostics are now **root-cause visible**:
+
+  * gate join fields: `gateRoomA`, `gateRoomB`
+  * lever join field: `leverRoomId`
+  * `closureModel` string (explicit reachability assumptions)
+  * `blockingDoorId` (best-effort; only when “blocked by other door” classification holds)
+
+* Batch runs surface **sample repro seeds** for rare failures and lever-access anomalies
+
+---
+
+## PHASE 2.5 CLOSEOUT DECISION (2026-02-08)
+
+We are explicitly treating **low-percentage pattern failures** as an expected outcome under best-effort generation.
+
+**Production/game usage plan (locked for now):**
+
+* The generator will be used **offline** to pre-generate a large pool of candidate seeds.
+* We will **curate** the resulting seed set and ship only seeds that satisfy required invariants (no pattern failures; acceptable diagnostics envelope).
+* This avoids policy creep and prevents Phase 2.5 from turning into endless edge-case chasing.
+
+**Measured reliability checkpoint (1000-run batch sample):**
+
+* `gateThenOptionalReward`: **996/1000 ok** (0.4% fail)
+
+  * Failures were dominated by topology / site-availability constraints (“no off-main branches” and “no usable branch door sites”), not lever placement.
+* Lever-access anomaly rates were measurable and reproducible via samples:
+
+  * `leverBehindOwnGate`: **48/996** (~4.8%)
+  * `leverBlockedByOtherDoor`: **10/996** (~1.0%)
+  * `unreachableEvenIfAllDoorsOpen`: **0**
+
+These rates are now *actionable* because we can jump directly from batch → seed → single inspection.
 
 ---
 
 ## NEXT STEPS (PRIORITY ORDER)
+
+### Phase 3 (ACTIVE) — Weighted Steering + Seed Curation Workflow
+
+1. **Define Phase 3 steering goals (soft, measurable, diagnostic-first)**
+
+   * Reduce “lever behind own gate” and “blocked by other door” rates without introducing hard constraints.
+   * Keep best-effort behavior: patterns may skip; generation never aborts.
+
+2. **Introduce weighted selection (not hard rules) in high-leverage choice points**
+
+   Initial targets (small, incremental):
+
+   * `gateThenOptionalReward`: bias toward gate sites / main edges that preserve viable branch door sites
+   * bias toward branch anchors with higher candidate door-site availability
+   * (later) bias toward earlier-room lever placements that are reachable under the chosen closure model
+
+   All weights must be accompanied by **diagnostics** describing why a choice was preferred.
+
+3. **Seed curation pipeline (supports the “ship only good seeds” plan)**
+
+   * Batch export: produce a stable list of “good seeds” (no pattern failures; diagnostics within envelope).
+
+   * Store a **seed bank** artifact (JSON) with:
+
+     * `seedUsed`
+     * key metrics / diag summaries
+     * tags (e.g., “good”, “hasOptionalReward”, “lowAnomalies”, etc.)
+
+   * Add tooling/UI affordance to:
+
+     * copy/export seed lists
+     * re-run a selected seed in Single mode from batch output
+
+4. **Phase 3 baseline + comparison harness**
+
+   * Run 1000+ seed batches for baseline (Phase 2.5) vs Phase 3 (weighted) and track deltas.
+   * Keep a regression guardrail on:
+
+     * door throat invariants
+     * ordered trigger → gate join fields
+     * diagnostics schema stability
 
 ### UI (Stabilization & Polish)
 
@@ -461,97 +573,17 @@ This makes Phase 2.5 iteration measurable and reproducible:
 
 3. Keyboard + accessibility affordances (non-policy)
 
-### Generator — Milestone 5 Phase 2.5
+### Phase 2.5 Validation Checklist (CLOSED — retained for traceability)
 
-1. **Validate door throat placement in batch**
+1. Door throat placement validated in batch (no mid-corridor door chains; throat sites only)
 
-   * confirm doors no longer appear mid-corridor or adjacent
-   * confirm doors align to corridor → room boundary throats only
-   * confirm no remaining door-site selection bypass exists (stats path is sole path)
+2. Ordered trigger → gate invariant validated across door patterns (trigger room is earlier than gated room)
 
-2. **Validate ordered trigger → gate invariant across all door patterns**
+3. Circuit diagnostics identity validated (index-based diagnostics contract)
 
-   * ensure triggers consistently occur in earlier rooms than gated doors
-   * watch for regressions in IntroGate / LeverOpensDoor / PlateOpensDoor / GateThenOptionalReward
+4. `gateThenOptionalReward` reliability validated under pressure (lever fallback removed the shallow-room scarcity failure class)
 
-3. **Validate circuit diagnostics in batch**
-
-   * confirm no remaining ID/index mismatches
-   * verify cycle membership and signal dependency rendering at scale
-
-4. **Validate `gateThenOptionalReward` reliability under pressure**
-
-   * measure reduction in “lever in shallow room” failures
-   * measure fallback frequency and confirm it does not increase lever-behind-own-gate rate
-   * confirm branch door sites remain available with throat constraint enabled
-
-5. **Diagnose and decompose lever-access anomalies using sample seeds (NEW)**
-
-   Using `patterns[].samples.*Seeds[]` from batch output:
-
-   * Re-run selected sample seeds in **Single Seed** mode.
-   * Confirm each case classifies correctly:
-
-     * “behind own gate” cases should show:
-
-       * `reachableWithGateClosed=false`
-       * `reachableIfGateWereOpen=true`
-       * `reachableIfAllDoorsWereOpen=true`
-     * “blocked by other door” cases should show:
-
-       * `reachableWithGateClosed=false`
-       * `reachableIfGateWereOpen=false`
-       * `reachableIfAllDoorsWereOpen=true`
-
-   Goal: convert aggregate rates into concrete, explainable structural causes.
-
-6. **Richen diagnostics to make root-cause visible without manual inference (NEW)**
-
-   Extend pattern diagnostics (especially `gateThenOptionalReward` and its lever-access diag payload) to include:
-
-   **A) Failure-edge trace (for `gateThenOptionalReward` failures)**
-
-   * Emit a compact list of considered main-path edges (capped) including:
-
-     * edge endpoints (room ids)
-     * distances of endpoints
-     * whether off-main branch neighbors exist
-     * count of branch neighbors
-     * whether any branch door site candidates exist under current constraints
-
-   Purpose: distinguish “no branches exist” from “branches exist but door-site constraints eliminate all branch sites.”
-
-   **B) Lever-access root cause (for lever anomalies)**
-
-   Expand lever-access diagnostics to include:
-
-   * `leverRoomId`
-   * gate door endpoints (`gateRoomA`, `gateRoomB`) or equivalent door meta join fields
-   * for “blocked by other door” cases:
-
-     * `blockingDoorId` (the earliest closed door whose opening changes reachability)
-   * for “behind own gate” cases:
-
-     * a boolean like `pathCrossesGateDoor` (whether any shortest/first-found path to the lever crosses the gate door)
-     * optionally, a minimal witness path summary (capped) or a “cut” witness (e.g., which door edge separates reachable set)
-
-   Purpose: determine whether “behind own gate” is:
-
-   * true ordering regression,
-   * graph-cut inevitability under door closures,
-   * or a diagnostic closure-model artifact.
-
-   **C) Closure-model label (optional but contract-clarifying)**
-
-   * Record which door-closure assumption was used for each reachability test in the diag payload.
-
-7. **Validate hidden-pocket preview logic in batch**
-
-   * confirm failure modes collapse as expected
-
-8. Run 1000+ seed batch comparison vs baseline
-
-9. Record stability metrics and intent-misalignment deltas
+5. Sample-seed reproduction loop validated (batch → seed → single inspection)
 
 ---
 
@@ -563,9 +595,9 @@ This makes Phase 2.5 iteration measurable and reproducible:
 
 * **Milestone 5:** Intent steering and policy formation — current focus
 
-  * Phase 2.5: diagnostics + soft pressure
-  * Phase 3: weighted steering
-  * Phase 4: selective hard constraints
+  * Phase 2.5: diagnostics + soft pressure — **CLOSED**
+  * Phase 3: weighted steering — **ACTIVE**
+  * Phase 4: selective hard constraints (only if stability is proven)
 
 * **Milestone 6 (Future):** Authorial controls, difficulty bands, pacing targets
 
