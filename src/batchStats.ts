@@ -617,6 +617,19 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         };
       }
 
+      // Emit sample seed drilldowns (if any were captured)
+      if (
+        acc.sampleFailureSeeds.length ||
+        acc.sampleLeverBehindOwnGateSeeds.length ||
+        acc.sampleLeverBlockedByOtherDoorSeeds.length
+      ) {
+        out.samples = {
+          failureSeeds: acc.sampleFailureSeeds,
+          leverBehindOwnGateSeeds: acc.sampleLeverBehindOwnGateSeeds,
+          leverBlockedByOtherDoorSeeds: acc.sampleLeverBlockedByOtherDoorSeeds,
+        };
+      }
+
       return out;
     });
 

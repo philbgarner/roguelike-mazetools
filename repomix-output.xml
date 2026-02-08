@@ -7060,6 +7060,33 @@ export const tileFrag = /* glsl */ `
 
 import type { DoorSiteStatsBundle } from "./doorSites";
 
+export type SampleFailureSeedV1 = {
+  schemaVersion: 1;
+  seed: string;
+  seedUsed: number;
+  reason: string;
+  // parsed out of "(edgeConsidered=.. gateElim=..)" when present
+  edgeStats?: Record<string, number>;
+};
+
+export type SampleLeverCaseSeedV1 = {
+  schemaVersion: 1;
+  seed: string;
+  seedUsed: number;
+  gateDoorId: number;
+  leverId: number;
+  leverX: number;
+  leverY: number;
+
+  reachableWithGateClosed: boolean;
+  reachableIfGateWereOpen: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+
+  isBehindOwnGate: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
 export type LeverBehindOwnGateDiagV1 = {
   schemaVersion: 1;
   gateDoorId: number; // the door id the lever controls (same id for this pattern)
@@ -7210,6 +7237,12 @@ export type BatchPatternSummary = {
     leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
     pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
   };
+
+  samples?: {
+    failureSeeds?: SampleFailureSeedV1[];
+    leverBehindOwnGateSeeds?: SampleLeverCaseSeedV1[];
+    leverBlockedByOtherDoorSeeds?: SampleLeverCaseSeedV1[];
+  };
 };
 
 export type BatchSummary = {
@@ -7246,6 +7279,22 @@ function safeNum(v: unknown): number {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function parseParenKeyVals(reason: string): Record<string, number> | undefined {
+  const m = reason.match(/\(([^)]*)\)\s*$/);
+  if (!m) return undefined;
+  const body = m[1];
+  const out: Record<string, number> = {};
+  for (const part of body.split(/\s+/g)) {
+    const kv = part.split("=");
+    if (kv.length !== 2) continue;
+    const k = kv[0].trim();
+    const v = Number(kv[1]);
+    if (!k) continue;
+    if (Number.isFinite(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
@@ -7297,6 +7346,10 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       leverBlockedByOtherDoorCount: 0,
       leverUnreachableEvenIfAllDoorsOpenCount: 0,
       leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
+      // --- sample seed capture (capped) ---
+      sampleFailureSeeds: [] as SampleFailureSeedV1[],
+      sampleLeverBehindOwnGateSeeds: [] as SampleLeverCaseSeedV1[],
+      sampleLeverBlockedByOtherDoorSeeds: [] as SampleLeverCaseSeedV1[],
     };
   }
 
@@ -7327,6 +7380,10 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       leverBlockedByOtherDoorCount: number;
       leverUnreachableEvenIfAllDoorsOpenCount: number;
       leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+
+      sampleFailureSeeds: SampleFailureSeedV1[];
+      sampleLeverBehindOwnGateSeeds: SampleLeverCaseSeedV1[];
+      sampleLeverBlockedByOtherDoorSeeds: SampleLeverCaseSeedV1[];
     }
   >();
 
@@ -7340,6 +7397,74 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       if (!next) {
         next = makeAcc();
         byPattern.set(name, next);
+      }
+
+      // --- Sample seed capture (Phase 2.5 drilldowns) -----------------------
+
+      // 1) gateThenOptionalReward failures (want ~4)
+      if (name === "gateThenOptionalReward" && !d.ok) {
+        if (next.sampleFailureSeeds.length < 4) {
+          const reason = String(d.reason ?? "Failed");
+          next.sampleFailureSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            reason,
+            edgeStats: parseParenKeyVals(reason),
+          });
+        }
+      }
+
+      // 2) lever behind own gate (want ~10)
+      const leverDiag = (d as any).leverBehindOwnGate as
+        | LeverBehindOwnGateDiagV1
+        | undefined;
+
+      if (name === "gateThenOptionalReward" && leverDiag) {
+        if (
+          leverDiag.isBehindOwnGate &&
+          next.sampleLeverBehindOwnGateSeeds.length < 10
+        ) {
+          next.sampleLeverBehindOwnGateSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            gateDoorId: leverDiag.gateDoorId,
+            leverId: leverDiag.leverId,
+            leverX: leverDiag.leverX,
+            leverY: leverDiag.leverY,
+            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
+            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
+            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
+            isBehindOwnGate: leverDiag.isBehindOwnGate,
+            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
+            unreachableEvenIfAllDoorsOpen:
+              leverDiag.unreachableEvenIfAllDoorsOpen,
+          });
+        }
+
+        // 3) blocked by other door (want ~10)
+        if (
+          leverDiag.blockedByOtherDoor &&
+          next.sampleLeverBlockedByOtherDoorSeeds.length < 10
+        ) {
+          next.sampleLeverBlockedByOtherDoorSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            gateDoorId: leverDiag.gateDoorId,
+            leverId: leverDiag.leverId,
+            leverX: leverDiag.leverX,
+            leverY: leverDiag.leverY,
+            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
+            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
+            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
+            isBehindOwnGate: leverDiag.isBehindOwnGate,
+            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
+            unreachableEvenIfAllDoorsOpen:
+              leverDiag.unreachableEvenIfAllDoorsOpen,
+          });
+        }
       }
 
       next.runs += 1;

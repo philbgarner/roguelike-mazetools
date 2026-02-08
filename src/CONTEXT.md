@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-07 (rev Z)**
+**CONTEXT VERSION:** **2026-02-08 (rev AA)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 2.5 Soft Enforcement (INTENT PRESSURE, BEST-EFFORT)**
-**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED; DOOR-SITE VALIDATION UNIFIED (NO LEGACY NON-VALIDATING PATHS); GATETHENOPTIONALREWARD LEVER FALLBACK ONLINE**
+**PHASE STATUS:** **WIZARD UI + EXECUTION LOOP STABILIZED; INSPECTION-SAFE REGENERATION WIRED; CIRCUIT DIAGNOSTICS IDENTITY CORRECTED; DOOR THROAT PLACEMENT + ORDERED TRIGGER→GATE REFACTOR COMPLETE; SCENE-GRAPH ORDERING NORMALIZED; DOOR-SITE VALIDATION UNIFIED (NO LEGACY NON-VALIDATING PATHS); GATETHENOPTIONALREWARD LEVER FALLBACK ONLINE; BATCH SAMPLE-SEED CAPTURE ONLINE (FAILURES + LEVER ACCESS CASES)**
 
 ---
 
@@ -150,7 +150,7 @@ Fully enforced in the wizard reducer and routing logic.
 
 ---
 
-## IMPLEMENTATION PROGRESS (REV X → REV Z)
+## IMPLEMENTATION PROGRESS (REV X → REV AA)
 
 ### Inspection UX (Step 7)
 
@@ -403,6 +403,34 @@ This preserves Milestone 5 policy:
 
 ---
 
+### Batch Sample-Seed Capture for Targeted Reproduction (NEW — Rev AA)
+
+A Phase 2.5 diagnostics gap remained: aggregated batch summaries identified failure modes and rates, but did not provide a deterministic bridge back to **specific repro seeds**.
+
+**New capability (diagnostics-only, no policy change):**
+
+* Batch aggregation now captures **sample seeds** (capped lists) for selected high-value cases and emits them into the batch “summary-only” JSON under `patterns[].samples`.
+
+For `gateThenOptionalReward`, the batch summary now includes:
+
+* `samples.failureSeeds[]` (up to 4)
+
+  * `{ seed, seedUsed, reason, edgeStats }`
+  * `edgeStats` is parsed from the reason string `(edgeConsidered=… gateElim=… etc)` to provide immediate selection context.
+
+* `samples.leverBehindOwnGateSeeds[]` (up to 10)
+
+  * deterministic repro seeds for the “lever unreachable unless its gate is opened” class.
+
+* `samples.leverBlockedByOtherDoorSeeds[]` (up to 10)
+
+  * deterministic repro seeds for the “lever blocked by a different closed door” class.
+
+This makes Phase 2.5 iteration measurable and reproducible:
+**batch → pick seed → single-run inspection → fix → re-batch**.
+
+---
+
 ## CURRENT STATE SUMMARY
 
 * Milestone 4 is closed and untouched
@@ -415,6 +443,7 @@ This preserves Milestone 5 policy:
 * Scene-graph ordering is **globally normalized by room depth**
 * Door-site validation is unified: no legacy non-validating code paths remain
 * `gateThenOptionalReward` lever placement no longer hard-fails solely due to shallow-room scarcity
+* Batch runs now surface **sample repro seeds** for rare failures and lever-access anomalies
 
 ---
 
@@ -456,13 +485,73 @@ This preserves Milestone 5 policy:
    * measure fallback frequency and confirm it does not increase lever-behind-own-gate rate
    * confirm branch door sites remain available with throat constraint enabled
 
-5. **Validate hidden-pocket preview logic in batch**
+5. **Diagnose and decompose lever-access anomalies using sample seeds (NEW)**
+
+   Using `patterns[].samples.*Seeds[]` from batch output:
+
+   * Re-run selected sample seeds in **Single Seed** mode.
+   * Confirm each case classifies correctly:
+
+     * “behind own gate” cases should show:
+
+       * `reachableWithGateClosed=false`
+       * `reachableIfGateWereOpen=true`
+       * `reachableIfAllDoorsWereOpen=true`
+     * “blocked by other door” cases should show:
+
+       * `reachableWithGateClosed=false`
+       * `reachableIfGateWereOpen=false`
+       * `reachableIfAllDoorsWereOpen=true`
+
+   Goal: convert aggregate rates into concrete, explainable structural causes.
+
+6. **Richen diagnostics to make root-cause visible without manual inference (NEW)**
+
+   Extend pattern diagnostics (especially `gateThenOptionalReward` and its lever-access diag payload) to include:
+
+   **A) Failure-edge trace (for `gateThenOptionalReward` failures)**
+
+   * Emit a compact list of considered main-path edges (capped) including:
+
+     * edge endpoints (room ids)
+     * distances of endpoints
+     * whether off-main branch neighbors exist
+     * count of branch neighbors
+     * whether any branch door site candidates exist under current constraints
+
+   Purpose: distinguish “no branches exist” from “branches exist but door-site constraints eliminate all branch sites.”
+
+   **B) Lever-access root cause (for lever anomalies)**
+
+   Expand lever-access diagnostics to include:
+
+   * `leverRoomId`
+   * gate door endpoints (`gateRoomA`, `gateRoomB`) or equivalent door meta join fields
+   * for “blocked by other door” cases:
+
+     * `blockingDoorId` (the earliest closed door whose opening changes reachability)
+   * for “behind own gate” cases:
+
+     * a boolean like `pathCrossesGateDoor` (whether any shortest/first-found path to the lever crosses the gate door)
+     * optionally, a minimal witness path summary (capped) or a “cut” witness (e.g., which door edge separates reachable set)
+
+   Purpose: determine whether “behind own gate” is:
+
+   * true ordering regression,
+   * graph-cut inevitability under door closures,
+   * or a diagnostic closure-model artifact.
+
+   **C) Closure-model label (optional but contract-clarifying)**
+
+   * Record which door-closure assumption was used for each reachability test in the diag payload.
+
+7. **Validate hidden-pocket preview logic in batch**
 
    * confirm failure modes collapse as expected
 
-6. Run 1000+ seed batch comparison vs baseline
+8. Run 1000+ seed batch comparison vs baseline
 
-7. Record stability metrics and intent-misalignment deltas
+9. Record stability metrics and intent-misalignment deltas
 
 ---
 
