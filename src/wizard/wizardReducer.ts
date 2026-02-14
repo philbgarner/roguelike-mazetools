@@ -111,6 +111,8 @@ export type BatchRunResult = {
   kind: "batch";
   summary: any;
   summaryJson: string;
+  seedBank?: any;
+  seedBankJson?: string;
 };
 
 export type RunResult = SingleRunResult | BatchRunResult;
@@ -217,7 +219,10 @@ export type WizardAction =
   // Global reset
   | { type: "RESET_ALL" }
   | { type: "INVALIDATE_RESULTS" }
-  | { type: "REROLL_SEED"; seed: string };
+  | { type: "REROLL_SEED"; seed: string }
+
+  // Seed curation: re-run a specific seed from batch results in single mode
+  | { type: "RERUN_SEED_SINGLE"; seed: string };
 
 function clampInt(n: number, lo: number, hi: number): number {
   const x = n | 0;
@@ -420,6 +425,37 @@ export function wizardReducer(
         ...state,
         world,
         contract,
+        progress: null,
+        result: null,
+        error: "",
+      };
+    }
+
+    case "RERUN_SEED_SINGLE": {
+      // Re-run a specific seed in single mode, preserving world/bsp/pattern config.
+      // Used from batch results to inspect an individual seed.
+      if (!state.world || !state.bsp || !state.mode) return state;
+      const rerunSeed = String(action.seed);
+      const rerunWorld: WorldConfig = { ...state.world, seed: rerunSeed };
+      const rerunPattern = state.mode.pattern;
+      // Batch ModeConfig lacks contentStrategy; default to "patterns" which is
+      // what the batch harness effectively uses (all pattern toggles explicit).
+      const rerunCS: ContentStrategy =
+        state.mode.mode === "single" ? state.mode.contentStrategy : "patterns";
+      const rerunContract: RunContract = {
+        mode: "single",
+        world: rerunWorld,
+        bsp: state.bsp,
+        contentStrategy: rerunCS,
+        pattern: rerunPattern,
+        guarantees:
+          deriveRunContract({ ...state, world: rerunWorld })?.guarantees ?? [],
+      };
+      return {
+        ...state,
+        world: rerunWorld,
+        contract: rerunContract,
+        step: 5 as WizardStep,
         progress: null,
         result: null,
         error: "",

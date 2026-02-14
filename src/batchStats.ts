@@ -699,3 +699,99 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
     circuits,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Seed Bank — per-seed classification for the "ship only good seeds" workflow
+// ---------------------------------------------------------------------------
+
+export type SeedBankEntry = {
+  seed: string;
+  seedUsed: number;
+  rooms: number;
+  corridors: number;
+  tags: string[];
+  patternResults: Array<{
+    name: string;
+    ok: boolean;
+    reason?: string;
+  }>;
+};
+
+export type SeedBank = {
+  schemaVersion: 1;
+  generatedAt: string;
+  totalSeeds: number;
+  goodCount: number;
+  failedCount: number;
+  seeds: SeedBankEntry[];
+};
+
+/**
+ * Build a per-seed classification bank from the same BatchRunInput[] used by
+ * aggregateBatchRuns(). Each seed is tagged:
+ *
+ *  - "good"              — all patterns ok, no lever anomalies
+ *  - "patternFailure"    — at least one pattern failed (+ pattern name tag)
+ *  - "hasLeverAnomaly"   — lever diagnostic reported an anomaly (future-proof)
+ */
+export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
+  let goodCount = 0;
+  let failedCount = 0;
+  const seeds: SeedBankEntry[] = [];
+
+  for (const r of runs) {
+    const tags: string[] = [];
+    const patternResults: SeedBankEntry["patternResults"] = [];
+    let anyFailure = false;
+    let anyLeverAnomaly = false;
+
+    for (const d of r.patternDiagnostics ?? []) {
+      const name = String(d.name ?? "unknown");
+      patternResults.push({
+        name,
+        ok: !!d.ok,
+        reason: d.ok ? undefined : String(d.reason ?? "unknown"),
+      });
+
+      if (!d.ok) {
+        anyFailure = true;
+        tags.push(name); // tag with the failing pattern name
+      }
+
+      const lb = d.leverBehindOwnGate as LeverBehindOwnGateDiagV1 | undefined;
+      if (
+        lb &&
+        (lb.isBehindOwnGate ||
+          lb.blockedByOtherDoor ||
+          lb.unreachableEvenIfAllDoorsOpen)
+      ) {
+        anyLeverAnomaly = true;
+      }
+    }
+
+    if (anyFailure) tags.unshift("patternFailure");
+    if (anyLeverAnomaly) tags.push("hasLeverAnomaly");
+    if (!anyFailure && !anyLeverAnomaly) tags.push("good");
+
+    if (!anyFailure && !anyLeverAnomaly) goodCount++;
+    else failedCount++;
+
+    seeds.push({
+      seed: r.seed,
+      seedUsed: r.seedUsed,
+      rooms: r.rooms,
+      corridors: r.corridors,
+      tags,
+      patternResults,
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    totalSeeds: runs.length,
+    goodCount,
+    failedCount,
+    seeds,
+  };
+}

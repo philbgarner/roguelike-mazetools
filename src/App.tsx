@@ -21,7 +21,11 @@ import {
   derivePlatesFromBlocks,
 } from "./dungeonState";
 import { evaluateCircuits } from "./evaluateCircuits";
-import { aggregateBatchRuns, type BatchRunInput } from "./batchStats";
+import {
+  aggregateBatchRuns,
+  buildSeedBank,
+  type BatchRunInput,
+} from "./batchStats";
 import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
 
 import WizardScreen from "./wizard/WizardScreen";
@@ -286,13 +290,21 @@ function ExecutionView(props: {
         }
 
         const summary = aggregateBatchRuns(runs);
+        const seedBank = buildSeedBank(runs);
         const json = JSON.stringify(summary, null, 2);
+        const seedBankJson = JSON.stringify(seedBank, null, 2);
 
         if (cancelled) return;
 
         dispatch({
           type: "EXEC_DONE",
-          result: { kind: "batch", summary, summaryJson: json },
+          result: {
+            kind: "batch",
+            summary,
+            summaryJson: json,
+            seedBank,
+            seedBankJson,
+          },
         });
       } catch (err: any) {
         if (cancelled) return;
@@ -429,10 +441,16 @@ function InspectionRouter(props: {
         summaryJson: result.summaryJson,
         runs: result.summary?.runs ?? undefined,
         seedPrefix: batchSeedPrefix,
+        seedBank: result.seedBank,
+        seedBankJson: result.seedBankJson,
       }}
       onBack={() => {
         dispatch({ type: "INVALIDATE_RESULTS" });
         dispatch({ type: "SET_STEP", step: 1 });
+      }}
+      onRerunSeed={(seed) => {
+        dispatch({ type: "RERUN_SEED_SINGLE", seed });
+        dispatch({ type: "EXEC_START" });
       }}
       title="Batch Results — Summary Only"
     />
