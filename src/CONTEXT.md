@@ -2,7 +2,7 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-14 (rev AD)**
+**CONTEXT VERSION:** **2026-02-14 (rev AE)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 3 Weighted Steering (SOFT POLICY, SEED CURATION-AWARE)**
@@ -491,6 +491,18 @@ This supports Phase 3 steering because we now have actionable diagnostics to mea
 
 * Batch runs surface **sample repro seeds** for rare failures and lever-access anomalies
 
+* **Phase 3 weighted steering is COMPLETE** (2026-02-14):
+
+  * `leverBehindOwnGate`: 4.8% → **0%** (gate-aware reachability BFS at lever placement)
+  * `leverBlockedByOtherDoor`: 1.0% → **0%** (branch-door lever-access guard)
+  * Pattern failure rate stable at ~0.5% (topology-driven, expected)
+
+* **Seed curation pipeline is COMPLETE** (2026-02-14):
+
+  * `buildSeedBank()` classifies every batch seed as good/patternFailure/hasLeverAnomaly
+  * BatchResultsView: filterable seed table, Download Seed Bank, Download Good Seeds
+  * Per-seed Copy + Inspect (re-runs seed in single mode via `RERUN_SEED_SINGLE` action)
+
 ---
 
 ## PHASE 2.5 CLOSEOUT DECISION (2026-02-08)
@@ -586,20 +598,16 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
   `unreachableEvenIfAllDoorsOpen` must stay at 0%;
   door throat invariants and trigger→gate ordering preserved.
 
-#### Seed Curation Pipeline (PENDING — after steering stabilizes)
+#### Seed Curation Pipeline (DONE — 2026-02-14)
 
-* Batch export: produce a stable list of “good seeds” (no pattern failures; diagnostics within envelope).
-
-* Store a **seed bank** artifact (JSON) with:
-
-  * `seedUsed`
-  * key metrics / diag summaries
-  * tags (e.g., “good”, “hasOptionalReward”, “lowAnomalies”, etc.)
-
-* Add tooling/UI affordance to:
-
-  * copy/export seed lists
-  * re-run a selected seed in Single mode from batch output
+* `buildSeedBank(runs)` in `batchStats.ts` — per-seed classification (good/patternFailure/hasLeverAnomaly)
+* `SeedBank` JSON artifact with `schemaVersion`, timestamps, summary counts, and per-seed entries
+* Each `SeedBankEntry`: seed, seedUsed, rooms, corridors, tags[], patternResults[]
+* BatchResultsView UI:
+  * Seed bank summary bar (good/total/failed counts)
+  * Download Seed Bank (full JSON) + Download Good Seeds (string list)
+  * Filterable table (All / Good / Failed) with Copy + Inspect per row
+  * Inspect dispatches `RERUN_SEED_SINGLE` → single-mode execution with batch config preserved
 
 ### UI (Stabilization & Polish)
 
