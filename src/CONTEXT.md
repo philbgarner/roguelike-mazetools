@@ -2,7 +2,7 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-14 (rev AC)**
+**CONTEXT VERSION:** **2026-02-14 (rev AD)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 3 Weighted Steering (SOFT POLICY, SEED CURATION-AWARE)**
@@ -550,22 +550,32 @@ These rates are now *actionable* because we can jump directly from batch → see
    `leverBehindOwnGate` dropped from **4.8% → 0.4%** (target was ≤2.0%).
    Pattern failure rate unchanged (0.4%). No regression on any guardrail.
 
-2. **Gate-site branch-preservation scoring** (IN PROGRESS)
+2. **Branch-door lever-access guard** (DONE — 2026-02-14)
 
-   When iterating gate sites within a main edge, prefer sites that leave the most
-   branch-side door sites available. Currently gate sites are shuffled randomly.
-   Scoring here reduces cases where gate placement inadvertently blocks the only
-   viable branch paths, which cascades into lever placement failures.
+   After lever placement, verify the lever is still reachable with both the gate
+   AND branch door blocked. If the branch door would cut off the lever, skip that
+   branch site. Result (1000-run batch, combined with #1):
+   `leverBlockedByOtherDoor` dropped from **1.0% → 0%**;
+   `leverBehindOwnGate` also reached **0%**. Pattern failure 0.5% (noise).
 
-3. **Branch-neighbor scoring** (PENDING)
+3. **Branch-neighbor scoring** (PENDING — deferred; anomaly targets already met)
 
    When selecting which off-main neighbor to branch into, prefer neighbors with higher
-   usable door-site counts. Currently random shuffle. Picking neighbors with more
-   options reduces site-scarcity cascades.
+   usable door-site counts. Currently random shuffle. May revisit if pattern failure
+   rate needs reduction.
 
-All three interventions are **soft biases** (weighted sort, not hard rejection).
-Each emits a diagnostic annotation describing why a choice was preferred, per the
-escalation principle.
+All interventions are **soft biases** (weighted sort or soft guard, not hard rejection).
+
+#### Combined Results (Interventions #1 + #2, 1000-run batch, 2026-02-14)
+
+| Metric                             | Phase 2.5  | Phase 3    | Delta       |
+|------------------------------------|------------|------------|-------------|
+| Pattern failure                    | 0.4%       | 0.5%       | +0.1% (noise)|
+| `leverBehindOwnGate`              | 4.8%       | **0%**     | **−4.8%**    |
+| `leverBlockedByOtherDoor`         | 1.0%       | **0%**     | **−1.0%**    |
+| `unreachableEvenIfAllDoorsOpen`   | 0%         | 0%         | no change   |
+
+Both lever-access anomaly classes eliminated. All targets exceeded.
 
 #### Measurement Plan
 
