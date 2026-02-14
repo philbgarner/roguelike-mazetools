@@ -1045,6 +1045,37 @@ export function applyGateThenOptionalRewardPattern(args: {
             }
 
             // --- Lever placement (prefer shallowRoom; fallback to any earlier reachable room) ---
+            //
+            // Phase 3 steering — lever-room reachability bias:
+            //
+            // reachClosed0 is computed *before* we place the gate door, so it doesn't
+            // know the gate will block passage. A lever placed on a tile reachable in
+            // reachClosed0 may become unreachable once the gate is written — this is
+            // the root cause of the "lever behind own gate" anomaly (~4.8% in Phase 2.5).
+            //
+            // Fix: temporarily mark the gate tile as a door (ft=4) and recompute
+            // reachability. Use this gate-aware reach map for lever sampling so that
+            // levers are only placed on tiles the player can actually reach with the
+            // gate closed.
+            //
+            // Cost: one extra BFS per gate-site attempt that reaches lever placement.
+            // This is bounded by MAX_GATE_SITE_TRIES_PER_MAIN_EDGE × branch attempts,
+            // and the BFS is O(W×H) which is cheap relative to the full generation.
+
+            const prevFtAtGate = ft[gateDi]!;
+            const prevFidAtGate = fid[gateDi]!;
+            ft[gateDi] = 4; // temporarily treat gate tile as a closed door
+            fid[gateDi] = 255; // nonzero so computeReachable blocks on it
+            const reachWithGateBlocked = computeReachable(
+              dungeon,
+              ft,
+              fid,
+              start,
+              new Set(),
+            );
+            ft[gateDi] = prevFtAtGate; // restore — gate not committed yet
+            fid[gateDi] = prevFidAtGate;
+
             const leverTry = (room: (typeof rooms)[number]) =>
               trySample(6, () =>
                 sampleReachableRoomFloorNoFeatures(
@@ -1052,7 +1083,7 @@ export function applyGateThenOptionalRewardPattern(args: {
                   dungeon,
                   room,
                   ft,
-                  reachClosed0,
+                  reachWithGateBlocked, // Phase 3: gate-aware reachability
                 ),
               );
 
@@ -1064,7 +1095,6 @@ export function applyGateThenOptionalRewardPattern(args: {
               const gateDist = roomDistance.get(deepRoomId) ?? 9999;
 
               // Candidate rooms: any room strictly earlier than the gated side.
-              // (Also require the room exists and has some reachable, feature-free floor.)
               const candidateRoomIds: number[] = [];
               for (let rid = 1; rid <= rooms.length; rid++) {
                 if (rid === deepRoomId) continue;
@@ -1073,8 +1103,38 @@ export function applyGateThenOptionalRewardPattern(args: {
                 candidateRoomIds.push(rid);
               }
 
-              // Prefer closer-to-entrance rooms; randomize within each distance bucket.
+              // Phase 3 steering: check which candidate rooms have any tile
+              // reachable with the gate blocked. Rooms on the entrance side of
+              // the gate are strongly preferred — placing the lever there avoids
+              // the "lever behind own gate" anomaly entirely for this circuit.
+              const roomIsGateReachable = (rid: number): boolean => {
+                const r = rooms[rid - 1];
+                if (!r) return false;
+                // Spot-check: does any interior floor tile in this room appear
+                // in the gate-aware reach map? Sample a grid of points for speed.
+                for (
+                  let y = r.y + 1;
+                  y < r.y + r.h - 1;
+                  y += Math.max(1, ((r.h - 2) >> 2) | 0)
+                ) {
+                  for (
+                    let x = r.x + 1;
+                    x < r.x + r.w - 1;
+                    x += Math.max(1, ((r.w - 2) >> 2) | 0)
+                  ) {
+                    const ri = idxOf(dungeon.width, x, y);
+                    if (reachWithGateBlocked[ri]) return true;
+                  }
+                }
+                return false;
+              };
+
+              // Sort: gate-reachable rooms first (entrance-side of the gate),
+              // then by distance (closer to entrance preferred), then random tiebreak.
               candidateRoomIds.sort((ra, rb) => {
+                const gaR = roomIsGateReachable(ra) ? 0 : 1;
+                const gbR = roomIsGateReachable(rb) ? 0 : 1;
+                if (gaR !== gbR) return gaR - gbR;
                 const da = roomDistance.get(ra) ?? 9999;
                 const db = roomDistance.get(rb) ?? 9999;
                 if (da !== db) return da - db;

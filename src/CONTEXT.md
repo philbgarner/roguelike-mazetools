@@ -2,7 +2,7 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-08 (rev AB)**
+**CONTEXT VERSION:** **2026-02-14 (rev AC)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — Phase 3 Weighted Steering (SOFT POLICY, SEED CURATION-AWARE)**
@@ -522,44 +522,75 @@ These rates are now *actionable* because we can jump directly from batch → see
 
 ### Phase 3 (ACTIVE) — Weighted Steering + Seed Curation Workflow
 
-1. **Define Phase 3 steering goals (soft, measurable, diagnostic-first)**
+#### Phase 3 Steering Goals (DEFINED — 2026-02-14)
 
-   * Reduce “lever behind own gate” and “blocked by other door” rates without introducing hard constraints.
-   * Keep best-effort behavior: patterns may skip; generation never aborts.
+**Baselines (Phase 2.5, 1000-run batch):**
 
-2. **Introduce weighted selection (not hard rules) in high-leverage choice points**
+| Metric                             | Phase 2.5 Rate        |
+|------------------------------------|-----------------------|
+| Pattern failure (gateThenOptReward)| 0.4% (4/1000)        |
+| `leverBehindOwnGate`              | ~4.8% (48/996)       |
+| `leverBlockedByOtherDoor`         | ~1.0% (10/996)       |
+| `unreachableEvenIfAllDoorsOpen`   | 0%                   |
 
-   Initial targets (small, incremental):
+**Targets (soft — no hard constraints):**
 
-   * `gateThenOptionalReward`: bias toward gate sites / main edges that preserve viable branch door sites
-   * bias toward branch anchors with higher candidate door-site availability
-   * (later) bias toward earlier-room lever placements that are reachable under the chosen closure model
+| Metric                             | Target       | Hard floor          |
+|------------------------------------|--------------|---------------------|
+| Pattern failure                    | ≤0.4%        | No regression       |
+| `leverBehindOwnGate`              | ≤2.0%        | None — soft goal    |
+| `leverBlockedByOtherDoor`         | ≤0.5%        | None — soft goal    |
+| `unreachableEvenIfAllDoorsOpen`   | Stay at 0%   | N/A                 |
 
-   All weights must be accompanied by **diagnostics** describing why a choice was preferred.
+#### Steering Interventions (ranked by expected impact)
 
-3. **Seed curation pipeline (supports the “ship only good seeds” plan)**
+1. **Lever-room reachability bias** (IN PROGRESS)
 
-   * Batch export: produce a stable list of “good seeds” (no pattern failures; diagnostics within envelope).
+   In the lever fallback loop, score candidate rooms not just by `roomDistance` but by
+   whether the room is reachable from the entrance *without passing through the gate
+   being placed*. Current code picks by distance alone, which doesn’t account for
+   whether the gate itself blocks the path. This directly targets `leverBehindOwnGate`.
 
-   * Store a **seed bank** artifact (JSON) with:
+2. **Gate-site branch-preservation scoring** (PENDING)
 
-     * `seedUsed`
-     * key metrics / diag summaries
-     * tags (e.g., “good”, “hasOptionalReward”, “lowAnomalies”, etc.)
+   When iterating gate sites within a main edge, prefer sites that leave the most
+   branch-side door sites available. Currently gate sites are shuffled randomly.
+   Scoring here reduces cases where gate placement inadvertently blocks the only
+   viable branch paths, which cascades into lever placement failures.
 
-   * Add tooling/UI affordance to:
+3. **Branch-neighbor scoring** (PENDING)
 
-     * copy/export seed lists
-     * re-run a selected seed in Single mode from batch output
+   When selecting which off-main neighbor to branch into, prefer neighbors with higher
+   usable door-site counts. Currently random shuffle. Picking neighbors with more
+   options reduces site-scarcity cascades.
 
-4. **Phase 3 baseline + comparison harness**
+All three interventions are **soft biases** (weighted sort, not hard rejection).
+Each emits a diagnostic annotation describing why a choice was preferred, per the
+escalation principle.
 
-   * Run 1000+ seed batches for baseline (Phase 2.5) vs Phase 3 (weighted) and track deltas.
-   * Keep a regression guardrail on:
+#### Measurement Plan
 
-     * door throat invariants
-     * ordered trigger → gate join fields
-     * diagnostics schema stability
+* Run a **1000-seed baseline batch** on Phase 2.5 snapshot before any changes.
+* Apply each intervention **incrementally** and re-run 1000-seed batches.
+* Compare deltas on all four metrics above.
+* **Regression guardrails**: pattern failure rate must not increase;
+  `unreachableEvenIfAllDoorsOpen` must stay at 0%;
+  door throat invariants and trigger→gate ordering preserved.
+
+#### Seed Curation Pipeline (PENDING — after steering stabilizes)
+
+* Batch export: produce a stable list of “good seeds” (no pattern failures; diagnostics within envelope).
+
+* Store a **seed bank** artifact (JSON) with:
+
+  * `seedUsed`
+  * key metrics / diag summaries
+  * tags (e.g., “good”, “hasOptionalReward”, “lowAnomalies”, etc.)
+
+* Add tooling/UI affordance to:
+
+  * copy/export seed lists
+  * re-run a selected seed in Single mode from batch output
 
 ### UI (Stabilization & Polish)
 
