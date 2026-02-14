@@ -544,14 +544,13 @@ These rates are now *actionable* because we can jump directly from batch → see
 
 #### Steering Interventions (ranked by expected impact)
 
-1. **Lever-room reachability bias** (IN PROGRESS)
+1. **Lever-room reachability bias** (DONE — 2026-02-14)
 
-   In the lever fallback loop, score candidate rooms not just by `roomDistance` but by
-   whether the room is reachable from the entrance *without passing through the gate
-   being placed*. Current code picks by distance alone, which doesn’t account for
-   whether the gate itself blocks the path. This directly targets `leverBehindOwnGate`.
+   Gate-aware reachability BFS at lever placement time. Result (1000-run batch):
+   `leverBehindOwnGate` dropped from **4.8% → 0.4%** (target was ≤2.0%).
+   Pattern failure rate unchanged (0.4%). No regression on any guardrail.
 
-2. **Gate-site branch-preservation scoring** (PENDING)
+2. **Gate-site branch-preservation scoring** (IN PROGRESS)
 
    When iterating gate sites within a main edge, prefer sites that leave the most
    branch-side door sites available. Currently gate sites are shuffled randomly.

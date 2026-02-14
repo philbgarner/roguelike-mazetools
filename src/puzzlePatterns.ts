@@ -1159,6 +1159,47 @@ export function applyGateThenOptionalRewardPattern(args: {
               continue;
             }
 
+            // Phase 3 steering — branch-door lever-access guard:
+            //
+            // The lever was placed using reachWithGateBlocked (which accounts for
+            // the gate door and all previously-placed doors). But this pattern also
+            // places a *branch* door at branchSite. If that branch door sits on the
+            // only path between the entrance and the lever, the lever becomes
+            // unreachable — producing a "blocked by other door" anomaly.
+            //
+            // Fix: temporarily block both the gate tile AND the branch tile, then
+            // check if the lever is still reachable. If not, skip this branch site
+            // and try the next one. This is a soft bias (we continue to the next
+            // branch site rather than aborting), and only costs one BFS per branch
+            // site that passes lever placement but fails this guard.
+            {
+              const prevBranchFt = ft[branchDi]!;
+              const prevBranchFid = fid[branchDi]!;
+              ft[gateDi] = 4;
+              fid[gateDi] = 255;
+              ft[branchDi] = 4;
+              fid[branchDi] = 255;
+
+              const reachBothDoorsBlocked = computeReachable(
+                dungeon,
+                ft,
+                fid,
+                start,
+                new Set(),
+              );
+
+              ft[gateDi] = prevFtAtGate;
+              fid[gateDi] = prevFidAtGate;
+              ft[branchDi] = prevBranchFt;
+              fid[branchDi] = prevBranchFid;
+
+              const leverI = idxOf(dungeon.width, leverP.x, leverP.y);
+              if (!reachBothDoorsBlocked[leverI]) {
+                // Lever would be blocked by the branch door — try next branch site.
+                continue;
+              }
+            }
+
             let plateP: Point | null = null;
             let blockP: Point | null = null;
 
