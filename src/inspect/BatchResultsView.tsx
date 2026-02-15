@@ -80,7 +80,8 @@ type SeedFilter =
   | "good"
   | "failed"
   | "budgetViolation"
-  | "difficultyOutOfBand";
+  | "difficultyOutOfBand"
+  | "pacingFailure";
 
 function filterSeeds(
   seeds: SeedBankEntry[],
@@ -92,6 +93,8 @@ function filterSeeds(
     return seeds.filter((s) => s.tags.includes("budgetViolation"));
   if (filter === "difficultyOutOfBand")
     return seeds.filter((s) => s.tags.includes("difficultyOutOfBand"));
+  if (filter === "pacingFailure")
+    return seeds.filter((s) => s.tags.includes("pacingFailure"));
   return seeds.filter((s) => !s.tags.includes("good"));
 }
 
@@ -115,6 +118,11 @@ function SeedBankTable(props: {
     () =>
       seedBank.seeds.filter((s) => s.tags.includes("difficultyOutOfBand"))
         .length,
+    [seedBank.seeds],
+  );
+
+  const pacingFailureCount = useMemo(
+    () => seedBank.seeds.filter((s) => s.tags.includes("pacingFailure")).length,
     [seedBank.seeds],
   );
 
@@ -191,6 +199,7 @@ function SeedBankTable(props: {
             "failed",
             ...(budgetViolationCount > 0 ? ["budgetViolation"] : []),
             ...(difficultyViolationCount > 0 ? ["difficultyOutOfBand"] : []),
+            ...(pacingFailureCount > 0 ? ["pacingFailure"] : []),
           ] as SeedFilter[]
         ).map((f) => (
           <button
@@ -210,7 +219,9 @@ function SeedBankTable(props: {
                   ? `Budget (${budgetViolationCount})`
                   : f === "difficultyOutOfBand"
                     ? `Difficulty (${difficultyViolationCount})`
-                    : `Failed (${seedBank.failedCount})`}
+                    : f === "pacingFailure"
+                      ? `Pacing (${pacingFailureCount})`
+                      : `Failed (${seedBank.failedCount})`}
           </button>
         ))}
       </div>
@@ -269,7 +280,9 @@ function SeedBankTable(props: {
                                 ? "#5a4a1a"
                                 : t === "difficultyOutOfBand"
                                   ? "#1a4a5a"
-                                  : "#4a4a2a",
+                                  : t === "pacingFailure"
+                                    ? "#4a1a5a"
+                                    : "#4a4a2a",
                         color: "#ddd",
                       }}
                     >
@@ -469,6 +482,47 @@ export function BatchResultsView(props: BatchResultsViewProps) {
                 {Object.entries(payload.summary.budget.violationsByCategory)
                   .sort((a, b) => (b[1] as number) - (a[1] as number))
                   .map(([cat, count]) => `${cat}: ${count}`)
+                  .join(", ")}
+              </div>
+            )}
+          </div>
+        )}
+
+        {payload.summary?.pacing && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: 8,
+              background: "#2a1a2a",
+              borderRadius: 4,
+              border: "1px solid #545",
+            }}
+          >
+            <strong>Pacing Targets Summary</strong>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              Checked: {payload.summary.pacing.checkedCount} | Pass:{" "}
+              {payload.summary.pacing.passCount} | Fail:{" "}
+              {payload.summary.pacing.failCount}
+              {payload.summary.pacing.failCount > 0 && (
+                <span>
+                  {" "}
+                  (
+                  {(
+                    (payload.summary.pacing.failCount /
+                      payload.summary.pacing.checkedCount) *
+                    100
+                  ).toFixed(1)}
+                  % rejection rate)
+                </span>
+              )}
+            </div>
+            {Object.keys(payload.summary.pacing.violationsByMetric).length >
+              0 && (
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Violations by metric:{" "}
+                {Object.entries(payload.summary.pacing.violationsByMetric)
+                  .sort((a, b) => (b[1] as number) - (a[1] as number))
+                  .map(([metric, count]) => `${metric}: ${count}`)
                   .join(", ")}
               </div>
             )}

@@ -7,6 +7,7 @@
 
 import type { DoorSiteStatsBundle } from "./doorSites";
 import type { BudgetResult, DifficultyResult } from "./contentBudget";
+import type { PacingResult } from "./pacingTargets";
 
 export type SampleFailureSeedV1 = {
   schemaVersion: 1;
@@ -151,6 +152,7 @@ export type BatchRunInput = {
   circuitMetrics: CircuitBatchMetrics | null;
   budgetResult?: BudgetResult | null;
   difficultyResult?: DifficultyResult | null;
+  pacingResult?: PacingResult | null;
 };
 
 export type BatchPatternSummary = {
@@ -260,6 +262,13 @@ export type BatchSummary = {
     failCount: number;
     violationsByMetric: Record<string, number>;
   };
+
+  pacing?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByMetric: Record<string, number>;
+  };
 };
 
 function safeNum(v: unknown): number {
@@ -321,6 +330,12 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
   let diffPass = 0;
   let diffFail = 0;
   const diffViolationsByMetric: Record<string, number> = {};
+
+  // Milestone 6: pacing aggregation
+  let pacingChecked = 0;
+  let pacingPass = 0;
+  let pacingFail = 0;
+  const pacingViolationsByMetric: Record<string, number> = {};
 
   function makeAcc() {
     return {
@@ -597,6 +612,20 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         }
       }
     }
+
+    // Milestone 6: pacing accumulation
+    if (r.pacingResult) {
+      pacingChecked++;
+      if (r.pacingResult.pass) {
+        pacingPass++;
+      } else {
+        pacingFail++;
+        for (const v of r.pacingResult.violations) {
+          pacingViolationsByMetric[v.metric] =
+            (pacingViolationsByMetric[v.metric] ?? 0) + 1;
+        }
+      }
+    }
   }
 
   const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
@@ -779,6 +808,16 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         }
       : undefined;
 
+  const pacing =
+    pacingChecked > 0
+      ? {
+          checkedCount: pacingChecked,
+          passCount: pacingPass,
+          failCount: pacingFail,
+          violationsByMetric: pacingViolationsByMetric,
+        }
+      : undefined;
+
   return {
     runs: totalRuns,
     roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
@@ -787,6 +826,7 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
     circuits,
     budget,
     difficulty,
+    pacing,
   };
 }
 
@@ -862,16 +902,19 @@ export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
 
     const anyBudgetViolation = r.budgetResult?.pass === false;
     const anyDifficultyViolation = r.difficultyResult?.pass === false;
+    const anyPacingViolation = r.pacingResult?.pass === false;
 
     if (anyFailure) tags.unshift("patternFailure");
     if (anyLeverAnomaly) tags.push("hasLeverAnomaly");
     if (anyBudgetViolation) tags.push("budgetViolation");
     if (anyDifficultyViolation) tags.push("difficultyOutOfBand");
+    if (anyPacingViolation) tags.push("pacingFailure");
     const isGood =
       !anyFailure &&
       !anyLeverAnomaly &&
       !anyBudgetViolation &&
-      !anyDifficultyViolation;
+      !anyDifficultyViolation &&
+      !anyPacingViolation;
     if (isGood) tags.push("good");
 
     if (isGood) goodCount++;

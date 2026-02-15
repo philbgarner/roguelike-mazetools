@@ -101,6 +101,17 @@ export type DifficultyBand = {
   puzzleDensity?: DifficultyBandEntry; // ratio: puzzles per room
 };
 
+// Milestone 6, Phase 3 — Pacing Targets
+export type RampProfile = "linear" | "front-loaded" | "back-loaded";
+
+export type PacingTargets = {
+  firstGateDistance?: { min?: number; max?: number };
+  rewardAfterGate?: { enabled?: boolean; maxDistance?: number };
+  contentFreeIntro?: { min?: number };
+  shortcutPresent?: { required?: boolean };
+  rampProfile?: { target?: RampProfile };
+};
+
 export type ModeConfig =
   | {
       mode: "single";
@@ -108,6 +119,7 @@ export type ModeConfig =
       pattern: PatternConfig;
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
+      pacingTargets: PacingTargets | null;
     }
   | {
       mode: "batch";
@@ -115,6 +127,7 @@ export type ModeConfig =
       pattern: PatternConfig;
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
+      pacingTargets: PacingTargets | null;
     };
 
 export type RunContract =
@@ -126,6 +139,7 @@ export type RunContract =
       pattern: PatternConfig;
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
+      pacingTargets: PacingTargets | null;
       guarantees: string[];
     }
   | {
@@ -136,6 +150,7 @@ export type RunContract =
       pattern: PatternConfig;
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
+      pacingTargets: PacingTargets | null;
       guarantees: string[];
     };
 
@@ -156,6 +171,7 @@ export type SingleRunResult = {
   circuitDebug0: any;
   budgetResult?: any;
   difficultyResult?: any;
+  pacingResult?: any;
 };
 
 export type BatchRunResult = {
@@ -260,6 +276,7 @@ export type WizardAction =
   | { type: "SET_BATCH"; batch: BatchConfig }
   | { type: "SET_CONTENT_BUDGET"; contentBudget: ContentBudget | null }
   | { type: "SET_DIFFICULTY_BAND"; difficultyBand: DifficultyBand | null }
+  | { type: "SET_PACING_TARGETS"; pacingTargets: PacingTargets | null }
 
   // Step 5
   | { type: "DERIVE_CONTRACT" }
@@ -363,6 +380,7 @@ export function deriveRunContract(state: WizardState): RunContract | null {
       pattern: state.mode.pattern,
       contentBudget: state.mode.contentBudget,
       difficultyBand: state.mode.difficultyBand,
+      pacingTargets: state.mode.pacingTargets,
       guarantees,
     };
   }
@@ -375,6 +393,7 @@ export function deriveRunContract(state: WizardState): RunContract | null {
     pattern: state.mode.pattern,
     contentBudget: state.mode.contentBudget,
     difficultyBand: state.mode.difficultyBand,
+    pacingTargets: state.mode.pacingTargets,
     guarantees,
   };
 }
@@ -391,6 +410,7 @@ function materializeMode(state: WizardState): ModeConfig {
       ),
       contentBudget: state.mode.contentBudget ?? null,
       difficultyBand: state.mode.difficultyBand ?? null,
+      pacingTargets: state.mode.pacingTargets ?? null,
     };
   }
 
@@ -403,6 +423,7 @@ function materializeMode(state: WizardState): ModeConfig {
       ),
       contentBudget: state.mode.contentBudget ?? null,
       difficultyBand: state.mode.difficultyBand ?? null,
+      pacingTargets: state.mode.pacingTargets ?? null,
     };
   }
 
@@ -414,6 +435,7 @@ function materializeMode(state: WizardState): ModeConfig {
     pattern: normalizePattern(DEFAULT_PATTERN as PatternConfig),
     contentBudget: null,
     difficultyBand: null,
+    pacingTargets: null,
   };
 }
 
@@ -438,6 +460,7 @@ function buildContract(
       pattern: mode.pattern,
       contentBudget: mode.contentBudget,
       difficultyBand: mode.difficultyBand,
+      pacingTargets: mode.pacingTargets,
       guarantees,
     };
   }
@@ -450,6 +473,7 @@ function buildContract(
     pattern: mode.pattern,
     contentBudget: mode.contentBudget,
     difficultyBand: mode.difficultyBand,
+    pacingTargets: mode.pacingTargets,
     guarantees,
   };
 }
@@ -522,6 +546,7 @@ export function wizardReducer(
         pattern: rerunPattern,
         contentBudget: state.mode.contentBudget,
         difficultyBand: state.mode.difficultyBand,
+        pacingTargets: state.mode.pacingTargets,
         guarantees:
           deriveRunContract({ ...state, world: rerunWorld })?.guarantees ?? [],
       };
@@ -605,6 +630,7 @@ export function wizardReducer(
         pattern: normalizePattern(DEFAULT_PATTERN),
         contentBudget: null,
         difficultyBand: null,
+        pacingTargets: null,
       };
 
       const singleMsg = state.result
@@ -628,6 +654,7 @@ export function wizardReducer(
         pattern: normalizePattern(DEFAULT_PATTERN),
         contentBudget: null,
         difficultyBand: null,
+        pacingTargets: null,
       };
 
       const batchMsg = state.result
@@ -688,6 +715,20 @@ export function wizardReducer(
       const mode: ModeConfig = {
         ...state.mode,
         difficultyBand: action.difficultyBand,
+      };
+      // Step 4 change — invalidates results only.
+      return {
+        ...clearResults(state),
+        step: 4,
+        mode,
+      };
+    }
+
+    case "SET_PACING_TARGETS": {
+      if (!state.mode) return state;
+      const mode: ModeConfig = {
+        ...state.mode,
+        pacingTargets: action.pacingTargets,
       };
       // Step 4 change — invalidates results only.
       return {

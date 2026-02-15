@@ -33,6 +33,7 @@ import {
   type BudgetResult,
   type DifficultyResult,
 } from "./contentBudget";
+import { validatePacingTargets, type PacingResult } from "./pacingTargets";
 
 import WizardScreen from "./wizard/WizardScreen";
 
@@ -217,6 +218,12 @@ function ExecutionView(props: {
             contract.difficultyBand,
           );
 
+          // Milestone 6: pacing targets validation (single mode)
+          const pacingResult0: PacingResult = validatePacingTargets(
+            content.meta as any,
+            contract.pacingTargets,
+          );
+
           if (cancelled) return;
 
           dispatch({
@@ -237,6 +244,7 @@ function ExecutionView(props: {
               circuitDebug0: (eval0 as any).debug ?? null,
               budgetResult: budgetResult0,
               difficultyResult: difficultyResult0,
+              pacingResult: pacingResult0,
             },
           });
 
@@ -311,6 +319,12 @@ function ExecutionView(props: {
             contract.difficultyBand,
           );
 
+          // Milestone 6: pacing targets validation (batch mode)
+          const pacingResult1: PacingResult = validatePacingTargets(
+            content.meta as any,
+            contract.pacingTargets,
+          );
+
           runs.push({
             seed: seedStr,
             seedUsed: dungeon.meta.seedUsed,
@@ -322,6 +336,7 @@ function ExecutionView(props: {
               : null,
             budgetResult: budgetResult1,
             difficultyResult: difficultyResult1,
+            pacingResult: pacingResult1,
           });
 
           if (i % updateEvery === 0 || i === total - 1) {
