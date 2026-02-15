@@ -862,6 +862,7 @@ export function applyGateThenOptionalRewardPattern(args: {
   let failChest = 0;
   let failBranchSameAsGate = 0;
   let failGateEliminatesAllBranchSites = 0;
+  let failHardConstraint = 0;
 
   // --- Explore edges first ---
   for (const edge of mainEdgesToTry) {
@@ -1556,6 +1557,43 @@ export function applyGateThenOptionalRewardPattern(args: {
               isBehindOwnGate,
             };
 
+            // Phase 4 hard constraint: if any lever-access anomaly slipped past
+            // the Phase 3 soft biases, roll back all committed fixtures and try
+            // the next candidate. This is the safety net — soft biases are the
+            // primary defense, but hard constraints guarantee no anomaly ships.
+            if (
+              isBehindOwnGate ||
+              blockedByOtherDoor ||
+              unreachableEvenIfAllDoorsOpen
+            ) {
+              failHardConstraint++;
+
+              // Roll back fixture mask writes
+              const rollbackIndices = [gateDi, gateLi, branchDi, pi, bi2, ci];
+              for (const ri of rollbackIndices) {
+                ft[ri] = 0;
+                fid[ri] = 0;
+                fparam[ri] = 0;
+              }
+              lootTier[ci] = 0;
+
+              // Roll back meta arrays (all were push()ed in commit order)
+              doors.pop(); // branch door
+              doors.pop(); // gate door
+              levers.pop();
+              plates.pop();
+              blocks.pop();
+              chests.pop();
+
+              // Roll back circuits and roles
+              circuitsById.delete(gateId);
+              circuitsById.delete(branchId);
+              delete circuitRoles[gateId];
+              delete circuitRoles[branchId];
+
+              continue;
+            }
+
             // Include this edge in counters in the success report
             const edgesWithBranchesNow =
               mainEdgesWithBranches + (edgeHadBranches ? 1 : 0);
@@ -1570,6 +1608,7 @@ export function applyGateThenOptionalRewardPattern(args: {
               stats: { doorSites: stats },
               gateEdgeReuse,
               leverBehindOwnGate,
+              failHardConstraint,
               // carry these in the payload if you’re aggregating them elsewhere
               // (kept as any-compatible with your existing caller)
               mainEdgesConsidered,
@@ -1611,6 +1650,7 @@ export function applyGateThenOptionalRewardPattern(args: {
     ` plateFail=${failPlate}` +
     ` blockAdjFail=${failBlockAdj}` +
     ` chestFail=${failChest}` +
+    ` hardConstraint=${failHardConstraint}` +
     `)`;
 
   if (
@@ -1629,9 +1669,13 @@ export function applyGateThenOptionalRewardPattern(args: {
       failPlate,
       failBlockAdj,
       failChest,
+      failHardConstraint,
     );
 
-    if (max === failGateOccupied && max > 0)
+    if (max === failHardConstraint && max > 0)
+      reason =
+        "Failed: lever-access hard constraint rejected all placements (soft biases insufficient).";
+    else if (max === failGateOccupied && max > 0)
       reason = "Failed: gate door tile occupied too often.";
     else if (max === failBranchOccupied && max > 0)
       reason = "Failed: branch door tile occupied too often.";
@@ -1666,6 +1710,7 @@ export function applyGateThenOptionalRewardPattern(args: {
     mainEdgesConsidered,
     mainEdgesWithBranches,
     mainEdgesWithUsableDoorSites,
+    failHardConstraint,
     circuitRoles,
   } as any;
 }

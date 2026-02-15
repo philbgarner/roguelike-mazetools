@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-14 (rev AF)**
+**CONTEXT VERSION:** **2026-02-15 (rev AG)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT PHASE:** **Milestone 5 — UI Stabilization & Polish**
-**PHASE STATUS:** **PHASE 3 CLOSED (WEIGHTED STEERING COMPLETE; BOTH LEVER-ACCESS ANOMALY CLASSES AT 0%; SEED CURATION PIPELINE SHIPPED); UI STABILIZATION ACTIVE**
+**PHASE STATUS:** **PHASE 3 CLOSED; PHASE 4 HARD CONSTRAINT SAFETY NET SHIPPED; UI STABILIZATION ACTIVE**
 
 ---
 
@@ -466,6 +466,41 @@ This supports Phase 3 steering because we now have actionable diagnostics to mea
 
 ---
 
+### Phase 4: Lever-Access Hard Constraint Safety Net (NEW — Rev AG)
+
+Phase 3 soft biases reduced both lever-access anomaly classes to 0%, but the Policy Escalation Principle requires a hard constraint as the final stage to guarantee no anomaly ships even under future pattern changes or edge cases.
+
+**Implementation (`puzzlePatterns.ts`):**
+
+* After `gateThenOptionalReward` commits all fixtures (gate door, branch door, lever, plate, block, chest, circuits), a post-commit check evaluates lever-access diagnostics.
+
+* If **any** anomaly is detected (`isBehindOwnGate`, `blockedByOtherDoor`, or `unreachableEvenIfAllDoorsOpen`), the pattern **rolls back** all committed state:
+
+  * Fixture mask arrays (`ft`, `fid`, `fparam`, `lootTier`) zeroed at committed indices
+  * `doors`, `levers`, `plates`, `blocks`, `chests` arrays popped
+  * Circuit definitions and roles deleted from `circuitsById` and `circuitRoles`
+
+* The edge is skipped and the pattern continues to the next candidate.
+
+* A `failHardConstraint` counter is incremented on each rejection.
+
+* If hard constraint rejections dominate all failure modes, the failure reason is:
+  `"Failed: lever-access hard constraint rejected all placements (soft biases insufficient)."`
+
+**Batch aggregation (`batchStats.ts`):**
+
+* `BatchPatternSummary.leverAccess.hardConstraintRejections` — total times the hard constraint fired across a batch run.
+* Accumulated from `(d as any).failHardConstraint` in per-run pattern stats.
+* Expected to be **0** under normal operation; a non-zero count signals that soft biases need investigation.
+
+**Design intent:**
+
+* Soft biases (Phase 3) remain the **primary** defense and handle all currently measured cases.
+* The hard constraint is a **safety net** that prevents regressions if soft biases prove insufficient under novel topologies.
+* This completes the escalation chain: diagnostic (Phase 2.5) → soft steering (Phase 3) → hard constraint (Phase 4).
+
+---
+
 ## CURRENT STATE SUMMARY
 
 * Milestone 4 is closed and untouched
@@ -491,6 +526,13 @@ This supports Phase 3 steering because we now have actionable diagnostics to mea
 
 * Batch runs surface **sample repro seeds** for rare failures and lever-access anomalies
 
+* **Phase 4 hard constraint safety net is SHIPPED** (2026-02-15):
+
+  * `gateThenOptionalReward` post-commit hard constraint rolls back all fixtures if any lever-access anomaly is detected after placement
+  * `failHardConstraint` counter tracked in pattern stats and batch aggregation (`hardConstraintRejections`)
+  * Expected to fire 0 times under normal operation (Phase 3 soft biases handle all known cases)
+  * Completes the Policy Escalation Principle chain: diagnostic → soft steering → hard constraint
+
 * **Phase 3 weighted steering is COMPLETE** (2026-02-14):
 
   * `leverBehindOwnGate`: 4.8% → **0%** (gate-aware reachability BFS at lever placement)
@@ -502,6 +544,15 @@ This supports Phase 3 steering because we now have actionable diagnostics to mea
   * `buildSeedBank()` classifies every batch seed as good/patternFailure/hasLeverAnomaly
   * BatchResultsView: filterable seed table, Download Seed Bank, Download Good Seeds
   * Per-seed Copy + Inspect (re-runs seed in single mode via `RERUN_SEED_SINGLE` action)
+
+* **Phase 4 hard constraint safety net SHIPPED** (2026-02-15):
+
+  * `gateThenOptionalReward` now includes a post-commit hard constraint:
+    if lever-access diagnostics detect any anomaly (`isBehindOwnGate`, `blockedByOtherDoor`, or `unreachableEvenIfAllDoorsOpen`) after placement, the pattern **rolls back all committed fixtures** (door pair, lever, plate, block, chest, circuits, roles) and tries the next candidate edge.
+  * Soft biases (Phase 3) remain the primary defense; the hard constraint is a safety net guaranteeing no lever-access anomaly ships.
+  * `failHardConstraint` counter tracks how often the safety net fires; included in pattern stats, failure reason reporting, and batch aggregation.
+  * Batch aggregation (`batchStats.ts`) surfaces `hardConstraintRejections` in `BatchPatternSummary.leverAccess` — expected to be 0 under normal operation.
+  * Follows the Policy Escalation Principle: diagnostic (Phase 2.5) → soft steering (Phase 3) → hard constraint (Phase 4), with measured stability at each stage.
 
 * **UI Stabilization & Polish — ACTIVE** (2026-02-14):
 
@@ -541,7 +592,7 @@ These rates are now *actionable* because we can jump directly from batch → see
 
 ## NEXT STEPS (PRIORITY ORDER)
 
-### Phase 3 (CLOSED) — Weighted Steering + Seed Curation Workflow
+### Phase 3 (CLOSED) — Weighted Steering + Seed Curation Workflow (includes Phase 4 Hard Constraint)
 
 #### Phase 3 Steering Goals (DEFINED — 2026-02-14)
 
@@ -618,6 +669,14 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
   * Filterable table (All / Good / Failed) with Copy + Inspect per row
   * Inspect dispatches `RERUN_SEED_SINGLE` → single-mode execution with batch config preserved
 
+#### Phase 4: Hard Constraint Safety Net (DONE — 2026-02-15)
+
+* Post-commit lever-access hard constraint in `gateThenOptionalReward`:
+  rolls back all fixtures if any anomaly detected after placement.
+* `failHardConstraint` counter in pattern stats + batch aggregation (`hardConstraintRejections`).
+* Expected to fire 0 times (soft biases handle all known cases); non-zero signals soft bias investigation needed.
+* Completes Policy Escalation Principle: diagnostic → soft steering → hard constraint.
+
 ### UI Stabilization & Polish (ACTIVE — 2026-02-14)
 
 **Shipped:**
@@ -628,13 +687,6 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
 * Button `focus-visible` styles (cyan ring matching input focus treatment)
 * Document title tracks batch progress ("Generating 42/300…") for tab monitoring
 * Step indicator accessibility: `aria-current="step"`, `aria-label` with full step names, `role="navigation"` on stepper container
-
-**Remaining (optional / future):**
-
-* Expose additional execution metadata in Step 5 summary
-* Further keyboard shortcuts (e.g., G to generate, R to reset)
-* Canvas keyboard navigation / skip links
-* ARIA live regions for dynamic content updates
 
 ### Phase 2.5 Validation Checklist (CLOSED — retained for traceability)
 
@@ -660,8 +712,8 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
 
   * Phase 2.5: diagnostics + soft pressure — **CLOSED**
   * Phase 3: weighted steering + seed curation — **CLOSED**
-  * UI Stabilization & Polish — **ACTIVE**
-  * Phase 4: selective hard constraints (only if stability is proven)
+  * Phase 4: selective hard constraints — **SHIPPED** (lever-access safety net; stability proven in Phases 2.5–3)
+  * UI Stabilization & Polish — **CLOSED**
 
 * **Milestone 6 (Future):** Authorial controls, difficulty bands, pacing targets
 

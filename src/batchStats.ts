@@ -206,6 +206,9 @@ export type BatchPatternSummary = {
     // (Optional but useful) Old signal: unreachable even when only gate is opened (other doors still closed)
     leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
     pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
+
+    // Phase 4: total times the post-commit hard constraint fired (should be 0 under normal operation)
+    hardConstraintRejections: number;
   };
 
   samples?: {
@@ -316,6 +319,7 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       leverBlockedByOtherDoorCount: 0,
       leverUnreachableEvenIfAllDoorsOpenCount: 0,
       leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
+      hardConstraintRejections: 0,
       // --- sample seed capture (capped) ---
       sampleFailureSeeds: [] as SampleFailureSeedV1[],
       sampleLeverBehindOwnGateSeeds: [] as SampleLeverCaseSeedV1[],
@@ -350,6 +354,7 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
       leverBlockedByOtherDoorCount: number;
       leverUnreachableEvenIfAllDoorsOpenCount: number;
       leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+      hardConstraintRejections: number;
 
       sampleFailureSeeds: SampleFailureSeedV1[];
       sampleLeverBehindOwnGateSeeds: SampleLeverCaseSeedV1[];
@@ -508,6 +513,10 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
           next.leverUnreachableWithGateOpenButOtherDoorsClosedCount += 1;
       }
 
+      // Phase 4: accumulate hard constraint rejections from pattern stats
+      const hcr = safeNum((d as any).failHardConstraint);
+      if (hcr > 0) next.hardConstraintRejections += hcr;
+
       byPattern.set(name, next);
     }
 
@@ -647,6 +656,8 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
                   runsWithDiag
               : 0,
           ),
+
+          hardConstraintRejections: acc.hardConstraintRejections,
         };
       }
 
