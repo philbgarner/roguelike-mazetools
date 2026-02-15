@@ -1,5 +1,5 @@
 // src/wizard/WizardScreen.tsx
-import React, { useMemo, useEffect } from "react";
+import React, { useMemo, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import {
@@ -118,24 +118,32 @@ function NumInput(props: {
   max: number;
   step?: number;
   onChange: (v: number) => void;
+  rangeHint?: boolean;
 }) {
   return (
-    <input
-      type="number"
-      value={Number.isFinite(props.value) ? props.value : props.min}
-      min={props.min}
-      max={props.max}
-      step={props.step ?? 1}
-      onChange={(e) => props.onChange(Number(e.target.value))}
-      style={{
-        width: "100%",
-        padding: "9px 10px",
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.05)",
-        color: "rgba(255,255,255,0.92)",
-      }}
-    />
+    <div>
+      <input
+        type="number"
+        value={Number.isFinite(props.value) ? props.value : props.min}
+        min={props.min}
+        max={props.max}
+        step={props.step ?? 1}
+        onChange={(e) => props.onChange(Number(e.target.value))}
+        style={{
+          width: "100%",
+          padding: "9px 10px",
+          borderRadius: 12,
+          border: "1px solid rgba(255,255,255,0.14)",
+          background: "rgba(255,255,255,0.05)",
+          color: "rgba(255,255,255,0.92)",
+        }}
+      />
+      {props.rangeHint && (
+        <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>
+          {props.min} – {props.max}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -227,6 +235,11 @@ export default function WizardScreen(props: {
         </div>
       )}
 
+      <InvalidationBanner
+        message={state.invalidationMessage}
+        onDismiss={() => dispatch({ type: "CLEAR_INVALIDATION_MSG" })}
+      />
+
       <WizardStepper
         step={state.step}
         canStep2={canStep2}
@@ -265,6 +278,52 @@ export default function WizardScreen(props: {
   );
 }
 
+// --- Invalidation Banner --------------------------------------------------
+
+function InvalidationBanner(props: { message: string; onDismiss: () => void }) {
+  const { message, onDismiss } = props;
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(onDismiss, 4000);
+    return () => window.clearTimeout(timer);
+  }, [message, onDismiss]);
+
+  if (!message) return null;
+
+  return (
+    <div
+      style={{
+        padding: "8px 12px",
+        border: "1px solid rgba(251, 191, 36, 0.4)",
+        borderRadius: 12,
+        marginBottom: 10,
+        background: "rgba(251, 191, 36, 0.08)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        fontSize: 13,
+      }}
+    >
+      <span style={{ opacity: 0.9 }}>{message}</span>
+      <button
+        onClick={onDismiss}
+        style={{
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.6)",
+          cursor: "pointer",
+          fontSize: 14,
+          padding: "0 4px",
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 // --- Stepper --------------------------------------------------------------
 
 function WizardStepper(props: {
@@ -277,6 +336,14 @@ function WizardStepper(props: {
 }) {
   const { step, canStep2, canStep3, canStep4, canStep5, onGo } = props;
 
+  const stepNames: Record<number, string> = {
+    1: "World Seed & Dimensions",
+    2: "BSP Geometry",
+    3: "Generation Mode",
+    4: "Content Options",
+    5: "Confirm & Run",
+  };
+
   const Btn = (p: {
     n: 1 | 2 | 3 | 4 | 5;
     enabled: boolean;
@@ -285,6 +352,8 @@ function WizardStepper(props: {
     <button
       onClick={() => (p.enabled ? onGo(p.n) : null)}
       disabled={!p.enabled}
+      aria-current={step === p.n ? "step" : undefined}
+      aria-label={`Step ${p.n}: ${stepNames[p.n]}`}
       style={{
         opacity: step === p.n ? 1 : 0.85,
         fontWeight: step === p.n ? 800 : 600,
@@ -295,7 +364,11 @@ function WizardStepper(props: {
   );
 
   return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+    <div
+      style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+      role="navigation"
+      aria-label="Wizard steps"
+    >
       <Btn n={1} enabled={true} label="1 World" />
       <Btn n={2} enabled={canStep2} label="2 BSP" />
       <Btn n={3} enabled={canStep3} label="3 Mode" />
@@ -361,6 +434,7 @@ function Step1World(props: {
             value={world.width}
             min={24}
             max={256}
+            rangeHint
             onChange={(v) => setWorld({ width: clampInt(v, 24, 256) })}
           />
         </LabeledField>
@@ -369,6 +443,7 @@ function Step1World(props: {
             value={world.height}
             min={24}
             max={256}
+            rangeHint
             onChange={(v) => setWorld({ height: clampInt(v, 24, 256) })}
           />
         </LabeledField>
@@ -459,6 +534,7 @@ function Step2Bsp(props: {
             value={bsp.maxDepth}
             min={2}
             max={12}
+            rangeHint
             onChange={(v) => setBsp({ maxDepth: clampInt(v, 2, 12) })}
           />
         </LabeledField>
@@ -472,6 +548,7 @@ function Step2Bsp(props: {
             value={bsp.splitPadding}
             min={0}
             max={6}
+            rangeHint
             onChange={(v) => setBsp({ splitPadding: clampInt(v, 0, 6) })}
           />
         </LabeledField>
@@ -484,6 +561,7 @@ function Step2Bsp(props: {
             value={bsp.minLeafSize}
             min={8}
             max={64}
+            rangeHint
             onChange={(v) => setBsp({ minLeafSize: clampInt(v, 8, 64) })}
           />
         </LabeledField>
@@ -496,6 +574,7 @@ function Step2Bsp(props: {
             value={bsp.maxLeafSize}
             min={10}
             max={96}
+            rangeHint
             onChange={(v) => setBsp({ maxLeafSize: clampInt(v, 10, 96) })}
           />
         </LabeledField>
@@ -508,6 +587,7 @@ function Step2Bsp(props: {
             value={bsp.roomPadding}
             min={0}
             max={6}
+            rangeHint
             onChange={(v) => setBsp({ roomPadding: clampInt(v, 0, 6) })}
           />
         </LabeledField>
@@ -522,6 +602,7 @@ function Step2Bsp(props: {
             min={0}
             max={1}
             step={0.05}
+            rangeHint
             onChange={(v) =>
               setBsp({ roomFillLeafChance: Math.max(0, Math.min(1, v)) })
             }
@@ -536,6 +617,7 @@ function Step2Bsp(props: {
             value={bsp.minRoomSize}
             min={3}
             max={24}
+            rangeHint
             onChange={(v) => setBsp({ minRoomSize: clampInt(v, 3, 24) })}
           />
         </LabeledField>
@@ -548,6 +630,7 @@ function Step2Bsp(props: {
             value={bsp.maxRoomSize}
             min={4}
             max={32}
+            rangeHint
             onChange={(v) => setBsp({ maxRoomSize: clampInt(v, 4, 32) })}
           />
         </LabeledField>
@@ -560,6 +643,7 @@ function Step2Bsp(props: {
             value={bsp.corridorWidth}
             min={1}
             max={4}
+            rangeHint
             onChange={(v) => setBsp({ corridorWidth: clampInt(v, 1, 4) })}
           />
         </LabeledField>

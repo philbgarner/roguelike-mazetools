@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-14 (rev AE)**
+**CONTEXT VERSION:** **2026-02-14 (rev AF)**
 **LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
 **CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Milestone 5 — Phase 3 Weighted Steering (SOFT POLICY, SEED CURATION-AWARE)**
-**PHASE STATUS:** **PHASE 2.5 CLOSED (DIAGNOSTICS COMPLETE; RELIABILITY MEASURED; LOW-RATE FAILURES ACCEPTED VIA SEED CURATION); PHASE 3 ACTIVE — WEIGHTED STEERING + POLICY SHAPING NEXT**
+**CURRENT PHASE:** **Milestone 5 — UI Stabilization & Polish**
+**PHASE STATUS:** **PHASE 3 CLOSED (WEIGHTED STEERING COMPLETE; BOTH LEVER-ACCESS ANOMALY CLASSES AT 0%; SEED CURATION PIPELINE SHIPPED); UI STABILIZATION ACTIVE**
 
 ---
 
@@ -503,6 +503,15 @@ This supports Phase 3 steering because we now have actionable diagnostics to mea
   * BatchResultsView: filterable seed table, Download Seed Bank, Download Good Seeds
   * Per-seed Copy + Inspect (re-runs seed in single mode via `RERUN_SEED_SINGLE` action)
 
+* **UI Stabilization & Polish — ACTIVE** (2026-02-14):
+
+  * Regen button disabled during execution (prevents spam-click race conditions)
+  * Inline range hints on all numeric wizard inputs (Step 1 + Step 2)
+  * Invalidation banner: upstream edits show a dismissible yellow toast explaining what was cleared (auto-dismiss 4s)
+  * Button `focus-visible` styles: cyan ring matching input focus treatment
+  * Document title shows batch progress ("Generating 42/300…") for tab monitoring
+  * Step indicator accessibility: `aria-current="step"`, `aria-label` with full step names, `role="navigation"` on stepper
+
 ---
 
 ## PHASE 2.5 CLOSEOUT DECISION (2026-02-08)
@@ -532,7 +541,7 @@ These rates are now *actionable* because we can jump directly from batch → see
 
 ## NEXT STEPS (PRIORITY ORDER)
 
-### Phase 3 (ACTIVE) — Weighted Steering + Seed Curation Workflow
+### Phase 3 (CLOSED) — Weighted Steering + Seed Curation Workflow
 
 #### Phase 3 Steering Goals (DEFINED — 2026-02-14)
 
@@ -609,17 +618,23 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
   * Filterable table (All / Good / Failed) with Copy + Inspect per row
   * Inspect dispatches `RERUN_SEED_SINGLE` → single-mode execution with batch config preserved
 
-### UI (Stabilization & Polish)
+### UI Stabilization & Polish (ACTIVE — 2026-02-14)
 
-1. Minor UX polish:
+**Shipped:**
 
-   * inline validation hints
-   * clearer invalidation messaging
-   * disable regen button during execution
+* Inline range hints on all numeric wizard inputs (Step 1 Width/Height, Step 2 BSP fields)
+* Invalidation banner: dismissible yellow toast on upstream edits explaining what was cleared (auto-dismiss 4s); `invalidationMessage` field in `WizardState`, `CLEAR_INVALIDATION_MSG` action
+* Regen button disabled during execution (`isRegenerating` local state in `InspectionShell`; shows "Regenerating…")
+* Button `focus-visible` styles (cyan ring matching input focus treatment)
+* Document title tracks batch progress ("Generating 42/300…") for tab monitoring
+* Step indicator accessibility: `aria-current="step"`, `aria-label` with full step names, `role="navigation"` on stepper container
 
-2. Optional: expose additional execution metadata in Step 5 summary
+**Remaining (optional / future):**
 
-3. Keyboard + accessibility affordances (non-policy)
+* Expose additional execution metadata in Step 5 summary
+* Further keyboard shortcuts (e.g., G to generate, R to reset)
+* Canvas keyboard navigation / skip links
+* ARIA live regions for dynamic content updates
 
 ### Phase 2.5 Validation Checklist (CLOSED — retained for traceability)
 
@@ -644,7 +659,8 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
 * **Milestone 5:** Intent steering and policy formation — current focus
 
   * Phase 2.5: diagnostics + soft pressure — **CLOSED**
-  * Phase 3: weighted steering — **ACTIVE**
+  * Phase 3: weighted steering + seed curation — **CLOSED**
+  * UI Stabilization & Polish — **ACTIVE**
   * Phase 4: selective hard constraints (only if stability is proven)
 
 * **Milestone 6 (Future):** Authorial controls, difficulty bands, pacing targets

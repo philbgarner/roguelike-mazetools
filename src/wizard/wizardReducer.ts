@@ -131,6 +131,9 @@ export type WizardState = {
   progress: ExecProgress;
   result: RunResult | null;
   error: string;
+
+  // UI polish: brief message shown when upstream edits clear downstream state
+  invalidationMessage: string;
 };
 
 export const DEFAULT_BSP: BspConfig = {
@@ -183,6 +186,7 @@ export function initialWizardState(): WizardState {
     progress: null,
     result: null,
     error: "",
+    invalidationMessage: "",
   };
 }
 
@@ -220,6 +224,7 @@ export type WizardAction =
   | { type: "RESET_ALL" }
   | { type: "INVALIDATE_RESULTS" }
   | { type: "REROLL_SEED"; seed: string }
+  | { type: "CLEAR_INVALIDATION_MSG" }
 
   // Seed curation: re-run a specific seed from batch results in single mode
   | { type: "RERUN_SEED_SINGLE"; seed: string };
@@ -469,13 +474,21 @@ export function wizardReducer(
         step: Math.min(state.step, 5) as WizardStep,
       };
 
+    case "CLEAR_INVALIDATION_MSG":
+      return { ...state, invalidationMessage: "" };
+
     case "SET_STEP":
       // navigation only; does NOT auto-derive contract
-      return { ...state, step: action.step };
+      return { ...state, step: action.step, invalidationMessage: "" };
 
     case "SET_WORLD": {
       // Step 1 change invalidates everything downstream and returns to Step 1.
       const world = normalizeWorld(action.world);
+      // Only show invalidation message if downstream state existed
+      const worldMsg =
+        state.bsp || state.mode || state.result
+          ? "World changed — BSP, mode, and results cleared."
+          : "";
       return {
         step: 1,
         world,
@@ -485,6 +498,7 @@ export function wizardReducer(
         progress: null,
         result: null,
         error: "",
+        invalidationMessage: worldMsg,
       };
     }
 
@@ -495,6 +509,10 @@ export function wizardReducer(
         return state;
       }
       const bsp = normalizeBsp(action.bsp);
+      const bspMsg =
+        state.mode || state.result
+          ? "BSP changed — mode and results cleared."
+          : "";
       return {
         step: 2,
         world: state.world,
@@ -504,6 +522,7 @@ export function wizardReducer(
         progress: null,
         result: null,
         error: "",
+        invalidationMessage: bspMsg,
       };
     }
 
@@ -517,10 +536,15 @@ export function wizardReducer(
         pattern: normalizePattern(DEFAULT_PATTERN),
       };
 
+      const singleMsg = state.result
+        ? "Mode changed — options and results cleared."
+        : "";
+
       return {
         ...clearResults(state),
         step: 3,
         mode,
+        invalidationMessage: singleMsg,
       };
     }
 
@@ -533,10 +557,15 @@ export function wizardReducer(
         pattern: normalizePattern(DEFAULT_PATTERN),
       };
 
+      const batchMsg = state.result
+        ? "Mode changed — options and results cleared."
+        : "";
+
       return {
         ...clearResults(state),
         step: 3,
         mode,
+        invalidationMessage: batchMsg,
       };
     }
 

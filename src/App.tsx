@@ -90,6 +90,18 @@ function ExecutionView(props: {
 }) {
   const { state, dispatch } = props;
 
+  // Update document title with execution progress
+  useEffect(() => {
+    if (state.progress?.kind === "batch") {
+      document.title = `Generating ${state.progress.done}/${state.progress.total}…`;
+    } else if (state.progress?.kind === "single") {
+      document.title = "Generating…";
+    }
+    return () => {
+      document.title = "Dungeon Generator";
+    };
+  }, [state.progress]);
+
   useEffect(() => {
     let cancelled = false;
 

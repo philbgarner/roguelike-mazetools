@@ -576,6 +576,13 @@ export function InspectionShell(props: InspectionShellProps) {
   const dungeon = result.dungeon;
   const content = result.content;
 
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // Reset regenerating flag when we receive a new result (component remounts or result changes).
+  useEffect(() => {
+    setIsRegenerating(false);
+  }, [result]);
+
   const contentRef = useRef<ContentOutputs>(content);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -1165,8 +1172,16 @@ export function InspectionShell(props: InspectionShellProps) {
 
           <div className="maze-header-actions">
             {!controlsCollapsed && props.onRandomizeSeedAndRegenerate && (
-              <button onClick={props.onRandomizeSeedAndRegenerate}>
-                🎲 Randomize Seed + Regenerate
+              <button
+                disabled={isRegenerating}
+                onClick={() => {
+                  setIsRegenerating(true);
+                  props.onRandomizeSeedAndRegenerate!();
+                }}
+              >
+                {isRegenerating
+                  ? "Regenerating…"
+                  : "🎲 Randomize Seed + Regenerate"}
               </button>
             )}
 

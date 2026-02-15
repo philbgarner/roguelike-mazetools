@@ -181,6 +181,12 @@ input {
     transform: none;
 }
 
+button:focus-visible {
+    outline: none;
+    border-color: rgba(125, 211, 252, 0.35);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.25);
+}
+
 .maze-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
