@@ -27,6 +27,12 @@ import {
   type BatchRunInput,
 } from "./batchStats";
 import { computeGlobalCircuitMetrics } from "./debug/circuitDiagnosticsVM";
+import {
+  validateContentBudget,
+  validateDifficultyBand,
+  type BudgetResult,
+  type DifficultyResult,
+} from "./contentBudget";
 
 import WizardScreen from "./wizard/WizardScreen";
 
@@ -200,6 +206,17 @@ function ExecutionView(props: {
           const metrics0 = computeGlobalCircuitMetrics(diag0);
           const startCell0 = computeStartCell(dungeon, content);
 
+          // Milestone 6: content budget validation (single mode)
+          const budgetResult0: BudgetResult | null = contract.contentBudget
+            ? validateContentBudget(content.meta as any, contract.contentBudget)
+            : null;
+
+          // Milestone 6: difficulty band validation (single mode)
+          const difficultyResult0: DifficultyResult = validateDifficultyBand(
+            content.meta as any,
+            contract.difficultyBand,
+          );
+
           if (cancelled) return;
 
           dispatch({
@@ -218,6 +235,8 @@ function ExecutionView(props: {
               circuitEval0: eval0,
               // If your UI expects debug, keep debug here:
               circuitDebug0: (eval0 as any).debug ?? null,
+              budgetResult: budgetResult0,
+              difficultyResult: difficultyResult0,
             },
           });
 
@@ -281,6 +300,17 @@ function ExecutionView(props: {
           const diag0 = (eval0 as any).diagnostics ?? null;
           const metrics0 = computeGlobalCircuitMetrics(diag0);
 
+          // Milestone 6: content budget validation (batch mode)
+          const budgetResult1: BudgetResult | null = contract.contentBudget
+            ? validateContentBudget(content.meta as any, contract.contentBudget)
+            : null;
+
+          // Milestone 6: difficulty band validation (batch mode)
+          const difficultyResult1: DifficultyResult = validateDifficultyBand(
+            content.meta as any,
+            contract.difficultyBand,
+          );
+
           runs.push({
             seed: seedStr,
             seedUsed: dungeon.meta.seedUsed,
@@ -290,6 +320,8 @@ function ExecutionView(props: {
             circuitMetrics: metrics0
               ? ({ schemaVersion: 1, ...metrics0 } as any)
               : null,
+            budgetResult: budgetResult1,
+            difficultyResult: difficultyResult1,
           });
 
           if (i % updateEvery === 0 || i === total - 1) {

@@ -68,9 +68,54 @@ export type BatchConfig = {
   summaryOnly: boolean;
 };
 
+// Milestone 6, Phase 1 — Content Budgets (authorial controls)
+export type ContentBudgetEntry = {
+  min?: number; // undefined = no floor
+  max?: number; // undefined = no cap
+};
+
+export type ContentBudget = {
+  levers?: ContentBudgetEntry;
+  doors?: ContentBudgetEntry;
+  plates?: ContentBudgetEntry;
+  blocks?: ContentBudgetEntry;
+  chests?: ContentBudgetEntry;
+  secrets?: ContentBudgetEntry;
+  hazards?: ContentBudgetEntry;
+  monsters?: ContentBudgetEntry;
+  keys?: ContentBudgetEntry;
+  circuits?: ContentBudgetEntry;
+};
+
+// Milestone 6, Phase 2 — Difficulty Bands
+export type DifficultyBandEntry = {
+  min?: number;
+  max?: number;
+};
+
+export type DifficultyBand = {
+  totalRooms?: DifficultyBandEntry;
+  criticalPathLength?: DifficultyBandEntry;
+  maxGateDepth?: DifficultyBandEntry;
+  branchCount?: DifficultyBandEntry;
+  puzzleDensity?: DifficultyBandEntry; // ratio: puzzles per room
+};
+
 export type ModeConfig =
-  | { mode: "single"; contentStrategy: ContentStrategy; pattern: PatternConfig }
-  | { mode: "batch"; batch: BatchConfig; pattern: PatternConfig }; // batch uses patterns too in your current harness
+  | {
+      mode: "single";
+      contentStrategy: ContentStrategy;
+      pattern: PatternConfig;
+      contentBudget: ContentBudget | null;
+      difficultyBand: DifficultyBand | null;
+    }
+  | {
+      mode: "batch";
+      batch: BatchConfig;
+      pattern: PatternConfig;
+      contentBudget: ContentBudget | null;
+      difficultyBand: DifficultyBand | null;
+    };
 
 export type RunContract =
   | {
@@ -79,6 +124,8 @@ export type RunContract =
       bsp: BspConfig;
       contentStrategy: ContentStrategy;
       pattern: PatternConfig;
+      contentBudget: ContentBudget | null;
+      difficultyBand: DifficultyBand | null;
       guarantees: string[];
     }
   | {
@@ -87,6 +134,8 @@ export type RunContract =
       bsp: BspConfig;
       batch: BatchConfig;
       pattern: PatternConfig;
+      contentBudget: ContentBudget | null;
+      difficultyBand: DifficultyBand | null;
       guarantees: string[];
     };
 
@@ -105,6 +154,8 @@ export type SingleRunResult = {
   runtime0: any;
   circuitEval0: any;
   circuitDebug0: any;
+  budgetResult?: any;
+  difficultyResult?: any;
 };
 
 export type BatchRunResult = {
@@ -207,6 +258,8 @@ export type WizardAction =
   | { type: "SET_SINGLE_CONTENT_STRATEGY"; contentStrategy: ContentStrategy }
   | { type: "SET_PATTERN"; patch: Partial<PatternConfig> }
   | { type: "SET_BATCH"; batch: BatchConfig }
+  | { type: "SET_CONTENT_BUDGET"; contentBudget: ContentBudget | null }
+  | { type: "SET_DIFFICULTY_BAND"; difficultyBand: DifficultyBand | null }
 
   // Step 5
   | { type: "DERIVE_CONTRACT" }
@@ -308,6 +361,8 @@ export function deriveRunContract(state: WizardState): RunContract | null {
       bsp: state.bsp,
       contentStrategy: state.mode.contentStrategy,
       pattern: state.mode.pattern,
+      contentBudget: state.mode.contentBudget,
+      difficultyBand: state.mode.difficultyBand,
       guarantees,
     };
   }
@@ -318,6 +373,8 @@ export function deriveRunContract(state: WizardState): RunContract | null {
     bsp: state.bsp,
     batch: state.mode.batch,
     pattern: state.mode.pattern,
+    contentBudget: state.mode.contentBudget,
+    difficultyBand: state.mode.difficultyBand,
     guarantees,
   };
 }
@@ -332,6 +389,8 @@ function materializeMode(state: WizardState): ModeConfig {
       pattern: normalizePattern(
         state.mode.pattern ?? (DEFAULT_PATTERN as PatternConfig),
       ),
+      contentBudget: state.mode.contentBudget ?? null,
+      difficultyBand: state.mode.difficultyBand ?? null,
     };
   }
 
@@ -342,6 +401,8 @@ function materializeMode(state: WizardState): ModeConfig {
       pattern: normalizePattern(
         state.mode.pattern ?? (DEFAULT_PATTERN as PatternConfig),
       ),
+      contentBudget: state.mode.contentBudget ?? null,
+      difficultyBand: state.mode.difficultyBand ?? null,
     };
   }
 
@@ -351,6 +412,8 @@ function materializeMode(state: WizardState): ModeConfig {
     mode: "single",
     contentStrategy: "atomic",
     pattern: normalizePattern(DEFAULT_PATTERN as PatternConfig),
+    contentBudget: null,
+    difficultyBand: null,
   };
 }
 
@@ -373,6 +436,8 @@ function buildContract(
       bsp,
       contentStrategy: mode.contentStrategy,
       pattern: mode.pattern,
+      contentBudget: mode.contentBudget,
+      difficultyBand: mode.difficultyBand,
       guarantees,
     };
   }
@@ -383,6 +448,8 @@ function buildContract(
     bsp,
     batch: mode.batch,
     pattern: mode.pattern,
+    contentBudget: mode.contentBudget,
+    difficultyBand: mode.difficultyBand,
     guarantees,
   };
 }
@@ -453,6 +520,8 @@ export function wizardReducer(
         bsp: state.bsp,
         contentStrategy: rerunCS,
         pattern: rerunPattern,
+        contentBudget: state.mode.contentBudget,
+        difficultyBand: state.mode.difficultyBand,
         guarantees:
           deriveRunContract({ ...state, world: rerunWorld })?.guarantees ?? [],
       };
@@ -534,6 +603,8 @@ export function wizardReducer(
         mode: "single",
         contentStrategy: action.contentStrategy,
         pattern: normalizePattern(DEFAULT_PATTERN),
+        contentBudget: null,
+        difficultyBand: null,
       };
 
       const singleMsg = state.result
@@ -555,6 +626,8 @@ export function wizardReducer(
         mode: "batch",
         batch: normalizeBatch(DEFAULT_BATCH),
         pattern: normalizePattern(DEFAULT_PATTERN),
+        contentBudget: null,
+        difficultyBand: null,
       };
 
       const batchMsg = state.result
@@ -589,6 +662,34 @@ export function wizardReducer(
         ...state.mode,
         batch: normalizeBatch(action.batch),
       };
+      return {
+        ...clearResults(state),
+        step: 4,
+        mode,
+      };
+    }
+
+    case "SET_CONTENT_BUDGET": {
+      if (!state.mode) return state;
+      const mode: ModeConfig = {
+        ...state.mode,
+        contentBudget: action.contentBudget,
+      };
+      // Step 4 change — invalidates results only.
+      return {
+        ...clearResults(state),
+        step: 4,
+        mode,
+      };
+    }
+
+    case "SET_DIFFICULTY_BAND": {
+      if (!state.mode) return state;
+      const mode: ModeConfig = {
+        ...state.mode,
+        difficultyBand: action.difficultyBand,
+      };
+      // Step 4 change — invalidates results only.
       return {
         ...clearResults(state),
         step: 4,

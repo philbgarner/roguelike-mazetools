@@ -75,7 +75,12 @@ function pickPreview(summary: any) {
   return Object.keys(out).length ? out : null;
 }
 
-type SeedFilter = "all" | "good" | "failed";
+type SeedFilter =
+  | "all"
+  | "good"
+  | "failed"
+  | "budgetViolation"
+  | "difficultyOutOfBand";
 
 function filterSeeds(
   seeds: SeedBankEntry[],
@@ -83,6 +88,10 @@ function filterSeeds(
 ): SeedBankEntry[] {
   if (filter === "all") return seeds;
   if (filter === "good") return seeds.filter((s) => s.tags.includes("good"));
+  if (filter === "budgetViolation")
+    return seeds.filter((s) => s.tags.includes("budgetViolation"));
+  if (filter === "difficultyOutOfBand")
+    return seeds.filter((s) => s.tags.includes("difficultyOutOfBand"));
   return seeds.filter((s) => !s.tags.includes("good"));
 }
 
@@ -95,6 +104,19 @@ function SeedBankTable(props: {
   const { seedBank, seedBankJson, onRerunSeed } = props;
   const [filter, setFilter] = useState<SeedFilter>("good");
   const [copiedSeed, setCopiedSeed] = useState<string | null>(null);
+
+  const budgetViolationCount = useMemo(
+    () =>
+      seedBank.seeds.filter((s) => s.tags.includes("budgetViolation")).length,
+    [seedBank.seeds],
+  );
+
+  const difficultyViolationCount = useMemo(
+    () =>
+      seedBank.seeds.filter((s) => s.tags.includes("difficultyOutOfBand"))
+        .length,
+    [seedBank.seeds],
+  );
 
   const filtered = useMemo(
     () => filterSeeds(seedBank.seeds, filter),
@@ -162,7 +184,15 @@ function SeedBankTable(props: {
       </div>
 
       <div style={{ marginBottom: 6, display: "flex", gap: 4 }}>
-        {(["all", "good", "failed"] as SeedFilter[]).map((f) => (
+        {(
+          [
+            "all",
+            "good",
+            "failed",
+            ...(budgetViolationCount > 0 ? ["budgetViolation"] : []),
+            ...(difficultyViolationCount > 0 ? ["difficultyOutOfBand"] : []),
+          ] as SeedFilter[]
+        ).map((f) => (
           <button
             key={f}
             className="maze-btn"
@@ -176,7 +206,11 @@ function SeedBankTable(props: {
               ? `All (${seedBank.totalSeeds})`
               : f === "good"
                 ? `Good (${seedBank.goodCount})`
-                : `Failed (${seedBank.failedCount})`}
+                : f === "budgetViolation"
+                  ? `Budget (${budgetViolationCount})`
+                  : f === "difficultyOutOfBand"
+                    ? `Difficulty (${difficultyViolationCount})`
+                    : `Failed (${seedBank.failedCount})`}
           </button>
         ))}
       </div>
@@ -231,7 +265,11 @@ function SeedBankTable(props: {
                             ? "#2a5a2a"
                             : t === "patternFailure"
                               ? "#5a2a2a"
-                              : "#4a4a2a",
+                              : t === "budgetViolation"
+                                ? "#5a4a1a"
+                                : t === "difficultyOutOfBand"
+                                  ? "#1a4a5a"
+                                  : "#4a4a2a",
                         color: "#ddd",
                       }}
                     >
@@ -353,6 +391,88 @@ export function BatchResultsView(props: BatchResultsViewProps) {
             seedPrefix={payload.seedPrefix}
             onRerunSeed={props.onRerunSeed}
           />
+        )}
+
+        {payload.summary?.difficulty && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: 8,
+              background: "#1a2a2a",
+              borderRadius: 4,
+              border: "1px solid #455",
+            }}
+          >
+            <strong>Difficulty Band Summary</strong>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              Checked: {payload.summary.difficulty.checkedCount} | Pass:{" "}
+              {payload.summary.difficulty.passCount} | Fail:{" "}
+              {payload.summary.difficulty.failCount}
+              {payload.summary.difficulty.failCount > 0 && (
+                <span>
+                  {" "}
+                  (
+                  {(
+                    (payload.summary.difficulty.failCount /
+                      payload.summary.difficulty.checkedCount) *
+                    100
+                  ).toFixed(1)}
+                  % rejection rate)
+                </span>
+              )}
+            </div>
+            {Object.keys(payload.summary.difficulty.violationsByMetric).length >
+              0 && (
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Violations by metric:{" "}
+                {Object.entries(payload.summary.difficulty.violationsByMetric)
+                  .sort((a, b) => (b[1] as number) - (a[1] as number))
+                  .map(([metric, count]) => `${metric}: ${count}`)
+                  .join(", ")}
+              </div>
+            )}
+          </div>
+        )}
+
+        {payload.summary?.budget && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: 8,
+              background: "#2a2a1a",
+              borderRadius: 4,
+              border: "1px solid #554",
+            }}
+          >
+            <strong>Content Budget Summary</strong>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              Checked: {payload.summary.budget.checkedCount} | Pass:{" "}
+              {payload.summary.budget.passCount} | Fail:{" "}
+              {payload.summary.budget.failCount}
+              {payload.summary.budget.failCount > 0 && (
+                <span>
+                  {" "}
+                  (
+                  {(
+                    (payload.summary.budget.failCount /
+                      payload.summary.budget.checkedCount) *
+                    100
+                  ).toFixed(1)}
+                  % rejection rate)
+                </span>
+              )}
+            </div>
+            {Object.keys(payload.summary.budget.violationsByCategory).length >
+              0 && (
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Violations by category:{" "}
+                {Object.entries(payload.summary.budget.violationsByCategory)
+                  .sort((a, b) => (b[1] as number) - (a[1] as number))
+                  .map(([cat, count]) => `${cat}: ${count}`)
+                  .join(", ")}
+              </div>
+            )}
+          </div>
         )}
 
         {preview && (

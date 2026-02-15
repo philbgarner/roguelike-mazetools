@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-15 (rev AH)**
+**CONTEXT VERSION:** **2026-02-15 (rev AJ)**
 **LAST COMPLETED MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT MILESTONE:** **Milestone 6 — Authorial Controls, Difficulty Bands & Pacing**
-**CURRENT PHASE:** **Milestone 6 — Design & Planning**
-**PHASE STATUS:** **MILESTONE 5 CLOSED; MILESTONE 6 PLANNING**
+**CURRENT PHASE:** **Milestone 6 Phase 2 — Difficulty Bands**
+**PHASE STATUS:** **PHASE 1 + PHASE 2 SHIPPED**
 
 ---
 
@@ -57,23 +57,6 @@ It is designed to evolve toward a JRPG / metroidvania-style dungeon system empha
 **Milestone 4 remains CLOSED and VALIDATED.**
 
 All composition logic, diagnostics, and reliability guarantees remain unchanged by subsequent UI, inspection, or execution-loop work.
-
----
-
-## UI ARCHITECTURE REFACTOR (REV S → REV W)
-
-### Motivation
-
-The legacy `App.tsx` mixed:
-
-* configuration
-* execution
-* batch analysis
-* live inspection
-
-This allowed invalid state combinations, blurred execution boundaries, and caused inspection to drift from generator truth.
-
-The UI is now fully refactored into a **linear wizard**, a **pure execution phase**, and a **truthful inspection shell** that mirrors the generator pipeline and enforces invariants by construction.
 
 ---
 
@@ -507,7 +490,9 @@ Phase 3 soft biases reduced both lever-access anomaly classes to 0%, but the Pol
 
 * **Milestone 5 is CLOSED**: all phases complete (diagnostics → soft steering → hard constraints → UI polish → seed curation)
 
-* **Milestone 6 is in PLANNING**: authorial controls (content budgets, difficulty bands, pacing targets, exclusion/inclusion rules, seed annotation)
+* **Milestone 6 Phases 1–2 SHIPPED**:
+  * Phase 1 (Content Budgets): post-generation min/max validation on all content types; budget violations tagged in seed bank; batch UI shows budget summary and filter
+  * Phase 2 (Difficulty Bands): structural metrics (totalRooms, criticalPathLength, maxGateDepth, branchCount, puzzleDensity) computed post-generation; min/max constraints; difficulty violations tagged in seed bank
 
 * Wizard → Execution → Inspection loop is **fully closed**
 
@@ -811,8 +796,8 @@ Authorial controls are configured in the wizard, likely as a new step or sub-ste
 
 ### Implementation Phases (Proposed)
 
-1. **Phase 1 — Content Budgets**: simplest to implement (count-based post-generation validation). Proves the constraint → reject → curate loop.
-2. **Phase 2 — Difficulty Bands**: structural metrics from room graph. Requires defining and measuring critical path length, gate depth, etc.
+1. **Phase 1 — Content Budgets** (DONE — 2026-02-15): count-based post-generation validation. Constraint → reject → curate loop proven.
+2. **Phase 2 — Difficulty Bands** (DONE — 2026-02-15): structural metrics (totalRooms, criticalPathLength, maxGateDepth, branchCount, puzzleDensity) with min/max constraints.
 3. **Phase 3 — Pacing Targets**: progression-order analysis. Builds on difficulty band metrics.
 4. **Phase 4 — Exclusion / Inclusion Rules**: pre-generation pattern filtering + post-generation required-content checks.
 5. **Phase 5 — Seed Annotation**: metadata extension + UI for annotation. Lowest priority (workflow, not generation).
@@ -823,6 +808,86 @@ Authorial controls are configured in the wizard, likely as a new step or sub-ste
 * Baseline: unconstrained batch (should match current ~0.5% pattern failure rate).
 * Target: authorial constraints should produce **≥50% good seeds** for reasonable constraint sets (e.g., "1–2 levers, 6–10 rooms, easy difficulty").
 * Overly restrictive constraints (e.g., "exactly 1 lever, exactly 7 rooms, linear ramp") may have lower yield — that's acceptable as long as batch sizes can compensate.
+
+---
+
+### Phase 1 Implementation: Content Budgets (DONE — 2026-02-15)
+
+**Architecture:**
+
+Content budgets are **post-generation hard constraints**. After `generateDungeonContent()` returns, item counts in `content.meta.*` arrays are checked against authored min/max limits. No pattern logic is modified. Failures are acceptable — the batch curation workflow filters them out.
+
+**Files changed:**
+
+* **`src/wizard/wizardReducer.ts`**:
+  * `ContentBudgetEntry` type: `{ min?: number; max?: number }`
+  * `ContentBudget` type: optional entries for `levers`, `doors`, `plates`, `blocks`, `chests`, `secrets`, `hazards`, `monsters`, `keys`, `circuits`
+  * Added `contentBudget: ContentBudget | null` to `ModeConfig`, `RunContract`, `SingleRunResult`
+  * `SET_CONTENT_BUDGET` wizard action (Step 4 change — invalidates results only)
+  * Wired through `deriveRunContract()`, `buildContract()`, `materializeMode()`, `RERUN_SEED_SINGLE`
+  * Default: `null` (unconstrained — existing workflows unaffected)
+
+* **`src/contentBudget.ts`** (NEW):
+  * `BudgetViolation`: `{ category, actual, min?, max? }`
+  * `BudgetResult`: `{ pass: boolean, violations: BudgetViolation[] }`
+  * `validateContentBudget(meta, budget)`: counts each `meta.*` array, checks against budget entries
+
+* **`src/App.tsx`**:
+  * Budget validation called after `generateDungeonContent()` in both single and batch execution paths
+  * `budgetResult` included in `SingleRunResult` and `BatchRunInput`
+
+* **`src/batchStats.ts`**:
+  * `BatchRunInput.budgetResult?: BudgetResult | null`
+  * `BatchSummary.budget?`: `{ checkedCount, passCount, failCount, violationsByCategory }`
+  * `aggregateBatchRuns()` accumulates budget pass/fail counts and per-category violation counts
+  * `buildSeedBank()` tags seeds with `"budgetViolation"` when `budgetResult.pass === false`
+  * Budget violations count as failed seeds (excluded from `"good"` classification)
+
+* **`src/inspect/BatchResultsView.tsx`**:
+  * `SeedFilter` extended with `"budgetViolation"` option
+  * Budget filter tab shown when budget violations exist
+  * Budget violation tag badge: amber (`#5a4a1a`)
+  * Content Budget Summary panel: checked/pass/fail counts, rejection rate, violations by category
+
+### Phase 2 Implementation: Difficulty Bands (DONE — 2026-02-15)
+
+**Architecture:**
+
+Difficulty bands are **post-generation hard constraints** on structural metrics. After generation, five metrics are computed from `content.meta` and checked against authored min/max limits. Metrics are always computed (even without constraints) so they're available for inspection.
+
+**Metrics computed:**
+
+| Metric | Source | Computation |
+|--------|--------|-------------|
+| `totalRooms` | `meta.rooms.length` | Direct count |
+| `criticalPathLength` | `meta.mainPathRoomIds.length` | Main path room count |
+| `maxGateDepth` | `meta.doors[].depth` | Highest door depth value |
+| `branchCount` | `meta.roomGraph` + `mainPathRoomIds` | Off-main-path rooms with degree ≤ 1 |
+| `puzzleDensity` | content arrays + rooms | `(doors + levers + plates + blocks) / rooms` |
+
+**Files changed:**
+
+* **`src/wizard/wizardReducer.ts`**:
+  * `DifficultyBandEntry` and `DifficultyBand` types
+  * Added `difficultyBand: DifficultyBand | null` to `ModeConfig`, `RunContract`, `SingleRunResult`
+  * `SET_DIFFICULTY_BAND` wizard action (Step 4 change)
+  * Wired through all contract derivation and mode construction paths
+
+* **`src/contentBudget.ts`** (extended):
+  * `DifficultyViolation`, `DifficultyMetrics`, `DifficultyResult` types
+  * `validateDifficultyBand(meta, band)`: computes all 5 metrics, checks against band constraints
+  * Always returns computed `metrics` object (useful even without active constraints)
+
+* **`src/App.tsx`**: Calls `validateDifficultyBand()` in both single and batch paths
+
+* **`src/batchStats.ts`**:
+  * `BatchRunInput.difficultyResult?: DifficultyResult | null`
+  * `BatchSummary.difficulty?`: `{ checkedCount, passCount, failCount, violationsByMetric }`
+  * `buildSeedBank()` tags `"difficultyOutOfBand"` when difficulty band violated
+
+* **`src/inspect/BatchResultsView.tsx`**:
+  * `"difficultyOutOfBand"` filter tab (teal badge `#1a4a5a`)
+  * Difficulty Band Summary panel with rejection rate and per-metric breakdown
 
 ---
 

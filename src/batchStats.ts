@@ -6,6 +6,7 @@
 //
 
 import type { DoorSiteStatsBundle } from "./doorSites";
+import type { BudgetResult, DifficultyResult } from "./contentBudget";
 
 export type SampleFailureSeedV1 = {
   schemaVersion: 1;
@@ -148,6 +149,8 @@ export type BatchRunInput = {
   corridors: number;
   patternDiagnostics: PatternDiag[];
   circuitMetrics: CircuitBatchMetrics | null;
+  budgetResult?: BudgetResult | null;
+  difficultyResult?: DifficultyResult | null;
 };
 
 export type BatchPatternSummary = {
@@ -243,6 +246,20 @@ export type BatchSummary = {
 
     largestCycleSizeAvg: number;
   };
+
+  budget?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByCategory: Record<string, number>;
+  };
+
+  difficulty?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByMetric: Record<string, number>;
+  };
 };
 
 function safeNum(v: unknown): number {
@@ -292,6 +309,18 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
   let blockedByCycleCountSum = 0;
 
   let largestCycleSizeSum = 0;
+
+  // Milestone 6: budget aggregation
+  let budgetChecked = 0;
+  let budgetPass = 0;
+  let budgetFail = 0;
+  const budgetViolationsByCategory: Record<string, number> = {};
+
+  // Milestone 6: difficulty aggregation
+  let diffChecked = 0;
+  let diffPass = 0;
+  let diffFail = 0;
+  const diffViolationsByMetric: Record<string, number> = {};
 
   function makeAcc() {
     return {
@@ -540,6 +569,34 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
 
       largestCycleSizeSum += safeNum(cm.largestCycleSize);
     }
+
+    // Milestone 6: budget accumulation
+    if (r.budgetResult) {
+      budgetChecked++;
+      if (r.budgetResult.pass) {
+        budgetPass++;
+      } else {
+        budgetFail++;
+        for (const v of r.budgetResult.violations) {
+          budgetViolationsByCategory[v.category] =
+            (budgetViolationsByCategory[v.category] ?? 0) + 1;
+        }
+      }
+    }
+
+    // Milestone 6: difficulty accumulation
+    if (r.difficultyResult) {
+      diffChecked++;
+      if (r.difficultyResult.pass) {
+        diffPass++;
+      } else {
+        diffFail++;
+        for (const v of r.difficultyResult.violations) {
+          diffViolationsByMetric[v.metric] =
+            (diffViolationsByMetric[v.metric] ?? 0) + 1;
+        }
+      }
+    }
   }
 
   const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
@@ -702,12 +759,34 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         }
       : undefined;
 
+  const budget =
+    budgetChecked > 0
+      ? {
+          checkedCount: budgetChecked,
+          passCount: budgetPass,
+          failCount: budgetFail,
+          violationsByCategory: budgetViolationsByCategory,
+        }
+      : undefined;
+
+  const difficulty =
+    diffChecked > 0
+      ? {
+          checkedCount: diffChecked,
+          passCount: diffPass,
+          failCount: diffFail,
+          violationsByMetric: diffViolationsByMetric,
+        }
+      : undefined;
+
   return {
     runs: totalRuns,
     roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
     corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
     patterns,
     circuits,
+    budget,
+    difficulty,
   };
 }
 
@@ -741,9 +820,10 @@ export type SeedBank = {
  * Build a per-seed classification bank from the same BatchRunInput[] used by
  * aggregateBatchRuns(). Each seed is tagged:
  *
- *  - "good"              — all patterns ok, no lever anomalies
+ *  - "good"              — all patterns ok, no lever anomalies, no budget violations
  *  - "patternFailure"    — at least one pattern failed (+ pattern name tag)
  *  - "hasLeverAnomaly"   — lever diagnostic reported an anomaly (future-proof)
+ *  - "budgetViolation"   — content budget constraint violated (Milestone 6)
  */
 export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
   let goodCount = 0;
@@ -780,11 +860,21 @@ export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
       }
     }
 
+    const anyBudgetViolation = r.budgetResult?.pass === false;
+    const anyDifficultyViolation = r.difficultyResult?.pass === false;
+
     if (anyFailure) tags.unshift("patternFailure");
     if (anyLeverAnomaly) tags.push("hasLeverAnomaly");
-    if (!anyFailure && !anyLeverAnomaly) tags.push("good");
+    if (anyBudgetViolation) tags.push("budgetViolation");
+    if (anyDifficultyViolation) tags.push("difficultyOutOfBand");
+    const isGood =
+      !anyFailure &&
+      !anyLeverAnomaly &&
+      !anyBudgetViolation &&
+      !anyDifficultyViolation;
+    if (isGood) tags.push("good");
 
-    if (!anyFailure && !anyLeverAnomaly) goodCount++;
+    if (isGood) goodCount++;
     else failedCount++;
 
     seeds.push({
