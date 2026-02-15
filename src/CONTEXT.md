@@ -2,11 +2,11 @@
 
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM
 
-**CONTEXT VERSION:** **2026-02-15 (rev AG)**
-**LAST COMPLETED MILESTONE:** **Milestone 4 — Puzzle Composition & Progression Grammar**
-**CURRENT MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
-**CURRENT PHASE:** **Milestone 5 — UI Stabilization & Polish**
-**PHASE STATUS:** **PHASE 3 CLOSED; PHASE 4 HARD CONSTRAINT SAFETY NET SHIPPED; UI STABILIZATION ACTIVE**
+**CONTEXT VERSION:** **2026-02-15 (rev AH)**
+**LAST COMPLETED MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
+**CURRENT MILESTONE:** **Milestone 6 — Authorial Controls, Difficulty Bands & Pacing**
+**CURRENT PHASE:** **Milestone 6 — Design & Planning**
+**PHASE STATUS:** **MILESTONE 5 CLOSED; MILESTONE 6 PLANNING**
 
 ---
 
@@ -505,7 +505,9 @@ Phase 3 soft biases reduced both lever-access anomaly classes to 0%, but the Pol
 
 * Milestone 4 is closed and untouched
 
-* Milestone 5 **Phase 2.5 is CLOSED**: diagnostics-first soft enforcement shipped; reliability measured at scale
+* **Milestone 5 is CLOSED**: all phases complete (diagnostics → soft steering → hard constraints → UI polish → seed curation)
+
+* **Milestone 6 is in PLANNING**: authorial controls (content budgets, difficulty bands, pacing targets, exclusion/inclusion rules, seed annotation)
 
 * Wizard → Execution → Inspection loop is **fully closed**
 
@@ -554,7 +556,7 @@ Phase 3 soft biases reduced both lever-access anomaly classes to 0%, but the Pol
   * Batch aggregation (`batchStats.ts`) surfaces `hardConstraintRejections` in `BatchPatternSummary.leverAccess` — expected to be 0 under normal operation.
   * Follows the Policy Escalation Principle: diagnostic (Phase 2.5) → soft steering (Phase 3) → hard constraint (Phase 4), with measured stability at each stage.
 
-* **UI Stabilization & Polish — ACTIVE** (2026-02-14):
+* **UI Stabilization & Polish — CLOSED** (2026-02-15):
 
   * Regen button disabled during execution (prevents spam-click race conditions)
   * Inline range hints on all numeric wizard inputs (Step 1 + Step 2)
@@ -677,7 +679,7 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
 * Expected to fire 0 times (soft biases handle all known cases); non-zero signals soft bias investigation needed.
 * Completes Policy Escalation Principle: diagnostic → soft steering → hard constraint.
 
-### UI Stabilization & Polish (ACTIVE — 2026-02-14)
+### UI Stabilization & Polish (CLOSED — 2026-02-15)
 
 **Shipped:**
 
@@ -702,20 +704,142 @@ Both lever-access anomaly classes eliminated. All targets exceeded.
 
 ---
 
+## MILESTONE 5 STATUS — COMPLETE
+
+**Milestone 5 is CLOSED and VALIDATED.**
+
+All steering, hard constraints, seed curation, and UI stabilization work is complete. The full Policy Escalation Principle chain (diagnostic → soft steering → hard constraint) has been exercised and measured. Both lever-access anomaly classes are at 0%. The seed curation pipeline provides batch → curate → ship workflow.
+
+---
+
+## MILESTONE 6 — AUTHORIAL CONTROLS, DIFFICULTY BANDS & PACING
+
+### Design Philosophy
+
+Authorial controls are **hard constraints** on generation. Failures are acceptable because the production workflow is **batch generation + seed curation** — the generator produces a large pool of candidates, and only seeds satisfying all authorial requirements are shipped. This means:
+
+* Controls can be strict; there is no need for soft fallbacks or best-effort degradation.
+* A higher failure rate is an acceptable trade-off for tighter authorial precision.
+* Batch diagnostics report which controls caused rejections, enabling authors to tune constraints.
+
+### Control Categories
+
+#### 1. Content Budgets
+
+Hard caps and floors on what patterns emit per dungeon.
+
+| Control                  | Type       | Example                                  |
+|--------------------------|------------|------------------------------------------|
+| Lever count              | min / max  | "exactly 1 lever", "2–3 levers"          |
+| Block puzzle count       | min / max  | "at most 1 block puzzle"                 |
+| Secret count             | min / max  | "at least 1 secret"                      |
+| Chest count              | min / max  | "2–4 chests"                             |
+| Hazard count             | min / max  | "no hazards", "1–2 hazards"              |
+| Circuit count            | min / max  | "at most 3 circuits"                     |
+| Door count               | min / max  | "3–5 doors"                              |
+
+**Implementation approach:** Post-generation validation pass. After all patterns run, count each content type. Reject seeds that violate any budget constraint. Diagnostics report which budget was violated.
+
+#### 2. Difficulty Bands
+
+Constraints on structural complexity that correlate with perceived difficulty.
+
+| Control                     | Type       | Example                                    |
+|-----------------------------|------------|--------------------------------------------|
+| Gate depth (max backtrack)  | min / max  | "no gate deeper than 3 rooms from start"   |
+| Puzzle density              | range      | "0.5–1.5 puzzles per room on average"      |
+| Critical path length        | min / max  | "main path is 4–8 rooms"                   |
+| Branch count                | min / max  | "at least 1 off-main branch"               |
+| Total room count            | min / max  | "6–12 rooms"                               |
+
+**Implementation approach:** Post-generation measurement. Compute structural metrics from room graph + content metadata. Reject seeds outside the specified band. These metrics are already partially available in diagnostics; extend as needed.
+
+#### 3. Pacing Targets
+
+Constraints on the **rhythm** of progression grammar sequences (teach → gate → reward → shortcut).
+
+| Control                         | Type       | Example                                        |
+|---------------------------------|------------|-------------------------------------------------|
+| First-gate distance from start  | min / max  | "first gate not before room 2"                  |
+| Reward-after-gate guarantee     | boolean    | "every gate must have a reward within 2 rooms"  |
+| Shortcut presence               | boolean    | "must include at least one shortcut loop"        |
+| Content-free intro rooms        | min        | "at least 1 room with no puzzles at start"       |
+| Ramp profile                    | enum       | "linear" / "front-loaded" / "back-loaded"        |
+
+**Implementation approach:** Post-generation pacing analysis. Walk the room graph in progression order, evaluate pacing predicates. Reject seeds that fail pacing constraints. Ramp profiles may require defining density buckets across the critical path (e.g., first third / middle third / final third).
+
+#### 4. Exclusion / Inclusion Rules
+
+Direct control over which content types or patterns are allowed.
+
+| Control                    | Type     | Example                                  |
+|----------------------------|----------|------------------------------------------|
+| Pattern exclusion          | blocklist| "no gateThenOptionalReward"              |
+| Content type exclusion     | blocklist| "no plates", "no blocks"                 |
+| Required pattern           | require  | "must include gateThenOptionalReward"     |
+| Required content type      | require  | "must include at least one lever"         |
+
+**Implementation approach:** Pre-generation (exclusions skip patterns entirely) and post-generation (required content verified after all patterns run).
+
+#### 5. Seed Annotation & Tagging
+
+Metadata attached to curated seeds for downstream consumption.
+
+| Control                    | Type     | Example                                  |
+|----------------------------|----------|------------------------------------------|
+| Difficulty label           | string   | "easy" / "medium" / "hard"               |
+| Theme tag                  | string[] | ["fire", "water", "tutorial"]            |
+| Author notes               | string   | free-text                                |
+| Curated flag               | boolean  | manual approval marker                   |
+
+**Implementation approach:** Extend `SeedBankEntry` with optional authorial metadata fields. UI provides annotation interface in inspection view. Seed bank export includes all annotations.
+
+### Wizard Integration
+
+Authorial controls are configured in the wizard, likely as a new step or sub-step of the existing content strategy step (Step 4A):
+
+* **Step 4A** gains an "Authorial Controls" panel with budget, difficulty, pacing, and exclusion settings.
+* Controls have sensible defaults (unconstrained) so existing workflows are unaffected.
+* Step 5 (Run Summary) displays active authorial constraints for confirmation.
+* Batch mode benefits most: run large batches, curation filters by authorial constraints automatically.
+
+### Batch Integration
+
+* Batch summary reports **rejection rate by control category** (budget violations, difficulty band misses, pacing failures).
+* Seed bank classification gains new tags: `budgetViolation`, `difficultyOutOfBand`, `pacingFailure`.
+* Authors can iterate: tighten constraints → batch → check rejection rate → loosen if too restrictive.
+
+### Implementation Phases (Proposed)
+
+1. **Phase 1 — Content Budgets**: simplest to implement (count-based post-generation validation). Proves the constraint → reject → curate loop.
+2. **Phase 2 — Difficulty Bands**: structural metrics from room graph. Requires defining and measuring critical path length, gate depth, etc.
+3. **Phase 3 — Pacing Targets**: progression-order analysis. Builds on difficulty band metrics.
+4. **Phase 4 — Exclusion / Inclusion Rules**: pre-generation pattern filtering + post-generation required-content checks.
+5. **Phase 5 — Seed Annotation**: metadata extension + UI for annotation. Lowest priority (workflow, not generation).
+
+### Measurement Plan
+
+* Each phase: run **1000-seed batch** with representative constraints, measure rejection rate.
+* Baseline: unconstrained batch (should match current ~0.5% pattern failure rate).
+* Target: authorial constraints should produce **≥50% good seeds** for reasonable constraint sets (e.g., "1–2 levers, 6–10 rooms, easy difficulty").
+* Overly restrictive constraints (e.g., "exactly 1 lever, exactly 7 rooms, linear ramp") may have lower yield — that's acceptable as long as batch sizes can compensate.
+
+---
+
 ## GENERAL PROJECT PLAN (HIGH LEVEL)
 
 * **Milestone 1–3:** Geometry, runtime state, and circuit execution — complete
 
 * **Milestone 4:** Composition patterns + progression grammar — complete
 
-* **Milestone 5:** Intent steering and policy formation — current focus
+* **Milestone 5:** Intent steering and policy formation — **COMPLETE**
 
   * Phase 2.5: diagnostics + soft pressure — **CLOSED**
   * Phase 3: weighted steering + seed curation — **CLOSED**
-  * Phase 4: selective hard constraints — **SHIPPED** (lever-access safety net; stability proven in Phases 2.5–3)
+  * Phase 4: selective hard constraints — **SHIPPED**
   * UI Stabilization & Polish — **CLOSED**
 
-* **Milestone 6 (Future):** Authorial controls, difficulty bands, pacing targets
+* **Milestone 6:** Authorial controls, difficulty bands, pacing targets — **current focus**
 
 ---
 
