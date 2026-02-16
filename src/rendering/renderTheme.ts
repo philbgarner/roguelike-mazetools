@@ -2,6 +2,8 @@
 // - colors are hex strings (easy to serialize + author)
 // - renderer converts to THREE.Color / vec3 as needed
 
+import type { DungeonTheme, RenderThemeUniforms, Vec4 } from "../theme/themeTypes";
+
 export type RenderTheme = {
   id: string;
   label: string;
@@ -114,3 +116,96 @@ export const THEME_DEFAULT: RenderTheme = {
     },
   },
 };
+
+// ---------------------------------------------------------------------------
+// Hex -> Vec4 conversion (no THREE dependency)
+// ---------------------------------------------------------------------------
+
+function hexToVec4(hex: string, a = 1): Vec4 {
+  const h = hex.replace('#', '');
+  const n = parseInt(h, 16);
+  const r = ((n >> 16) & 0xff) / 255;
+  const g = ((n >> 8) & 0xff) / 255;
+  const b = (n & 0xff) / 255;
+  return [r, g, b, a];
+}
+
+function applyStrength(rgba: Vec4, strength: number): Vec4 {
+  const s = Math.max(0, Math.min(1.5, strength));
+  return [
+    1 + (rgba[0] - 1) * s,
+    1 + (rgba[1] - 1) * s,
+    1 + (rgba[2] - 1) * s,
+    rgba[3],
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// RenderTheme -> shader uniforms
+// ---------------------------------------------------------------------------
+
+export function toShaderUniforms(theme: RenderTheme): RenderThemeUniforms {
+  return {
+    uFloorColor: applyStrength(hexToVec4(theme.colors.floor), theme.strength.floor),
+    uWallColor: applyStrength(hexToVec4(theme.colors.wallEdge), theme.strength.wallEdge),
+    uPlayerColor: applyStrength(hexToVec4(theme.colors.player), theme.strength.player),
+    uItemColor: applyStrength(hexToVec4(theme.colors.interactable), theme.strength.interactable),
+    uHazardColor: applyStrength(hexToVec4(theme.colors.hazard), theme.strength.hazard),
+    // RenderTheme lacks enemy; default to red
+    uEnemyColor: [1.0, 0.35, 0.35, 1.0],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DungeonTheme -> RenderTheme bridge
+// ---------------------------------------------------------------------------
+
+export function dungeonThemeToRenderTheme(theme: DungeonTheme): RenderTheme {
+  return {
+    id: theme.id,
+    label: theme.label,
+    colors: {
+      floor: theme.render.colors.floor,
+      wallEdge: theme.render.colors.wallEdge,
+      player: theme.render.colors.player,
+      interactable: theme.render.colors.interactable,
+      hazard: theme.render.colors.hazard,
+      focus: "#61AFEF",
+      selection: "#98C379",
+      debugOverlay: "#ABB2BF",
+    },
+    strength: {
+      floor: theme.render.strength.floor,
+      wallEdge: theme.render.strength.wallEdge,
+      player: theme.render.strength.player,
+      interactable: theme.render.strength.interactable,
+      hazard: theme.render.strength.hazard,
+      focus: 1.0,
+      selection: 1.0,
+      debugOverlay: 0.9,
+    },
+    legend: {
+      tintChannelLabels: {
+        0: "Base",
+        1: "Player",
+        2: "Interactable",
+        3: "Hazard",
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DungeonTheme -> shader uniforms (convenience: includes enemy color)
+// ---------------------------------------------------------------------------
+
+export function dungeonThemeToShaderUniforms(theme: DungeonTheme): RenderThemeUniforms {
+  return {
+    uFloorColor: applyStrength(hexToVec4(theme.render.colors.floor), theme.render.strength.floor),
+    uWallColor: applyStrength(hexToVec4(theme.render.colors.wallEdge), theme.render.strength.wallEdge),
+    uPlayerColor: applyStrength(hexToVec4(theme.render.colors.player), theme.render.strength.player),
+    uItemColor: applyStrength(hexToVec4(theme.render.colors.interactable), theme.render.strength.interactable),
+    uHazardColor: applyStrength(hexToVec4(theme.render.colors.hazard), theme.render.strength.hazard),
+    uEnemyColor: applyStrength(hexToVec4(theme.render.colors.enemy), theme.render.strength.enemy),
+  };
+}

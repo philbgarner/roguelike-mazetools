@@ -27,4 +27,19 @@ export type {
   InclusionResult,
   PatternDiagnostics,
   PuzzleRole,
+  ThemeResolvedPayload,
 } from "./publicTypes";
+
+// Theme module re-exports
+export type {
+  DungeonTheme,
+  RoomTheme,
+  SpawnTable,
+  RenderThemeUniforms,
+} from "../theme/themeTypes";
+
+export {
+  registerThemes,
+  getTheme,
+  getAllThemeIds,
+} from "../theme/themeRegistry";

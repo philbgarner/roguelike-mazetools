@@ -1,12 +1,13 @@
 /**
- * Public API entry point — Session 1 scaffold.
+ * Public API entry point.
  *
  * Wraps the existing generator + validators into a single call.
- * `resolved` and `theme` are stubs (null) until later sessions.
  */
 
 import { generateBspDungeon, generateDungeonContent } from "../mazeGen";
 import { DEFAULT_BSP, DEFAULT_PATTERN } from "../configTypes";
+import { getTheme } from "../theme/themeRegistry";
+import { dungeonThemeToShaderUniforms } from "../rendering/renderTheme";
 import {
   validateContentBudget,
   validateDifficultyBand,
@@ -107,6 +108,18 @@ export function generateDungeon(
     content.meta.patternDiagnostics ?? [],
   );
 
+  // ---- Theme resolution ---------------------------------------------------
+
+  const { themeId } = request;
+  let themePayload: GenerateDungeonResult["theme"] = null;
+  if (themeId) {
+    const dungeonTheme = getTheme(themeId);
+    themePayload = {
+      themeId: dungeonTheme.id,
+      uniforms: dungeonThemeToShaderUniforms(dungeonTheme),
+    };
+  }
+
   // ---- Assemble result ----------------------------------------------------
 
   return {
@@ -114,7 +127,7 @@ export function generateDungeon(
     content,
 
     resolved: null,
-    theme: null,
+    theme: themePayload,
 
     validation: {
       budget: budgetResult,

@@ -22,6 +22,7 @@ import type { BudgetResult, DifficultyResult } from "../contentBudget";
 import type { PacingResult } from "../pacingTargets";
 import type { InclusionResult } from "../inclusionRules";
 import type { PatternDiagnostics, PuzzleRole } from "../puzzlePatterns";
+import type { ThemeResolvedPayload } from "../theme/themeTypes";
 
 // Re-export for consumer convenience
 export type {
@@ -40,6 +41,7 @@ export type {
   InclusionResult,
   PatternDiagnostics,
   PuzzleRole,
+  ThemeResolvedPayload,
 };
 
 // ---------------------------------------------------------------------------
@@ -92,8 +94,8 @@ export type GenerateDungeonResult = {
   /** Theme-resolved spawnables. Populated in Session 5. */
   resolved: null;
 
-  /** Theme payload (render uniforms + identifiers). Populated in Session 3. */
-  theme: null;
+  /** Theme payload (render uniforms + identifiers). null when no themeId provided. */
+  theme: ThemeResolvedPayload | null;
 
   /** Authorial-control validation results. */
   validation: {
