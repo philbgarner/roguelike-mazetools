@@ -61,7 +61,6 @@ export function SingleInspectView(props: SingleInspectViewProps) {
         dungeon: payload.dungeon,
         content: payload.content,
         runtime0: payload.runtime0,
-        startCell0: payload.startCell0,
         circuitDiagnostics0: payload.circuitDiagnostics0 ?? null,
         circuitDebug0: payload.circuitDebug0 ?? null,
       }}

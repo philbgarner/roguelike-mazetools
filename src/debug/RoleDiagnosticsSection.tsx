@@ -249,7 +249,7 @@ export default function RoleDiagnosticsSection(
       // rule: query filter
       if (ruleQ) {
         const hits = hitsByCircuitIndex.get(r.circuitIndex) ?? [];
-        if (!hits.some((h) => (h.ruleId ?? "").toUpperCase() === ruleQ))
+        if (!hits.some((h: any) => (h.ruleId ?? "").toUpperCase() === ruleQ))
           continue;
       }
 
@@ -258,7 +258,9 @@ export default function RoleDiagnosticsSection(
         const roleStr = (r.role ?? "").toLowerCase();
         const hits = hitsByCircuitIndex.get(r.circuitIndex) ?? [];
         const hitStr = hits
-          .map((h) => `${h.ruleId} ${h.code} ${h.detail ?? ""}`.toLowerCase())
+          .map((h: any) =>
+            `${h.ruleId} ${h.code} ${h.detail ?? ""}`.toLowerCase(),
+          )
           .join(" | ");
         const merged = `${roleStr} ${hitStr}`;
         if (!merged.includes(freeText)) continue;
@@ -645,7 +647,7 @@ export default function RoleDiagnosticsSection(
                         maxHeight: 160,
                       }}
                     >
-                      {selectedHits.map((h, i) => (
+                      {selectedHits.map((h: any, i: any) => (
                         <div
                           key={`${h.ruleId}:${h.code}:${i}`}
                           className="mono"
