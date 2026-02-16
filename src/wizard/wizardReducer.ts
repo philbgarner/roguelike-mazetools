@@ -112,6 +112,13 @@ export type PacingTargets = {
   rampProfile?: { target?: RampProfile };
 };
 
+// Milestone 6, Phase 4 — Exclusion / Inclusion Rules
+export type InclusionRules = {
+  excludePatterns?: string[]; // pre-gen: forcibly skip these pattern names
+  requirePatterns?: string[]; // post-gen: these pattern names must have ok=true in diagnostics
+  requireContentTypes?: string[]; // post-gen: these meta arrays must be non-empty
+};
+
 export type ModeConfig =
   | {
       mode: "single";
@@ -120,6 +127,7 @@ export type ModeConfig =
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
       pacingTargets: PacingTargets | null;
+      inclusionRules: InclusionRules | null;
     }
   | {
       mode: "batch";
@@ -128,6 +136,7 @@ export type ModeConfig =
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
       pacingTargets: PacingTargets | null;
+      inclusionRules: InclusionRules | null;
     };
 
 export type RunContract =
@@ -140,6 +149,7 @@ export type RunContract =
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
       pacingTargets: PacingTargets | null;
+      inclusionRules: InclusionRules | null;
       guarantees: string[];
     }
   | {
@@ -151,6 +161,7 @@ export type RunContract =
       contentBudget: ContentBudget | null;
       difficultyBand: DifficultyBand | null;
       pacingTargets: PacingTargets | null;
+      inclusionRules: InclusionRules | null;
       guarantees: string[];
     };
 
@@ -172,6 +183,7 @@ export type SingleRunResult = {
   budgetResult?: any;
   difficultyResult?: any;
   pacingResult?: any;
+  inclusionResult?: any;
 };
 
 export type BatchRunResult = {
@@ -277,6 +289,7 @@ export type WizardAction =
   | { type: "SET_CONTENT_BUDGET"; contentBudget: ContentBudget | null }
   | { type: "SET_DIFFICULTY_BAND"; difficultyBand: DifficultyBand | null }
   | { type: "SET_PACING_TARGETS"; pacingTargets: PacingTargets | null }
+  | { type: "SET_INCLUSION_RULES"; inclusionRules: InclusionRules | null }
 
   // Step 5
   | { type: "DERIVE_CONTRACT" }
@@ -381,6 +394,7 @@ export function deriveRunContract(state: WizardState): RunContract | null {
       contentBudget: state.mode.contentBudget,
       difficultyBand: state.mode.difficultyBand,
       pacingTargets: state.mode.pacingTargets,
+      inclusionRules: state.mode.inclusionRules,
       guarantees,
     };
   }
@@ -394,6 +408,7 @@ export function deriveRunContract(state: WizardState): RunContract | null {
     contentBudget: state.mode.contentBudget,
     difficultyBand: state.mode.difficultyBand,
     pacingTargets: state.mode.pacingTargets,
+    inclusionRules: state.mode.inclusionRules,
     guarantees,
   };
 }
@@ -411,6 +426,7 @@ function materializeMode(state: WizardState): ModeConfig {
       contentBudget: state.mode.contentBudget ?? null,
       difficultyBand: state.mode.difficultyBand ?? null,
       pacingTargets: state.mode.pacingTargets ?? null,
+      inclusionRules: state.mode.inclusionRules ?? null,
     };
   }
 
@@ -424,6 +440,7 @@ function materializeMode(state: WizardState): ModeConfig {
       contentBudget: state.mode.contentBudget ?? null,
       difficultyBand: state.mode.difficultyBand ?? null,
       pacingTargets: state.mode.pacingTargets ?? null,
+      inclusionRules: state.mode.inclusionRules ?? null,
     };
   }
 
@@ -436,6 +453,7 @@ function materializeMode(state: WizardState): ModeConfig {
     contentBudget: null,
     difficultyBand: null,
     pacingTargets: null,
+    inclusionRules: null,
   };
 }
 
@@ -461,6 +479,7 @@ function buildContract(
       contentBudget: mode.contentBudget,
       difficultyBand: mode.difficultyBand,
       pacingTargets: mode.pacingTargets,
+      inclusionRules: mode.inclusionRules,
       guarantees,
     };
   }
@@ -474,6 +493,7 @@ function buildContract(
     contentBudget: mode.contentBudget,
     difficultyBand: mode.difficultyBand,
     pacingTargets: mode.pacingTargets,
+    inclusionRules: mode.inclusionRules,
     guarantees,
   };
 }
@@ -547,6 +567,7 @@ export function wizardReducer(
         contentBudget: state.mode.contentBudget,
         difficultyBand: state.mode.difficultyBand,
         pacingTargets: state.mode.pacingTargets,
+        inclusionRules: state.mode.inclusionRules,
         guarantees:
           deriveRunContract({ ...state, world: rerunWorld })?.guarantees ?? [],
       };
@@ -631,6 +652,7 @@ export function wizardReducer(
         contentBudget: null,
         difficultyBand: null,
         pacingTargets: null,
+        inclusionRules: null,
       };
 
       const singleMsg = state.result
@@ -655,6 +677,7 @@ export function wizardReducer(
         contentBudget: null,
         difficultyBand: null,
         pacingTargets: null,
+        inclusionRules: null,
       };
 
       const batchMsg = state.result
@@ -729,6 +752,20 @@ export function wizardReducer(
       const mode: ModeConfig = {
         ...state.mode,
         pacingTargets: action.pacingTargets,
+      };
+      // Step 4 change — invalidates results only.
+      return {
+        ...clearResults(state),
+        step: 4,
+        mode,
+      };
+    }
+
+    case "SET_INCLUSION_RULES": {
+      if (!state.mode) return state;
+      const mode: ModeConfig = {
+        ...state.mode,
+        inclusionRules: action.inclusionRules,
       };
       // Step 4 change — invalidates results only.
       return {

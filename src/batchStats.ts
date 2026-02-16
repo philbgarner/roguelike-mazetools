@@ -8,6 +8,7 @@
 import type { DoorSiteStatsBundle } from "./doorSites";
 import type { BudgetResult, DifficultyResult } from "./contentBudget";
 import type { PacingResult } from "./pacingTargets";
+import type { InclusionResult } from "./inclusionRules";
 
 export type SampleFailureSeedV1 = {
   schemaVersion: 1;
@@ -153,6 +154,7 @@ export type BatchRunInput = {
   budgetResult?: BudgetResult | null;
   difficultyResult?: DifficultyResult | null;
   pacingResult?: PacingResult | null;
+  inclusionResult?: InclusionResult | null;
 };
 
 export type BatchPatternSummary = {
@@ -269,6 +271,13 @@ export type BatchSummary = {
     failCount: number;
     violationsByMetric: Record<string, number>;
   };
+
+  inclusion?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByName: Record<string, number>;
+  };
 };
 
 function safeNum(v: unknown): number {
@@ -336,6 +345,12 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
   let pacingPass = 0;
   let pacingFail = 0;
   const pacingViolationsByMetric: Record<string, number> = {};
+
+  // Milestone 6: inclusion rules aggregation
+  let inclusionChecked = 0;
+  let inclusionPass = 0;
+  let inclusionFail = 0;
+  const inclusionViolationsByName: Record<string, number> = {};
 
   function makeAcc() {
     return {
@@ -626,6 +641,20 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         }
       }
     }
+
+    // Milestone 6: inclusion rules accumulation
+    if (r.inclusionResult) {
+      inclusionChecked++;
+      if (r.inclusionResult.pass) {
+        inclusionPass++;
+      } else {
+        inclusionFail++;
+        for (const v of r.inclusionResult.violations) {
+          inclusionViolationsByName[v.name] =
+            (inclusionViolationsByName[v.name] ?? 0) + 1;
+        }
+      }
+    }
   }
 
   const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
@@ -818,6 +847,16 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
         }
       : undefined;
 
+  const inclusion =
+    inclusionChecked > 0
+      ? {
+          checkedCount: inclusionChecked,
+          passCount: inclusionPass,
+          failCount: inclusionFail,
+          violationsByName: inclusionViolationsByName,
+        }
+      : undefined;
+
   return {
     runs: totalRuns,
     roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
@@ -827,6 +866,7 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
     budget,
     difficulty,
     pacing,
+    inclusion,
   };
 }
 
@@ -903,18 +943,21 @@ export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
     const anyBudgetViolation = r.budgetResult?.pass === false;
     const anyDifficultyViolation = r.difficultyResult?.pass === false;
     const anyPacingViolation = r.pacingResult?.pass === false;
+    const anyInclusionViolation = r.inclusionResult?.pass === false;
 
     if (anyFailure) tags.unshift("patternFailure");
     if (anyLeverAnomaly) tags.push("hasLeverAnomaly");
     if (anyBudgetViolation) tags.push("budgetViolation");
     if (anyDifficultyViolation) tags.push("difficultyOutOfBand");
     if (anyPacingViolation) tags.push("pacingFailure");
+    if (anyInclusionViolation) tags.push("inclusionViolation");
     const isGood =
       !anyFailure &&
       !anyLeverAnomaly &&
       !anyBudgetViolation &&
       !anyDifficultyViolation &&
-      !anyPacingViolation;
+      !anyPacingViolation &&
+      !anyInclusionViolation;
     if (isGood) tags.push("good");
 
     if (isGood) goodCount++;

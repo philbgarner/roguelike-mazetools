@@ -13,6 +13,7 @@ import {
   type BatchConfig,
   type PatternConfig,
   type ContentStrategy,
+  type InclusionRules,
 } from "./wizardReducer";
 
 const stepMotion = {
@@ -1022,6 +1023,8 @@ function Step4Options(props: {
         </div>
       </Section>
 
+      <InclusionRulesSection mode={mode} dispatch={dispatch} />
+
       <Row>
         <button onClick={() => dispatch({ type: "SET_STEP", step: 3 })}>
           ← Back
@@ -1036,6 +1039,163 @@ function Step4Options(props: {
           Next → Step 5 (Run Summary)
         </button>
       </Row>
+    </Section>
+  );
+}
+
+// --- Inclusion / Exclusion Rules Section ----------------------------------
+
+const ALL_PATTERN_NAMES = [
+  "introGate",
+  "leverHiddenPocket",
+  "leverOpensDoor",
+  "plateOpensDoor",
+  "gateThenOptionalReward",
+] as const;
+
+const ALL_CONTENT_TYPES = [
+  "levers",
+  "doors",
+  "plates",
+  "blocks",
+  "chests",
+  "secrets",
+  "hazards",
+  "monsters",
+  "keys",
+  "circuits",
+  "hidden",
+] as const;
+
+function InclusionRulesSection(props: {
+  mode: { inclusionRules: InclusionRules | null; [k: string]: any };
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const { mode, dispatch } = props;
+  const rules = mode.inclusionRules;
+
+  const excludePatterns = rules?.excludePatterns ?? [];
+  const requirePatterns = rules?.requirePatterns ?? [];
+  const requireContentTypes = rules?.requireContentTypes ?? [];
+
+  const update = (patch: Partial<InclusionRules>) => {
+    const next: InclusionRules = {
+      excludePatterns: patch.excludePatterns ?? excludePatterns,
+      requirePatterns: patch.requirePatterns ?? requirePatterns,
+      requireContentTypes: patch.requireContentTypes ?? requireContentTypes,
+    };
+    // If everything is empty, set null (unconstrained)
+    const isEmpty =
+      next.excludePatterns!.length === 0 &&
+      next.requirePatterns!.length === 0 &&
+      next.requireContentTypes!.length === 0;
+    dispatch({
+      type: "SET_INCLUSION_RULES",
+      inclusionRules: isEmpty ? null : next,
+    });
+  };
+
+  const toggleIn = (arr: string[], val: string): string[] =>
+    arr.includes(val) ? arr.filter((v) => v !== val) : [...arr, val];
+
+  // Detect contradictions (excluded AND required pattern)
+  const contradictions = excludePatterns.filter((p) =>
+    requirePatterns.includes(p),
+  );
+
+  return (
+    <Section title="Inclusion / Exclusion Rules">
+      <div style={{ opacity: 0.75, marginBottom: 10 }}>
+        Exclude patterns (pre-generation skip) and require patterns/content
+        (post-generation rejection). Unchecked = unconstrained.
+      </div>
+
+      <div
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}
+      >
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            Exclude Patterns
+          </div>
+          {ALL_PATTERN_NAMES.map((name) => (
+            <Toggle
+              key={`ex-${name}`}
+              checked={excludePatterns.includes(name)}
+              onChange={() =>
+                update({ excludePatterns: toggleIn(excludePatterns, name) })
+              }
+              label={name}
+            />
+          ))}
+        </div>
+
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            Require Patterns
+          </div>
+          {ALL_PATTERN_NAMES.map((name) => (
+            <Toggle
+              key={`req-${name}`}
+              checked={requirePatterns.includes(name)}
+              onChange={() =>
+                update({ requirePatterns: toggleIn(requirePatterns, name) })
+              }
+              label={name}
+            />
+          ))}
+        </div>
+
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            Require Content Types
+          </div>
+          {ALL_CONTENT_TYPES.map((name) => (
+            <Toggle
+              key={`rct-${name}`}
+              checked={requireContentTypes.includes(name)}
+              onChange={() =>
+                update({
+                  requireContentTypes: toggleIn(requireContentTypes, name),
+                })
+              }
+              label={name}
+            />
+          ))}
+        </div>
+      </div>
+
+      {contradictions.length > 0 && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: 6,
+            background: "#5a3a1a",
+            borderRadius: 4,
+            fontSize: 12,
+          }}
+        >
+          Warning: pattern(s) <strong>{contradictions.join(", ")}</strong> are
+          both excluded and required. This guarantees 100% rejection.
+        </div>
+      )}
     </Section>
   );
 }

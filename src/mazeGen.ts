@@ -1075,6 +1075,9 @@ export type ContentOptions = {
   // Milestone 4 — Phase 3 (composition)
   includePhase3Compositions?: boolean;
   gateThenOptionalRewardCount?: number;
+
+  // Milestone 6, Phase 4 — Exclusion rules (pre-generation pattern filtering)
+  excludePatterns?: string[];
 };
 
 export type ContentOutputs = {
@@ -1570,6 +1573,9 @@ export function generateDungeonContent(
     // Milestone 4 — Phase 3 (composition)
     includePhase3Compositions: opts?.includePhase3Compositions ?? false,
     gateThenOptionalRewardCount: opts?.gateThenOptionalRewardCount ?? 1,
+
+    // Milestone 6, Phase 4 — Exclusion rules
+    excludePatterns: opts?.excludePatterns ?? [],
   };
 
   console.log("generating dungeon content", options);
@@ -1998,14 +2004,24 @@ export function generateDungeonContent(
             allocId: () => clamp255(nextId++),
             options: {
               maxAttempts: options.patternMaxAttempts,
-              requireThroat: options.requireThroat,
+              requireThroat: true,
             },
           }),
       });
     }
   }
 
-  const { didCarve, diagnostics } = runPatternsBestEffort(patterns);
+  // Milestone 6, Phase 4: pre-generation pattern exclusion
+  const excluded = new Set(options.excludePatterns);
+  const filteredPatterns =
+    excluded.size > 0
+      ? patterns.filter((p) => {
+          const name = typeof p === "function" ? p.name : p.name;
+          return !excluded.has(name);
+        })
+      : patterns;
+
+  const { didCarve, diagnostics } = runPatternsBestEffort(filteredPatterns);
 
   if (didCarve) {
     recomputeDungeonDistanceToWall(dungeon);

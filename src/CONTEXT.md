@@ -1,10 +1,10 @@
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM (CONDENSED; M6 HIGH-FIDELITY)
 
-**CONTEXT VERSION:** **2026-02-15 (rev AK)**
+**CONTEXT VERSION:** **2026-02-15 (rev AL)**
 **LAST COMPLETED MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT MILESTONE:** **Milestone 6 — Authorial Controls, Difficulty Bands & Pacing**
-**CURRENT PHASE:** **Milestone 6 Phase 3 — Pacing Targets**
-**PHASE STATUS:** **PHASE 1 + PHASE 2 + PHASE 3 SHIPPED**
+**CURRENT PHASE:** **Milestone 6 Phase 4 — Exclusion / Inclusion Rules**
+**PHASE STATUS:** **PHASE 1 + PHASE 2 + PHASE 3 + PHASE 4 SHIPPED**
 
 ---
 
@@ -136,6 +136,7 @@ Authorial controls are **hard constraints** applied to completed generations.
   * `"budgetViolation"`
   * `"difficultyOutOfBand"`
   * `"pacingFailure"`
+  * `"inclusionViolation"`
 * Seed curation remains the primary workflow: tighten constraints → batch → observe yield → tune constraints.
 
 ---
@@ -346,17 +347,81 @@ Authorial controls are **hard constraints** applied to completed generations.
 
 ---
 
-## PHASE 4 — EXCLUSION / INCLUSION RULES (NEXT)
+## PHASE 4 — EXCLUSION / INCLUSION RULES (SHIPPED — 2026-02-15)
 
-* Pre-generation:
+### Contract
 
-  * pattern/content-type blocklists skip patterns entirely.
-* Post-generation:
+* **Pre-generation**: pattern exclusion lists forcibly skip named patterns before `runPatternsBestEffort()`, regardless of `include*` toggles in PatternConfig.
+* **Post-generation**: required-pattern and required-content checks reject seeds that are missing required outcomes.
+* Exclusion/inclusion rules are distinct from pattern toggles: toggles are structural config; rules are authorial constraints.
+* Default is `null` (unconstrained).
 
-  * required pattern/content checks reject seeds if missing.
-* Seed bank tags:
+### Data Model (Wizard / Contract / Result)
 
-  * `"requiredMissing"` / `"excludedPresent"` (names TBD, but must be explicit)
+* `InclusionRules`: `{ excludePatterns?: string[]; requirePatterns?: string[]; requireContentTypes?: string[] }`
+* Valid pattern names: `"introGate"`, `"leverHiddenPocket"`, `"leverOpensDoor"`, `"plateOpensDoor"`, `"gateThenOptionalReward"`
+* Valid content types: `"levers"`, `"doors"`, `"plates"`, `"blocks"`, `"chests"`, `"secrets"`, `"hazards"`, `"monsters"`, `"keys"`, `"circuits"`, `"hidden"`
+* Stored on:
+
+  * `ModeConfig`, `RunContract`, `SingleRunResult` as `inclusionRules: InclusionRules | null`
+* Wizard action:
+
+  * `SET_INCLUSION_RULES` (Step 4 change — invalidates results only)
+
+### Validation Module
+
+* `src/inclusionRules.ts` (NEW)
+
+  * `InclusionViolation`: `{ kind: "requiredPatternMissing" | "requiredContentMissing", name, detail? }`
+  * `InclusionResult`: `{ pass: boolean, violations: InclusionViolation[] }`
+  * `validateInclusionRules(meta, rules, patternDiagnostics)`:
+
+    * if `rules` is null → pass
+    * checks `requirePatterns`: at least one diagnostic with matching name must have `ok === true`
+    * checks `requireContentTypes`: `meta[name]` array must be non-empty
+    * returns pass + violations
+
+### Pre-Generation Filtering
+
+* `src/mazeGen.ts`
+
+  * `ContentOptions.excludePatterns?: string[]`
+  * After building the patterns array and before `runPatternsBestEffort()`, filters out any pattern whose name is in the exclusion set
+  * Excluded patterns produce no diagnostics (they are never attempted)
+
+### Execution Wiring
+
+* `src/App.tsx`
+
+  * Passes `excludePatterns` from `contract.inclusionRules?.excludePatterns` into content options
+  * Calls `validateInclusionRules()` in both single and batch paths after pacing validation
+  * Plumbs `inclusionResult` into results
+
+### Batch + Seed Bank
+
+* `src/batchStats.ts`
+
+  * `BatchRunInput.inclusionResult?: InclusionResult | null`
+  * `BatchSummary.inclusion?`: `{ checkedCount, passCount, failCount, violationsByName }`
+  * `aggregateBatchRuns()` accumulates pass/fail and per-name violation counts
+  * `buildSeedBank()` tags seeds with `"inclusionViolation"` when `inclusionResult.pass === false`
+  * Inclusion violations exclude seeds from `"good"` classification
+
+### Batch UI
+
+* `src/inspect/BatchResultsView.tsx`
+
+  * Seed filter includes `"inclusionViolation"` tab (shown when violations exist)
+  * Inclusion Rules Summary panel: checked/pass/fail counts, rejection rate, violations by name
+  * Inclusion violation badge styling: warm brown (`#5a3a1a`)
+
+### Wizard UI
+
+* `src/wizard/WizardScreen.tsx`
+
+  * "Inclusion / Exclusion Rules" section in Step 4 after Pattern Configuration
+  * Three columns: Exclude Patterns (5 checkboxes), Require Patterns (5 checkboxes), Require Content Types (11 checkboxes)
+  * Warning banner when a pattern is both excluded and required (guarantees 100% rejection)
 
 ---
 
@@ -375,7 +440,8 @@ Authorial controls are **hard constraints** applied to completed generations.
 * Milestone 6 **Phase 1 shipped**: content budgets validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
 * Milestone 6 **Phase 2 shipped**: difficulty metrics computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
 * Milestone 6 **Phase 3 shipped**: pacing metrics (first-gate distance, reward-after-gate, content-free intro, shortcut presence, ramp profile) computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
-* Next: Milestone 6 **Phase 4 exclusion/inclusion rules** (pre-generation pattern filtering + post-generation required-content verification).
+* Milestone 6 **Phase 4 shipped**: exclusion/inclusion rules — pre-generation pattern exclusion via `excludePatterns` + post-generation required-pattern/content verification; violations tagged `"inclusionViolation"`; batch UI summarizes; seed bank filters; wizard UI with contradiction warnings.
+* Next: Milestone 6 **Phase 5 seed annotation** (metadata attached to curated seeds; low priority).
 
 ---
 

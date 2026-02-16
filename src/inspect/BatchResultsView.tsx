@@ -81,7 +81,8 @@ type SeedFilter =
   | "failed"
   | "budgetViolation"
   | "difficultyOutOfBand"
-  | "pacingFailure";
+  | "pacingFailure"
+  | "inclusionViolation";
 
 function filterSeeds(
   seeds: SeedBankEntry[],
@@ -95,6 +96,8 @@ function filterSeeds(
     return seeds.filter((s) => s.tags.includes("difficultyOutOfBand"));
   if (filter === "pacingFailure")
     return seeds.filter((s) => s.tags.includes("pacingFailure"));
+  if (filter === "inclusionViolation")
+    return seeds.filter((s) => s.tags.includes("inclusionViolation"));
   return seeds.filter((s) => !s.tags.includes("good"));
 }
 
@@ -123,6 +126,13 @@ function SeedBankTable(props: {
 
   const pacingFailureCount = useMemo(
     () => seedBank.seeds.filter((s) => s.tags.includes("pacingFailure")).length,
+    [seedBank.seeds],
+  );
+
+  const inclusionViolationCount = useMemo(
+    () =>
+      seedBank.seeds.filter((s) => s.tags.includes("inclusionViolation"))
+        .length,
     [seedBank.seeds],
   );
 
@@ -200,6 +210,7 @@ function SeedBankTable(props: {
             ...(budgetViolationCount > 0 ? ["budgetViolation"] : []),
             ...(difficultyViolationCount > 0 ? ["difficultyOutOfBand"] : []),
             ...(pacingFailureCount > 0 ? ["pacingFailure"] : []),
+            ...(inclusionViolationCount > 0 ? ["inclusionViolation"] : []),
           ] as SeedFilter[]
         ).map((f) => (
           <button
@@ -221,7 +232,9 @@ function SeedBankTable(props: {
                     ? `Difficulty (${difficultyViolationCount})`
                     : f === "pacingFailure"
                       ? `Pacing (${pacingFailureCount})`
-                      : `Failed (${seedBank.failedCount})`}
+                      : f === "inclusionViolation"
+                        ? `Inclusion (${inclusionViolationCount})`
+                        : `Failed (${seedBank.failedCount})`}
           </button>
         ))}
       </div>
@@ -282,7 +295,9 @@ function SeedBankTable(props: {
                                   ? "#1a4a5a"
                                   : t === "pacingFailure"
                                     ? "#4a1a5a"
-                                    : "#4a4a2a",
+                                    : t === "inclusionViolation"
+                                      ? "#5a3a1a"
+                                      : "#4a4a2a",
                         color: "#ddd",
                       }}
                     >
@@ -523,6 +538,47 @@ export function BatchResultsView(props: BatchResultsViewProps) {
                 {Object.entries(payload.summary.pacing.violationsByMetric)
                   .sort((a, b) => (b[1] as number) - (a[1] as number))
                   .map(([metric, count]) => `${metric}: ${count}`)
+                  .join(", ")}
+              </div>
+            )}
+          </div>
+        )}
+
+        {payload.summary?.inclusion && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: 8,
+              background: "#2a1a0a",
+              borderRadius: 4,
+              border: "1px solid #654",
+            }}
+          >
+            <strong>Inclusion Rules Summary</strong>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              Checked: {payload.summary.inclusion.checkedCount} | Pass:{" "}
+              {payload.summary.inclusion.passCount} | Fail:{" "}
+              {payload.summary.inclusion.failCount}
+              {payload.summary.inclusion.failCount > 0 && (
+                <span>
+                  {" "}
+                  (
+                  {(
+                    (payload.summary.inclusion.failCount /
+                      payload.summary.inclusion.checkedCount) *
+                    100
+                  ).toFixed(1)}
+                  % rejection rate)
+                </span>
+              )}
+            </div>
+            {Object.keys(payload.summary.inclusion.violationsByName).length >
+              0 && (
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Violations by name:{" "}
+                {Object.entries(payload.summary.inclusion.violationsByName)
+                  .sort((a, b) => (b[1] as number) - (a[1] as number))
+                  .map(([name, count]) => `${name}: ${count}`)
                   .join(", ")}
               </div>
             )}

@@ -34,6 +34,7 @@ import {
   type DifficultyResult,
 } from "./contentBudget";
 import { validatePacingTargets, type PacingResult } from "./pacingTargets";
+import { validateInclusionRules, type InclusionResult } from "./inclusionRules";
 
 import WizardScreen from "./wizard/WizardScreen";
 
@@ -163,6 +164,7 @@ function ExecutionView(props: {
 
                   includePhase3Compositions: false,
                   gateThenOptionalRewardCount: 0,
+                  excludePatterns: contract.inclusionRules?.excludePatterns,
                 }
               : {
                   seed: contract.world.seed as any,
@@ -182,6 +184,7 @@ function ExecutionView(props: {
 
                   includePhase3Compositions: p.includePhase3Compositions,
                   gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
+                  excludePatterns: contract.inclusionRules?.excludePatterns,
                 };
 
           const content = generateDungeonContent(dungeon, contentOpts);
@@ -224,6 +227,13 @@ function ExecutionView(props: {
             contract.pacingTargets,
           );
 
+          // Milestone 6: inclusion rules validation (single mode)
+          const inclusionResult0: InclusionResult = validateInclusionRules(
+            content.meta as any,
+            contract.inclusionRules,
+            content.meta.patternDiagnostics ?? [],
+          );
+
           if (cancelled) return;
 
           dispatch({
@@ -245,6 +255,7 @@ function ExecutionView(props: {
               budgetResult: budgetResult0,
               difficultyResult: difficultyResult0,
               pacingResult: pacingResult0,
+              inclusionResult: inclusionResult0,
             },
           });
 
@@ -293,6 +304,7 @@ function ExecutionView(props: {
             patternMaxAttempts: p.patternMaxAttempts,
             includePhase3Compositions: p.includePhase3Compositions,
             gateThenOptionalRewardCount: p.gateThenOptionalRewardCount,
+            excludePatterns: contract.inclusionRules?.excludePatterns,
           });
 
           if (!content.meta) content.meta = {} as any;
@@ -325,6 +337,13 @@ function ExecutionView(props: {
             contract.pacingTargets,
           );
 
+          // Milestone 6: inclusion rules validation (batch mode)
+          const inclusionResult1: InclusionResult = validateInclusionRules(
+            content.meta as any,
+            contract.inclusionRules,
+            content.meta.patternDiagnostics ?? [],
+          );
+
           runs.push({
             seed: seedStr,
             seedUsed: dungeon.meta.seedUsed,
@@ -337,6 +356,7 @@ function ExecutionView(props: {
             budgetResult: budgetResult1,
             difficultyResult: difficultyResult1,
             pacingResult: pacingResult1,
+            inclusionResult: inclusionResult1,
           });
 
           if (i % updateEvery === 0 || i === total - 1) {
