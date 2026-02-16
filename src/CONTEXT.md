@@ -427,10 +427,37 @@ Authorial controls are **hard constraints** applied to completed generations.
 
 ## PHASE 5 — SEED ANNOTATION (PLANNED, LOW PRIORITY)
 
+### Intent
+
+Non-generation workflow layer: attach author metadata to curated seeds for downstream consumption (e.g. level design handoff, theme tagging, difficulty labeling).
+
+### Data Model
+
 * Extend `SeedBankEntry` with optional author metadata:
 
-  * difficulty label, theme tags, notes, curated flag, etc.
-* UI: annotation interface in inspection; export includes annotations.
+  * `annotation?: SeedAnnotation`
+  * `SeedAnnotation`: `{ difficultyLabel?: string; themeTags?: string[]; notes?: string; curated?: boolean }`
+* Annotations are **not** generation inputs — they attach to completed seeds post-generation.
+* Export (seed bank JSON download) includes annotations when present.
+
+### Files to Modify
+
+* **`src/batchStats.ts`** — Key types: `SeedBankEntry` (line ~877), `SeedBank` (line ~890), `buildSeedBank()` (line ~903). Extend `SeedBankEntry` with optional `annotation` field. `buildSeedBank()` initializes it as `undefined`. Schema version may bump to 2.
+
+* **`src/inspect/BatchResultsView.tsx`** — Key symbols: `SeedBankTable` component (line ~104), `BatchResultsPayload` type, `BatchResultsViewProps` type. Add inline annotation editing UI per seed row (notes text input, difficulty label dropdown, theme tag chips, curated checkbox). Must preserve existing download/filter/rerun functionality.
+
+* **`src/App.tsx`** — Key symbols: `BatchResultsView` usage (line ~517), `EXEC_DONE` dispatch. Annotations are mutable post-generation so `App.tsx` needs a callback to update seed bank state in the wizard result without invalidating. Consider a new action like `UPDATE_SEED_ANNOTATION` that patches `result.seedBank` without clearing results.
+
+* **`src/wizard/wizardReducer.ts`** — Key symbols: `BatchRunResult` type (line ~187), `WizardAction` union (line ~260), `wizardReducer` function. Add `UPDATE_SEED_ANNOTATION` action that mutates `result.seedBank.seeds[idx].annotation` without triggering invalidation (Step 7 edit, not Step 4).
+
+* **`src/CONTEXT.md`** — Update phase status to shipped.
+
+### Key Considerations
+
+* Annotations are **Step 7 edits** — they must NOT invalidate results or trigger re-execution.
+* The `UPDATE_SEED_ANNOTATION` action is unique among wizard actions: it mutates the result object rather than config. This requires careful reducer handling to avoid `clearResults()`.
+* Seed bank JSON export must include annotations so they survive round-trips.
+* Single-mode inspection does not produce a seed bank, so annotation UI is batch-only.
 
 ---
 
