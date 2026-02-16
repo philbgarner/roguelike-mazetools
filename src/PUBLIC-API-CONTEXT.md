@@ -1,8 +1,8 @@
 # PUBLIC-API-CONTEXT.md
 
-**CONTEXT VERSION:** **2026-02-16 (rev B)**
+**CONTEXT VERSION:** **2026-02-16 (rev C)**
 **OWNER AREA:** Milestone 6+ — Developer Interface / Public API / Theme & Resolver Layer
-**STATUS:** **PLANNING LOCK — DISCRETE SESSIONS DEFINED; PROMPT TEMPLATES ADDED**
+**STATUS:** **SESSIONS 1–5 COMPLETE — resolver pipeline live; Sessions 6–7 remain**
 
 ---
 
@@ -50,6 +50,23 @@ This must preserve the project’s locked invariants:
 - `src/doorSites.ts`
 - `src/evaluateCircuits.ts`
 - supporting: `src/walkability.ts`, `src/dungeonState.ts`, `src/graphEdgeId.ts`, etc.
+
+### Public API (Sessions 1–2)
+- `src/api/publicTypes.ts` — `GenerateDungeonRequest`, `GenerateDungeonResult`
+- `src/api/generateDungeon.ts` — single entry point wrapping generator + validators + theme + resolver
+- `src/api/index.ts` — barrel exports (runtime-safe only)
+
+### Theme layer (Sessions 3–4)
+- `src/theme/themeTypes.ts` — `DungeonTheme`, `RoomTheme`, `SpawnTable<T>`, `RenderThemeUniforms`, `ThemeResolvedPayload`
+- `src/theme/themeRegistry.ts` — `registerThemes`, `getTheme`, `getAllThemeIds`
+- `src/theme/defaultThemes.ts` — medieval keep, babylon ziggurat, surgical suite (with populated spawn tables)
+- `src/theme/roomTags.ts` — `RoomTag`, `computeRoomTags`
+- `src/theme/selectRoomThemes.ts` — deterministic room theme selection by `(seed, themeId, roomId)` + tags
+
+### Resolver pipeline (Session 5)
+- `src/resolve/resolveTypes.ts` — `ResolvedSpawns`, per-entity spawn types, `ResolvedEntityId`
+- `src/resolve/seededPicker.ts` — `hashSeed`, `seededFloat`, `pickWeighted`
+- `src/resolve/resolveSpawns.ts` — `resolveSpawns({ theme, content, seed, level })` deterministic resolver
 
 ### Milestone 6 authorial controls
 - `src/contentBudget.ts`
@@ -110,7 +127,7 @@ Each session is intended to end with:
 3) documented (this file + optionally `CONTEXT.md` / `RENDERING-CONTEXT.md`)
 4) commit
 
-### Session 1 — Public API Scaffolding (Types + Entry Points)
+### Session 1 — Public API Scaffolding (Types + Entry Points) ✅ COMPLETE
 
 **Objective:** Introduce a stable public surface without changing generator behavior.
 
@@ -155,7 +172,7 @@ Each session is intended to end with:
 
 ---
 
-### Session 2 — Separate Runtime Kit vs Dev Harness (Boundary Hygiene)
+### Session 2 — Separate Runtime Kit vs Dev Harness (Boundary Hygiene) ✅ COMPLETE
 
 **Objective:** Make it obvious what a game project needs to copy/import.
 
@@ -184,7 +201,7 @@ Each session is intended to end with:
 
 ---
 
-### Session 3 — Theme Schema v1 (DungeonTheme + RoomTheme + RenderTheme sync)
+### Session 3 — Theme Schema v1 (DungeonTheme + RoomTheme + RenderTheme sync) ✅ COMPLETE
 
 **Objective:** Define theme as data + deterministic resolvers, without yet applying to spawns.
 
@@ -224,7 +241,7 @@ Each session is intended to end with:
 
 ---
 
-### Session 4 — Room Tagging + Deterministic Room Theme Selection
+### Session 4 — Room Tagging + Deterministic Room Theme Selection ✅ COMPLETE
 
 **Objective:** Choose room themes using generator facts, not UI vibes.
 
@@ -254,37 +271,32 @@ Each session is intended to end with:
 
 ---
 
-### Session 5 — Resolver Pipeline v1 (Abstract placements -> Game Spawnables)
+### Session 5 — Resolver Pipeline v1 (Abstract placements -> Game Spawnables) ✅ COMPLETE
 
 **Objective:** Convert abstract placements into theme-resolved spawnables.
 
-**Create**
+**Created**
 - `src/resolve/resolveTypes.ts`
-  - export:
-    - `ResolvedSpawns`
-    - `ResolvedMonsterSpawn`, `ResolvedLootSpawn`, `ResolvedPropSpawn`, `ResolvedNpcSpawn`, `ResolvedBossSpawn`
-    - `ResolvedEntityId` strategy
+  - `ResolvedSpawns`, `ResolvedMonsterSpawn`, `ResolvedLootSpawn`, `ResolvedPropSpawn`, `ResolvedNpcSpawn`, `ResolvedBossSpawn`
+  - `ResolvedEntityId` — stable string format `{kind}:{roomId}:{indexInRoom}`
 - `src/resolve/seededPicker.ts`
-  - export:
-    - `hashSeed(...)`
-    - `pickWeighted(...)`
+  - `hashSeed(...parts)` — FNV-1a 32-bit over joined parts
+  - `seededFloat(seed)` — single-step Mulberry32 → [0, 1)
+  - `pickWeighted(table, seed)` — deterministic weighted selection; returns null for empty tables
 - `src/resolve/resolveSpawns.ts`
-  - export:
-    - `resolveSpawns({ theme, content, seed, level }): ResolvedSpawns`
-  - deterministic resolution: stable per-entity seed = hash(seed, themeId, entityKind, entityStableId)
+  - `resolveSpawns({ theme, content, seed, level }): ResolvedSpawns`
+  - Stable per-entity seed: `hashSeed(globalSeed, themeId, entityKind, "{roomId}:{y*width+x}", level)`
+  - Entities sorted by grid position before index assignment for determinism
+  - Boss heuristic: promotes first monster in farthest room when boss table is non-empty
+  - Never throws; empty tables → `spawnId = ""`
 
-**Modify**
-- `src/api/generateDungeon.ts`
-  - populate `resolved` using `resolveSpawns(...)`
+**Modified**
+- `src/api/publicTypes.ts` — `resolved: null` → `resolved: ResolvedSpawns | null`
+- `src/api/generateDungeon.ts` — calls `resolveSpawns()` when `themeId` is provided
+- `src/api/index.ts` — re-exports all resolved spawn types
+- `src/theme/defaultThemes.ts` — populated spawn tables for all three themes (monsters, loot, props, NPCs, bosses)
 
-**Testing**
-- Determinism: same request -> identical resolved spawns.
-- Theme constraints: no cross-theme spawn leakage.
-
-**Docs**
-- Seed hashing rules and entity id definition.
-
-**Commit label suggestion:** `resolve: add deterministic spawn resolution pipeline`
+**Commit:** `resolve: add deterministic spawn resolution pipeline`
 
 ---
 
@@ -370,10 +382,22 @@ To be finalized during Session 2.
 - `src/compositionDiagnostics.ts`
 - `src/roleDiagnostics.ts`
 
-**Theme/Resolve (to be created)**
-- `src/api/*`
-- `src/theme/*`
-- `src/resolve/*`
+**Public API**
+- `src/api/publicTypes.ts`
+- `src/api/generateDungeon.ts`
+- `src/api/index.ts`
+
+**Theme**
+- `src/theme/themeTypes.ts`
+- `src/theme/themeRegistry.ts`
+- `src/theme/defaultThemes.ts`
+- `src/theme/roomTags.ts`
+- `src/theme/selectRoomThemes.ts`
+
+**Resolve**
+- `src/resolve/resolveTypes.ts`
+- `src/resolve/seededPicker.ts`
+- `src/resolve/resolveSpawns.ts`
 
 **Render (optional runtime)**
 - `src/rendering/renderTheme.ts` (or runtime subset)

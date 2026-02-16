@@ -23,6 +23,7 @@ import type { PacingResult } from "../pacingTargets";
 import type { InclusionResult } from "../inclusionRules";
 import type { PatternDiagnostics, PuzzleRole } from "../puzzlePatterns";
 import type { ThemeResolvedPayload } from "../theme/themeTypes";
+import type { ResolvedSpawns } from "../resolve/resolveTypes";
 
 // Re-export for consumer convenience
 export type {
@@ -42,6 +43,7 @@ export type {
   PatternDiagnostics,
   PuzzleRole,
   ThemeResolvedPayload,
+  ResolvedSpawns,
 };
 
 // ---------------------------------------------------------------------------
@@ -91,8 +93,8 @@ export type GenerateDungeonResult = {
   bsp: BspDungeonOutputs;
   content: ContentOutputs;
 
-  /** Theme-resolved spawnables. Populated in Session 5. */
-  resolved: null;
+  /** Theme-resolved spawnables. null when no themeId provided. */
+  resolved: ResolvedSpawns | null;
 
   /** Theme payload (render uniforms + identifiers). null when no themeId provided. */
   theme: ThemeResolvedPayload | null;

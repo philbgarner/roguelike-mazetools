@@ -10,6 +10,7 @@ import { getTheme } from "../theme/themeRegistry";
 import { dungeonThemeToShaderUniforms } from "../rendering/renderTheme";
 import { computeRoomTags } from "../theme/roomTags";
 import { selectAllRoomThemes } from "../theme/selectRoomThemes";
+import { resolveSpawns } from "../resolve/resolveSpawns";
 import {
   validateContentBudget,
   validateDifficultyBand,
@@ -112,9 +113,10 @@ export function generateDungeon(
 
   // ---- Theme resolution ---------------------------------------------------
 
-  const { themeId } = request;
+  const { themeId, level } = request;
   const seedNum = bsp.meta?.seedUsed ?? 0;
   let themePayload: GenerateDungeonResult["theme"] = null;
+  let resolved: GenerateDungeonResult["resolved"] = null;
   if (themeId) {
     const dungeonTheme = getTheme(themeId);
     const roomTagsByRoomId = computeRoomTags(bsp, content);
@@ -129,6 +131,12 @@ export function generateDungeon(
       roomTagsByRoomId,
       roomThemesByRoomId,
     };
+    resolved = resolveSpawns({
+      theme: dungeonTheme,
+      content,
+      seed: seedNum,
+      level,
+    });
   }
 
   // ---- Assemble result ----------------------------------------------------
@@ -137,7 +145,7 @@ export function generateDungeon(
     bsp,
     content,
 
-    resolved: null,
+    resolved,
     theme: themePayload,
 
     validation: {

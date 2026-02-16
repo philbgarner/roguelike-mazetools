@@ -38,6 +38,16 @@ export type {
   RenderThemeUniforms,
 } from "../theme/themeTypes";
 
+export type {
+  ResolvedSpawns,
+  ResolvedMonsterSpawn,
+  ResolvedLootSpawn,
+  ResolvedPropSpawn,
+  ResolvedNpcSpawn,
+  ResolvedBossSpawn,
+  ResolvedEntityId,
+} from "../resolve/resolveTypes";
+
 export {
   registerThemes,
   getTheme,

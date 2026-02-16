@@ -7,12 +7,89 @@
 
 import type { DungeonTheme } from "./themeTypes";
 
-const EMPTY_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
-  monsters: [],
-  loot: [],
-  props: [],
-  npcs: [],
-  bosses: [],
+// ---------------------------------------------------------------------------
+// Spawn tables per theme
+// ---------------------------------------------------------------------------
+
+const MEDIEVAL_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+  monsters: [
+    { value: "skeleton_warrior", weight: 4 },
+    { value: "armored_guard", weight: 3 },
+    { value: "giant_rat", weight: 2 },
+    { value: "ghost_knight", weight: 1 },
+  ],
+  loot: [
+    { value: "iron_chest", weight: 4 },
+    { value: "gold_coffer", weight: 2 },
+    { value: "royal_cache", weight: 1 },
+  ],
+  props: [
+    { value: "weapon_rack", weight: 3 },
+    { value: "torch_sconce", weight: 3 },
+    { value: "tattered_banner", weight: 2 },
+  ],
+  npcs: [
+    { value: "wandering_merchant", weight: 3 },
+    { value: "imprisoned_knight", weight: 2 },
+  ],
+  bosses: [
+    { value: "black_knight", weight: 3 },
+    { value: "lich_king", weight: 1 },
+  ],
+};
+
+const BABYLON_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+  monsters: [
+    { value: "clay_golem", weight: 3 },
+    { value: "sand_wraith", weight: 3 },
+    { value: "temple_guardian", weight: 2 },
+    { value: "scorpion_swarm", weight: 2 },
+  ],
+  loot: [
+    { value: "clay_urn", weight: 4 },
+    { value: "jeweled_idol", weight: 2 },
+    { value: "golden_tablet", weight: 1 },
+  ],
+  props: [
+    { value: "stone_pillar", weight: 3 },
+    { value: "cuneiform_tablet", weight: 2 },
+    { value: "offering_bowl", weight: 3 },
+  ],
+  npcs: [
+    { value: "temple_scribe", weight: 3 },
+    { value: "blind_oracle", weight: 1 },
+  ],
+  bosses: [
+    { value: "bull_of_heaven", weight: 2 },
+    { value: "lamassu", weight: 2 },
+  ],
+};
+
+const SURGICAL_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+  monsters: [
+    { value: "animated_cadaver", weight: 3 },
+    { value: "rogue_orderly", weight: 3 },
+    { value: "surgical_drone", weight: 2 },
+    { value: "escaped_subject", weight: 2 },
+  ],
+  loot: [
+    { value: "medical_kit", weight: 4 },
+    { value: "specimen_jar", weight: 2 },
+    { value: "experimental_serum", weight: 1 },
+  ],
+  props: [
+    { value: "operating_table", weight: 3 },
+    { value: "iv_stand", weight: 3 },
+    { value: "biohazard_container", weight: 2 },
+  ],
+  npcs: [
+    { value: "surviving_patient", weight: 3 },
+    { value: "renegade_doctor", weight: 1 },
+  ],
+  bosses: [
+    { value: "chief_surgeon", weight: 2 },
+    { value: "the_experiment", weight: 2 },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -49,7 +126,7 @@ export const THEME_MEDIEVAL_KEEP: DungeonTheme = {
     { id: "dungeon_cell", label: "Dungeon Cell" },
   ],
 
-  spawnTables: EMPTY_SPAWN_TABLES,
+  spawnTables: MEDIEVAL_SPAWN_TABLES,
 };
 
 // ---------------------------------------------------------------------------
@@ -85,7 +162,7 @@ export const THEME_BABYLON_ZIGGURAT: DungeonTheme = {
     { id: "sacred_pool", label: "Sacred Pool" },
   ],
 
-  spawnTables: EMPTY_SPAWN_TABLES,
+  spawnTables: BABYLON_SPAWN_TABLES,
 };
 
 // ---------------------------------------------------------------------------
@@ -122,7 +199,7 @@ export const THEME_SURGICAL_SUITE: DungeonTheme = {
     { id: "recovery_ward", label: "Recovery Ward" },
   ],
 
-  spawnTables: EMPTY_SPAWN_TABLES,
+  spawnTables: SURGICAL_SPAWN_TABLES,
 };
 
 export const DEFAULT_THEMES: DungeonTheme[] = [
