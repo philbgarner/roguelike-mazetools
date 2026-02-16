@@ -94,5 +94,8 @@ export type RenderThemeUniforms = {
 export type ThemeResolvedPayload = {
   themeId: string;
   uniforms: RenderThemeUniforms;
-  // Future (Session 4): roomThemesByRoomId, roomTagsByRoomId
+  /** Per-room computed tags (roomId → tag set). */
+  roomTagsByRoomId: Map<number, Set<import("./roomTags").RoomTag>>;
+  /** Per-room selected theme (roomId → RoomTheme). */
+  roomThemesByRoomId: Map<number, RoomTheme>;
 };

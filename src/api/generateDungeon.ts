@@ -8,6 +8,8 @@ import { generateBspDungeon, generateDungeonContent } from "../mazeGen";
 import { DEFAULT_BSP, DEFAULT_PATTERN } from "../configTypes";
 import { getTheme } from "../theme/themeRegistry";
 import { dungeonThemeToShaderUniforms } from "../rendering/renderTheme";
+import { computeRoomTags } from "../theme/roomTags";
+import { selectAllRoomThemes } from "../theme/selectRoomThemes";
 import {
   validateContentBudget,
   validateDifficultyBand,
@@ -111,12 +113,21 @@ export function generateDungeon(
   // ---- Theme resolution ---------------------------------------------------
 
   const { themeId } = request;
+  const seedNum = bsp.meta?.seedUsed ?? 0;
   let themePayload: GenerateDungeonResult["theme"] = null;
   if (themeId) {
     const dungeonTheme = getTheme(themeId);
+    const roomTagsByRoomId = computeRoomTags(bsp, content);
+    const roomThemesByRoomId = selectAllRoomThemes(
+      seedNum,
+      dungeonTheme,
+      roomTagsByRoomId,
+    );
     themePayload = {
       themeId: dungeonTheme.id,
       uniforms: dungeonThemeToShaderUniforms(dungeonTheme),
+      roomTagsByRoomId,
+      roomThemesByRoomId,
     };
   }
 
