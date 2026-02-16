@@ -5,7 +5,11 @@
  * `resolved` and `theme` will be populated in later sessions.
  */
 
-import type { BspDungeonOptions, BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import type {
+  BspDungeonOptions,
+  BspDungeonOutputs,
+  ContentOutputs,
+} from "../mazeGen";
 import type {
   ContentBudget,
   ContentStrategy,
@@ -13,7 +17,7 @@ import type {
   InclusionRules,
   PacingTargets,
   PatternConfig,
-} from "../wizard/wizardReducer";
+} from "../configTypes";
 import type { BudgetResult, DifficultyResult } from "../contentBudget";
 import type { PacingResult } from "../pacingTargets";
 import type { InclusionResult } from "../inclusionRules";

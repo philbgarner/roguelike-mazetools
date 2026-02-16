@@ -6,7 +6,7 @@
 // and required content types are present.
 // Pre-generation exclusion (excludePatterns) is enforced in mazeGen.ts.
 
-import type { InclusionRules } from "./wizard/wizardReducer";
+import type { InclusionRules } from "./configTypes";
 
 export type InclusionViolation = {
   kind: "requiredPatternMissing" | "requiredContentMissing";

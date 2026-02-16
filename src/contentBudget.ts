@@ -14,7 +14,7 @@ import type {
   ContentBudgetEntry,
   DifficultyBand,
   DifficultyBandEntry,
-} from "./wizard/wizardReducer";
+} from "./configTypes";
 
 export type BudgetViolation = {
   category: string; // "levers", "doors", etc.

@@ -6,7 +6,7 @@
 // against authorial pacing constraints. Metrics are always computed
 // (even when unconstrained) so inspection can display them.
 
-import type { PacingTargets, RampProfile } from "./wizard/wizardReducer";
+import type { PacingTargets, RampProfile } from "./configTypes";
 
 // ---------------------------------------------------------------------------
 // Result types

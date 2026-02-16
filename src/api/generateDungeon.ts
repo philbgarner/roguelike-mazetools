@@ -6,11 +6,17 @@
  */
 
 import { generateBspDungeon, generateDungeonContent } from "../mazeGen";
-import { DEFAULT_BSP, DEFAULT_PATTERN } from "../wizard/wizardReducer";
-import { validateContentBudget, validateDifficultyBand } from "../contentBudget";
+import { DEFAULT_BSP, DEFAULT_PATTERN } from "../configTypes";
+import {
+  validateContentBudget,
+  validateDifficultyBand,
+} from "../contentBudget";
 import { validatePacingTargets } from "../pacingTargets";
 import { validateInclusionRules } from "../inclusionRules";
-import type { GenerateDungeonRequest, GenerateDungeonResult } from "./publicTypes";
+import type {
+  GenerateDungeonRequest,
+  GenerateDungeonResult,
+} from "./publicTypes";
 
 const DEFAULT_WIDTH = 96;
 const DEFAULT_HEIGHT = 96;
