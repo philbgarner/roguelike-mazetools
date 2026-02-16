@@ -89,7 +89,7 @@ Invalidation principle (high-level):
 
 ---
 
-# MILESTONE 6 — AUTHORIAL CONTROLS, DIFFICULTY BANDS & PACING (HIGH FIDELITY)
+# MILESTONE 6 — AUTHORIAL CONTROLS, DIFFICULTY BANDS & PACING (COMPLETE)
 
 ## Design Philosophy (LOCKED FOR M6)
 
@@ -425,7 +425,7 @@ Authorial controls are **hard constraints** applied to completed generations.
 
 ---
 
-## PHASE 5 — SEED ANNOTATION (PLANNED, LOW PRIORITY)
+## PHASE 5 — SEED ANNOTATION (SHIPPED — 2026-02-16)
 
 ### Intent
 
@@ -461,14 +461,15 @@ Non-generation workflow layer: attach author metadata to curated seeds for downs
 
 ---
 
-## CURRENT STATE SUMMARY (CONDENSED, M6-FOCUSED)
+## CURRENT STATE SUMMARY
 
 * Milestone 5 is **closed**; seed curation workflow is canonical.
-* Milestone 6 **Phase 1 shipped**: content budgets validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
-* Milestone 6 **Phase 2 shipped**: difficulty metrics computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
-* Milestone 6 **Phase 3 shipped**: pacing metrics (first-gate distance, reward-after-gate, content-free intro, shortcut presence, ramp profile) computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
-* Milestone 6 **Phase 4 shipped**: exclusion/inclusion rules — pre-generation pattern exclusion via `excludePatterns` + post-generation required-pattern/content verification; violations tagged `"inclusionViolation"`; batch UI summarizes; seed bank filters; wizard UI with contradiction warnings.
-* Next: Milestone 6 **Phase 5 seed annotation** (metadata attached to curated seeds; low priority).
+* Milestone 6 is **closed** — all 5 phases shipped:
+  * **Phase 1**: content budgets validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
+  * **Phase 2**: difficulty metrics computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
+  * **Phase 3**: pacing metrics (first-gate distance, reward-after-gate, content-free intro, shortcut presence, ramp profile) computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
+  * **Phase 4**: exclusion/inclusion rules — pre-generation pattern exclusion via `excludePatterns` + post-generation required-pattern/content verification; violations tagged `"inclusionViolation"`; batch UI summarizes; seed bank filters; wizard UI with contradiction warnings.
+  * **Phase 5**: seed annotation — author metadata (`SeedAnnotation`: difficulty label, theme tags, notes, curated flag) attached to seed bank entries post-generation; inline annotation editing UI in batch results; `UPDATE_SEED_ANNOTATION` reducer action (Step 7 edit, no invalidation); curated filter; annotations included in seed bank JSON export.
 
 ---
 
@@ -476,7 +477,7 @@ Non-generation workflow layer: attach author metadata to curated seeds for downs
 
 * Milestones 1–4: geometry/runtime/circuits + progression composition — complete
 * Milestone 5: diagnostics → soft steering → hard safety nets + seed curation — complete
-* Milestone 6: authorial controls (budgets, difficulty, pacing, include/exclude, annotation) — current
+* Milestone 6: authorial controls (budgets, difficulty, pacing, include/exclude, annotation) — complete
 
 ---
 

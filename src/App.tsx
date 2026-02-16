@@ -531,6 +531,9 @@ function InspectionRouter(props: {
         dispatch({ type: "RERUN_SEED_SINGLE", seed });
         dispatch({ type: "EXEC_START" });
       }}
+      onUpdateSeedAnnotation={(index, annotation) => {
+        dispatch({ type: "UPDATE_SEED_ANNOTATION", index, annotation });
+      }}
       title="Batch Results — Summary Only"
     />
   );

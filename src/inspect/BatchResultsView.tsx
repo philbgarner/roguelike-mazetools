@@ -6,7 +6,7 @@
 // Phase 3 additions: seed bank table with download, copy, and inspect affordances.
 
 import React, { useMemo, useState } from "react";
-import type { SeedBank, SeedBankEntry } from "../batchStats";
+import type { SeedAnnotation, SeedBank, SeedBankEntry } from "../batchStats";
 
 export type BatchResultsPayload = {
   summary: any;
@@ -30,6 +30,9 @@ export type BatchResultsViewProps = {
 
   /** Re-run a seed in single mode for inspection */
   onRerunSeed?: (seed: string) => void;
+
+  /** Update annotation on a seed bank entry (Step 7 edit, no invalidation) */
+  onUpdateSeedAnnotation?: (index: number, annotation: SeedAnnotation) => void;
 
   /** Optional title */
   title?: string;
@@ -79,6 +82,7 @@ type SeedFilter =
   | "all"
   | "good"
   | "failed"
+  | "curated"
   | "budgetViolation"
   | "difficultyOutOfBand"
   | "pacingFailure"
@@ -90,6 +94,8 @@ function filterSeeds(
 ): SeedBankEntry[] {
   if (filter === "all") return seeds;
   if (filter === "good") return seeds.filter((s) => s.tags.includes("good"));
+  if (filter === "curated")
+    return seeds.filter((s) => s.annotation?.curated === true);
   if (filter === "budgetViolation")
     return seeds.filter((s) => s.tags.includes("budgetViolation"));
   if (filter === "difficultyOutOfBand")
@@ -101,15 +107,124 @@ function filterSeeds(
   return seeds.filter((s) => !s.tags.includes("good"));
 }
 
+function AnnotationRow(props: {
+  entry: SeedBankEntry;
+  seedIndex: number;
+  onUpdate: (index: number, annotation: SeedAnnotation) => void;
+}) {
+  const { entry, seedIndex, onUpdate } = props;
+  const ann = entry.annotation ?? {};
+
+  const [diffLabel, setDiffLabel] = useState(ann.difficultyLabel ?? "");
+  const [tagsStr, setTagsStr] = useState((ann.themeTags ?? []).join(", "));
+  const [notes, setNotes] = useState(ann.notes ?? "");
+  const [curated, setCurated] = useState(ann.curated ?? false);
+
+  const flush = (patch: Partial<SeedAnnotation>) => {
+    const next: SeedAnnotation = {
+      difficultyLabel: patch.difficultyLabel ?? (diffLabel || undefined),
+      themeTags:
+        "themeTags" in patch
+          ? patch.themeTags
+          : tagsStr
+            ? tagsStr
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean)
+            : undefined,
+      notes: patch.notes ?? (notes || undefined),
+      curated: "curated" in patch ? patch.curated : curated || undefined,
+    };
+    onUpdate(seedIndex, next);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "#2a2a2a",
+    border: "1px solid #555",
+    borderRadius: 3,
+    color: "#ddd",
+    padding: "2px 4px",
+    fontSize: 11,
+  };
+
+  return (
+    <tr style={{ background: "#1a1a2a" }}>
+      <td colSpan={5} style={{ padding: "4px 8px" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <label style={{ fontSize: 11 }}>
+            <input
+              type="checkbox"
+              checked={curated}
+              onChange={(e) => {
+                setCurated(e.target.checked);
+                flush({ curated: e.target.checked });
+              }}
+            />{" "}
+            Curated
+          </label>
+          <label style={{ fontSize: 11 }}>
+            Difficulty:{" "}
+            <input
+              style={{ ...inputStyle, width: 80 }}
+              value={diffLabel}
+              onChange={(e) => setDiffLabel(e.target.value)}
+              onBlur={() => flush({ difficultyLabel: diffLabel || undefined })}
+              placeholder="e.g. hard"
+            />
+          </label>
+          <label style={{ fontSize: 11 }}>
+            Tags:{" "}
+            <input
+              style={{ ...inputStyle, width: 140 }}
+              value={tagsStr}
+              onChange={(e) => setTagsStr(e.target.value)}
+              onBlur={() =>
+                flush({
+                  themeTags: tagsStr
+                    ? tagsStr
+                        .split(",")
+                        .map((t) => t.trim())
+                        .filter(Boolean)
+                    : undefined,
+                })
+              }
+              placeholder="comma-separated"
+            />
+          </label>
+          <label style={{ fontSize: 11 }}>
+            Notes:{" "}
+            <input
+              style={{ ...inputStyle, width: 180 }}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              onBlur={() => flush({ notes: notes || undefined })}
+              placeholder="author notes"
+            />
+          </label>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function SeedBankTable(props: {
   seedBank: SeedBank;
   seedBankJson: string;
   seedPrefix?: string;
   onRerunSeed?: (seed: string) => void;
+  onUpdateSeedAnnotation?: (index: number, annotation: SeedAnnotation) => void;
 }) {
-  const { seedBank, seedBankJson, onRerunSeed } = props;
+  const { seedBank, seedBankJson, onRerunSeed, onUpdateSeedAnnotation } = props;
   const [filter, setFilter] = useState<SeedFilter>("good");
   const [copiedSeed, setCopiedSeed] = useState<string | null>(null);
+  const [expandedSeed, setExpandedSeed] = useState<string | null>(null);
 
   const budgetViolationCount = useMemo(
     () =>
@@ -133,6 +248,11 @@ function SeedBankTable(props: {
     () =>
       seedBank.seeds.filter((s) => s.tags.includes("inclusionViolation"))
         .length,
+    [seedBank.seeds],
+  );
+
+  const curatedCount = useMemo(
+    () => seedBank.seeds.filter((s) => s.annotation?.curated === true).length,
     [seedBank.seeds],
   );
 
@@ -207,6 +327,7 @@ function SeedBankTable(props: {
             "all",
             "good",
             "failed",
+            ...(curatedCount > 0 ? ["curated"] : []),
             ...(budgetViolationCount > 0 ? ["budgetViolation"] : []),
             ...(difficultyViolationCount > 0 ? ["difficultyOutOfBand"] : []),
             ...(pacingFailureCount > 0 ? ["pacingFailure"] : []),
@@ -226,15 +347,17 @@ function SeedBankTable(props: {
               ? `All (${seedBank.totalSeeds})`
               : f === "good"
                 ? `Good (${seedBank.goodCount})`
-                : f === "budgetViolation"
-                  ? `Budget (${budgetViolationCount})`
-                  : f === "difficultyOutOfBand"
-                    ? `Difficulty (${difficultyViolationCount})`
-                    : f === "pacingFailure"
-                      ? `Pacing (${pacingFailureCount})`
-                      : f === "inclusionViolation"
-                        ? `Inclusion (${inclusionViolationCount})`
-                        : `Failed (${seedBank.failedCount})`}
+                : f === "curated"
+                  ? `Curated (${curatedCount})`
+                  : f === "budgetViolation"
+                    ? `Budget (${budgetViolationCount})`
+                    : f === "difficultyOutOfBand"
+                      ? `Difficulty (${difficultyViolationCount})`
+                      : f === "pacingFailure"
+                        ? `Pacing (${pacingFailureCount})`
+                        : f === "inclusionViolation"
+                          ? `Inclusion (${inclusionViolationCount})`
+                          : `Failed (${seedBank.failedCount})`}
           </button>
         ))}
       </div>
@@ -267,66 +390,132 @@ function SeedBankTable(props: {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((entry) => (
-              <tr key={entry.seed} style={{ borderBottom: "1px solid #333" }}>
-                <td style={tdStyle}>{entry.seed}</td>
-                <td style={tdStyle}>{entry.seedUsed}</td>
-                <td style={{ ...tdStyle, textAlign: "center" }}>
-                  {entry.rooms}
-                </td>
-                <td style={tdStyle}>
-                  {entry.tags.map((t) => (
-                    <span
-                      key={t}
-                      style={{
-                        display: "inline-block",
-                        padding: "1px 5px",
-                        marginRight: 3,
-                        borderRadius: 3,
-                        fontSize: 11,
-                        background:
-                          t === "good"
-                            ? "#2a5a2a"
-                            : t === "patternFailure"
-                              ? "#5a2a2a"
-                              : t === "budgetViolation"
-                                ? "#5a4a1a"
-                                : t === "difficultyOutOfBand"
-                                  ? "#1a4a5a"
-                                  : t === "pacingFailure"
-                                    ? "#4a1a5a"
-                                    : t === "inclusionViolation"
-                                      ? "#5a3a1a"
-                                      : "#4a4a2a",
-                        color: "#ddd",
-                      }}
-                    >
-                      {t}
-                    </span>
-                  ))}
-                </td>
-                <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-                  <button
-                    className="maze-btn"
-                    style={{ fontSize: 11, padding: "1px 6px", marginRight: 3 }}
-                    onClick={() => doCopySeed(entry.seed)}
-                    title="Copy seed string"
+            {filtered.map((entry) => {
+              const seedIdx = seedBank.seeds.indexOf(entry);
+              const ann = entry.annotation;
+              const isExpanded = expandedSeed === entry.seed;
+              return (
+                <React.Fragment key={entry.seed}>
+                  <tr
+                    style={{
+                      borderBottom: isExpanded ? "none" : "1px solid #333",
+                    }}
                   >
-                    {copiedSeed === entry.seed ? "Copied" : "Copy"}
-                  </button>
-                  {onRerunSeed && (
-                    <button
-                      className="maze-btn"
-                      style={{ fontSize: 11, padding: "1px 6px" }}
-                      onClick={() => onRerunSeed(entry.seed)}
-                      title="Re-run this seed in single mode for inspection"
-                    >
-                      Inspect
-                    </button>
+                    <td style={tdStyle}>
+                      {entry.seed}
+                      {ann?.curated && (
+                        <span
+                          style={{
+                            marginLeft: 4,
+                            padding: "0 4px",
+                            borderRadius: 3,
+                            fontSize: 10,
+                            background: "#2a4a5a",
+                            color: "#adf",
+                          }}
+                        >
+                          curated
+                        </span>
+                      )}
+                      {ann?.themeTags && ann.themeTags.length > 0 && (
+                        <span
+                          style={{
+                            marginLeft: 4,
+                            fontSize: 10,
+                            opacity: 0.7,
+                          }}
+                        >
+                          [{ann.themeTags.length} tag
+                          {ann.themeTags.length !== 1 ? "s" : ""}]
+                        </span>
+                      )}
+                    </td>
+                    <td style={tdStyle}>{entry.seedUsed}</td>
+                    <td style={{ ...tdStyle, textAlign: "center" }}>
+                      {entry.rooms}
+                    </td>
+                    <td style={tdStyle}>
+                      {entry.tags.map((t) => (
+                        <span
+                          key={t}
+                          style={{
+                            display: "inline-block",
+                            padding: "1px 5px",
+                            marginRight: 3,
+                            borderRadius: 3,
+                            fontSize: 11,
+                            background:
+                              t === "good"
+                                ? "#2a5a2a"
+                                : t === "patternFailure"
+                                  ? "#5a2a2a"
+                                  : t === "budgetViolation"
+                                    ? "#5a4a1a"
+                                    : t === "difficultyOutOfBand"
+                                      ? "#1a4a5a"
+                                      : t === "pacingFailure"
+                                        ? "#4a1a5a"
+                                        : t === "inclusionViolation"
+                                          ? "#5a3a1a"
+                                          : "#4a4a2a",
+                            color: "#ddd",
+                          }}
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </td>
+                    <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
+                      <button
+                        className="maze-btn"
+                        style={{
+                          fontSize: 11,
+                          padding: "1px 6px",
+                          marginRight: 3,
+                        }}
+                        onClick={() => doCopySeed(entry.seed)}
+                        title="Copy seed string"
+                      >
+                        {copiedSeed === entry.seed ? "Copied" : "Copy"}
+                      </button>
+                      {onRerunSeed && (
+                        <button
+                          className="maze-btn"
+                          style={{
+                            fontSize: 11,
+                            padding: "1px 6px",
+                            marginRight: 3,
+                          }}
+                          onClick={() => onRerunSeed(entry.seed)}
+                          title="Re-run this seed in single mode for inspection"
+                        >
+                          Inspect
+                        </button>
+                      )}
+                      {onUpdateSeedAnnotation && (
+                        <button
+                          className="maze-btn"
+                          style={{ fontSize: 11, padding: "1px 6px" }}
+                          onClick={() =>
+                            setExpandedSeed(isExpanded ? null : entry.seed)
+                          }
+                          title="Annotate this seed"
+                        >
+                          {isExpanded ? "Close" : "Annotate"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {isExpanded && onUpdateSeedAnnotation && (
+                    <AnnotationRow
+                      entry={entry}
+                      seedIndex={seedIdx}
+                      onUpdate={onUpdateSeedAnnotation}
+                    />
                   )}
-                </td>
-              </tr>
-            ))}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
         {filtered.length === 0 && (
@@ -418,6 +607,7 @@ export function BatchResultsView(props: BatchResultsViewProps) {
             seedBankJson={payload.seedBankJson}
             seedPrefix={payload.seedPrefix}
             onRerunSeed={props.onRerunSeed}
+            onUpdateSeedAnnotation={props.onUpdateSeedAnnotation}
           />
         )}
 

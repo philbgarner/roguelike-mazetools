@@ -874,6 +874,13 @@ export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
 // Seed Bank — per-seed classification for the "ship only good seeds" workflow
 // ---------------------------------------------------------------------------
 
+export type SeedAnnotation = {
+  difficultyLabel?: string;
+  themeTags?: string[];
+  notes?: string;
+  curated?: boolean;
+};
+
 export type SeedBankEntry = {
   seed: string;
   seedUsed: number;
@@ -885,10 +892,11 @@ export type SeedBankEntry = {
     ok: boolean;
     reason?: string;
   }>;
+  annotation?: SeedAnnotation;
 };
 
 export type SeedBank = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   generatedAt: string;
   totalSeeds: number;
   goodCount: number;
@@ -974,7 +982,7 @@ export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     totalSeeds: runs.length,
     goodCount,

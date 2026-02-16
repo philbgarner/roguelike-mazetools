@@ -2,6 +2,8 @@
 //
 // Milestone 5 — UI Refactor (rev S)
 // Wizard reducer enforcing the AUTHORITATIVE invalidation matrix.
+
+import type { SeedAnnotation } from "../batchStats";
 //
 // Contract:
 // - Steps 1–5 configure only (no generation).
@@ -310,7 +312,14 @@ export type WizardAction =
   | { type: "CLEAR_INVALIDATION_MSG" }
 
   // Seed curation: re-run a specific seed from batch results in single mode
-  | { type: "RERUN_SEED_SINGLE"; seed: string };
+  | { type: "RERUN_SEED_SINGLE"; seed: string }
+
+  // Seed annotation: attach author metadata to a seed (Step 7 edit, no invalidation)
+  | {
+      type: "UPDATE_SEED_ANNOTATION";
+      index: number;
+      annotation: SeedAnnotation;
+    };
 
 function clampInt(n: number, lo: number, hi: number): number {
   const x = n | 0;
@@ -866,6 +875,32 @@ export function wizardReducer(
         result: null,
         error: String(action.error ?? "Execution failed"),
       };
+
+    case "UPDATE_SEED_ANNOTATION": {
+      // Step 7 edit: mutate result.seedBank without invalidating results.
+      if (
+        !state.result ||
+        state.result.kind !== "batch" ||
+        !state.result.seedBank
+      )
+        return state;
+      const sb = state.result.seedBank;
+      if (action.index < 0 || action.index >= sb.seeds.length) return state;
+      const updatedSeeds = [...sb.seeds];
+      updatedSeeds[action.index] = {
+        ...updatedSeeds[action.index],
+        annotation: action.annotation,
+      };
+      const updatedSeedBank = { ...sb, seeds: updatedSeeds };
+      return {
+        ...state,
+        result: {
+          ...state.result,
+          seedBank: updatedSeedBank,
+          seedBankJson: JSON.stringify(updatedSeedBank, null, 2),
+        },
+      };
+    }
 
     default:
       return state;
