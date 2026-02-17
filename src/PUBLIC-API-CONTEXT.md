@@ -1,8 +1,8 @@
 # PUBLIC-API-CONTEXT.md
 
-**CONTEXT VERSION:** **2026-02-16 (rev C)**
+**CONTEXT VERSION:** **2026-02-17 (rev D)**
 **OWNER AREA:** Milestone 6+ — Developer Interface / Public API / Theme & Resolver Layer
-**STATUS:** **SESSIONS 1–6 COMPLETE — authorial presets live; Session 7 remains**
+**STATUS:** **ALL SESSIONS COMPLETE (1–7)**
 
 ---
 
@@ -332,29 +332,25 @@ Each session is intended to end with:
 
 ---
 
-### Session 7 — “Copy/Paste Developer Kit” Cookbook + Runtime File Manifest
+### Session 7 — “Copy/Paste Developer Kit” Cookbook + Runtime File Manifest ✅ COMPLETE
 
 **Objective:** Make adoption trivial.
 
-**Create**
+**Created**
 - `RUNTIME-FILE-MANIFEST.md`
-  - explicit runtime-safe file list to copy
+  - explicit runtime-safe file list to copy (26 required + 1 optional)
 - `API-QUICKSTART.md`
-  - minimal usage example:
-    - call `generateDungeon`
-    - apply uniforms
-    - seed curation via diagnostics/validation
+  - minimal usage examples (basic, themed, authorial controls)
+  - render uniform application (Three.js + custom engine)
+  - seed curation workflow (batch → classify → inspect → iterate)
+  - custom theme/preset registration
+  - quick reference table
 
-**Modify**
+**Modified**
 - `README.md`
-  - short public API intro + pointers
+  - short public API intro + pointers to quickstart and manifest
 
-**Testing**
-- Fresh project smoke checklist:
-  - runtime-only imports
-  - generate + render
-
-**Commit label suggestion:** `docs: add runtime manifest + quickstart`
+**Commit:** `docs: add runtime manifest + quickstart`
 
 ---
 
