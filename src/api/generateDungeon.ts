@@ -17,6 +17,7 @@ import {
 } from "../contentBudget";
 import { validatePacingTargets } from "../pacingTargets";
 import { validateInclusionRules } from "../inclusionRules";
+import { getBand, getBudget, getPacingPreset } from "./authorialPresets";
 import type {
   GenerateDungeonRequest,
   GenerateDungeonResult,
@@ -35,11 +36,23 @@ export function generateDungeon(
     bsp: bspOverrides,
     pattern: patternOverrides,
     contentStrategy = "patterns",
+    difficultyBandId,
     difficultyBand = null,
+    budgetId,
     contentBudget = null,
+    pacingId,
     pacingTargets = null,
     inclusionRules = null,
   } = request;
+
+  // ---- Resolve preset IDs (inline values take precedence) -----------------
+
+  const resolvedBand =
+    difficultyBand ?? (difficultyBandId ? getBand(difficultyBandId) : null);
+  const resolvedBudget =
+    contentBudget ?? (budgetId ? getBudget(budgetId) : null);
+  const resolvedPacing =
+    pacingTargets ?? (pacingId ? getPacingPreset(pacingId) : null);
 
   // ---- BSP generation -----------------------------------------------------
 
@@ -91,18 +104,18 @@ export function generateDungeon(
 
   // ---- Validation ---------------------------------------------------------
 
-  const budgetResult = contentBudget
-    ? validateContentBudget(content.meta as any, contentBudget)
+  const budgetResult = resolvedBudget
+    ? validateContentBudget(content.meta as any, resolvedBudget)
     : null;
 
   const difficultyResult = validateDifficultyBand(
     content.meta as any,
-    difficultyBand,
+    resolvedBand,
   );
 
   const pacingResult = validatePacingTargets(
     content.meta as any,
-    pacingTargets,
+    resolvedPacing,
   );
 
   const inclusionResult = validateInclusionRules(

@@ -78,10 +78,17 @@ export type GenerateDungeonRequest = {
   contentStrategy?: ContentStrategy;
 
   // -- Authorial controls (optional — null/undefined = skip validation) -----
+  // Provide either an inline value or a preset ID. Inline takes precedence.
 
+  difficultyBandId?: string;
   difficultyBand?: DifficultyBand | null;
+
+  budgetId?: string;
   contentBudget?: ContentBudget | null;
+
+  pacingId?: string;
   pacingTargets?: PacingTargets | null;
+
   inclusionRules?: InclusionRules | null;
 };
 

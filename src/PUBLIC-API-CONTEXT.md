@@ -2,7 +2,7 @@
 
 **CONTEXT VERSION:** **2026-02-16 (rev C)**
 **OWNER AREA:** Milestone 6+ — Developer Interface / Public API / Theme & Resolver Layer
-**STATUS:** **SESSIONS 1–5 COMPLETE — resolver pipeline live; Sessions 6–7 remain**
+**STATUS:** **SESSIONS 1–6 COMPLETE — authorial presets live; Session 7 remains**
 
 ---
 
@@ -300,40 +300,35 @@ Each session is intended to end with:
 
 ---
 
-### Session 6 — Authorial Controls Integration (Bands/Budgets/Pacing in Public API)
+### Session 6 — Authorial Controls Integration (Bands/Budgets/Pacing in Public API) ✅ COMPLETE
 
 **Objective:** Make band/budget/pacing selectable from request, returning validation output.
 
-**Create**
+**Created**
 - `src/api/authorialPresets.ts`
-  - export:
-    - `DEFAULT_BANDS`, `DEFAULT_BUDGETS`, `DEFAULT_PACING`
-  - isolate runtime from wizard UI types.
+  - `AuthorialPreset<T>` generic wrapper: `{ id: string; label: string; value: T }`
+  - Three registries (Map-based, following `themeRegistry.ts` pattern):
+    - `registerBands()`, `getBand(id)`, `getAllBandIds()` — for `DifficultyBand`
+    - `registerBudgets()`, `getBudget(id)`, `getAllBudgetIds()` — for `ContentBudget`
+    - `registerPacingPresets()`, `getPacingPreset(id)`, `getAllPacingIds()` — for `PacingTargets`
+  - Default presets (auto-registered on import):
+    - Bands: `"easy"`, `"medium"`, `"hard"`
+    - Budgets: `"minimal"`, `"balanced"`, `"rich"`
+    - Pacing: `"relaxed"`, `"standard"`, `"intense"`
+  - `DEFAULT_BANDS`, `DEFAULT_BUDGETS`, `DEFAULT_PACING` arrays exported
 
-**Modify**
-- `src/wizard/wizardReducer.ts`
-  - remove runtime dependency from UI (move shared defaults to runtime/shared module).
-  - runtime must not import wizard UI.
+**Modified**
+- `src/api/publicTypes.ts` — added `difficultyBandId?`, `budgetId?`, `pacingId?` string fields on `GenerateDungeonRequest`
+- `src/api/generateDungeon.ts` — added preset ID resolution (inline > ID > null) before validation calls
+- `src/api/index.ts` — re-exports all registry functions, `AuthorialPreset` type, and default arrays
 
-**Modify**
-- `src/contentBudget.ts`
-  - expose stable validator:
-    - `validateContentBudget({ content, band, budget, pacing }): BudgetValidationResult`
+**Not modified (boundary already clean)**
+- `src/wizard/wizardReducer.ts` — runtime code never imported from wizard UI; no change needed
+- `src/contentBudget.ts` — `validateContentBudget` was already a stable callable
+- `src/pacingTargets.ts` — already stable
+- `src/inclusionRules.ts` — no preset registry (project-specific lists, not reusable presets)
 
-**Modify**
-- `src/api/generateDungeon.ts`
-  - apply request-specified authorial controls
-  - attach `validation`
-  - never abort; preserve seed curation workflow
-
-**Testing**
-- Batch-run seeds: validate pass/fail rates and diagnostic clarity.
-
-**Docs**
-- Update `src/CONTEXT.md` with public API + authorial controls addendum.
-- Update this file with preset IDs.
-
-**Commit label suggestion:** `api: integrate authorial controls into generateDungeon + validation output`
+**Commit:** `api: integrate authorial controls into generateDungeon + validation output`
 
 ---
 

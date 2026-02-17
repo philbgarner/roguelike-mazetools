@@ -1,10 +1,10 @@
 # PROJECT CONTEXT — BSP DUNGEON, CONTENT & PUZZLE SYSTEM (CONDENSED; M6 HIGH-FIDELITY)
 
-**CONTEXT VERSION:** **2026-02-15 (rev AL)**
+**CONTEXT VERSION:** **2026-02-16 (rev AM)**
 **LAST COMPLETED MILESTONE:** **Milestone 5 — Intent Steering & Progression Policy**
 **CURRENT MILESTONE:** **Milestone 6 — Authorial Controls, Difficulty Bands & Pacing**
 **CURRENT PHASE:** **Milestone 6 Phase 4 — Exclusion / Inclusion Rules**
-**PHASE STATUS:** **PHASE 1 + PHASE 2 + PHASE 3 + PHASE 4 SHIPPED**
+**PHASE STATUS:** **PHASE 1 + PHASE 2 + PHASE 3 + PHASE 4 + PHASE 5 SHIPPED**
 
 ---
 
@@ -458,6 +458,43 @@ Non-generation workflow layer: attach author metadata to curated seeds for downs
 * The `UPDATE_SEED_ANNOTATION` action is unique among wizard actions: it mutates the result object rather than config. This requires careful reducer handling to avoid `clearResults()`.
 * Seed bank JSON export must include annotations so they survive round-trips.
 * Single-mode inspection does not produce a seed bank, so annotation UI is batch-only.
+
+---
+
+## PUBLIC API — AUTHORIAL CONTROLS PRESET INTEGRATION
+
+The public API (`src/api/generateDungeon.ts`) now supports authorial controls via **preset IDs** in addition to inline values.
+
+### Resolution Order
+
+For each control (difficulty band, content budget, pacing targets):
+1. **Inline value** (`difficultyBand`, `contentBudget`, `pacingTargets`) — highest precedence
+2. **Preset ID** (`difficultyBandId`, `budgetId`, `pacingId`) — resolved from registry
+3. **null** — unconstrained (validation skipped or returns pass-by-default)
+
+### Preset Registries (`src/api/authorialPresets.ts`)
+
+Three registries following the `themeRegistry.ts` pattern:
+
+| Control | Register | Lookup | List IDs |
+|---|---|---|---|
+| Difficulty Band | `registerBands()` | `getBand(id)` | `getAllBandIds()` |
+| Content Budget | `registerBudgets()` | `getBudget(id)` | `getAllBudgetIds()` |
+| Pacing Targets | `registerPacingPresets()` | `getPacingPreset(id)` | `getAllPacingIds()` |
+
+### Default Preset IDs
+
+| Control | Preset IDs |
+|---|---|
+| Difficulty Band | `"easy"`, `"medium"`, `"hard"` |
+| Content Budget | `"minimal"`, `"balanced"`, `"rich"` |
+| Pacing Targets | `"relaxed"`, `"standard"`, `"intense"` |
+
+Defaults are auto-registered on import. Games can call `register*()` to add or override presets.
+
+### Inclusion Rules
+
+No preset registry for `InclusionRules` — these are project-specific pattern/content lists, not reusable presets. Pass inline or null.
 
 ---
 

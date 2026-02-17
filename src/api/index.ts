@@ -53,3 +53,21 @@ export {
   getTheme,
   getAllThemeIds,
 } from "../theme/themeRegistry";
+
+// Authorial control preset registries
+export type { AuthorialPreset } from "./authorialPresets";
+
+export {
+  registerBands,
+  getBand,
+  getAllBandIds,
+  registerBudgets,
+  getBudget,
+  getAllBudgetIds,
+  registerPacingPresets,
+  getPacingPreset,
+  getAllPacingIds,
+  DEFAULT_BANDS,
+  DEFAULT_BUDGETS,
+  DEFAULT_PACING,
+} from "./authorialPresets";
