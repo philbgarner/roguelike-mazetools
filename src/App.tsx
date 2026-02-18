@@ -38,6 +38,40 @@ import { validateInclusionRules, type InclusionResult } from "./inclusionRules";
 
 import WizardScreen from "./wizard/WizardScreen";
 
+import {
+  ExampleGallery,
+  MinimalExample,
+  ThemedExample,
+  PresetControlsExample,
+  InlineControlsExample,
+} from "./examples";
+
+// --- Hash Router --------------------------------------------------------------
+
+function useHashRoute(): string {
+  const [hash, setHash] = React.useState(
+    () => window.location.hash.replace(/^#/, "") || "/",
+  );
+  React.useEffect(() => {
+    const onHash = () => setHash(window.location.hash.replace(/^#/, "") || "/");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  return hash;
+}
+
+export default function App() {
+  const route = useHashRoute();
+
+  if (route === "/examples") return <ExampleGallery />;
+  if (route === "/examples/minimal") return <MinimalExample />;
+  if (route === "/examples/themed") return <ThemedExample />;
+  if (route === "/examples/preset-controls") return <PresetControlsExample />;
+  if (route === "/examples/inline-controls") return <InlineControlsExample />;
+
+  return <WizardApp />;
+}
+
 // --- Thin Shell Router --------------------------------------------------------
 
 const screenMotion = {
@@ -46,7 +80,7 @@ const screenMotion = {
   exit: { opacity: 0, y: -8, transition: { duration: 0.14 } },
 };
 
-export default function App() {
+function WizardApp() {
   const [state, dispatch] = useReducer(
     wizardReducer,
     undefined,
