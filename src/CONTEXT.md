@@ -70,25 +70,6 @@ This milestone is closed; its details exist to explain why Milestone 6 can safel
 
 ---
 
-## WIZARD FLOW + INVALIDATION (CONDENSED, STILL LOCKED)
-
-Wizard enforces strict staging: **configuration → execution → inspection**.
-
-* **Step 1:** seed + dimensions (no generation)
-* **Step 2:** BSP geometry settings (geometry only)
-* **Step 3:** single vs batch
-* **Step 4:** content strategy + authorial controls (single) / batch params (batch)
-* **Step 5:** mandatory read-only confirmation; execution can only start here
-* **Step 6:** generation execution (no inspection mounted)
-* **Step 7:** post-generation inspection (single interactive; batch summary-only)
-
-Invalidation principle (high-level):
-
-* upstream changes invalidate downstream artifacts; inspection is torn down on any post-execution change.
-* Step 4 edits invalidate results only (not world geometry config).
-
----
-
 # MILESTONE 6 — AUTHORIAL CONTROLS, DIFFICULTY BANDS & PACING (COMPLETE)
 
 ## Design Philosophy (LOCKED FOR M6)
@@ -120,402 +101,212 @@ Authorial controls are **hard constraints** applied to completed generations.
 
 ---
 
-## Wizard Integration (M6)
+# Milestone 7 — VISIBILITY AND EXPLORATION (STARTED)
 
-* Controls are configured via wizard (currently treated as part of Step 4A “Content Strategy” for single; batch benefits most).
-* Step 5 run summary must display active constraints (explicit author intent).
-* Invalidation: changing authorial controls invalidates results only (must re-run).
+## GOAL
 
----
+Add a **runtime exploration layer** for the inspection/runtime renderer:
 
-## Batch Integration (M6)
+* A **visibility + explored** mask is recomputed **every time `playerX` or `playerY` changes**.
+* Rendering becomes “fog of war”-like:
 
-* Batch summary must report **rejection rate by category** and per-control breakdown.
-* Seed bank classification gains tags for authorial failures:
+  * **Unexplored** cells: **not rendered at all**.
+  * **Explored but not currently visible**: rendered, but **dim**.
+  * **Currently visible** cells: rendered with a **lit background** and **slightly brighter foreground**.
 
-  * `"budgetViolation"`
-  * `"difficultyOutOfBand"`
-  * `"pacingFailure"`
-  * `"inclusionViolation"`
-* Seed curation remains the primary workflow: tighten constraints → batch → observe yield → tune constraints.
+This is a **render/runtime concern**, not a generator policy concern.
 
 ---
 
-## PHASE 1 — CONTENT BUDGETS (SHIPPED — 2026-02-15)
+## DATA MODEL
 
-### Contract
+Create a new `THREE.DataTexture` sized `W×H`:
 
-* Budgets are **post-generation hard constraints** validated after `generateDungeonContent()` returns.
-* No pattern logic is modified to “aim for” budgets; instead, seeds that violate budgets are rejected/tagged for curation.
-* Diagnostics/reporting must name which categories violated.
+* **Format**: `RGBA8` (`THREE.RGBAFormat`, `THREE.UnsignedByteType`)
+* Per-cell channels (0–255):
 
-### Data Model (Wizard / Contract / Result)
+  * **A (alpha)** = *visibility* (0 = not visible, 255 = fully visible)
+  * **G (green)** = *explored* (0 or 255)
+  * R/B unused (0)
 
-* `ContentBudgetEntry`: `{ min?: number; max?: number }`
-* `ContentBudget`: optional entries for:
-  `levers`, `doors`, `plates`, `blocks`, `chests`, `secrets`, `hazards`, `monsters`, `keys`, `circuits`
-* Stored on:
+Update rule on player movement:
 
-  * `ModeConfig`, `RunContract`, `SingleRunResult` as `contentBudget: ContentBudget | null`
-* Wizard action:
+1. **Wipe ONLY visibility** (set A=0 for all cells; leave explored G as-is).
+2. Recompute new visibility A values.
+3. For any cell with A>0, also set **G=255** (explored accumulates).
 
-  * `SET_CONTENT_BUDGET` (Step 4 change — invalidates results only)
-* Default:
+Visibility shape:
 
-  * `null` (unconstrained)
-
-### Validation Module
-
-* `src/contentBudget.ts` (NEW)
-
-  * `BudgetViolation`: `{ category, actual, min?, max? }`
-  * `BudgetResult`: `{ pass: boolean, violations: BudgetViolation[] }`
-  * `validateContentBudget(meta, budget)`:
-
-    * counts each `meta.*` array
-    * checks against min/max per category
-    * returns pass + violations
-
-### Execution Wiring
-
-* `src/App.tsx`
-
-  * Calls budget validation after `generateDungeonContent()` in both **single** and **batch** execution paths.
-  * Plumbs `budgetResult` into results.
-
-### Batch + Seed Bank
-
-* `src/batchStats.ts`
-
-  * `BatchRunInput.budgetResult?: BudgetResult | null`
-  * `BatchSummary.budget?`: `{ checkedCount, passCount, failCount, violationsByCategory }`
-  * `aggregateBatchRuns()` accumulates pass/fail and per-category violation counts
-  * `buildSeedBank()` tags seeds with `"budgetViolation"` when `budgetResult.pass === false`
-  * Budget violations exclude seeds from `"good"` classification
-
-### Batch UI
-
-* `src/inspect/BatchResultsView.tsx`
-
-  * Seed filter includes `"budgetViolation"` tab (shown when violations exist)
-  * Budget Summary panel: checked/pass/fail counts, rejection rate, violations by category
-  * Budget violation badge styling: amber (`#5a4a1a`)
+* Cells **on and immediately surrounding the player** should be **A=255** (hard inner ring).
+* Other visible cells scale by distance to player to simulate gradual darkness (falloff).
+* Keep it simple first: **no occlusion / line-of-sight** yet (pure radius + falloff).
 
 ---
 
-## PHASE 2 — DIFFICULTY BANDS (SHIPPED — 2026-02-15)
+## RENDERING REQUIREMENTS (SHADER)
 
-### Contract
+Shader behavior using the vis/explored texture:
 
-* Difficulty bands are **post-generation hard constraints** validated after generation.
-* Metrics are always computed (even when unconstrained) so inspection can display them.
-* Reject seeds outside min/max bands; report which metric failed.
+* Sample `uVisExplored` at the current cell:
 
-### Data Model (Wizard / Contract / Result)
+  * `explored = (g > 0.5)`
+  * `vis = a` in `[0..1]`
+* If **not explored** → **discard** (or output fully transparent).
+* If explored:
 
-* `DifficultyBandEntry`: `{ min?: number; max?: number }`
-* `DifficultyBand`: entries per metric (below)
-* Stored on:
+  * Apply **dim factor** when `vis == 0` (e.g. 0.20–0.35).
+  * Apply **brightening** when `vis > 0`:
 
-  * `ModeConfig`, `RunContract`, `SingleRunResult` as `difficultyBand: DifficultyBand | null`
-* Wizard action:
+    * Background color present (fog-light) and
+    * Foreground slightly brighter than non-visible explored cells.
 
-  * `SET_DIFFICULTY_BAND` (Step 4 change — invalidates results only)
-* Default:
+This should affect both:
 
-  * `null` (unconstrained)
-
-### Metrics Computed
-
-| Metric               | Source                               | Computation                                  |
-| -------------------- | ------------------------------------ | -------------------------------------------- |
-| `totalRooms`         | `meta.rooms.length`                  | direct count                                 |
-| `criticalPathLength` | `meta.mainPathRoomIds.length`        | main path room count                         |
-| `maxGateDepth`       | `meta.doors[].depth`                 | max depth value                              |
-| `branchCount`        | `meta.roomGraph` + `mainPathRoomIds` | off-main rooms with degree ≤ 1               |
-| `puzzleDensity`      | content arrays + rooms               | `(doors + levers + plates + blocks) / rooms` |
-
-### Validation Module (Extension)
-
-* `src/contentBudget.ts` extended with:
-
-  * `DifficultyMetrics`, `DifficultyViolation`, `DifficultyResult`
-  * `validateDifficultyBand(meta, band)`:
-
-    * computes all 5 metrics
-    * checks min/max constraints
-    * returns `{ pass, violations, metrics }` (metrics always present)
-
-### Execution Wiring
-
-* `src/App.tsx`
-
-  * Calls `validateDifficultyBand()` in both single and batch paths; attaches results.
-
-### Batch + Seed Bank
-
-* `src/batchStats.ts`
-
-  * `BatchRunInput.difficultyResult?: DifficultyResult | null`
-  * `BatchSummary.difficulty?`: `{ checkedCount, passCount, failCount, violationsByMetric }`
-  * `buildSeedBank()` tags `"difficultyOutOfBand"` when violated
-
-### Batch UI
-
-* `src/inspect/BatchResultsView.tsx`
-
-  * `"difficultyOutOfBand"` filter tab (teal badge `#1a4a5a`)
-  * Difficulty Summary panel: rejection rate + per-metric breakdown
+* atlas glyph sampling (foreground), and
+* tile background fill (wall/floor backdrop).
 
 ---
 
-## PHASE 3 — PACING TARGETS (SHIPPED — 2026-02-15)
+## IMPLEMENTATION PLAN (FILES + SYMBOLS)
 
-### Contract
+### 1) Add visibility/explored texture builder + updater
 
-* Pacing targets are **post-generation hard constraints** validated after generation.
-* Metrics are always computed (even when unconstrained) so inspection can display them.
-* Reject seeds that violate pacing constraints; report which metric failed.
+**New file: `src/rendering/visibility.ts`**
 
-### Data Model (Wizard / Contract / Result)
+Add these exports:
 
-* `RampProfile`: `"linear" | "front-loaded" | "back-loaded"`
-* `PacingTargets`: optional entries for 5 controls:
+* `export type VisibilityParams = { radius: number; innerRadius: number; exploredOnVisible: boolean; }`
+* `export function createVisExploredRGBA(W: number, H: number, name: string): { data: Uint8Array; tex: THREE.DataTexture }`
+* `export function updateVisExploredRGBA(data: Uint8Array, W: number, H: number, playerX: number, playerY: number, params: VisibilityParams): void`
 
-  * `firstGateDistance?: { min?: number; max?: number }`
-  * `rewardAfterGate?: { enabled?: boolean; maxDistance?: number }`
-  * `contentFreeIntro?: { min?: number }`
-  * `shortcutPresent?: { required?: boolean }`
-  * `rampProfile?: { target?: RampProfile }`
-* Stored on:
+Notes:
 
-  * `ModeConfig`, `RunContract`, `SingleRunResult` as `pacingTargets: PacingTargets | null`
-* Wizard action:
+* `data.length === W*H*4`
+* Index: `i = (y*W + x) * 4`
 
-  * `SET_PACING_TARGETS` (Step 4 change — invalidates results only)
-* Default:
+  * `data[i+1]` = G explored
+  * `data[i+3]` = A visibility
+* Update algorithm:
 
-  * `null` (unconstrained)
+  * clear A (only): loop all cells → `data[i+3]=0`
+  * compute vis within `radius`:
 
-### Metrics Computed
+    * `d = hypot(dx,dy)` (or manhattan; pick one and keep consistent)
+    * if `d <= innerRadius` → A=255
+    * else if `d <= radius` → A = `floor(255 * (1 - (d-innerRadius)/(radius-innerRadius)))`
+  * if A>0 and `exploredOnVisible` → `data[i+1]=255`
 
-| Metric                   | Source                                     | Computation                                                              |
-| ------------------------ | ------------------------------------------ | ------------------------------------------------------------------------ |
-| `firstGateDistance`      | `mainPathRoomIds` + `doors[]`              | index of first door on critical path (-1 if none)                        |
-| `rewardAfterGateRate`   | critical-path gates + `chests[]`           | fraction of gates with a chest within N rooms after (default N=2)        |
-| `contentFreeIntroCount` | `mainPathRoomIds` + all content arrays     | consecutive rooms from start with zero content                           |
-| `shortcutPresent`       | `roomGraph`                                | `edges > nodes - 1` (any cycle = shortcut)                              |
-| `rampProfileActual`     | 3-bucket content density on critical path  | classify as linear/front-loaded/back-loaded via 1.5x ratio threshold     |
+### 2) Add a texture factory for RGBA8 (if you want symmetry with R8 helpers)
 
-### Validation Module
+**Edit: `src/rendering/tiles.ts`**
 
-* `src/pacingTargets.ts` (NEW)
+Add alongside `maskToTileTextureR8` (near **line ~176**):
 
-  * `PacingViolation`: `{ metric, actual, expected?, detail? }`
-  * `PacingMetrics`: all 5 metrics + `rampBuckets: [number, number, number]`
-  * `PacingResult`: `{ pass: boolean, violations: PacingViolation[], metrics: PacingMetrics }`
-  * `validatePacingTargets(meta, targets)`:
+* `export function maskToTileTextureRGBA8(mask: Uint8Array, W: number, H: number, name: string): THREE.DataTexture`
 
-    * always computes all metrics (even when `targets` is null)
-    * checks constraints only when `targets` is non-null
-    * returns `{ pass, violations, metrics }` (metrics always present)
+Use the same sampler settings as R8:
 
-### Execution Wiring
+* `NearestFilter`, no mips, clamp, `NoColorSpace`, `flipY=false`.
 
-* `src/App.tsx`
+(Alternatively, you can build the `DataTexture` directly in `visibility.ts` and skip adding this helper.)
 
-  * Calls `validatePacingTargets()` in both **single** and **batch** execution paths after difficulty validation.
-  * Plumbs `pacingResult` into results.
+### 3) Wire the new texture into the renderer
 
-### Batch + Seed Bank
+**Edit: `src/rendering/DungeonRenderView.tsx`**
 
-* `src/batchStats.ts`
+Where to hook:
 
-  * `BatchRunInput.pacingResult?: PacingResult | null`
-  * `BatchSummary.pacing?`: `{ checkedCount, passCount, failCount, violationsByMetric }`
-  * `aggregateBatchRuns()` accumulates pass/fail and per-metric violation counts
-  * `buildSeedBank()` tags seeds with `"pacingFailure"` when `pacingResult.pass === false`
-  * Pacing violations exclude seeds from `"good"` classification
+* Add creation of the vis/explored texture near the other masks (after `tintTex` is a good spot; `tintTex` is around **line ~366**).
+* Use `useRef` to keep `{ data, tex }` stable across renders.
+* Recompute on player move using `useEffect` watching `props.playerX`, `props.playerY`.
 
-### Batch UI
+Concrete insertion points:
 
-* `src/inspect/BatchResultsView.tsx`
+* **Add after** `const tintTex = useMemo(...` (≈ line **366**):
 
-  * Seed filter includes `"pacingFailure"` tab (shown when violations exist)
-  * Pacing Targets Summary panel: checked/pass/fail counts, rejection rate, violations by metric
-  * Pacing failure badge styling: purple (`#4a1a5a`)
+  * `const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);`
+  * initialize once when `W,H` are known
+* **Add effect**:
 
----
+  * `useEffect(() => { updateVisExploredRGBA(...); visRef.current!.tex.needsUpdate = true; }, [W,H, props.playerX, props.playerY]);`
 
-## PHASE 4 — EXCLUSION / INCLUSION RULES (SHIPPED — 2026-02-15)
+Uniform wiring:
 
-### Contract
+* In the shader material uniforms block (starts around **line ~381**, at `uniforms: { ... }`), add:
 
-* **Pre-generation**: pattern exclusion lists forcibly skip named patterns before `runPatternsBestEffort()`, regardless of `include*` toggles in PatternConfig.
-* **Post-generation**: required-pattern and required-content checks reject seeds that are missing required outcomes.
-* Exclusion/inclusion rules are distinct from pattern toggles: toggles are structural config; rules are authorial constraints.
-* Default is `null` (unconstrained).
+  * `uVisExplored: { value: visRef.current?.tex ?? null }`
 
-### Data Model (Wizard / Contract / Result)
+### 4) Teach the fragment shader to respect exploration/visibility
 
-* `InclusionRules`: `{ excludePatterns?: string[]; requirePatterns?: string[]; requireContentTypes?: string[] }`
-* Valid pattern names: `"introGate"`, `"leverHiddenPocket"`, `"leverOpensDoor"`, `"plateOpensDoor"`, `"gateThenOptionalReward"`
-* Valid content types: `"levers"`, `"doors"`, `"plates"`, `"blocks"`, `"chests"`, `"secrets"`, `"hazards"`, `"monsters"`, `"keys"`, `"circuits"`, `"hidden"`
-* Stored on:
+**Edit: `src/rendering/tileShader.ts`**
 
-  * `ModeConfig`, `RunContract`, `SingleRunResult` as `inclusionRules: InclusionRules | null`
-* Wizard action:
+Add a new uniform in `tileFrag`:
 
-  * `SET_INCLUSION_RULES` (Step 4 change — invalidates results only)
+* `uniform sampler2D uVisExplored;`
 
-### Validation Module
+Then in the cell shading portion (where you already sample `uSolid/uChar/uTint`):
 
-* `src/inclusionRules.ts` (NEW)
+* Sample `uVisExplored` using the same grid UV you use for other masks.
+* Implement:
 
-  * `InclusionViolation`: `{ kind: "requiredPatternMissing" | "requiredContentMissing", name, detail? }`
-  * `InclusionResult`: `{ pass: boolean, violations: InclusionViolation[] }`
-  * `validateInclusionRules(meta, rules, patternDiagnostics)`:
+  * if `explored == 0` → discard / transparent
+  * else apply:
 
-    * if `rules` is null → pass
-    * checks `requirePatterns`: at least one diagnostic with matching name must have `ok === true`
-    * checks `requireContentTypes`: `meta[name]` array must be non-empty
-    * returns pass + violations
+    * `dim = mix(exploredDim, 1.0, vis)` (where `vis` is 0..1)
+    * background gets a small additive lift when `vis>0`
+    * foreground gets a slight boost when `vis>0`
 
-### Pre-Generation Filtering
+Keep this purely visual: no gameplay policy.
 
-* `src/mazeGen.ts`
+### 5) Optional: expose visibility params in render theme (later)
 
-  * `ContentOptions.excludePatterns?: string[]`
-  * After building the patterns array and before `runPatternsBestEffort()`, filters out any pattern whose name is in the exclusion set
-  * Excluded patterns produce no diagnostics (they are never attempted)
+If you want the behavior authorable (not required for first pass):
 
-### Execution Wiring
+**Edit: `src/rendering/renderTheme.ts`** to include:
 
-* `src/App.tsx`
+* `exploredDim`
+* `visibleFgBoost`
+* `visibleBgBoost`
+* `visRadius`, `innerRadius`
 
-  * Passes `excludePatterns` from `contract.inclusionRules?.excludePatterns` into content options
-  * Calls `validateInclusionRules()` in both single and batch paths after pacing validation
-  * Plumbs `inclusionResult` into results
-
-### Batch + Seed Bank
-
-* `src/batchStats.ts`
-
-  * `BatchRunInput.inclusionResult?: InclusionResult | null`
-  * `BatchSummary.inclusion?`: `{ checkedCount, passCount, failCount, violationsByName }`
-  * `aggregateBatchRuns()` accumulates pass/fail and per-name violation counts
-  * `buildSeedBank()` tags seeds with `"inclusionViolation"` when `inclusionResult.pass === false`
-  * Inclusion violations exclude seeds from `"good"` classification
-
-### Batch UI
-
-* `src/inspect/BatchResultsView.tsx`
-
-  * Seed filter includes `"inclusionViolation"` tab (shown when violations exist)
-  * Inclusion Rules Summary panel: checked/pass/fail counts, rejection rate, violations by name
-  * Inclusion violation badge styling: warm brown (`#5a3a1a`)
-
-### Wizard UI
-
-* `src/wizard/WizardScreen.tsx`
-
-  * "Inclusion / Exclusion Rules" section in Step 4 after Pattern Configuration
-  * Three columns: Exclude Patterns (5 checkboxes), Require Patterns (5 checkboxes), Require Content Types (11 checkboxes)
-  * Warning banner when a pattern is both excluded and required (guarantees 100% rejection)
+Then thread them through `DungeonRenderView` → shader uniforms. (This can be a Milestone 7 Phase 2 refinement.)
 
 ---
 
-## PHASE 5 — SEED ANNOTATION (SHIPPED — 2026-02-16)
+## TOUCHPOINTS FOR DEBUGGING
 
-### Intent
+**Edit: `src/rendering/DungeonRenderView.tsx`** tooltip builder (there’s a `buildTooltipLines` here near the top of the file):
 
-Non-generation workflow layer: attach author metadata to curated seeds for downstream consumption (e.g. level design handoff, theme tagging, difficulty labeling).
+Add two lines:
 
-### Data Model
+* `visA=<0..255>`
+* `explored=<0|255>`
 
-* Extend `SeedBankEntry` with optional author metadata:
-
-  * `annotation?: SeedAnnotation`
-  * `SeedAnnotation`: `{ difficultyLabel?: string; themeTags?: string[]; notes?: string; curated?: boolean }`
-* Annotations are **not** generation inputs — they attach to completed seeds post-generation.
-* Export (seed bank JSON download) includes annotations when present.
-
-### Files to Modify
-
-* **`src/batchStats.ts`** — Key types: `SeedBankEntry` (line ~877), `SeedBank` (line ~890), `buildSeedBank()` (line ~903). Extend `SeedBankEntry` with optional `annotation` field. `buildSeedBank()` initializes it as `undefined`. Schema version may bump to 2.
-
-* **`src/inspect/BatchResultsView.tsx`** — Key symbols: `SeedBankTable` component (line ~104), `BatchResultsPayload` type, `BatchResultsViewProps` type. Add inline annotation editing UI per seed row (notes text input, difficulty label dropdown, theme tag chips, curated checkbox). Must preserve existing download/filter/rerun functionality.
-
-* **`src/App.tsx`** — Key symbols: `BatchResultsView` usage (line ~517), `EXEC_DONE` dispatch. Annotations are mutable post-generation so `App.tsx` needs a callback to update seed bank state in the wizard result without invalidating. Consider a new action like `UPDATE_SEED_ANNOTATION` that patches `result.seedBank` without clearing results.
-
-* **`src/wizard/wizardReducer.ts`** — Key symbols: `BatchRunResult` type (line ~187), `WizardAction` union (line ~260), `wizardReducer` function. Add `UPDATE_SEED_ANNOTATION` action that mutates `result.seedBank.seeds[idx].annotation` without triggering invalidation (Step 7 edit, not Step 4).
-
-* **`src/CONTEXT.md`** — Update phase status to shipped.
-
-### Key Considerations
-
-* Annotations are **Step 7 edits** — they must NOT invalidate results or trigger re-execution.
-* The `UPDATE_SEED_ANNOTATION` action is unique among wizard actions: it mutates the result object rather than config. This requires careful reducer handling to avoid `clearResults()`.
-* Seed bank JSON export must include annotations so they survive round-trips.
-* Single-mode inspection does not produce a seed bank, so annotation UI is batch-only.
+This makes it easy to sanity-check mask updates without guessing.
 
 ---
 
-## PUBLIC API — AUTHORIAL CONTROLS PRESET INTEGRATION
+## ACCEPTANCE CHECKLIST
 
-The public API (`src/api/generateDungeon.ts`) now supports authorial controls via **preset IDs** in addition to inline values.
+* Moving player updates visibility every step.
+* Previously seen cells remain explored forever (until regeneration).
+* Unexplored cells do not render at all.
+* Visible cells look “lit” compared to explored-not-visible.
+* No generator outputs or seed curation policy changes required.
 
-### Resolution Order
-
-For each control (difficulty band, content budget, pacing targets):
-1. **Inline value** (`difficultyBand`, `contentBudget`, `pacingTargets`) — highest precedence
-2. **Preset ID** (`difficultyBandId`, `budgetId`, `pacingId`) — resolved from registry
-3. **null** — unconstrained (validation skipped or returns pass-by-default)
-
-### Preset Registries (`src/api/authorialPresets.ts`)
-
-Three registries following the `themeRegistry.ts` pattern:
-
-| Control | Register | Lookup | List IDs |
-|---|---|---|---|
-| Difficulty Band | `registerBands()` | `getBand(id)` | `getAllBandIds()` |
-| Content Budget | `registerBudgets()` | `getBudget(id)` | `getAllBudgetIds()` |
-| Pacing Targets | `registerPacingPresets()` | `getPacingPreset(id)` | `getAllPacingIds()` |
-
-### Default Preset IDs
-
-| Control | Preset IDs |
-|---|---|
-| Difficulty Band | `"easy"`, `"medium"`, `"hard"` |
-| Content Budget | `"minimal"`, `"balanced"`, `"rich"` |
-| Pacing Targets | `"relaxed"`, `"standard"`, `"intense"` |
-
-Defaults are auto-registered on import. Games can call `register*()` to add or override presets.
-
-### Inclusion Rules
-
-No preset registry for `InclusionRules` — these are project-specific pattern/content lists, not reusable presets. Pass inline or null.
 
 ---
 
 ## CURRENT STATE SUMMARY
 
 * Milestone 5 is **closed**; seed curation workflow is canonical.
-* Milestone 6 is **closed** — all 5 phases shipped:
-  * **Phase 1**: content budgets validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
-  * **Phase 2**: difficulty metrics computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
-  * **Phase 3**: pacing metrics (first-gate distance, reward-after-gate, content-free intro, shortcut presence, ramp profile) computed + validated post-generation; violations tagged; batch UI summarizes; seed bank filters.
-  * **Phase 4**: exclusion/inclusion rules — pre-generation pattern exclusion via `excludePatterns` + post-generation required-pattern/content verification; violations tagged `"inclusionViolation"`; batch UI summarizes; seed bank filters; wizard UI with contradiction warnings.
-  * **Phase 5**: seed annotation — author metadata (`SeedAnnotation`: difficulty label, theme tags, notes, curated flag) attached to seed bank entries post-generation; inline annotation editing UI in batch results; `UPDATE_SEED_ANNOTATION` reducer action (Step 7 edit, no invalidation); curated filter; annotations included in seed bank JSON export.
-
+* Milestone 6 is **closed** — all 5 phases shipped.
+* Milestone 7 is **open**: ready to begin.
 ---
 
 ## GENERAL PROJECT PLAN (HIGH LEVEL, SHORT)
 
-* Milestones 1–4: geometry/runtime/circuits + progression composition — complete
-* Milestone 5: diagnostics → soft steering → hard safety nets + seed curation — complete
-* Milestone 6: authorial controls (budgets, difficulty, pacing, include/exclude, annotation) — complete
-
+* Milestone 7: Exploration and visibility
 ---
 
 ## REMINDERS (LOCKED)
