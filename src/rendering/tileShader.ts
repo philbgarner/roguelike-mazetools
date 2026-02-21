@@ -53,6 +53,11 @@ export const tileFrag = /* glsl */ `
   uniform float uSelectedEnabled;
   uniform float uSelectedStrength;
 
+  // M7 visibility + explored
+  uniform sampler2D uVisExplored;
+  uniform float uExploredDim;
+  uniform float uVisFgBoost;
+  uniform float uVisBgBoost;
 
   varying vec2 vUv;
 
@@ -132,6 +137,20 @@ export const tileFrag = /* glsl */ `
       gl_FragColor = vec4(0.0);
       return;
     }
+
+    // ------------------------------------------------------------
+    // M7 FOG OF WAR — sample vis/explored texture
+    // ------------------------------------------------------------
+    vec4 visData  = texture2D(uVisExplored, texUv);
+    float explored = step(0.5, visData.g);
+    float vis      = visData.a;           // 0..1 (already normalised by GL)
+
+    if (explored < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    float dim = mix(uExploredDim, 1.0, vis);
 
     float tile = mix(
       mix(uFloorTile, uWallTile, isEdgeWall),
@@ -297,6 +316,15 @@ export const tileFrag = /* glsl */ `
       vec3 hoverCol = vec3(0.95);
       outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
     }
+
+    // ------------------------------------------------------------
+    // M7 — apply dim (explored-but-dark) and visibility boost
+    // ------------------------------------------------------------
+    outRgb *= dim;
+    // Warm ambient glow for currently visible cells
+    outRgb += vis * uVisBgBoost * vec3(0.15, 0.10, 0.06);
+    // Slight foreground lift for visible cells (brightens ink pixels)
+    outRgb = clamp(outRgb + vis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
 
     gl_FragColor = vec4(outRgb, 1.0);
   }

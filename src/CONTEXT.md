@@ -101,199 +101,37 @@ Authorial controls are **hard constraints** applied to completed generations.
 
 ---
 
-# Milestone 7 — VISIBILITY AND EXPLORATION (STARTED)
+# Milestone 7 — VISIBILITY AND EXPLORATION (COMPLETE)
 
-## GOAL
+Runtime fog-of-war layer for the inspection/runtime renderer. Purely a render concern — no
+generator outputs or seed curation policy changes.
 
-Add a **runtime exploration layer** for the inspection/runtime renderer:
+## What shipped
 
-* A **visibility + explored** mask is recomputed **every time `playerX` or `playerY` changes**.
-* Rendering becomes “fog of war”-like:
+* **`src/rendering/visibility.ts`** (new) — `VisibilityParams`, `createVisExploredRGBA`,
+  `updateVisExploredRGBA`. RGBA8 `DataTexture`: G=explored (0/255), A=visibility (0–255).
+  Euclidean radius falloff; inner ring always A=255; explored accumulates across moves.
 
-  * **Unexplored** cells: **not rendered at all**.
-  * **Explored but not currently visible**: rendered, but **dim**.
-  * **Currently visible** cells: rendered with a **lit background** and **slightly brighter foreground**.
+* **`src/rendering/tiles.ts`** — added `maskToTileTextureRGBA8` alongside the R8 helper.
 
-This is a **render/runtime concern**, not a generator policy concern.
+* **`src/rendering/tileShader.ts`** — uniforms `uVisExplored`, `uExploredDim`, `uVisFgBoost`,
+  `uVisBgBoost`. Unexplored cells discard; explored cells dimmed by `mix(uExploredDim, 1.0, vis)`;
+  visible cells get a warm bg glow and fg lift.
 
----
+* **`src/rendering/DungeonRenderView.tsx`** — `visRef`/`visTex` `useMemo` (re-created on W/H
+  change); `useEffect` on `playerX`/`playerY` calls `updateVisExploredRGBA` + `needsUpdate`.
+  `transparent: true` on `ShaderMaterial`. Tooltip shows `visA` and `explored` for debugging.
+  Internal `_visDataRef` prop shares the buffer with the wrapper for tooltip reads.
 
-## DATA MODEL
+## Tunable uniforms (defaults)
 
-Create a new `THREE.DataTexture` sized `W×H`:
+| Uniform | Default | Effect |
+|---|---|---|
+| `uExploredDim` | 0.25 | brightness of explored-but-dark cells |
+| `uVisFgBoost` | 0.15 | foreground lift for visible cells |
+| `uVisBgBoost` | 0.08 | warm bg glow for visible cells |
 
-* **Format**: `RGBA8` (`THREE.RGBAFormat`, `THREE.UnsignedByteType`)
-* Per-cell channels (0–255):
-
-  * **A (alpha)** = *visibility* (0 = not visible, 255 = fully visible)
-  * **G (green)** = *explored* (0 or 255)
-  * R/B unused (0)
-
-Update rule on player movement:
-
-1. **Wipe ONLY visibility** (set A=0 for all cells; leave explored G as-is).
-2. Recompute new visibility A values.
-3. For any cell with A>0, also set **G=255** (explored accumulates).
-
-Visibility shape:
-
-* Cells **on and immediately surrounding the player** should be **A=255** (hard inner ring).
-* Other visible cells scale by distance to player to simulate gradual darkness (falloff).
-* Keep it simple first: **no occlusion / line-of-sight** yet (pure radius + falloff).
-
----
-
-## RENDERING REQUIREMENTS (SHADER)
-
-Shader behavior using the vis/explored texture:
-
-* Sample `uVisExplored` at the current cell:
-
-  * `explored = (g > 0.5)`
-  * `vis = a` in `[0..1]`
-* If **not explored** → **discard** (or output fully transparent).
-* If explored:
-
-  * Apply **dim factor** when `vis == 0` (e.g. 0.20–0.35).
-  * Apply **brightening** when `vis > 0`:
-
-    * Background color present (fog-light) and
-    * Foreground slightly brighter than non-visible explored cells.
-
-This should affect both:
-
-* atlas glyph sampling (foreground), and
-* tile background fill (wall/floor backdrop).
-
----
-
-## IMPLEMENTATION PLAN (FILES + SYMBOLS)
-
-### 1) Add visibility/explored texture builder + updater
-
-**New file: `src/rendering/visibility.ts`**
-
-Add these exports:
-
-* `export type VisibilityParams = { radius: number; innerRadius: number; exploredOnVisible: boolean; }`
-* `export function createVisExploredRGBA(W: number, H: number, name: string): { data: Uint8Array; tex: THREE.DataTexture }`
-* `export function updateVisExploredRGBA(data: Uint8Array, W: number, H: number, playerX: number, playerY: number, params: VisibilityParams): void`
-
-Notes:
-
-* `data.length === W*H*4`
-* Index: `i = (y*W + x) * 4`
-
-  * `data[i+1]` = G explored
-  * `data[i+3]` = A visibility
-* Update algorithm:
-
-  * clear A (only): loop all cells → `data[i+3]=0`
-  * compute vis within `radius`:
-
-    * `d = hypot(dx,dy)` (or manhattan; pick one and keep consistent)
-    * if `d <= innerRadius` → A=255
-    * else if `d <= radius` → A = `floor(255 * (1 - (d-innerRadius)/(radius-innerRadius)))`
-  * if A>0 and `exploredOnVisible` → `data[i+1]=255`
-
-### 2) Add a texture factory for RGBA8 (if you want symmetry with R8 helpers)
-
-**Edit: `src/rendering/tiles.ts`**
-
-Add alongside `maskToTileTextureR8` (near **line ~176**):
-
-* `export function maskToTileTextureRGBA8(mask: Uint8Array, W: number, H: number, name: string): THREE.DataTexture`
-
-Use the same sampler settings as R8:
-
-* `NearestFilter`, no mips, clamp, `NoColorSpace`, `flipY=false`.
-
-(Alternatively, you can build the `DataTexture` directly in `visibility.ts` and skip adding this helper.)
-
-### 3) Wire the new texture into the renderer
-
-**Edit: `src/rendering/DungeonRenderView.tsx`**
-
-Where to hook:
-
-* Add creation of the vis/explored texture near the other masks (after `tintTex` is a good spot; `tintTex` is around **line ~366**).
-* Use `useRef` to keep `{ data, tex }` stable across renders.
-* Recompute on player move using `useEffect` watching `props.playerX`, `props.playerY`.
-
-Concrete insertion points:
-
-* **Add after** `const tintTex = useMemo(...` (≈ line **366**):
-
-  * `const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);`
-  * initialize once when `W,H` are known
-* **Add effect**:
-
-  * `useEffect(() => { updateVisExploredRGBA(...); visRef.current!.tex.needsUpdate = true; }, [W,H, props.playerX, props.playerY]);`
-
-Uniform wiring:
-
-* In the shader material uniforms block (starts around **line ~381**, at `uniforms: { ... }`), add:
-
-  * `uVisExplored: { value: visRef.current?.tex ?? null }`
-
-### 4) Teach the fragment shader to respect exploration/visibility
-
-**Edit: `src/rendering/tileShader.ts`**
-
-Add a new uniform in `tileFrag`:
-
-* `uniform sampler2D uVisExplored;`
-
-Then in the cell shading portion (where you already sample `uSolid/uChar/uTint`):
-
-* Sample `uVisExplored` using the same grid UV you use for other masks.
-* Implement:
-
-  * if `explored == 0` → discard / transparent
-  * else apply:
-
-    * `dim = mix(exploredDim, 1.0, vis)` (where `vis` is 0..1)
-    * background gets a small additive lift when `vis>0`
-    * foreground gets a slight boost when `vis>0`
-
-Keep this purely visual: no gameplay policy.
-
-### 5) Optional: expose visibility params in render theme (later)
-
-If you want the behavior authorable (not required for first pass):
-
-**Edit: `src/rendering/renderTheme.ts`** to include:
-
-* `exploredDim`
-* `visibleFgBoost`
-* `visibleBgBoost`
-* `visRadius`, `innerRadius`
-
-Then thread them through `DungeonRenderView` → shader uniforms. (This can be a Milestone 7 Phase 2 refinement.)
-
----
-
-## TOUCHPOINTS FOR DEBUGGING
-
-**Edit: `src/rendering/DungeonRenderView.tsx`** tooltip builder (there’s a `buildTooltipLines` here near the top of the file):
-
-Add two lines:
-
-* `visA=<0..255>`
-* `explored=<0|255>`
-
-This makes it easy to sanity-check mask updates without guessing.
-
----
-
-## ACCEPTANCE CHECKLIST
-
-* Moving player updates visibility every step.
-* Previously seen cells remain explored forever (until regeneration).
-* Unexplored cells do not render at all.
-* Visible cells look “lit” compared to explored-not-visible.
-* No generator outputs or seed curation policy changes required.
-
+Visibility defaults: `radius=6`, `innerRadius=1.5`.
 
 ---
 

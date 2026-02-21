@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
+import { createVisExploredRGBA, updateVisExploredRGBA } from "./visibility";
 import { tileFrag, tileVert } from "./tileShader";
 import type { RenderTheme } from "./renderTheme";
 import { THEME_DEFAULT } from "./renderTheme";
@@ -38,9 +39,14 @@ function buildTooltipLines(
   content: ContentOutputs,
   x: number,
   y: number,
+  visData?: Uint8Array | null,
 ) {
   const w = bsp.width;
   const i = y * w + x;
+
+  // M7 vis/explored
+  const visA = visData ? visData[i * 4 + 3] : -1;
+  const exploredG = visData ? visData[i * 4 + 1] : -1;
 
   // --- BSP masks ---
   const solid = (bsp.masks?.solid?.[i] ?? 0) ? 1 : 0;
@@ -60,6 +66,7 @@ function buildTooltipLines(
 
   // --- raw (matches InspectionShell style) ---
   lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+  if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
   if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
   if (hz !== 0) lines.push(`hazardType=${hz}`);
   if (danger !== 0) lines.push(`danger=${danger}`);
@@ -187,6 +194,9 @@ type Props = {
   onCellClick?: (cell: { x: number; y: number }) => boolean;
 
   handleHoverCell?: (x: number, y: number) => void;
+
+  // M7: internal — populated by DungeonRenderScene so the wrapper tooltip can read vis data.
+  _visDataRef?: React.MutableRefObject<Uint8Array | null>;
 };
 
 // -------------------------------
@@ -373,6 +383,18 @@ function DungeonRenderScene(props: Props) {
     return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
   }, [bsp, content, W, H, props.playerX, props.playerY]);
 
+  // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
+  const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  const visTex = useMemo(() => {
+    if (visRef.current) visRef.current.tex.dispose();
+    const vr = createVisExploredRGBA(W, H, "vis_explored_rgba");
+    visRef.current = vr;
+    // Expose the data buffer to the wrapper via the shared ref
+    if (props._visDataRef) props._visDataRef.current = vr.data;
+    return vr.tex;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [W, H]);
+
   // --- Shader material ---
   const mat = useMemo(() => {
     return new THREE.ShaderMaterial({
@@ -414,15 +436,21 @@ function DungeonRenderScene(props: Props) {
         uSelectedCell: { value: new THREE.Vector2(-1, -1) },
         uSelectedEnabled: { value: 0 },
         uSelectedStrength: { value: 0.55 }, // stronger than hover
+        // M7 visibility + explored
+        uVisExplored: { value: visTex },
+        uExploredDim: { value: 0.25 },
+        uVisFgBoost: { value: 0.15 },
+        uVisBgBoost: { value: 0.08 },
       },
       depthTest: false,
       depthWrite: false,
-      transparent: false,
+      transparent: true,
     });
   }, [
     bsp.textures.solid,
     charTex,
     tintTex,
+    visTex,
     atlas,
     W,
     H,
@@ -572,6 +600,21 @@ function DungeonRenderScene(props: Props) {
       atlas.dispose();
     };
   }, [atlas]);
+
+  // M7: recompute visibility every time the player moves (or W/H change).
+  useEffect(() => {
+    const vr = visRef.current;
+    if (!vr) return;
+    updateVisExploredRGBA(vr.data, W, H, props.playerX ?? 0, props.playerY ?? 0, {
+      radius: 6,
+      innerRadius: 1.5,
+      exploredOnVisible: true,
+    });
+    vr.tex.needsUpdate = true;
+    mat.uniforms.uVisExplored.value = vr.tex;
+    // Keep wrapper tooltip data in sync
+    if (props._visDataRef) props._visDataRef.current = vr.data;
+  }, [mat, W, H, props.playerX, props.playerY, props._visDataRef]);
 
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;
@@ -825,6 +868,9 @@ export default function DungeonRenderView(props: Props) {
 
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
 
+  // M7: shared ref populated by DungeonRenderScene so tooltip can read vis data.
+  const visDataRef = useRef<Uint8Array | null>(null);
+
   const [tooltip, setTooltip] = useState<{
     x: number;
     y: number;
@@ -906,10 +952,16 @@ export default function DungeonRenderView(props: Props) {
     const loot = content.masks.lootTier[i] | 0;
     const hz = content.masks.hazardType[i] | 0; // meaningful when ft==10 per repomix
 
+    // M7 vis/explored
+    const vd = visDataRef.current;
+    const visA = vd ? vd[i * 4 + 3] : -1;
+    const exploredG = vd ? vd[i * 4 + 1] : -1;
+
     const lines: string[] = [];
 
     // --- raw (keep) ---
     lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+    if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
     if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
     if (hz !== 0) lines.push(`hazardType=${hz}`);
     if (danger !== 0) lines.push(`danger=${danger}`);
@@ -991,6 +1043,7 @@ export default function DungeonRenderView(props: Props) {
         <OrthoFrustum pxPerCell={pxPerCell} />
         <DungeonRenderScene
           {...props}
+          _visDataRef={visDataRef}
           onCellHover={({ x, y, clientX, clientY }) => {
             const key = `${x},${y}`;
 
