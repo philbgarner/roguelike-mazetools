@@ -11,7 +11,8 @@
 //
 // This is an adapter carved from the old App.tsx inspection logic.
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { imageDataToPngDataUrl } from "../mazeGen";
 import DungeonRenderView from "../rendering/DungeonRenderView";
@@ -30,6 +31,13 @@ import type {
   CircuitEvalResult,
 } from "../evaluateCircuits";
 import { evaluateCircuits } from "../evaluateCircuits";
+
+import { aStar8 } from "../pathfinding/aStar8";
+import {
+  createPathMaskRGBA,
+  clearPathMaskRGBA,
+  stampPath,
+} from "../rendering/pathMask";
 
 import CircuitDiagnosticsSection from "../debug/CircuitDiagnosticsSection";
 import type {
@@ -621,6 +629,11 @@ export function InspectionShell(props: InspectionShellProps) {
 
   const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
 
+  // M8: path mask — owned here, passed to DungeonRenderView
+  const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  // Track current texture reference so we can force React re-renders on change
+  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
+
   // Hover tooltip state
   const hoverTimerRef = useRef<number | null>(null);
   const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
@@ -646,6 +659,18 @@ export function InspectionShell(props: InspectionShellProps) {
     return computeStartCell(dungeon, content);
   }, [dungeon, content]);
 
+  // M8: create/recreate path mask when dungeon dimensions change
+  useEffect(() => {
+    if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
+    const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
+    pathMaskRef.current = pm;
+    setPathMaskTex(pm.tex);
+    return () => {
+      pm.tex.dispose();
+      pathMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
   // -------------------------
   // Render-pane local state
   // -------------------------
@@ -655,6 +680,28 @@ export function InspectionShell(props: InspectionShellProps) {
     x: startCell.x,
     y: startCell.y,
   }));
+
+  // M8: recompute player path to selected cell whenever selection or player moves
+  const recomputePlayerPath = useCallback(
+    (targetX: number, targetY: number) => {
+      const pm = pathMaskRef.current;
+      if (!pm) return;
+      clearPathMaskRGBA(pm.data);
+      const result = aStar8(
+        dungeon,
+        content,
+        { x: player.x, y: player.y },
+        { x: targetX, y: targetY },
+      );
+      if (result) {
+        stampPath(pm.data, dungeon.width, result.path, "player");
+      }
+      pm.tex.needsUpdate = true;
+      // Force DungeonRenderView to pick up the refreshed texture
+      setPathMaskTex(pm.tex);
+    },
+    [dungeon, content, player.x, player.y],
+  );
 
   // "focus" is the camera target; click-to-focus updates this
   const [focus, setFocus] = useState<{ x: number; y: number }>(() => ({
@@ -1533,9 +1580,12 @@ export function InspectionShell(props: InspectionShellProps) {
                 setTooltip((t) => (t.visible ? { ...t, visible: false } : t));
               }}
               onCellClick={({ x, y }) => {
+                // Compute player path to clicked cell (debug/inspection mode)
+                recomputePlayerPath(x, y);
                 // Interactions win; only if false will render view fall back to camera focus
                 return tryInteractAtCell(x, y);
               }}
+              pathMaskTex={pathMaskTex ?? undefined}
             />
           )}
         </div>

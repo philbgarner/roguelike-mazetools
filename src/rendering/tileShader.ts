@@ -59,6 +59,11 @@ export const tileFrag = /* glsl */ `
   uniform float uVisFgBoost;
   uniform float uVisBgBoost;
 
+  // M8 path mask
+  uniform sampler2D uPathMask;
+  uniform float uPathStrength;
+  uniform float uPathAnimSpeed;
+
   varying vec2 vUv;
 
   // ------------------------------------------------------------
@@ -152,20 +157,72 @@ export const tileFrag = /* glsl */ `
 
     float dim = mix(uExploredDim, 1.0, vis);
 
-    float tile = mix(
-      mix(uFloorTile, uWallTile, isEdgeWall),
-      ch,
-      hasChar
-    );
+    float baseTile = mix(uFloorTile, uWallTile, isEdgeWall);
 
     float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
 
     float cols = uAtlasGrid.x;
     float rows = uAtlasGrid.y;
-    float tx = mod(tile, cols);
-    float ty = floor(tile / cols);
 
-    float isMonster = tileIs(tile, uMonsterTile);
+    // --- Base tile (floor or wall) ---
+    float btx = mod(baseTile, cols);
+    float bty = floor(baseTile / cols);
+    vec2 baseAtlasUv = (vec2(btx, bty) + local) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) baseAtlasUv.y = 1.0 - baseAtlasUv.y;
+    vec4 baseC = texture2D(uAtlas, baseAtlasUv);
+
+    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
+    float baseInkA = smoothstep(0.05, 0.20, baseC.a);
+    vec3 baseInk = baseC.rgb;
+
+    // --- M8 PATH GRADIENT — sampled before entity glyph ---
+    vec4 pathData = texture2D(uPathMask, texUv);
+    float pathStep = pathData.a * 255.0; // 0 = no path; 1..255 = step index
+
+    // Apply path overlay only on explored, walkable (non-wall) cells that have a path
+    float onPath = step(0.5, pathData.a) * explored * (1.0 - curWall);
+
+    // Infer direction-of-travel from stepped alpha neighbors
+    // Sample the 4 cardinal neighbor alphas (cheaper than 8)
+    vec2 oneCell = vec2(1.0) / uGridSize;
+    float aN = texture2D(uPathMask, texUv + vec2( 0.0, -oneCell.y)).a * 255.0;
+    float aS = texture2D(uPathMask, texUv + vec2( 0.0,  oneCell.y)).a * 255.0;
+    float aE = texture2D(uPathMask, texUv + vec2( oneCell.x,  0.0)).a * 255.0;
+    float aW = texture2D(uPathMask, texUv + vec2(-oneCell.x,  0.0)).a * 255.0;
+
+    // Direction toward start = neighbor with step = pathStep - 1
+    vec2 towardStart = vec2(0.0);
+    float target = pathStep - 1.0;
+    if (abs(aN - target) < 0.5) towardStart += vec2( 0.0,  1.0);
+    if (abs(aS - target) < 0.5) towardStart += vec2( 0.0, -1.0);
+    if (abs(aE - target) < 0.5) towardStart += vec2(-1.0,  0.0);
+    if (abs(aW - target) < 0.5) towardStart += vec2( 1.0,  0.0);
+    float tLen = length(towardStart);
+    vec2 travelDir = (tLen > 0.001) ? towardStart / tLen : vec2(1.0, 0.0);
+
+    // Animated scrolling gradient along direction of travel
+    float proj = dot(local - vec2(0.5), travelDir);
+    float phase = fract(proj * 1.5 + uTime * uPathAnimSpeed);
+    float gradient = smoothstep(0.0, 0.4, phase) * (1.0 - smoothstep(0.6, 1.0, phase));
+
+    // Step banding for "marching" look
+    float band = fract(pathStep / 8.0);
+    float pathIntensity = mix(gradient, band, 0.3) * uPathStrength * onPath;
+
+    // Path color: pick based on channel (R=enemy, G=npc, B=player)
+    // Blend toward the dominant channel's color
+    vec3 enemyPath  = vec3(1.0, 0.3, 0.3);
+    vec3 npcPath    = vec3(0.3, 1.0, 0.5);
+    vec3 playerPath = vec3(0.3, 0.6, 1.0);
+    float hasEnemy  = step(0.5, pathData.r);
+    float hasNpc    = step(0.5, pathData.g);
+    float hasPlayer = step(0.5, pathData.b);
+    vec3 pathColor = enemyPath * hasEnemy + npcPath * hasNpc + playerPath * hasPlayer;
+    float totalKinds = hasEnemy + hasNpc + hasPlayer;
+    pathColor = (totalKinds > 0.0) ? pathColor / totalKinds : playerPath;
+
+    // --- Entity glyph (if present) ---
+    float isMonster = tileIs(ch, uMonsterTile);
     vec2 local2 = local;
 
     if (isMonster > 0.5) {
@@ -173,14 +230,18 @@ export const tileFrag = /* glsl */ `
       local2 = breatheWarp(local, breath, uEnemyBreathAmp);
     }
 
+    float tx = mod(ch, cols);
+    float ty = floor(ch / cols);
     vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
     if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+    vec4 charC = texture2D(uAtlas, atlasUv);
+    float charInkA = smoothstep(0.05, 0.20, charC.a) * hasChar;
+    vec3 charInk = charC.rgb;
 
-    vec4 c = texture2D(uAtlas, atlasUv);
-
-    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
-    float inkA = smoothstep(0.05, 0.20, c.a);
-    vec3 ink = c.rgb;
+    // Use entity sample when present, else base
+    vec4 c = (hasChar > 0.5) ? charC : baseC;
+    float inkA = (hasChar > 0.5) ? charInkA : baseInkA;
+    vec3 ink = (hasChar > 0.5) ? charInk : baseInk;
 
     // -------------------------
     // Tint selection
@@ -229,7 +290,7 @@ export const tileFrag = /* glsl */ `
     // DOOR EFFECT — stronger, calmer, architectural
     // ------------------------------------------------------------
 
-    float isDoor = tileIs(tile, uDoorTile);
+    float isDoor = tileIs(ch, uDoorTile);
 
     if (isDoor > 0.5) {
       vec2 eps = vec2(1.0 / 32.0);
@@ -269,7 +330,13 @@ export const tileFrag = /* glsl */ `
       ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
     }
 
+    // --- Layer 1: base floor/wall ---
     vec3 outRgb = mix(bg, ink, inkA);
+
+    // --- Layer 2: path gradient overlay (under entity glyph, over floor) ---
+    // Only blend the path where entity glyph is absent (ink alpha is low)
+    float pathBlend = pathIntensity * (1.0 - inkA * hasChar);
+    outRgb = mix(outRgb, pathColor, pathBlend * 0.5);
 
     // ------------------------------------------------------------
     // SELECTED OUTLINE (R1.5) — inspection affordance

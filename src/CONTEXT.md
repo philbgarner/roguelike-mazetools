@@ -135,12 +135,246 @@ Visibility defaults: `radius=6`, `innerRadius=1.5`.
 
 ---
 
+# Milestone 8 — PATHFINDING (PLANNED)
+
+Efficient **8-way A*** pathfinding (with diagonals) plus a **renderable path mask** (`THREE.DataTexture RGBA8`) that the shader can display as an **animated direction-of-travel gradient** **under entity glyphs** (but **over floor glyphs**).
+
+---
+
+## Goals
+
+1. **Pathfinding core**
+
+   * Implement fast **8-directional A*** (N, NE, E, SE, S, SW, W, NW).
+   * Use an efficient open-set (binary heap / priority queue).
+   * Use an admissible heuristic for 8-way grids (**octile distance**).
+   * Integrate walkability via the existing shared rules (`isTileWalkable`) including optional resolvers.
+
+2. **Path mask texture (RGBA8)**
+
+   * Create/update a **stable** `THREE.DataTexture` sized `W×H`:
+
+     * **R** = enemy path coverage (0/255)
+     * **G** = npc/neutral path coverage (0/255)
+     * **B** = player path coverage (0/255)
+     * **A** = **step index from the path start** (0–255), giving a “stepped” look.
+   * Intended usage: for each mobile entity, compute its path-to-target; stamp the mask along the path.
+
+3. **Shader integration**
+
+   * Add a new uniform sampler: `uPathMask` (RGBA8).
+   * Render an **animated gradient** aligned with the inferred direction of travel (derived from stepped alpha neighbors).
+   * Composite order per-cell:
+
+     1. floor/wall base glyph
+     2. **path gradient overlay** (only on walkable cells; clipped by fog-of-war explored)
+     3. entity glyph ink on top
+
+---
+
+## New files to add
+
+### 1) `src/pathfinding/aStar8.ts` (new)
+
+Exports:
+
+* `export type GridPos = { x: number; y: number }`
+* `export type AStarPath = { path: GridPos[]; cost: number } | null`
+* `export function aStar8(...)`
+
+Key implementation notes:
+
+* Neighbor expansion: 8 dirs; cost `(10 orthogonal, 14 diagonal)` (integer math; avoids `sqrt`).
+* Heuristic: **octile**: `h = 10*(dx+dy) + (14-20)*min(dx,dy)`
+* Early-exit when reaching goal; reconstruct path via `cameFrom`.
+
+### 2) `src/pathfinding/minHeap.ts` (new)
+
+Exports:
+
+* `export class MinHeap<T>` with `push`, `pop`, `peek`, `size`, `updateKey` (optional), or implement lazy duplicate entries + best-known `gScore`.
+
+### 3) `src/rendering/pathMask.ts` (new)
+
+Exports:
+
+* `export type PathMaskKind = "enemy" | "npc" | "player"`
+* `export function createPathMaskRGBA(W: number, H: number, name: string)`
+  returns `{ data: Uint8Array; tex: THREE.DataTexture }` (same pattern as visibility)
+* `export function clearPathMaskRGBA(data: Uint8Array)` (sets all to 0)
+* `export function stampPath(...)` (writes channel + alpha step indices along a path)
+
+Stamping policy (simple + deterministic):
+
+* For each cell on the path at step `s`:
+
+  * set channel (R/G/B) to `255`
+  * set alpha to `max(existingA, s)` OR (preferably) `min(existingA==0?255:existingA, s)` — pick one and lock it in the spec.
+
+(Use `maskToTileTextureRGBA8` conventions: nearest filtering, clamp-to-edge, `NoColorSpace`, `flipY=false`.)
+
+---
+
+## Existing files to change
+
+### A) Shared walkability integration
+
+**File:** `src/walkability.ts`
+**Symbol:** `isTileWalkable(...)`
+**Lines:** 27–63
+Usage requirement for A*:
+
+* A* must call `isTileWalkable(dungeon, content, nx, ny, resolvers)` when expanding neighbors.
+* The A* API should accept the optional `WalkabilityResolvers` and pass it through.
+
+---
+
+### B) RGBA8 texture helper (already exists; reuse)
+
+**File:** `src/rendering/tiles.ts`
+**Symbol:** `maskToTileTextureRGBA8(...)`
+**Lines:** 207–235
+Plan:
+
+* Reuse this helper inside `createPathMaskRGBA(...)` to ensure texture parameters match other mask textures.
+
+---
+
+### C) Follow the visibility texture pattern (mirror it for path mask)
+
+**File:** `src/rendering/visibility.ts`
+**Symbols:**
+
+* `createVisExploredRGBA(...)` (lines 25–55)
+* `updateVisExploredRGBA(...)` (lines 60–102)
+  Plan:
+* Implement path-mask creation/update using the same “stable ref + needsUpdate” approach (create only on W/H change; mutate data per tick).
+
+---
+
+### D) Add a `uPathMask` uniform + shader compositing changes
+
+**File:** `src/rendering/tileShader.ts`
+Edits:
+
+1. **Uniform declaration**
+
+* Add: `uniform sampler2D uPathMask;`
+  Where: near the other samplers (currently `uSolid/uChar/uTint/uAtlas` at lines 20–23, and `uVisExplored` at line 57).
+
+2. **Sampling + fog gating**
+
+* Sample `vec4 pathData = texture2D(uPathMask, texUv);`
+* Apply only if `explored >= 0.5` (same explored discard logic at lines 148–151).
+
+3. **Direction-of-travel inference**
+
+* Use stepped alpha to infer local direction:
+
+  * `a = pathData.a * 255.0`
+  * Check the 8 neighbors’ alpha; prefer the neighbor with `alpha == a - 1` (toward start) or `a + 1` (toward goal) depending on the visual you want.
+  * Convert that neighbor offset into a direction vector `dir`.
+
+4. **Animated gradient**
+
+* Compute a scrolling phase using `uTime` + projection onto `dir`:
+
+  * e.g. `float phase = fract(dot(local - 0.5, dir) * freq + uTime * speed);`
+* Use `a` (step index) to “lock” banding (stepped quality):
+
+  * e.g. `float band = fract(a / bandSize);` or `float band = step(0.5, fract(a / k));`
+* Final path intensity should be subtle and sit “under” entity ink.
+
+5. **Correct draw order: path under entity glyph, over floor**
+   Current shader mixes floor/wall tile with `ch` directly (lines 155–160), then samples the atlas once (lines 176–179).
+   Refactor plan:
+
+* Always render a **base** tile first (`floor` or `wall`).
+* Then, if `hasChar > 0.5`, render the **entity glyph** as a second sample and alpha-composite it over the base.
+* Apply the **path overlay between** those two passes.
+
+**Lines to focus:**
+
+* Tile selection + atlas sample: ~155–180
+* Output composition: ~272–329
+
+---
+
+### E) Hook up `uPathMask` in the R3F renderer
+
+**File:** `src/rendering/DungeonRenderView.tsx`
+
+1. **Props**
+   **Symbol:** `type Props = { ... }`
+   **Lines:** 125–190 (props block starts at 125)
+   Add:
+
+* `pathMaskTex?: THREE.DataTexture;` (or a `{ dataRef }` pattern like M7)
+* Optional tuning props: `pathStrength?: number`, `pathAnimSpeed?: number` (or keep hardcoded in shader initially).
+
+2. **ShaderMaterial uniforms**
+   **Symbol:** `const mat = useMemo(() => new THREE.ShaderMaterial({ ... uniforms ... }))`
+   **Lines:** 398–445
+   Add:
+
+* `uPathMask: { value: props.pathMaskTex ?? someDefault1x1 }`
+
+3. **Update effect**
+   Add a `useEffect` that updates `mat.uniforms.uPathMask.value = props.pathMaskTex` when it changes (similar to the M7 `uVisExplored` update at lines 604–617).
+
+---
+
+### F) Provide the path mask texture from the inspection/runtime shell
+
+**File:** `src/inspect/InspectionShell.tsx`
+**Symbol:** `<DungeonRenderView ... />` usage
+**Lines:** 1487–1524
+
+Plan:
+
+* Create and own a path-mask `{data, tex}` ref in the shell (mirrors the vis/explored ownership pattern).
+* When the “target” changes (e.g. selected cell, hovered cell, or a chosen AI target), compute a path:
+
+  * `aStar8(...)` using `isTileWalkable(...)`
+  * `clearPathMaskRGBA(data)` then `stampPath(..., kind="player")` (or `"enemy"`, `"npc"`)
+  * set `tex.needsUpdate = true`
+* Pass `pathMaskTex={pathRef.current.tex}` into `DungeonRenderView`.
+
+(If you don’t want to commit to UI behavior yet, still wire the infrastructure with a simple “player path to selected cell” debug mode.)
+
+---
+
+## Minimal integration milestone checklist (agent-friendly)
+
+1. **Pathfinding core**
+
+   * Add `src/pathfinding/minHeap.ts`
+   * Add `src/pathfinding/aStar8.ts` (uses `isTileWalkable`)
+
+2. **Mask texture**
+
+   * Add `src/rendering/pathMask.ts` (modeled after `visibility.ts` lines 25–102)
+   * Reuse `maskToTileTextureRGBA8` (`tiles.ts` lines 207–235)
+
+3. **Shader**
+
+   * Add uniform `uPathMask` in `tileShader.ts` near lines 20–60
+   * Refactor composite around lines 155–180 and 272–329 so the path overlay is between base floor/wall and entity glyph
+
+4. **Renderer hookup**
+
+   * `DungeonRenderView.tsx`: add prop + uniform at lines 125–190 and 398–445
+   * `InspectionShell.tsx`: create path mask ref + pass into `<DungeonRenderView>` at lines 1487–1524
+
+---
+
+
 ## CURRENT STATE SUMMARY
 
 * Milestone 5 is **closed**; seed curation workflow is canonical.
 * Milestone 6 is **closed** — all 5 phases shipped.
-* Milestone 7 is **open**: ready to begin.
----
+* Milestone 7 is **closed**: shipped.
+* Milestone 8 is **open**: ready to begin.
 
 ## GENERAL PROJECT PLAN (HIGH LEVEL, SHORT)
 

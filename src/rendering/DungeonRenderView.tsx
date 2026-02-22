@@ -197,6 +197,11 @@ type Props = {
 
   // M7: internal — populated by DungeonRenderScene so the wrapper tooltip can read vis data.
   _visDataRef?: React.MutableRefObject<Uint8Array | null>;
+
+  // M8: path mask texture (RGBA8 — R=enemy, G=npc, B=player, A=step index)
+  pathMaskTex?: THREE.DataTexture;
+  pathStrength?: number;
+  pathAnimSpeed?: number;
 };
 
 // -------------------------------
@@ -383,6 +388,15 @@ function DungeonRenderScene(props: Props) {
     return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
   }, [bsp, content, W, H, props.playerX, props.playerY]);
 
+  // M8: 1×1 transparent fallback for uPathMask when no prop is supplied
+  const fallbackPathTex = useMemo(() => {
+    const d = new Uint8Array(4); // all zeros
+    const t = new THREE.DataTexture(d, 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    t.name = "path_mask_fallback";
+    t.needsUpdate = true;
+    return t;
+  }, []);
+
   // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
   const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
   const visTex = useMemo(() => {
@@ -441,6 +455,10 @@ function DungeonRenderScene(props: Props) {
         uExploredDim: { value: 0.25 },
         uVisFgBoost: { value: 0.15 },
         uVisBgBoost: { value: 0.08 },
+        // M8 path mask
+        uPathMask: { value: props.pathMaskTex ?? fallbackPathTex },
+        uPathStrength: { value: props.pathStrength ?? 0.7 },
+        uPathAnimSpeed: { value: props.pathAnimSpeed ?? 0.5 },
       },
       depthTest: false,
       depthWrite: false,
@@ -615,6 +633,11 @@ function DungeonRenderScene(props: Props) {
     // Keep wrapper tooltip data in sync
     if (props._visDataRef) props._visDataRef.current = vr.data;
   }, [mat, W, H, props.playerX, props.playerY, props._visDataRef]);
+
+  // M8: update path mask uniform when prop changes
+  useEffect(() => {
+    mat.uniforms.uPathMask.value = props.pathMaskTex ?? fallbackPathTex;
+  }, [mat, props.pathMaskTex, fallbackPathTex]);
 
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;

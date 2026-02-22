@@ -82,6 +82,7 @@ src/
     renderTheme.ts
     tiles.ts
     tileShader.ts
+    visibility.ts
   resolve/
     resolveSpawns.ts
     resolveTypes.ts
@@ -135,7 +136,9 @@ This section contains the contents of the repository's files.
     "allow": [
       "mcp__acp__Write",
       "mcp__acp__Bash",
-      "mcp__acp__Edit"
+      "mcp__acp__Edit",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
@@ -2497,6 +2500,111 @@ export default function ThemedExample() {
 }
 </file>
 
+<file path="src/rendering/visibility.ts">
+// src/rendering/visibility.ts
+import * as THREE from "three";
+
+export type VisibilityParams = {
+  /** Outer visibility radius in cells. */
+  radius: number;
+  /** Cells within this distance are always fully visible (A=255). */
+  innerRadius: number;
+  /** When true, any visible cell is also marked as explored (G=255). */
+  exploredOnVisible: boolean;
+};
+
+/**
+ * Allocate a W×H RGBA8 DataTexture for the visibility + explored mask.
+ *
+ * Channel layout per cell:
+ *   R – unused (0)
+ *   G – explored: 0 or 255
+ *   B – unused (0)
+ *   A – visibility: 0 (not visible) … 255 (fully visible)
+ *
+ * The returned `data` buffer is owned by the caller; mutate it with
+ * `updateVisExploredRGBA` then set `tex.needsUpdate = true`.
+ */
+export function createVisExploredRGBA(
+  W: number,
+  H: number,
+  name: string,
+): { data: Uint8Array; tex: THREE.DataTexture } {
+  const data = new Uint8Array(W * H * 4); // zeroed — unexplored
+
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+
+  tex.name = name;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  tex.needsUpdate = true;
+
+  return { data, tex };
+}
+
+/**
+ * Recompute the visibility (A) channel around the player, accumulating the
+ * explored (G) channel.  Call this whenever playerX or playerY changes, then
+ * set `tex.needsUpdate = true`.
+ *
+ * @param data   The `Uint8Array` returned by `createVisExploredRGBA`.
+ * @param W      Dungeon width in cells.
+ * @param H      Dungeon height in cells.
+ */
+export function updateVisExploredRGBA(
+  data: Uint8Array,
+  W: number,
+  H: number,
+  playerX: number,
+  playerY: number,
+  params: VisibilityParams,
+): void {
+  const { radius, innerRadius, exploredOnVisible } = params;
+
+  // 1. Wipe only the A channel (leave explored G as-is).
+  for (let n = 0; n < W * H; n++) {
+    data[n * 4 + 3] = 0;
+  }
+
+  // 2. Recompute visibility within bounding box.
+  const x0 = Math.max(0, Math.floor(playerX - radius));
+  const x1 = Math.min(W - 1, Math.ceil(playerX + radius));
+  const y0 = Math.max(0, Math.floor(playerY - radius));
+  const y1 = Math.min(H - 1, Math.ceil(playerY + radius));
+
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const d = Math.hypot(x - playerX, y - playerY);
+
+      let a: number;
+      if (d <= innerRadius) {
+        a = 255;
+      } else if (d <= radius) {
+        a = Math.floor(255 * (1 - (d - innerRadius) / (radius - innerRadius)));
+      } else {
+        continue;
+      }
+
+      const base = (y * W + x) * 4;
+      data[base + 3] = a;
+
+      if (exploredOnVisible && a > 0) {
+        data[base + 1] = 255; // G = explored
+      }
+    }
+  }
+}
+</file>
+
 <file path="src/resolve/resolveSpawns.ts">
 /**
  * Resolver pipeline — Session 5.
@@ -3748,6 +3856,345 @@ export const DEFAULT_BATCH: BatchConfig = {
   startIndex: 0,
   summaryOnly: true,
 };
+</file>
+
+<file path="src/dungeonState.ts">
+// src/dungeonState.ts
+//
+// Milestone 3 — Phase 2
+// Runtime puzzle state model + action helpers.
+//
+// This layer is intentionally independent from generation.
+// It is initialized from ContentOutputs.meta and then mutated by runtime actions.
+
+import type {
+  BspDungeonOutputs,
+  ContentOutputs,
+  DoorKind,
+  HazardType,
+  CircuitDef,
+} from "./mazeGen";
+import { isTileWalkable } from "./walkability";
+
+export type DoorRuntimeState = {
+  kind: DoorKind;
+  isOpen: boolean;
+  forcedOpen?: boolean;
+};
+
+export type KeyRuntimeState = {
+  collected: boolean;
+};
+
+export type LeverRuntimeState = {
+  toggled: boolean;
+};
+
+export type PlateRuntimeState = {
+  pressed: boolean;
+};
+
+export type BlockRuntimeState = {
+  x: number;
+  y: number;
+  weightClass: number; // 0..3
+};
+
+export type HazardRuntimeState = {
+  hazardType: HazardType;
+  enabled: boolean;
+};
+
+export type SecretRuntimeState = {
+  revealed: boolean;
+};
+
+export type CircuitRuntimeState = {
+  // “Active” is the output of behavior mode after evaluation.
+  active: boolean;
+  // For edge detection on satisfiable (raw) signal:
+  // used by TOGGLE mode and for “toggle target” effects.
+  lastSatisfied: boolean;
+  // Debug info: helpful to show in UI.
+  lastSatisfiedCount: number;
+};
+
+export type DungeonRuntimeState = {
+  doors: Record<number, DoorRuntimeState>;
+  keys: Record<number, KeyRuntimeState>;
+  levers: Record<number, LeverRuntimeState>;
+  plates: Record<number, PlateRuntimeState>;
+  blocks: Record<number, BlockRuntimeState>;
+  hazards: Record<number, HazardRuntimeState>;
+  secrets: Record<number, SecretRuntimeState>;
+  circuits: Record<number, CircuitRuntimeState>;
+};
+
+function cloneState<S>(s: S): S {
+  // runtime state is shallow objects + maps, so structuredClone is ideal if available
+  // but we keep it simple and explicit.
+  return JSON.parse(JSON.stringify(s)) as S;
+}
+
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+export function initDungeonRuntimeState(
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const doors: Record<number, DoorRuntimeState> = {};
+  const keys: Record<number, KeyRuntimeState> = {};
+  const levers: Record<number, LeverRuntimeState> = {};
+  const plates: Record<number, PlateRuntimeState> = {};
+  const blocks: Record<number, BlockRuntimeState> = {};
+  const hazards: Record<number, HazardRuntimeState> = {};
+  const secrets: Record<number, SecretRuntimeState> = {};
+  const circuits: Record<number, CircuitRuntimeState> = {};
+
+  // Doors
+  for (const d of content.meta.doors) {
+    doors[d.id] = { kind: d.kind, isOpen: false };
+  }
+
+  // Keys
+  for (const k of content.meta.keys) {
+    keys[k.id] = { collected: false };
+  }
+
+  // Levers
+  for (const l of content.meta.levers) {
+    levers[l.id] = { toggled: false };
+  }
+
+  // Plates
+  for (const p of content.meta.plates) {
+    plates[p.id] = { pressed: false };
+  }
+
+  // Blocks
+  for (const b of content.meta.blocks) {
+    blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
+  }
+
+  // Hazards
+  for (const h of content.meta.hazards) {
+    hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
+  }
+
+  // Secrets
+  for (const s of content.meta.secrets) {
+    secrets[s.id] = { revealed: false };
+  }
+
+  // Circuits (runtime debug state only)
+  for (const c of content.meta.circuits) {
+    circuits[c.id] = {
+      active: false,
+      lastSatisfied: false,
+      lastSatisfiedCount: 0,
+    };
+  }
+
+  return {
+    doors,
+    keys,
+    levers,
+    plates,
+    blocks,
+    hazards,
+    secrets,
+    circuits,
+  };
+}
+
+// ----------------- Basic actions -----------------
+
+export function collectKey(
+  state: DungeonRuntimeState,
+  keyCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.keys[keyCircuitId]) next.keys[keyCircuitId] = { collected: false };
+  next.keys[keyCircuitId].collected = true;
+  return next;
+}
+
+export function toggleLever(
+  state: DungeonRuntimeState,
+  leverCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.levers[leverCircuitId])
+    next.levers[leverCircuitId] = { toggled: false };
+  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
+  return next;
+}
+
+// Plates are now DERIVED — keep these for compatibility/testing, but App.tsx no longer calls them.
+export function setPlatePressed(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+  pressed: boolean,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId])
+    next.plates[plateCircuitId] = { pressed: false };
+  next.plates[plateCircuitId].pressed = pressed;
+  return next;
+}
+
+export function togglePlate(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId])
+    next.plates[plateCircuitId] = { pressed: false };
+  next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
+  return next;
+}
+
+export function resetRuntimeState(
+  _state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  // Re-init from current content meta
+  return initDungeonRuntimeState(content);
+}
+
+// ----------------- Derived state -----------------
+
+/**
+ * DERIVED PLATES:
+ * Plate.pressed is computed from block occupancy (and plate config), not directly mutated.
+ *
+ * This should be called any time blocks move (and once after init).
+ */
+export function derivePlatesFromBlocks(
+  state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+
+  // Precompute a quick occupancy set for blocks
+  const occupied = new Set<number>();
+  for (const b of Object.values(next.blocks)) {
+    occupied.add(idxOf(content.width, b.x, b.y));
+  }
+
+  for (const p of content.meta.plates) {
+    if (!next.plates[p.id]) next.plates[p.id] = { pressed: false };
+
+    const onBlock = occupied.has(idxOf(content.width, p.x, p.y));
+    let pressed = false;
+
+    // For now we only have blocks in the prototype, but we respect the plate flags:
+    if (p.activatedByBlock && onBlock) pressed = true;
+
+    // (Player activation can be added later)
+    if (p.inverted) pressed = !pressed;
+
+    next.plates[p.id].pressed = pressed;
+  }
+
+  return next;
+}
+
+// ----------------- Block push (prototype) -----------------
+
+export type PushResult =
+  | { ok: true; next: DungeonRuntimeState }
+  | { ok: false; next: DungeonRuntimeState; error: string };
+
+function hasBlockAt(
+  state: DungeonRuntimeState,
+  x: number,
+  y: number,
+  ignoreBlockId?: number,
+): boolean {
+  for (const [idStr, b] of Object.entries(state.blocks)) {
+    const id = Number(idStr);
+    if (ignoreBlockId != null && id === ignoreBlockId) continue;
+    if (b.x === x && b.y === y) return true;
+  }
+  return false;
+}
+
+/**
+ * Attempt to push a specific block by (dx,dy).
+ * - checks bounds/walls
+ * - blocks cannot overlap
+ * - doors block movement unless currently open
+ */
+export function tryPushBlock(
+  state: DungeonRuntimeState,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  blockId: number,
+  dx: number,
+  dy: number,
+): PushResult {
+  const b = state.blocks[blockId];
+  if (!b) return { ok: false, next: state, error: `Unknown block ${blockId}` };
+  if ((dx | 0) === 0 && (dy | 0) === 0)
+    return { ok: false, next: state, error: "No movement" };
+  if (Math.abs(dx) + Math.abs(dy) !== 1)
+    return {
+      ok: false,
+      next: state,
+      error: "Only cardinal pushes are supported",
+    };
+
+  const nx = b.x + dx;
+  const ny = b.y + dy;
+
+  const okWalk = isTileWalkable(dungeon, content, nx, ny, {
+    isDoorOpen: (doorId) => {
+      const door = state.doors?.[doorId];
+      return !!(door?.isOpen || (door as any)?.forcedOpen);
+    },
+    isSecretRevealed: (secretId) => !!state.secrets?.[secretId]?.revealed,
+  });
+
+  if (!okWalk) {
+    return { ok: false, next: state, error: "Blocked" };
+  }
+
+  if (hasBlockAt(state, nx, ny, blockId)) {
+    return { ok: false, next: state, error: "Another block is in the way" };
+  }
+
+  const next = cloneState(state);
+  next.blocks[blockId] = { ...next.blocks[blockId], x: nx, y: ny };
+  return { ok: true, next };
+}
+
+// ----------------- Target application helpers -----------------
+
+export function ensureDoor(
+  state: DungeonRuntimeState,
+  id: number,
+  kind: DoorKind,
+): void {
+  if (!state.doors[id]) state.doors[id] = { kind, isOpen: false };
+}
+
+export function ensureHazard(
+  state: DungeonRuntimeState,
+  id: number,
+  hazardType: HazardType,
+): void {
+  if (!state.hazards[id]) state.hazards[id] = { hazardType, enabled: false };
+}
+
+export function ensureSecret(state: DungeonRuntimeState, id: number): void {
+  if (!state.secrets[id]) state.secrets[id] = { revealed: false };
+}
+
+export function ensurePlate(state: DungeonRuntimeState, id: number): void {
+  if (!state.plates[id]) state.plates[id] = { pressed: false };
+}
 </file>
 
 <file path="src/graphEdgeId.ts">
@@ -6904,345 +7351,6 @@ export function validateDifficultyBand(
 }
 </file>
 
-<file path="src/dungeonState.ts">
-// src/dungeonState.ts
-//
-// Milestone 3 — Phase 2
-// Runtime puzzle state model + action helpers.
-//
-// This layer is intentionally independent from generation.
-// It is initialized from ContentOutputs.meta and then mutated by runtime actions.
-
-import type {
-  BspDungeonOutputs,
-  ContentOutputs,
-  DoorKind,
-  HazardType,
-  CircuitDef,
-} from "./mazeGen";
-import { isTileWalkable } from "./walkability";
-
-export type DoorRuntimeState = {
-  kind: DoorKind;
-  isOpen: boolean;
-  forcedOpen?: boolean;
-};
-
-export type KeyRuntimeState = {
-  collected: boolean;
-};
-
-export type LeverRuntimeState = {
-  toggled: boolean;
-};
-
-export type PlateRuntimeState = {
-  pressed: boolean;
-};
-
-export type BlockRuntimeState = {
-  x: number;
-  y: number;
-  weightClass: number; // 0..3
-};
-
-export type HazardRuntimeState = {
-  hazardType: HazardType;
-  enabled: boolean;
-};
-
-export type SecretRuntimeState = {
-  revealed: boolean;
-};
-
-export type CircuitRuntimeState = {
-  // “Active” is the output of behavior mode after evaluation.
-  active: boolean;
-  // For edge detection on satisfiable (raw) signal:
-  // used by TOGGLE mode and for “toggle target” effects.
-  lastSatisfied: boolean;
-  // Debug info: helpful to show in UI.
-  lastSatisfiedCount: number;
-};
-
-export type DungeonRuntimeState = {
-  doors: Record<number, DoorRuntimeState>;
-  keys: Record<number, KeyRuntimeState>;
-  levers: Record<number, LeverRuntimeState>;
-  plates: Record<number, PlateRuntimeState>;
-  blocks: Record<number, BlockRuntimeState>;
-  hazards: Record<number, HazardRuntimeState>;
-  secrets: Record<number, SecretRuntimeState>;
-  circuits: Record<number, CircuitRuntimeState>;
-};
-
-function cloneState<S>(s: S): S {
-  // runtime state is shallow objects + maps, so structuredClone is ideal if available
-  // but we keep it simple and explicit.
-  return JSON.parse(JSON.stringify(s)) as S;
-}
-
-function idxOf(W: number, x: number, y: number) {
-  return y * W + x;
-}
-
-export function initDungeonRuntimeState(
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  const doors: Record<number, DoorRuntimeState> = {};
-  const keys: Record<number, KeyRuntimeState> = {};
-  const levers: Record<number, LeverRuntimeState> = {};
-  const plates: Record<number, PlateRuntimeState> = {};
-  const blocks: Record<number, BlockRuntimeState> = {};
-  const hazards: Record<number, HazardRuntimeState> = {};
-  const secrets: Record<number, SecretRuntimeState> = {};
-  const circuits: Record<number, CircuitRuntimeState> = {};
-
-  // Doors
-  for (const d of content.meta.doors) {
-    doors[d.id] = { kind: d.kind, isOpen: false };
-  }
-
-  // Keys
-  for (const k of content.meta.keys) {
-    keys[k.id] = { collected: false };
-  }
-
-  // Levers
-  for (const l of content.meta.levers) {
-    levers[l.id] = { toggled: false };
-  }
-
-  // Plates
-  for (const p of content.meta.plates) {
-    plates[p.id] = { pressed: false };
-  }
-
-  // Blocks
-  for (const b of content.meta.blocks) {
-    blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
-  }
-
-  // Hazards
-  for (const h of content.meta.hazards) {
-    hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
-  }
-
-  // Secrets
-  for (const s of content.meta.secrets) {
-    secrets[s.id] = { revealed: false };
-  }
-
-  // Circuits (runtime debug state only)
-  for (const c of content.meta.circuits) {
-    circuits[c.id] = {
-      active: false,
-      lastSatisfied: false,
-      lastSatisfiedCount: 0,
-    };
-  }
-
-  return {
-    doors,
-    keys,
-    levers,
-    plates,
-    blocks,
-    hazards,
-    secrets,
-    circuits,
-  };
-}
-
-// ----------------- Basic actions -----------------
-
-export function collectKey(
-  state: DungeonRuntimeState,
-  keyCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.keys[keyCircuitId]) next.keys[keyCircuitId] = { collected: false };
-  next.keys[keyCircuitId].collected = true;
-  return next;
-}
-
-export function toggleLever(
-  state: DungeonRuntimeState,
-  leverCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.levers[leverCircuitId])
-    next.levers[leverCircuitId] = { toggled: false };
-  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
-  return next;
-}
-
-// Plates are now DERIVED — keep these for compatibility/testing, but App.tsx no longer calls them.
-export function setPlatePressed(
-  state: DungeonRuntimeState,
-  plateCircuitId: number,
-  pressed: boolean,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.plates[plateCircuitId])
-    next.plates[plateCircuitId] = { pressed: false };
-  next.plates[plateCircuitId].pressed = pressed;
-  return next;
-}
-
-export function togglePlate(
-  state: DungeonRuntimeState,
-  plateCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.plates[plateCircuitId])
-    next.plates[plateCircuitId] = { pressed: false };
-  next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
-  return next;
-}
-
-export function resetRuntimeState(
-  _state: DungeonRuntimeState,
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  // Re-init from current content meta
-  return initDungeonRuntimeState(content);
-}
-
-// ----------------- Derived state -----------------
-
-/**
- * DERIVED PLATES:
- * Plate.pressed is computed from block occupancy (and plate config), not directly mutated.
- *
- * This should be called any time blocks move (and once after init).
- */
-export function derivePlatesFromBlocks(
-  state: DungeonRuntimeState,
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-
-  // Precompute a quick occupancy set for blocks
-  const occupied = new Set<number>();
-  for (const b of Object.values(next.blocks)) {
-    occupied.add(idxOf(content.width, b.x, b.y));
-  }
-
-  for (const p of content.meta.plates) {
-    if (!next.plates[p.id]) next.plates[p.id] = { pressed: false };
-
-    const onBlock = occupied.has(idxOf(content.width, p.x, p.y));
-    let pressed = false;
-
-    // For now we only have blocks in the prototype, but we respect the plate flags:
-    if (p.activatedByBlock && onBlock) pressed = true;
-
-    // (Player activation can be added later)
-    if (p.inverted) pressed = !pressed;
-
-    next.plates[p.id].pressed = pressed;
-  }
-
-  return next;
-}
-
-// ----------------- Block push (prototype) -----------------
-
-export type PushResult =
-  | { ok: true; next: DungeonRuntimeState }
-  | { ok: false; next: DungeonRuntimeState; error: string };
-
-function hasBlockAt(
-  state: DungeonRuntimeState,
-  x: number,
-  y: number,
-  ignoreBlockId?: number,
-): boolean {
-  for (const [idStr, b] of Object.entries(state.blocks)) {
-    const id = Number(idStr);
-    if (ignoreBlockId != null && id === ignoreBlockId) continue;
-    if (b.x === x && b.y === y) return true;
-  }
-  return false;
-}
-
-/**
- * Attempt to push a specific block by (dx,dy).
- * - checks bounds/walls
- * - blocks cannot overlap
- * - doors block movement unless currently open
- */
-export function tryPushBlock(
-  state: DungeonRuntimeState,
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs,
-  blockId: number,
-  dx: number,
-  dy: number,
-): PushResult {
-  const b = state.blocks[blockId];
-  if (!b) return { ok: false, next: state, error: `Unknown block ${blockId}` };
-  if ((dx | 0) === 0 && (dy | 0) === 0)
-    return { ok: false, next: state, error: "No movement" };
-  if (Math.abs(dx) + Math.abs(dy) !== 1)
-    return {
-      ok: false,
-      next: state,
-      error: "Only cardinal pushes are supported",
-    };
-
-  const nx = b.x + dx;
-  const ny = b.y + dy;
-
-  const okWalk = isTileWalkable(dungeon, content, nx, ny, {
-    isDoorOpen: (doorId) => {
-      const door = state.doors?.[doorId];
-      return !!(door?.isOpen || (door as any)?.forcedOpen);
-    },
-    isSecretRevealed: (secretId) => !!state.secrets?.[secretId]?.revealed,
-  });
-
-  if (!okWalk) {
-    return { ok: false, next: state, error: "Blocked" };
-  }
-
-  if (hasBlockAt(state, nx, ny, blockId)) {
-    return { ok: false, next: state, error: "Another block is in the way" };
-  }
-
-  const next = cloneState(state);
-  next.blocks[blockId] = { ...next.blocks[blockId], x: nx, y: ny };
-  return { ok: true, next };
-}
-
-// ----------------- Target application helpers -----------------
-
-export function ensureDoor(
-  state: DungeonRuntimeState,
-  id: number,
-  kind: DoorKind,
-): void {
-  if (!state.doors[id]) state.doors[id] = { kind, isOpen: false };
-}
-
-export function ensureHazard(
-  state: DungeonRuntimeState,
-  id: number,
-  hazardType: HazardType,
-): void {
-  if (!state.hazards[id]) state.hazards[id] = { hazardType, enabled: false };
-}
-
-export function ensureSecret(state: DungeonRuntimeState, id: number): void {
-  if (!state.secrets[id]) state.secrets[id] = { revealed: false };
-}
-
-export function ensurePlate(state: DungeonRuntimeState, id: number): void {
-  if (!state.plates[id]) state.plates[id] = { pressed: false };
-}
-</file>
-
 <file path="src/inclusionRules.ts">
 // src/inclusionRules.ts
 //
@@ -8088,214 +8196,6 @@ export function SingleInspectView(props: SingleInspectViewProps) {
 }
 
 export default SingleInspectView;
-</file>
-
-<file path="src/rendering/tiles.ts">
-// src/rendering/tiles.ts
-import * as THREE from "three";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-// FeatureType values are defined in mazeGen.ts as literal union 0..10.
-
-export type TileBuildParams = {
-  wallTile: number;
-  floorTile: number;
-
-  // FeatureType-specific tiles (adjust to your atlas)
-  monsterTile?: number; // FeatureType=1
-  chestTile?: number; // FeatureType=2
-  secretDoorTile?: number; // FeatureType=3
-  doorTile?: number; // FeatureType=4
-  keyTile?: number; // FeatureType=5
-  leverTile?: number; // FeatureType=6
-  plateTile?: number; // FeatureType=7
-  blockTile?: number; // FeatureType=8
-  hiddenPassageTile?: number; // FeatureType=9
-
-  // Hazards (FeatureType=10)
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
-
-  playerX?: number;
-  playerY?: number;
-  playerTile?: number;
-};
-
-// 0=base, 1=player, 2=item/interactable, 3=hazard
-export function buildTintMask(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  params: Pick<TileBuildParams, "playerX" | "playerY">,
-): Uint8Array {
-  const W = bsp.width;
-  const H = bsp.height;
-  const out = new Uint8Array(W * H);
-
-  const solid = bsp.masks.solid; // 0 floor, 255 wall
-  const ft = content.masks.featureType;
-
-  for (let i = 0; i < out.length; i++) {
-    if (solid[i] === 255) {
-      out[i] = 0;
-      continue;
-    }
-
-    const featureType = ft[i] ?? 0;
-
-    // hazards get danger tint
-    if (featureType === 10) {
-      out[i] = 3;
-      continue;
-    }
-
-    // interactables/items (tinted consistently for now)
-    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
-    if (
-      featureType === 1 ||
-      featureType === 2 ||
-      featureType === 4 ||
-      featureType === 5 ||
-      featureType === 6 ||
-      featureType === 7 ||
-      featureType === 8 ||
-      featureType === 9
-    ) {
-      out[i] = 2;
-      continue;
-    }
-
-    out[i] = 0;
-  }
-
-  // Player wins
-  if (params.playerX !== undefined && params.playerY !== undefined) {
-    const px = params.playerX | 0;
-    const py = params.playerY | 0;
-    if (px >= 0 && px < W && py >= 0 && py < H) {
-      const pi = py * W + px;
-      if (solid[pi] !== 255) out[pi] = 1;
-    }
-  }
-
-  return out;
-}
-
-export function buildCharMask(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  params: TileBuildParams,
-): Uint8Array {
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const out = new Uint8Array(W * H);
-
-  const solid = bsp.masks.solid; // 0 floor, 255 wall
-  const ft = content.masks.featureType; // FeatureType enum
-  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
-
-  for (let i = 0; i < out.length; i++) {
-    // Let shader choose base wall/floor. Only override with a non-zero tile index.
-    if (solid[i] === 255) {
-      out[i] = 0;
-      continue;
-    }
-
-    const featureType = ft[i] ?? 0;
-
-    let t = 0;
-    switch (featureType) {
-      case 1: // monster (if used)
-        t = params.monsterTile ?? 0;
-        break;
-      case 2: // chest
-        t = params.chestTile ?? 0;
-        break;
-      case 3: // secret door
-        t = params.secretDoorTile ?? 0;
-        break;
-      case 4: // door
-        t = params.doorTile ?? 0;
-        break;
-      case 5: // key
-        t = params.keyTile ?? 0;
-        break;
-      case 6: // lever
-        t = params.leverTile ?? 0;
-        break;
-      case 7: // plate
-        t = params.plateTile ?? 0;
-        break;
-      case 8: // block
-        t = params.blockTile ?? 0;
-        break;
-      case 9: // hidden passage
-        t = params.hiddenPassageTile ?? 0;
-        break;
-      case 10: {
-        const hazardType = hz ? hz[i] : 0;
-        t =
-          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
-          params.hazardDefaultTile ??
-          0;
-        break;
-      }
-      default:
-        t = 0;
-    }
-
-    out[i] = t & 0xff;
-  }
-
-  // --- Player overlay (highest priority) ------------------------------------
-  if (
-    params.playerTile !== undefined &&
-    params.playerX !== undefined &&
-    params.playerY !== undefined
-  ) {
-    const px = params.playerX | 0;
-    const py = params.playerY | 0;
-    if (px >= 0 && px < W && py >= 0 && py < H) {
-      const pi = py * W + px;
-      // only place player on non-wall cells
-      if (solid[pi] !== 255) {
-        out[pi] = params.playerTile & 0xff;
-      }
-    }
-  }
-
-  return out;
-}
-
-export function maskToTileTextureR8(
-  mask: Uint8Array,
-  W: number,
-  H: number,
-  name: string,
-): THREE.DataTexture {
-  const tex = new THREE.DataTexture(
-    mask,
-    W,
-    H,
-    THREE.RedFormat,
-    THREE.UnsignedByteType,
-  );
-
-  tex.name = name;
-  tex.needsUpdate = true;
-
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-
-  // Match your generator DataTextures
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.flipY = false;
-
-  return tex;
-}
 </file>
 
 <file path="src/evaluateCircuits.ts">
@@ -9756,6 +9656,244 @@ export type GenerateDungeonResult = {
     seedUsed: number;
   };
 };
+</file>
+
+<file path="src/rendering/tiles.ts">
+// src/rendering/tiles.ts
+import * as THREE from "three";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+// FeatureType values are defined in mazeGen.ts as literal union 0..10.
+
+export type TileBuildParams = {
+  wallTile: number;
+  floorTile: number;
+
+  // FeatureType-specific tiles (adjust to your atlas)
+  monsterTile?: number; // FeatureType=1
+  chestTile?: number; // FeatureType=2
+  secretDoorTile?: number; // FeatureType=3
+  doorTile?: number; // FeatureType=4
+  keyTile?: number; // FeatureType=5
+  leverTile?: number; // FeatureType=6
+  plateTile?: number; // FeatureType=7
+  blockTile?: number; // FeatureType=8
+  hiddenPassageTile?: number; // FeatureType=9
+
+  // Hazards (FeatureType=10)
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+};
+
+// 0=base, 1=player, 2=item/interactable, 3=hazard
+export function buildTintMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: Pick<TileBuildParams, "playerX" | "playerY">,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType;
+
+  for (let i = 0; i < out.length; i++) {
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    // hazards get danger tint
+    if (featureType === 10) {
+      out[i] = 3;
+      continue;
+    }
+
+    // interactables/items (tinted consistently for now)
+    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
+    if (
+      featureType === 1 ||
+      featureType === 2 ||
+      featureType === 4 ||
+      featureType === 5 ||
+      featureType === 6 ||
+      featureType === 7 ||
+      featureType === 8 ||
+      featureType === 9
+    ) {
+      out[i] = 2;
+      continue;
+    }
+
+    out[i] = 0;
+  }
+
+  // Player wins
+  if (params.playerX !== undefined && params.playerY !== undefined) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      if (solid[pi] !== 255) out[pi] = 1;
+    }
+  }
+
+  return out;
+}
+
+export function buildCharMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: TileBuildParams,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType; // FeatureType enum
+  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
+
+  for (let i = 0; i < out.length; i++) {
+    // Let shader choose base wall/floor. Only override with a non-zero tile index.
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    let t = 0;
+    switch (featureType) {
+      case 1: // monster (if used)
+        t = params.monsterTile ?? 0;
+        break;
+      case 2: // chest
+        t = params.chestTile ?? 0;
+        break;
+      case 3: // secret door
+        t = params.secretDoorTile ?? 0;
+        break;
+      case 4: // door
+        t = params.doorTile ?? 0;
+        break;
+      case 5: // key
+        t = params.keyTile ?? 0;
+        break;
+      case 6: // lever
+        t = params.leverTile ?? 0;
+        break;
+      case 7: // plate
+        t = params.plateTile ?? 0;
+        break;
+      case 8: // block
+        t = params.blockTile ?? 0;
+        break;
+      case 9: // hidden passage
+        t = params.hiddenPassageTile ?? 0;
+        break;
+      case 10: {
+        const hazardType = hz ? hz[i] : 0;
+        t =
+          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
+          params.hazardDefaultTile ??
+          0;
+        break;
+      }
+      default:
+        t = 0;
+    }
+
+    out[i] = t & 0xff;
+  }
+
+  // --- Player overlay (highest priority) ------------------------------------
+  if (
+    params.playerTile !== undefined &&
+    params.playerX !== undefined &&
+    params.playerY !== undefined
+  ) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      // only place player on non-wall cells
+      if (solid[pi] !== 255) {
+        out[pi] = params.playerTile & 0xff;
+      }
+    }
+  }
+
+  return out;
+}
+
+export function maskToTileTextureR8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Match your generator DataTextures
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  return tex;
+}
+
+export function maskToTileTextureRGBA8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  return tex;
+}
 </file>
 
 <file path="src/wizard/WizardScreen.tsx">
@@ -12009,313 +12147,6 @@ export function BatchResultsView(props: BatchResultsViewProps) {
 export default BatchResultsView;
 </file>
 
-<file path="src/rendering/tileShader.ts">
-// src/rendering/tileShader.ts
-export const tileVert = /* glsl */ `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-// src/rendering/tileShader.ts
-export const tileFrag = /* glsl */ `
-  precision highp float;
-
-  uniform float uTime;
-  uniform float uHazardOmega;
-  uniform float uInteractOmega;
-  uniform float uAoStrength;
-  uniform vec2  uLightDir;
-
-  uniform sampler2D uSolid;
-  uniform sampler2D uChar;
-  uniform sampler2D uTint;
-  uniform sampler2D uAtlas;
-
-  uniform vec2 uGridSize;
-  uniform vec2 uAtlasGrid;
-  uniform float uWallTile;
-  uniform float uFloorTile;
-  uniform float uDoorTile;
-
-  uniform float uFlipAtlasY;
-  uniform float uFlipGridX;
-  uniform float uFlipGridY;
-
-  uniform vec4 uFloorColor;
-  uniform vec4 uWallColor;
-  uniform vec4 uPlayerColor;
-  uniform vec4 uItemColor;
-  uniform vec4 uHazardColor;
-  uniform vec4 uEnemyColor;
-
-  uniform float uEnemyBreathOmega;
-  uniform float uEnemyBreathAmp;
-  uniform float uMonsterTile;
-
-  // R1.5 affordances (inspection-only)
-  uniform vec2  uHoverCell;
-  uniform float uHoverEnabled;
-  uniform float uHoverStrength;
-
-  // R1.5 selection affordance (inspection-only)
-  uniform vec2  uSelectedCell;
-  uniform float uSelectedEnabled;
-  uniform float uSelectedStrength;
-
-
-  varying vec2 vUv;
-
-  // ------------------------------------------------------------
-  // Helpers
-  // ------------------------------------------------------------
-
-  float tileIs(float tile, float target) {
-    return 1.0 - step(0.5, abs(tile - target));
-  }
-
-  float sampleR8(sampler2D tex, vec2 uv) {
-    return texture2D(tex, uv).r;
-  }
-
-  float isWallAtCell(vec2 cell) {
-    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
-    vec2 uv = (c + vec2(0.5)) / uGridSize;
-    return step(0.5, sampleR8(uSolid, uv));
-  }
-
-  vec2 breatheWarp(vec2 local, float t, float amp) {
-    vec2 p = local - vec2(0.5);
-    float sY = 1.0 + amp * t;
-    float sX = 1.0 - amp * 0.6 * t;
-    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
-    return clamp(q, vec2(0.001), vec2(0.999));
-  }
-
-  float atlasAlphaAtLocal(
-    vec2 localCoord,
-    float tx,
-    float ty,
-    float cols,
-    float rows
-  ) {
-    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
-              / vec2(cols, rows);
-    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
-    return texture2D(uAtlas, uv).a;
-  }
-
-  // ------------------------------------------------------------
-  // Main
-  // ------------------------------------------------------------
-
-  void main() {
-    vec2 uvGrid = vUv;
-    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
-    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
-
-    vec2 gridUv = uvGrid * uGridSize;
-    vec2 cell   = floor(gridUv);
-    vec2 local  = fract(gridUv);
-    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
-
-    float curWall = step(0.5, sampleR8(uSolid, texUv));
-
-    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
-    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
-    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
-    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
-
-    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
-    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
-    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
-    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
-
-    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
-    float isEdgeWall = curWall * (1.0 - allWall);
-
-    float chN = sampleR8(uChar, texUv);
-    float ch  = floor(chN * 255.0 + 0.5);
-    float hasChar = step(0.5, ch);
-
-    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
-      gl_FragColor = vec4(0.0);
-      return;
-    }
-
-    float tile = mix(
-      mix(uFloorTile, uWallTile, isEdgeWall),
-      ch,
-      hasChar
-    );
-
-    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
-
-    float cols = uAtlasGrid.x;
-    float rows = uAtlasGrid.y;
-    float tx = mod(tile, cols);
-    float ty = floor(tile / cols);
-
-    float isMonster = tileIs(tile, uMonsterTile);
-    vec2 local2 = local;
-
-    if (isMonster > 0.5) {
-      float breath = sin(uTime * uEnemyBreathOmega);
-      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
-    }
-
-    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
-    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
-
-    vec4 c = texture2D(uAtlas, atlasUv);
-
-    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
-    float inkA = smoothstep(0.05, 0.20, c.a);
-    vec3 ink = c.rgb;
-
-    // -------------------------
-    // Tint selection
-    // -------------------------
-
-    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
-
-    if (tintId > 0.5 && tintId < 1.5) {
-      float t = 0.5 + 0.5 * sin(uTime * 4.0);
-      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
-    } else if (tintId > 1.5 && tintId < 2.5) {
-      tint = uItemColor;
-    } else if (tintId > 2.5 && tintId < 3.5) {
-      tint = uHazardColor;
-    }
-
-    if (isMonster > 0.5) {
-      tint = uEnemyColor;
-    }
-
-    // -------------------------
-    // Lighting
-    // -------------------------
-
-    float modulate = 1.0;
-    if (tintId > 2.5 && tintId < 3.5)
-      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
-    else if (tintId > 1.5 && tintId < 2.5)
-      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
-
-    float ao = (curWall < 0.5)
-      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
-      : 0.0;
-
-    vec2 dir = normalize(uLightDir + vec2(1e-5));
-    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
-
-    float shade = mix(0.97, 1.08, isEdgeWall);
-    shade *= (1.0 - ao);
-    shade *= (1.0 - shadow);
-    shade *= modulate;
-
-    ink *= tint.rgb * shade;
-
-    // ------------------------------------------------------------
-    // DOOR EFFECT — stronger, calmer, architectural
-    // ------------------------------------------------------------
-
-    float isDoor = tileIs(tile, uDoorTile);
-
-    if (isDoor > 0.5) {
-      vec2 eps = vec2(1.0 / 32.0);
-
-      float aC = inkA;
-      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
-      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
-      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
-      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
-
-      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
-
-      // Slow, weighty pulse (much slower than items)
-      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
-
-      // Vertical bias — doors feel tall and solid
-      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
-
-      float strength = edge * pulse * vertical;
-
-      vec3 hi = vec3(0.92, 0.95, 1.0);
-      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
-    }
-
-    // -------------------------
-    // Item metallic sheen (unchanged)
-    // -------------------------
-
-    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
-      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
-      float d = abs(phase - 0.5);
-      float core = 1.0 - smoothstep(0.01, 0.03, d);
-      float halo = 1.0 - smoothstep(0.04, 0.16, d);
-      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
-      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
-      vec3 hi = vec3(0.96, 0.98, 1.0);
-      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
-    }
-
-    vec3 outRgb = mix(bg, ink, inkA);
-
-    // ------------------------------------------------------------
-    // SELECTED OUTLINE (R1.5) — inspection affordance
-    // ------------------------------------------------------------
-    float sx = 1.0 - step(0.5, abs(cell.x - uSelectedCell.x));
-    float sy = 1.0 - step(0.5, abs(cell.y - uSelectedCell.y));
-    float isSelectedCell = uSelectedEnabled * sx * sy;
-
-    if (isSelectedCell > 0.0) {
-      // Thicker than hover
-      float t = 0.07;
-      float edge =
-        step(local.x, t) +
-        step(local.y, t) +
-        step(1.0 - local.x, t) +
-        step(1.0 - local.y, t);
-      edge = clamp(edge, 0.0, 1.0);
-
-      // Use item color (theme-derived) so we don't hardcode a new RGB
-      vec3 selCol = uItemColor.rgb;
-      outRgb = mix(outRgb, selCol, edge * uSelectedStrength);
-    }
-
-
-    // ------------------------------------------------------------
-    // HOVER OUTLINE (R1.5) — inspection affordance
-    // ------------------------------------------------------------
-    // cell is in the flipped grid space already (matches click mapping if we flip u/v in pointer handlers)
-    float hx = 1.0 - step(0.5, abs(cell.x - uHoverCell.x));
-    float hy = 1.0 - step(0.5, abs(cell.y - uHoverCell.y));
-    float isHoverCell = uHoverEnabled * hx * hy;
-
-    if (isHoverCell > 0.0) {
-      // Thin outline inside the cell (local is 0..1 within the cell)
-      float t = 0.04; // thickness in local space; tweak later if needed
-      float edge =
-        step(local.x, t) +
-        step(local.y, t) +
-        step(1.0 - local.x, t) +
-        step(1.0 - local.y, t);
-      edge = clamp(edge, 0.0, 1.0);
-
-      // High-contrast hover color; keep subtle (strength is uniform-tunable)
-      vec3 hoverCol = vec3(0.95);
-      outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
-    }
-
-    gl_FragColor = vec4(outRgb, 1.0);
-  }
-
-`;
-</file>
-
 <file path="src/styles.css">
 /* src/styles.css */
 
@@ -12933,6 +12764,341 @@ details[open] > .maze-summary {
         min-height: 60vh;
     }
 }
+</file>
+
+<file path="src/rendering/tileShader.ts">
+// src/rendering/tileShader.ts
+export const tileVert = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+// src/rendering/tileShader.ts
+export const tileFrag = /* glsl */ `
+  precision highp float;
+
+  uniform float uTime;
+  uniform float uHazardOmega;
+  uniform float uInteractOmega;
+  uniform float uAoStrength;
+  uniform vec2  uLightDir;
+
+  uniform sampler2D uSolid;
+  uniform sampler2D uChar;
+  uniform sampler2D uTint;
+  uniform sampler2D uAtlas;
+
+  uniform vec2 uGridSize;
+  uniform vec2 uAtlasGrid;
+  uniform float uWallTile;
+  uniform float uFloorTile;
+  uniform float uDoorTile;
+
+  uniform float uFlipAtlasY;
+  uniform float uFlipGridX;
+  uniform float uFlipGridY;
+
+  uniform vec4 uFloorColor;
+  uniform vec4 uWallColor;
+  uniform vec4 uPlayerColor;
+  uniform vec4 uItemColor;
+  uniform vec4 uHazardColor;
+  uniform vec4 uEnemyColor;
+
+  uniform float uEnemyBreathOmega;
+  uniform float uEnemyBreathAmp;
+  uniform float uMonsterTile;
+
+  // R1.5 affordances (inspection-only)
+  uniform vec2  uHoverCell;
+  uniform float uHoverEnabled;
+  uniform float uHoverStrength;
+
+  // R1.5 selection affordance (inspection-only)
+  uniform vec2  uSelectedCell;
+  uniform float uSelectedEnabled;
+  uniform float uSelectedStrength;
+
+  // M7 visibility + explored
+  uniform sampler2D uVisExplored;
+  uniform float uExploredDim;
+  uniform float uVisFgBoost;
+  uniform float uVisBgBoost;
+
+  varying vec2 vUv;
+
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
+
+  float tileIs(float tile, float target) {
+    return 1.0 - step(0.5, abs(tile - target));
+  }
+
+  float sampleR8(sampler2D tex, vec2 uv) {
+    return texture2D(tex, uv).r;
+  }
+
+  float isWallAtCell(vec2 cell) {
+    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
+    vec2 uv = (c + vec2(0.5)) / uGridSize;
+    return step(0.5, sampleR8(uSolid, uv));
+  }
+
+  vec2 breatheWarp(vec2 local, float t, float amp) {
+    vec2 p = local - vec2(0.5);
+    float sY = 1.0 + amp * t;
+    float sX = 1.0 - amp * 0.6 * t;
+    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
+    return clamp(q, vec2(0.001), vec2(0.999));
+  }
+
+  float atlasAlphaAtLocal(
+    vec2 localCoord,
+    float tx,
+    float ty,
+    float cols,
+    float rows
+  ) {
+    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
+              / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
+    return texture2D(uAtlas, uv).a;
+  }
+
+  // ------------------------------------------------------------
+  // Main
+  // ------------------------------------------------------------
+
+  void main() {
+    vec2 uvGrid = vUv;
+    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
+    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
+
+    vec2 gridUv = uvGrid * uGridSize;
+    vec2 cell   = floor(gridUv);
+    vec2 local  = fract(gridUv);
+    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
+
+    float curWall = step(0.5, sampleR8(uSolid, texUv));
+
+    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
+    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
+    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
+    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
+
+    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
+    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
+    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
+    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
+
+    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
+    float isEdgeWall = curWall * (1.0 - allWall);
+
+    float chN = sampleR8(uChar, texUv);
+    float ch  = floor(chN * 255.0 + 0.5);
+    float hasChar = step(0.5, ch);
+
+    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    // ------------------------------------------------------------
+    // M7 FOG OF WAR — sample vis/explored texture
+    // ------------------------------------------------------------
+    vec4 visData  = texture2D(uVisExplored, texUv);
+    float explored = step(0.5, visData.g);
+    float vis      = visData.a;           // 0..1 (already normalised by GL)
+
+    if (explored < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    float dim = mix(uExploredDim, 1.0, vis);
+
+    float tile = mix(
+      mix(uFloorTile, uWallTile, isEdgeWall),
+      ch,
+      hasChar
+    );
+
+    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
+
+    float cols = uAtlasGrid.x;
+    float rows = uAtlasGrid.y;
+    float tx = mod(tile, cols);
+    float ty = floor(tile / cols);
+
+    float isMonster = tileIs(tile, uMonsterTile);
+    vec2 local2 = local;
+
+    if (isMonster > 0.5) {
+      float breath = sin(uTime * uEnemyBreathOmega);
+      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
+    }
+
+    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+
+    vec4 c = texture2D(uAtlas, atlasUv);
+
+    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
+    float inkA = smoothstep(0.05, 0.20, c.a);
+    vec3 ink = c.rgb;
+
+    // -------------------------
+    // Tint selection
+    // -------------------------
+
+    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
+
+    if (tintId > 0.5 && tintId < 1.5) {
+      float t = 0.5 + 0.5 * sin(uTime * 4.0);
+      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
+    } else if (tintId > 1.5 && tintId < 2.5) {
+      tint = uItemColor;
+    } else if (tintId > 2.5 && tintId < 3.5) {
+      tint = uHazardColor;
+    }
+
+    if (isMonster > 0.5) {
+      tint = uEnemyColor;
+    }
+
+    // -------------------------
+    // Lighting
+    // -------------------------
+
+    float modulate = 1.0;
+    if (tintId > 2.5 && tintId < 3.5)
+      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
+    else if (tintId > 1.5 && tintId < 2.5)
+      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
+
+    float ao = (curWall < 0.5)
+      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
+      : 0.0;
+
+    vec2 dir = normalize(uLightDir + vec2(1e-5));
+    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
+
+    float shade = mix(0.97, 1.08, isEdgeWall);
+    shade *= (1.0 - ao);
+    shade *= (1.0 - shadow);
+    shade *= modulate;
+
+    ink *= tint.rgb * shade;
+
+    // ------------------------------------------------------------
+    // DOOR EFFECT — stronger, calmer, architectural
+    // ------------------------------------------------------------
+
+    float isDoor = tileIs(tile, uDoorTile);
+
+    if (isDoor > 0.5) {
+      vec2 eps = vec2(1.0 / 32.0);
+
+      float aC = inkA;
+      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
+      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
+      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
+      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
+
+      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
+
+      // Slow, weighty pulse (much slower than items)
+      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
+
+      // Vertical bias — doors feel tall and solid
+      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
+
+      float strength = edge * pulse * vertical;
+
+      vec3 hi = vec3(0.92, 0.95, 1.0);
+      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
+    }
+
+    // -------------------------
+    // Item metallic sheen (unchanged)
+    // -------------------------
+
+    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
+      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
+      float d = abs(phase - 0.5);
+      float core = 1.0 - smoothstep(0.01, 0.03, d);
+      float halo = 1.0 - smoothstep(0.04, 0.16, d);
+      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
+      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
+      vec3 hi = vec3(0.96, 0.98, 1.0);
+      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
+    }
+
+    vec3 outRgb = mix(bg, ink, inkA);
+
+    // ------------------------------------------------------------
+    // SELECTED OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    float sx = 1.0 - step(0.5, abs(cell.x - uSelectedCell.x));
+    float sy = 1.0 - step(0.5, abs(cell.y - uSelectedCell.y));
+    float isSelectedCell = uSelectedEnabled * sx * sy;
+
+    if (isSelectedCell > 0.0) {
+      // Thicker than hover
+      float t = 0.07;
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // Use item color (theme-derived) so we don't hardcode a new RGB
+      vec3 selCol = uItemColor.rgb;
+      outRgb = mix(outRgb, selCol, edge * uSelectedStrength);
+    }
+
+
+    // ------------------------------------------------------------
+    // HOVER OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    // cell is in the flipped grid space already (matches click mapping if we flip u/v in pointer handlers)
+    float hx = 1.0 - step(0.5, abs(cell.x - uHoverCell.x));
+    float hy = 1.0 - step(0.5, abs(cell.y - uHoverCell.y));
+    float isHoverCell = uHoverEnabled * hx * hy;
+
+    if (isHoverCell > 0.0) {
+      // Thin outline inside the cell (local is 0..1 within the cell)
+      float t = 0.04; // thickness in local space; tweak later if needed
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // High-contrast hover color; keep subtle (strength is uniform-tunable)
+      vec3 hoverCol = vec3(0.95);
+      outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
+    }
+
+    // ------------------------------------------------------------
+    // M7 — apply dim (explored-but-dark) and visibility boost
+    // ------------------------------------------------------------
+    outRgb *= dim;
+    // Warm ambient glow for currently visible cells
+    outRgb += vis * uVisBgBoost * vec3(0.15, 0.10, 0.06);
+    // Slight foreground lift for visible cells (brightens ink pixels)
+    outRgb = clamp(outRgb + vis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
+
+    gl_FragColor = vec4(outRgb, 1.0);
+  }
+
+`;
 </file>
 
 <file path="src/doorSites.ts">
@@ -16082,6 +16248,7 @@ import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
+import { createVisExploredRGBA, updateVisExploredRGBA } from "./visibility";
 import { tileFrag, tileVert } from "./tileShader";
 import type { RenderTheme } from "./renderTheme";
 import { THEME_DEFAULT } from "./renderTheme";
@@ -16116,9 +16283,14 @@ function buildTooltipLines(
   content: ContentOutputs,
   x: number,
   y: number,
+  visData?: Uint8Array | null,
 ) {
   const w = bsp.width;
   const i = y * w + x;
+
+  // M7 vis/explored
+  const visA = visData ? visData[i * 4 + 3] : -1;
+  const exploredG = visData ? visData[i * 4 + 1] : -1;
 
   // --- BSP masks ---
   const solid = (bsp.masks?.solid?.[i] ?? 0) ? 1 : 0;
@@ -16138,6 +16310,7 @@ function buildTooltipLines(
 
   // --- raw (matches InspectionShell style) ---
   lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+  if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
   if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
   if (hz !== 0) lines.push(`hazardType=${hz}`);
   if (danger !== 0) lines.push(`danger=${danger}`);
@@ -16265,6 +16438,9 @@ type Props = {
   onCellClick?: (cell: { x: number; y: number }) => boolean;
 
   handleHoverCell?: (x: number, y: number) => void;
+
+  // M7: internal — populated by DungeonRenderScene so the wrapper tooltip can read vis data.
+  _visDataRef?: React.MutableRefObject<Uint8Array | null>;
 };
 
 // -------------------------------
@@ -16451,6 +16627,18 @@ function DungeonRenderScene(props: Props) {
     return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
   }, [bsp, content, W, H, props.playerX, props.playerY]);
 
+  // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
+  const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  const visTex = useMemo(() => {
+    if (visRef.current) visRef.current.tex.dispose();
+    const vr = createVisExploredRGBA(W, H, "vis_explored_rgba");
+    visRef.current = vr;
+    // Expose the data buffer to the wrapper via the shared ref
+    if (props._visDataRef) props._visDataRef.current = vr.data;
+    return vr.tex;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [W, H]);
+
   // --- Shader material ---
   const mat = useMemo(() => {
     return new THREE.ShaderMaterial({
@@ -16492,15 +16680,21 @@ function DungeonRenderScene(props: Props) {
         uSelectedCell: { value: new THREE.Vector2(-1, -1) },
         uSelectedEnabled: { value: 0 },
         uSelectedStrength: { value: 0.55 }, // stronger than hover
+        // M7 visibility + explored
+        uVisExplored: { value: visTex },
+        uExploredDim: { value: 0.25 },
+        uVisFgBoost: { value: 0.15 },
+        uVisBgBoost: { value: 0.08 },
       },
       depthTest: false,
       depthWrite: false,
-      transparent: false,
+      transparent: true,
     });
   }, [
     bsp.textures.solid,
     charTex,
     tintTex,
+    visTex,
     atlas,
     W,
     H,
@@ -16650,6 +16844,21 @@ function DungeonRenderScene(props: Props) {
       atlas.dispose();
     };
   }, [atlas]);
+
+  // M7: recompute visibility every time the player moves (or W/H change).
+  useEffect(() => {
+    const vr = visRef.current;
+    if (!vr) return;
+    updateVisExploredRGBA(vr.data, W, H, props.playerX ?? 0, props.playerY ?? 0, {
+      radius: 6,
+      innerRadius: 1.5,
+      exploredOnVisible: true,
+    });
+    vr.tex.needsUpdate = true;
+    mat.uniforms.uVisExplored.value = vr.tex;
+    // Keep wrapper tooltip data in sync
+    if (props._visDataRef) props._visDataRef.current = vr.data;
+  }, [mat, W, H, props.playerX, props.playerY, props._visDataRef]);
 
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;
@@ -16903,6 +17112,9 @@ export default function DungeonRenderView(props: Props) {
 
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
 
+  // M7: shared ref populated by DungeonRenderScene so tooltip can read vis data.
+  const visDataRef = useRef<Uint8Array | null>(null);
+
   const [tooltip, setTooltip] = useState<{
     x: number;
     y: number;
@@ -16984,10 +17196,16 @@ export default function DungeonRenderView(props: Props) {
     const loot = content.masks.lootTier[i] | 0;
     const hz = content.masks.hazardType[i] | 0; // meaningful when ft==10 per repomix
 
+    // M7 vis/explored
+    const vd = visDataRef.current;
+    const visA = vd ? vd[i * 4 + 3] : -1;
+    const exploredG = vd ? vd[i * 4 + 1] : -1;
+
     const lines: string[] = [];
 
     // --- raw (keep) ---
     lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+    if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
     if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
     if (hz !== 0) lines.push(`hazardType=${hz}`);
     if (danger !== 0) lines.push(`danger=${danger}`);
@@ -17069,6 +17287,7 @@ export default function DungeonRenderView(props: Props) {
         <OrthoFrustum pxPerCell={pxPerCell} />
         <DungeonRenderScene
           {...props}
+          _visDataRef={visDataRef}
           onCellHover={({ x, y, clientX, clientY }) => {
             const key = `${x},${y}`;
 
@@ -24130,13 +24349,37 @@ Authorial controls are **hard constraints** applied to completed generations.
 
 ---
 
-# Milestone 7 — VISIBILITY AND EXPLORATION (STARTED)
+# Milestone 7 — VISIBILITY AND EXPLORATION (COMPLETE)
 
-* Mask of visible cells should be recalculated every time the player x or y value changes.
-* Mask is a THREE.DataTexture, alpha channel shows visibility (255 = fully visible, 0 = opaque, only the cells directly on and immediately surrounding the player will have visibility = 255, the other cells are scaled by distance from the player to simulate gradual darkness.), g shows explored status. (0|255)
-* Visible cells should be rendered with a background colour in the shader and should have a slightly brighter foreground colour.
-* Explored cells should be rendered while unexplored should not be rendered at all.
-* When the visibility/explored mask is recalculated, the old visibility pixels should be wiped and then new visibility pixels should be written to the alpha channel and also update the g channel at the same time.  This way gradually the dungeon explored mask is filled by visible pixels.
+Runtime fog-of-war layer for the inspection/runtime renderer. Purely a render concern — no
+generator outputs or seed curation policy changes.
+
+## What shipped
+
+* **`src/rendering/visibility.ts`** (new) — `VisibilityParams`, `createVisExploredRGBA`,
+  `updateVisExploredRGBA`. RGBA8 `DataTexture`: G=explored (0/255), A=visibility (0–255).
+  Euclidean radius falloff; inner ring always A=255; explored accumulates across moves.
+
+* **`src/rendering/tiles.ts`** — added `maskToTileTextureRGBA8` alongside the R8 helper.
+
+* **`src/rendering/tileShader.ts`** — uniforms `uVisExplored`, `uExploredDim`, `uVisFgBoost`,
+  `uVisBgBoost`. Unexplored cells discard; explored cells dimmed by `mix(uExploredDim, 1.0, vis)`;
+  visible cells get a warm bg glow and fg lift.
+
+* **`src/rendering/DungeonRenderView.tsx`** — `visRef`/`visTex` `useMemo` (re-created on W/H
+  change); `useEffect` on `playerX`/`playerY` calls `updateVisExploredRGBA` + `needsUpdate`.
+  `transparent: true` on `ShaderMaterial`. Tooltip shows `visA` and `explored` for debugging.
+  Internal `_visDataRef` prop shares the buffer with the wrapper for tooltip reads.
+
+## Tunable uniforms (defaults)
+
+| Uniform | Default | Effect |
+|---|---|---|
+| `uExploredDim` | 0.25 | brightness of explored-but-dark cells |
+| `uVisFgBoost` | 0.15 | foreground lift for visible cells |
+| `uVisBgBoost` | 0.08 | warm bg glow for visible cells |
+
+Visibility defaults: `radius=6`, `innerRadius=1.5`.
 
 ---
 
