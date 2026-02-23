@@ -391,14 +391,22 @@ function DungeonRenderScene(props: Props) {
   // M8: 1×1 transparent fallback for uPathMask when no prop is supplied
   const fallbackPathTex = useMemo(() => {
     const d = new Uint8Array(4); // all zeros
-    const t = new THREE.DataTexture(d, 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    const t = new THREE.DataTexture(
+      d,
+      1,
+      1,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
     t.name = "path_mask_fallback";
     t.needsUpdate = true;
     return t;
   }, []);
 
   // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
-  const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(
+    null,
+  );
   const visTex = useMemo(() => {
     if (visRef.current) visRef.current.tex.dispose();
     const vr = createVisExploredRGBA(W, H, "vis_explored_rgba");
@@ -623,11 +631,18 @@ function DungeonRenderScene(props: Props) {
   useEffect(() => {
     const vr = visRef.current;
     if (!vr) return;
-    updateVisExploredRGBA(vr.data, W, H, props.playerX ?? 0, props.playerY ?? 0, {
-      radius: 6,
-      innerRadius: 1.5,
-      exploredOnVisible: true,
-    });
+    updateVisExploredRGBA(
+      vr.data,
+      W,
+      H,
+      props.playerX ?? 0,
+      props.playerY ?? 0,
+      {
+        radius: 6,
+        innerRadius: 1.5,
+        exploredOnVisible: true,
+      },
+    );
     vr.tex.needsUpdate = true;
     mat.uniforms.uVisExplored.value = vr.tex;
     // Keep wrapper tooltip data in sync
@@ -951,7 +966,6 @@ export default function DungeonRenderView(props: Props) {
     if (top + estTipH > wrapH - pad) {
       top = Math.max(pad, anchorY - estTipH - pad);
     }
-    console.log("tooltip style", left, top, 999);
     return { left, top, zIndex: 999 };
   }
 
@@ -1047,7 +1061,7 @@ export default function DungeonRenderView(props: Props) {
 
     return { lines, ft, fid };
   }
-  console.log("tooltip.visible", tooltip.visible);
+
   return (
     <div
       ref={canvasWrapRef}
@@ -1083,6 +1097,13 @@ export default function DungeonRenderView(props: Props) {
 
             // New hovered cell
             lastHoverKeyRef.current = key;
+
+            props.onCellHover?.({
+              x: x,
+              y: y,
+              clientX: clientX,
+              clientY: clientY,
+            });
 
             // Arm tooltip (but do not show yet)
             setTooltip((t) => ({

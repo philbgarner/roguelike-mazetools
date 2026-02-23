@@ -1,5 +1,6 @@
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import hotkeys from "hotkeys-js";
+import * as THREE from "three";
 
 import DungeonRenderView from "../rendering/DungeonRenderView";
 import {
@@ -12,6 +13,18 @@ import {
 } from "../mazeGen";
 
 import { isTileWalkable } from "../walkability";
+import { aStar8 } from "../pathfinding/aStar8";
+import {
+  clearPathMaskRGBA,
+  createPathMaskRGBA,
+  stampPath,
+} from "../rendering/pathMask";
+import {
+  initDungeonRuntimeState,
+  derivePlatesFromBlocks,
+  toggleLever,
+} from "../dungeonState";
+import { evaluateCircuits } from "../evaluateCircuits";
 
 import { computeStartCell } from "../inspect/computeStartCell";
 
@@ -29,8 +42,12 @@ function isBlocked(
   content: ContentOutputs,
   x: number,
   y: number,
+  runtime?: any,
 ) {
-  return !isTileWalkable(dungeon, content, x, y);
+  return !isTileWalkable(dungeon, content, x, y, {
+    isDoorOpen: (doorId) => !!runtime?.doors?.[doorId]?.isOpen,
+    isSecretRevealed: (secretId) => !!runtime?.secrets?.[secretId]?.revealed,
+  });
 }
 
 export default function MinimalExample() {
@@ -57,35 +74,93 @@ export default function MinimalExample() {
     return computeStartCell(dungeon, content);
   }, [dungeon, content]);
 
+  // --- Runtime puzzle state (levers/doors/secrets) ---
+  const [runtime, setRuntime] = useState(() => {
+    let rt = initDungeonRuntimeState(content);
+    rt = derivePlatesFromBlocks(rt, content);
+    return evaluateCircuits(rt, content.meta.circuits).next;
+  });
+
+  // If you ever make seed dynamic, keep runtime in sync with new content:
+  useEffect(() => {
+    let rt = initDungeonRuntimeState(content);
+    rt = derivePlatesFromBlocks(rt, content);
+    setRuntime(evaluateCircuits(rt, content.meta.circuits).next);
+  }, [content]);
+
   const [player, setPlayer] = useState<Player>({
     x: startCell.x,
     y: startCell.y,
   });
 
+  // M7/M8: path mask — owned here, passed to DungeonRenderView
+  const pathMaskRef = useRef<{
+    data: Uint8Array;
+    tex: THREE.DataTexture;
+  } | null>(null);
+  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(
+    null,
+  );
+  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Create/recreate path mask when dungeon dimensions change
+  useEffect(() => {
+    if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
+    const pm = createPathMaskRGBA(
+      dungeon.width,
+      dungeon.height,
+      "path_mask_rgba",
+    );
+    pathMaskRef.current = pm;
+    setPathMaskTex(pm.tex);
+    return () => {
+      pm.tex.dispose();
+      pathMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
+  const recomputePlayerPath = useCallback(
+    (targetX: number, targetY: number) => {
+      const pm = pathMaskRef.current;
+      if (!pm) return;
+      clearPathMaskRGBA(pm.data);
+      const result = aStar8(
+        dungeon,
+        content,
+        { x: player.x, y: player.y },
+        { x: targetX, y: targetY },
+      );
+      if (result) stampPath(pm.data, dungeon.width, result.path, "player");
+      pm.tex.needsUpdate = true;
+      setPathMaskTex(pm.tex); // force a re-render so DungeonRenderView sees the refreshed texture
+    },
+    [dungeon, content, player.x, player.y],
+  );
+
   function moveLeft() {
     setPlayer((p) => {
-      if (isBlocked(dungeon, content, p.x - 1, p.y)) return p;
+      if (isBlocked(dungeon, content, p.x - 1, p.y, runtime)) return p;
       return { x: p.x - 1, y: p.y };
     });
   }
 
   function moveRight() {
     setPlayer((p) => {
-      if (isBlocked(dungeon, content, p.x + 1, p.y)) return p;
+      if (isBlocked(dungeon, content, p.x + 1, p.y, runtime)) return p;
       return { x: p.x + 1, y: p.y };
     });
   }
 
   function moveDown() {
     setPlayer((p) => {
-      if (isBlocked(dungeon, content, p.x, p.y + 1)) return p;
+      if (isBlocked(dungeon, content, p.x, p.y + 1, runtime)) return p;
       return { x: p.x, y: p.y + 1 };
     });
   }
 
   function moveUp() {
     setPlayer((p) => {
-      if (isBlocked(dungeon, content, p.x, p.y - 1)) return p;
+      if (isBlocked(dungeon, content, p.x, p.y - 1, runtime)) return p;
       return { x: p.x, y: p.y - 1 };
     });
   }
@@ -108,6 +183,18 @@ export default function MinimalExample() {
       hotkeys.unbind();
     };
   }, []);
+
+  // When a new dungeon loads (new start cell), reset player + clear any lingering hover path
+  useEffect(() => {
+    setPlayer({ x: startCell.x, y: startCell.y });
+    lastHoverCellRef.current = null;
+    const pm = pathMaskRef.current;
+    if (pm) {
+      clearPathMaskRGBA(pm.data);
+      pm.tex.needsUpdate = true;
+      setPathMaskTex(pm.tex);
+    }
+  }, [startCell.x, startCell.y]);
 
   return (
     <>
@@ -149,21 +236,60 @@ export default function MinimalExample() {
         selectedX={player.x}
         selectedY={player.y}
         onCellHover={({ x, y, clientX, clientY }) => {
-          console.log(
-            "cell hover",
-            x,
-            y,
-            "clientX",
-            clientX,
-            "clientY",
-            clientY,
-          );
+          const last = lastHoverCellRef.current;
+          if (last && last.x === x && last.y === y) return;
+          lastHoverCellRef.current = { x, y };
+
+          console.log("recomputing path for", x, y);
+          // Update *player* path visualization on hover
+          recomputePlayerPath(x, y);
         }}
-        onCellHoverEnd={() => {}}
+        onCellHoverEnd={() => {
+          lastHoverCellRef.current = null;
+          const pm = pathMaskRef.current;
+          if (!pm) return;
+          clearPathMaskRGBA(pm.data);
+          pm.tex.needsUpdate = true;
+          setPathMaskTex(pm.tex);
+        }}
         onCellClick={({ x, y }) => {
-          console.log("cell click", x, y);
+          const w = dungeon.width;
+          const i = y * w + x;
+          const ft = content.masks.featureType[i] | 0;
+          const fid = content.masks.featureId[i] | 0;
+          if (ft === 6 && fid) {
+            setRuntime((prev) => {
+              const next0 = toggleLever(prev, fid);
+              const next1 = derivePlatesFromBlocks(next0, content);
+              return evaluateCircuits(next1, content.meta.circuits).next;
+            });
+            return true;
+          }
+
+          // Click-to-navigate: if A* finds a path, snap player to that target.
+          // (MinimalExample: instant move. If you later want step-by-step, you can replay result.path.)
+          const result = aStar8(
+            dungeon,
+            content,
+            { x: player.x, y: player.y },
+            { x, y },
+          );
+          if (!result) return true; // still handled; no move if unreachable
+
+          setPlayer({ x, y });
+
+          // Optional: clear the hover path after committing the move
+          const pm = pathMaskRef.current;
+          if (pm) {
+            clearPathMaskRGBA(pm.data);
+            pm.tex.needsUpdate = true;
+            setPathMaskTex(pm.tex);
+          }
+
           return true;
         }}
+        // M7/M8: pass path mask into the shader
+        pathMaskTex={pathMaskTex ?? undefined}
       />
     </>
   );

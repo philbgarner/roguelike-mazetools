@@ -69,15 +69,20 @@ src/
     MinimalExample.tsx
     prepareResult.ts
     PresetControlsExample.tsx
+    styles.css
     ThemedExample.tsx
   inspect/
     BatchResultsView.tsx
     computeStartCell.ts
     InspectionShell.tsx
     SingleInspectView.tsx
+  pathfinding/
+    aStar8.ts
+    minHeap.ts
   rendering/
     codepage437Tiles.ts
     DungeonRenderView.tsx
+    pathMask.ts
     RENDERING-CONTEXT.md
     renderTheme.ts
     tiles.ts
@@ -138,7 +143,8 @@ This section contains the contents of the repository's files.
       "mcp__acp__Bash",
       "mcp__acp__Edit",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }
@@ -146,6 +152,345 @@ This section contains the contents of the repository's files.
 
 <file path="public/vite.svg">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="src/dungeonState.ts">
+// src/dungeonState.ts
+//
+// Milestone 3 — Phase 2
+// Runtime puzzle state model + action helpers.
+//
+// This layer is intentionally independent from generation.
+// It is initialized from ContentOutputs.meta and then mutated by runtime actions.
+
+import type {
+  BspDungeonOutputs,
+  ContentOutputs,
+  DoorKind,
+  HazardType,
+  CircuitDef,
+} from "./mazeGen";
+import { isTileWalkable } from "./walkability";
+
+export type DoorRuntimeState = {
+  kind: DoorKind;
+  isOpen: boolean;
+  forcedOpen?: boolean;
+};
+
+export type KeyRuntimeState = {
+  collected: boolean;
+};
+
+export type LeverRuntimeState = {
+  toggled: boolean;
+};
+
+export type PlateRuntimeState = {
+  pressed: boolean;
+};
+
+export type BlockRuntimeState = {
+  x: number;
+  y: number;
+  weightClass: number; // 0..3
+};
+
+export type HazardRuntimeState = {
+  hazardType: HazardType;
+  enabled: boolean;
+};
+
+export type SecretRuntimeState = {
+  revealed: boolean;
+};
+
+export type CircuitRuntimeState = {
+  // “Active” is the output of behavior mode after evaluation.
+  active: boolean;
+  // For edge detection on satisfiable (raw) signal:
+  // used by TOGGLE mode and for “toggle target” effects.
+  lastSatisfied: boolean;
+  // Debug info: helpful to show in UI.
+  lastSatisfiedCount: number;
+};
+
+export type DungeonRuntimeState = {
+  doors: Record<number, DoorRuntimeState>;
+  keys: Record<number, KeyRuntimeState>;
+  levers: Record<number, LeverRuntimeState>;
+  plates: Record<number, PlateRuntimeState>;
+  blocks: Record<number, BlockRuntimeState>;
+  hazards: Record<number, HazardRuntimeState>;
+  secrets: Record<number, SecretRuntimeState>;
+  circuits: Record<number, CircuitRuntimeState>;
+};
+
+function cloneState<S>(s: S): S {
+  // runtime state is shallow objects + maps, so structuredClone is ideal if available
+  // but we keep it simple and explicit.
+  return JSON.parse(JSON.stringify(s)) as S;
+}
+
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+export function initDungeonRuntimeState(
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const doors: Record<number, DoorRuntimeState> = {};
+  const keys: Record<number, KeyRuntimeState> = {};
+  const levers: Record<number, LeverRuntimeState> = {};
+  const plates: Record<number, PlateRuntimeState> = {};
+  const blocks: Record<number, BlockRuntimeState> = {};
+  const hazards: Record<number, HazardRuntimeState> = {};
+  const secrets: Record<number, SecretRuntimeState> = {};
+  const circuits: Record<number, CircuitRuntimeState> = {};
+
+  // Doors
+  for (const d of content.meta.doors) {
+    doors[d.id] = { kind: d.kind, isOpen: false };
+  }
+
+  // Keys
+  for (const k of content.meta.keys) {
+    keys[k.id] = { collected: false };
+  }
+
+  // Levers
+  for (const l of content.meta.levers) {
+    levers[l.id] = { toggled: false };
+  }
+
+  // Plates
+  for (const p of content.meta.plates) {
+    plates[p.id] = { pressed: false };
+  }
+
+  // Blocks
+  for (const b of content.meta.blocks) {
+    blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
+  }
+
+  // Hazards
+  for (const h of content.meta.hazards) {
+    hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
+  }
+
+  // Secrets
+  for (const s of content.meta.secrets) {
+    secrets[s.id] = { revealed: false };
+  }
+
+  // Circuits (runtime debug state only)
+  for (const c of content.meta.circuits) {
+    circuits[c.id] = {
+      active: false,
+      lastSatisfied: false,
+      lastSatisfiedCount: 0,
+    };
+  }
+
+  return {
+    doors,
+    keys,
+    levers,
+    plates,
+    blocks,
+    hazards,
+    secrets,
+    circuits,
+  };
+}
+
+// ----------------- Basic actions -----------------
+
+export function collectKey(
+  state: DungeonRuntimeState,
+  keyCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.keys[keyCircuitId]) next.keys[keyCircuitId] = { collected: false };
+  next.keys[keyCircuitId].collected = true;
+  return next;
+}
+
+export function toggleLever(
+  state: DungeonRuntimeState,
+  leverCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.levers[leverCircuitId])
+    next.levers[leverCircuitId] = { toggled: false };
+  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
+  return next;
+}
+
+// Plates are now DERIVED — keep these for compatibility/testing, but App.tsx no longer calls them.
+export function setPlatePressed(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+  pressed: boolean,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId])
+    next.plates[plateCircuitId] = { pressed: false };
+  next.plates[plateCircuitId].pressed = pressed;
+  return next;
+}
+
+export function togglePlate(
+  state: DungeonRuntimeState,
+  plateCircuitId: number,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+  if (!next.plates[plateCircuitId])
+    next.plates[plateCircuitId] = { pressed: false };
+  next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
+  return next;
+}
+
+export function resetRuntimeState(
+  _state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  // Re-init from current content meta
+  return initDungeonRuntimeState(content);
+}
+
+// ----------------- Derived state -----------------
+
+/**
+ * DERIVED PLATES:
+ * Plate.pressed is computed from block occupancy (and plate config), not directly mutated.
+ *
+ * This should be called any time blocks move (and once after init).
+ */
+export function derivePlatesFromBlocks(
+  state: DungeonRuntimeState,
+  content: ContentOutputs,
+): DungeonRuntimeState {
+  const next = cloneState(state);
+
+  // Precompute a quick occupancy set for blocks
+  const occupied = new Set<number>();
+  for (const b of Object.values(next.blocks)) {
+    occupied.add(idxOf(content.width, b.x, b.y));
+  }
+
+  for (const p of content.meta.plates) {
+    if (!next.plates[p.id]) next.plates[p.id] = { pressed: false };
+
+    const onBlock = occupied.has(idxOf(content.width, p.x, p.y));
+    let pressed = false;
+
+    // For now we only have blocks in the prototype, but we respect the plate flags:
+    if (p.activatedByBlock && onBlock) pressed = true;
+
+    // (Player activation can be added later)
+    if (p.inverted) pressed = !pressed;
+
+    next.plates[p.id].pressed = pressed;
+  }
+
+  return next;
+}
+
+// ----------------- Block push (prototype) -----------------
+
+export type PushResult =
+  | { ok: true; next: DungeonRuntimeState }
+  | { ok: false; next: DungeonRuntimeState; error: string };
+
+function hasBlockAt(
+  state: DungeonRuntimeState,
+  x: number,
+  y: number,
+  ignoreBlockId?: number,
+): boolean {
+  for (const [idStr, b] of Object.entries(state.blocks)) {
+    const id = Number(idStr);
+    if (ignoreBlockId != null && id === ignoreBlockId) continue;
+    if (b.x === x && b.y === y) return true;
+  }
+  return false;
+}
+
+/**
+ * Attempt to push a specific block by (dx,dy).
+ * - checks bounds/walls
+ * - blocks cannot overlap
+ * - doors block movement unless currently open
+ */
+export function tryPushBlock(
+  state: DungeonRuntimeState,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  blockId: number,
+  dx: number,
+  dy: number,
+): PushResult {
+  const b = state.blocks[blockId];
+  if (!b) return { ok: false, next: state, error: `Unknown block ${blockId}` };
+  if ((dx | 0) === 0 && (dy | 0) === 0)
+    return { ok: false, next: state, error: "No movement" };
+  if (Math.abs(dx) + Math.abs(dy) !== 1)
+    return {
+      ok: false,
+      next: state,
+      error: "Only cardinal pushes are supported",
+    };
+
+  const nx = b.x + dx;
+  const ny = b.y + dy;
+
+  const okWalk = isTileWalkable(dungeon, content, nx, ny, {
+    isDoorOpen: (doorId) => {
+      const door = state.doors?.[doorId];
+      return !!(door?.isOpen || (door as any)?.forcedOpen);
+    },
+    isSecretRevealed: (secretId) => !!state.secrets?.[secretId]?.revealed,
+  });
+
+  if (!okWalk) {
+    return { ok: false, next: state, error: "Blocked" };
+  }
+
+  if (hasBlockAt(state, nx, ny, blockId)) {
+    return { ok: false, next: state, error: "Another block is in the way" };
+  }
+
+  const next = cloneState(state);
+  next.blocks[blockId] = { ...next.blocks[blockId], x: nx, y: ny };
+  return { ok: true, next };
+}
+
+// ----------------- Target application helpers -----------------
+
+export function ensureDoor(
+  state: DungeonRuntimeState,
+  id: number,
+  kind: DoorKind,
+): void {
+  if (!state.doors[id]) state.doors[id] = { kind, isOpen: false };
+}
+
+export function ensureHazard(
+  state: DungeonRuntimeState,
+  id: number,
+  hazardType: HazardType,
+): void {
+  if (!state.hazards[id]) state.hazards[id] = { hazardType, enabled: false };
+}
+
+export function ensureSecret(state: DungeonRuntimeState, id: number): void {
+  if (!state.secrets[id]) state.secrets[id] = { revealed: false };
+}
+
+export function ensurePlate(state: DungeonRuntimeState, id: number): void {
+  if (!state.plates[id]) state.plates[id] = { pressed: false };
+}
 </file>
 
 <file path="src/main.tsx">
@@ -159,6 +504,72 @@ ReactDOM.createRoot(document.getElementById("app")!).render(
     <App />
   </React.StrictMode>,
 );
+</file>
+
+<file path="src/walkability.ts">
+// src/walkability.ts
+//
+// Shared walkability rules used by:
+// - runtime movement / pushing (dungeonState.ts)
+// - generation-time reachability validation (puzzlePatterns.ts)
+//
+// IMPORTANT:
+// - Walls are never walkable.
+// - Doors are walkable only if "open" (according to provided resolver).
+// - Hidden passages (featureType=9) are blocked until revealed (according to provided resolver).
+// - Hazards never block movement (consequence-only for now).
+
+import type { BspDungeonOutputs, ContentOutputs } from "./mazeGen";
+
+type DoorOpenResolver = (doorId: number) => boolean;
+type SecretRevealedResolver = (secretId: number) => boolean;
+
+export type WalkabilityResolvers = {
+  isDoorOpen?: DoorOpenResolver;
+  isSecretRevealed?: SecretRevealedResolver;
+};
+
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+export function isTileWalkable(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  x: number,
+  y: number,
+  resolvers: WalkabilityResolvers = {},
+): boolean {
+  const W = dungeon.width;
+  const H = dungeon.height;
+  if (x < 0 || y < 0 || x >= W || y >= H) return false;
+
+  const i = idxOf(W, x, y);
+
+  // walls
+  if (dungeon.masks.solid[i] === 255) return false;
+
+  const ft = content.masks.featureType[i] | 0;
+  const fid = content.masks.featureId[i] | 0;
+
+  // Hidden passage: blocked until revealed
+  if (ft === 9 && fid !== 0) {
+    const isRevealed = resolvers.isSecretRevealed
+      ? resolvers.isSecretRevealed(fid)
+      : false;
+    if (!isRevealed) return false;
+  }
+
+  // Door: blocked until open
+  if (ft === 4 && fid !== 0) {
+    const isOpen = resolvers.isDoorOpen ? resolvers.isDoorOpen(fid) : false;
+    if (!isOpen) return false;
+  }
+
+  // Hazards do not block (by design, for now)
+
+  return true;
+}
 </file>
 
 <file path=".gitignore">
@@ -2396,27 +2807,6 @@ export default function InlineControlsExample() {
 }
 </file>
 
-<file path="src/examples/MinimalExample.tsx">
-import React, { useCallback } from "react";
-import { generateDungeon } from "../api";
-import ExampleShell from "./ExampleShell";
-
-export default function MinimalExample() {
-  const generate = useCallback(
-    () => generateDungeon({ seed: 42, level: 1 }),
-    [],
-  );
-
-  return (
-    <ExampleShell
-      title="Minimal Call"
-      description="generateDungeon({ seed: 42, level: 1 })"
-      generate={generate}
-    />
-  );
-}
-</file>
-
 <file path="src/examples/prepareResult.ts">
 import type { GenerateDungeonResult } from "../api/publicTypes";
 import type { InspectionShellSingleResult } from "../inspect/InspectionShell";
@@ -2479,6 +2869,20 @@ export default function PresetControlsExample() {
 }
 </file>
 
+<file path="src/examples/styles.css">
+body {
+    width: 100vw;
+    height: 100vh;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+}
+
+#app {
+    height: 100%;
+}
+</file>
+
 <file path="src/examples/ThemedExample.tsx">
 import React, { useCallback } from "react";
 import { generateDungeon } from "../api";
@@ -2497,6 +2901,292 @@ export default function ThemedExample() {
       generate={generate}
     />
   );
+}
+</file>
+
+<file path="src/pathfinding/aStar8.ts">
+// src/pathfinding/aStar8.ts
+//
+// 8-directional A* pathfinding using octile distance heuristic.
+// Integer-scaled costs: orthogonal = 10, diagonal = 14 (≈ 10*sqrt(2)).
+
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import { isTileWalkable, type WalkabilityResolvers } from "../walkability";
+import { MinHeap } from "./minHeap";
+
+export type GridPos = { x: number; y: number };
+
+export type AStarPath = { path: GridPos[]; cost: number } | null;
+
+// 8-directional offsets: [dx, dy, cost]
+const DIRS: [number, number, number][] = [
+  [ 0, -1, 10], // N
+  [ 1, -1, 14], // NE
+  [ 1,  0, 10], // E
+  [ 1,  1, 14], // SE
+  [ 0,  1, 10], // S
+  [-1,  1, 14], // SW
+  [-1,  0, 10], // W
+  [-1, -1, 14], // NW
+];
+
+/**
+ * Octile distance heuristic for 8-directional grids.
+ * Scaled to match the integer costs above (orthogonal=10, diagonal=14).
+ */
+function octile(ax: number, ay: number, bx: number, by: number): number {
+  const dx = Math.abs(ax - bx);
+  const dy = Math.abs(ay - by);
+  // h = 10*(dx+dy) + (14-20)*min(dx,dy)  = 10*(dx+dy) - 6*min(dx,dy)
+  return 10 * (dx + dy) - 6 * Math.min(dx, dy);
+}
+
+/**
+ * Find the shortest 8-directional path from `start` to `goal`.
+ *
+ * @param dungeon   BSP dungeon outputs (for walkability checks)
+ * @param content   Content outputs (for feature walkability)
+ * @param start     Starting grid position
+ * @param goal      Target grid position
+ * @param resolvers Optional walkability resolvers (door open, secret revealed)
+ * @returns         Path from start to goal (inclusive) and total cost, or null if unreachable.
+ */
+export function aStar8(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  start: GridPos,
+  goal: GridPos,
+  resolvers: WalkabilityResolvers = {},
+): AStarPath {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  // Quick bounds + walkability check on goal
+  if (!isTileWalkable(dungeon, content, goal.x, goal.y, resolvers)) return null;
+  if (!isTileWalkable(dungeon, content, start.x, start.y, resolvers)) return null;
+
+  // Flat-array maps for gScore and cameFrom
+  const gScore = new Int32Array(W * H).fill(2147483647); // MAX_INT
+  const cameFromX = new Int16Array(W * H).fill(-1);
+  const cameFromY = new Int16Array(W * H).fill(-1);
+
+  const startIdx = start.y * W + start.x;
+  gScore[startIdx] = 0;
+
+  const open = new MinHeap<number>(); // stores flat cell index
+  open.push(octile(start.x, start.y, goal.x, goal.y), startIdx);
+
+  while (open.size > 0) {
+    const idx = open.pop()!;
+    const cx = idx % W;
+    const cy = (idx / W) | 0;
+
+    if (cx === goal.x && cy === goal.y) {
+      // Reconstruct path
+      const path: GridPos[] = [];
+      let ni = idx;
+      while (ni !== startIdx || path.length === 0) {
+        path.push({ x: ni % W, y: (ni / W) | 0 });
+        const px = cameFromX[ni];
+        const py = cameFromY[ni];
+        if (px === -1) break;
+        ni = py * W + px;
+      }
+      // Add start if not already there
+      if (path[path.length - 1].x !== start.x || path[path.length - 1].y !== start.y) {
+        path.push({ x: start.x, y: start.y });
+      }
+      path.reverse();
+      return { path, cost: gScore[idx] };
+    }
+
+    const curG = gScore[idx];
+
+    for (const [dx, dy, moveCost] of DIRS) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+
+      if (!isTileWalkable(dungeon, content, nx, ny, resolvers)) continue;
+
+      // For diagonals: block if both orthogonal neighbors are walls (corner cutting)
+      if (dx !== 0 && dy !== 0) {
+        if (
+          !isTileWalkable(dungeon, content, cx + dx, cy, resolvers) ||
+          !isTileWalkable(dungeon, content, cx, cy + dy, resolvers)
+        ) {
+          continue;
+        }
+      }
+
+      const ni = ny * W + nx;
+      const tentativeG = curG + moveCost;
+
+      if (tentativeG < gScore[ni]) {
+        gScore[ni] = tentativeG;
+        cameFromX[ni] = cx;
+        cameFromY[ni] = cy;
+        const h = octile(nx, ny, goal.x, goal.y);
+        open.push(tentativeG + h, ni);
+      }
+    }
+  }
+
+  return null; // no path found
+}
+</file>
+
+<file path="src/pathfinding/minHeap.ts">
+// src/pathfinding/minHeap.ts
+//
+// A minimal binary min-heap keyed on a numeric priority.
+// Used by aStar8 as the open-set priority queue.
+
+export class MinHeap<T> {
+  private _heap: Array<{ priority: number; value: T }> = [];
+
+  get size(): number {
+    return this._heap.length;
+  }
+
+  push(priority: number, value: T): void {
+    this._heap.push({ priority, value });
+    this._bubbleUp(this._heap.length - 1);
+  }
+
+  pop(): T | undefined {
+    if (this._heap.length === 0) return undefined;
+    const top = this._heap[0].value;
+    const last = this._heap.pop()!;
+    if (this._heap.length > 0) {
+      this._heap[0] = last;
+      this._siftDown(0);
+    }
+    return top;
+  }
+
+  peek(): T | undefined {
+    return this._heap[0]?.value;
+  }
+
+  peekPriority(): number {
+    return this._heap[0]?.priority ?? Infinity;
+  }
+
+  private _bubbleUp(i: number): void {
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this._heap[parent].priority <= this._heap[i].priority) break;
+      const tmp = this._heap[parent];
+      this._heap[parent] = this._heap[i];
+      this._heap[i] = tmp;
+      i = parent;
+    }
+  }
+
+  private _siftDown(i: number): void {
+    const n = this._heap.length;
+    while (true) {
+      let smallest = i;
+      const l = 2 * i + 1;
+      const r = 2 * i + 2;
+      if (l < n && this._heap[l].priority < this._heap[smallest].priority) smallest = l;
+      if (r < n && this._heap[r].priority < this._heap[smallest].priority) smallest = r;
+      if (smallest === i) break;
+      const tmp = this._heap[smallest];
+      this._heap[smallest] = this._heap[i];
+      this._heap[i] = tmp;
+      i = smallest;
+    }
+  }
+}
+</file>
+
+<file path="src/rendering/pathMask.ts">
+// src/rendering/pathMask.ts
+//
+// Path mask RGBA8 texture — mirrors the visibility.ts pattern.
+//
+// Channel layout per cell:
+//   R – enemy path coverage (0 or 255)
+//   G – npc/neutral path coverage (0 or 255)
+//   B – player path coverage (0 or 255)
+//   A – step index from path start (0–255); 0 means no path here
+
+import * as THREE from "three";
+import type { GridPos } from "../pathfinding/aStar8";
+
+export type PathMaskKind = "enemy" | "npc" | "player";
+
+/**
+ * Allocate a W×H RGBA8 DataTexture for the path mask.
+ * All channels start at 0 (no path).
+ */
+export function createPathMaskRGBA(
+  W: number,
+  H: number,
+  name: string,
+): { data: Uint8Array; tex: THREE.DataTexture } {
+  const data = new Uint8Array(W * H * 4); // zeroed
+
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+
+  tex.name = name;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  tex.needsUpdate = true;
+
+  return { data, tex };
+}
+
+/** Zero all channels (call before re-stamping paths each tick). */
+export function clearPathMaskRGBA(data: Uint8Array): void {
+  data.fill(0);
+}
+
+/**
+ * Write a path into the mask buffer.
+ *
+ * For each cell at step `s` (0-based from start):
+ *   - Sets the appropriate channel (R=enemy, G=npc, B=player) to 255.
+ *   - Sets alpha to the minimum of any existing non-zero alpha and s+1,
+ *     or s+1 if alpha was 0.  This makes overlapping paths take the
+ *     earlier (smaller) step index, giving a consistent "distance from
+ *     start" gradient when paths cross.
+ *
+ * @param data   Uint8Array from createPathMaskRGBA
+ * @param W      Dungeon width
+ * @param path   Ordered path cells from start (index 0) to goal
+ * @param kind   Which entity kind ("enemy"→R, "npc"→G, "player"→B)
+ */
+export function stampPath(
+  data: Uint8Array,
+  W: number,
+  path: GridPos[],
+  kind: PathMaskKind,
+): void {
+  const chOffset = kind === "enemy" ? 0 : kind === "npc" ? 1 : 2;
+
+  for (let s = 0; s < path.length; s++) {
+    const { x, y } = path[s];
+    const base = (y * W + x) * 4;
+
+    // Set kind channel
+    data[base + chOffset] = 255;
+
+    // Alpha: step index clamped to 1..255 (0 means "no path")
+    const stepVal = Math.min(255, s + 1);
+    const existing = data[base + 3];
+    data[base + 3] = existing === 0 ? stepVal : Math.min(existing, stepVal);
+  }
 }
 </file>
 
@@ -3858,345 +4548,6 @@ export const DEFAULT_BATCH: BatchConfig = {
 };
 </file>
 
-<file path="src/dungeonState.ts">
-// src/dungeonState.ts
-//
-// Milestone 3 — Phase 2
-// Runtime puzzle state model + action helpers.
-//
-// This layer is intentionally independent from generation.
-// It is initialized from ContentOutputs.meta and then mutated by runtime actions.
-
-import type {
-  BspDungeonOutputs,
-  ContentOutputs,
-  DoorKind,
-  HazardType,
-  CircuitDef,
-} from "./mazeGen";
-import { isTileWalkable } from "./walkability";
-
-export type DoorRuntimeState = {
-  kind: DoorKind;
-  isOpen: boolean;
-  forcedOpen?: boolean;
-};
-
-export type KeyRuntimeState = {
-  collected: boolean;
-};
-
-export type LeverRuntimeState = {
-  toggled: boolean;
-};
-
-export type PlateRuntimeState = {
-  pressed: boolean;
-};
-
-export type BlockRuntimeState = {
-  x: number;
-  y: number;
-  weightClass: number; // 0..3
-};
-
-export type HazardRuntimeState = {
-  hazardType: HazardType;
-  enabled: boolean;
-};
-
-export type SecretRuntimeState = {
-  revealed: boolean;
-};
-
-export type CircuitRuntimeState = {
-  // “Active” is the output of behavior mode after evaluation.
-  active: boolean;
-  // For edge detection on satisfiable (raw) signal:
-  // used by TOGGLE mode and for “toggle target” effects.
-  lastSatisfied: boolean;
-  // Debug info: helpful to show in UI.
-  lastSatisfiedCount: number;
-};
-
-export type DungeonRuntimeState = {
-  doors: Record<number, DoorRuntimeState>;
-  keys: Record<number, KeyRuntimeState>;
-  levers: Record<number, LeverRuntimeState>;
-  plates: Record<number, PlateRuntimeState>;
-  blocks: Record<number, BlockRuntimeState>;
-  hazards: Record<number, HazardRuntimeState>;
-  secrets: Record<number, SecretRuntimeState>;
-  circuits: Record<number, CircuitRuntimeState>;
-};
-
-function cloneState<S>(s: S): S {
-  // runtime state is shallow objects + maps, so structuredClone is ideal if available
-  // but we keep it simple and explicit.
-  return JSON.parse(JSON.stringify(s)) as S;
-}
-
-function idxOf(W: number, x: number, y: number) {
-  return y * W + x;
-}
-
-export function initDungeonRuntimeState(
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  const doors: Record<number, DoorRuntimeState> = {};
-  const keys: Record<number, KeyRuntimeState> = {};
-  const levers: Record<number, LeverRuntimeState> = {};
-  const plates: Record<number, PlateRuntimeState> = {};
-  const blocks: Record<number, BlockRuntimeState> = {};
-  const hazards: Record<number, HazardRuntimeState> = {};
-  const secrets: Record<number, SecretRuntimeState> = {};
-  const circuits: Record<number, CircuitRuntimeState> = {};
-
-  // Doors
-  for (const d of content.meta.doors) {
-    doors[d.id] = { kind: d.kind, isOpen: false };
-  }
-
-  // Keys
-  for (const k of content.meta.keys) {
-    keys[k.id] = { collected: false };
-  }
-
-  // Levers
-  for (const l of content.meta.levers) {
-    levers[l.id] = { toggled: false };
-  }
-
-  // Plates
-  for (const p of content.meta.plates) {
-    plates[p.id] = { pressed: false };
-  }
-
-  // Blocks
-  for (const b of content.meta.blocks) {
-    blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
-  }
-
-  // Hazards
-  for (const h of content.meta.hazards) {
-    hazards[h.id] = { hazardType: h.hazardType, enabled: h.activeInitial };
-  }
-
-  // Secrets
-  for (const s of content.meta.secrets) {
-    secrets[s.id] = { revealed: false };
-  }
-
-  // Circuits (runtime debug state only)
-  for (const c of content.meta.circuits) {
-    circuits[c.id] = {
-      active: false,
-      lastSatisfied: false,
-      lastSatisfiedCount: 0,
-    };
-  }
-
-  return {
-    doors,
-    keys,
-    levers,
-    plates,
-    blocks,
-    hazards,
-    secrets,
-    circuits,
-  };
-}
-
-// ----------------- Basic actions -----------------
-
-export function collectKey(
-  state: DungeonRuntimeState,
-  keyCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.keys[keyCircuitId]) next.keys[keyCircuitId] = { collected: false };
-  next.keys[keyCircuitId].collected = true;
-  return next;
-}
-
-export function toggleLever(
-  state: DungeonRuntimeState,
-  leverCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.levers[leverCircuitId])
-    next.levers[leverCircuitId] = { toggled: false };
-  next.levers[leverCircuitId].toggled = !next.levers[leverCircuitId].toggled;
-  return next;
-}
-
-// Plates are now DERIVED — keep these for compatibility/testing, but App.tsx no longer calls them.
-export function setPlatePressed(
-  state: DungeonRuntimeState,
-  plateCircuitId: number,
-  pressed: boolean,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.plates[plateCircuitId])
-    next.plates[plateCircuitId] = { pressed: false };
-  next.plates[plateCircuitId].pressed = pressed;
-  return next;
-}
-
-export function togglePlate(
-  state: DungeonRuntimeState,
-  plateCircuitId: number,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-  if (!next.plates[plateCircuitId])
-    next.plates[plateCircuitId] = { pressed: false };
-  next.plates[plateCircuitId].pressed = !next.plates[plateCircuitId].pressed;
-  return next;
-}
-
-export function resetRuntimeState(
-  _state: DungeonRuntimeState,
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  // Re-init from current content meta
-  return initDungeonRuntimeState(content);
-}
-
-// ----------------- Derived state -----------------
-
-/**
- * DERIVED PLATES:
- * Plate.pressed is computed from block occupancy (and plate config), not directly mutated.
- *
- * This should be called any time blocks move (and once after init).
- */
-export function derivePlatesFromBlocks(
-  state: DungeonRuntimeState,
-  content: ContentOutputs,
-): DungeonRuntimeState {
-  const next = cloneState(state);
-
-  // Precompute a quick occupancy set for blocks
-  const occupied = new Set<number>();
-  for (const b of Object.values(next.blocks)) {
-    occupied.add(idxOf(content.width, b.x, b.y));
-  }
-
-  for (const p of content.meta.plates) {
-    if (!next.plates[p.id]) next.plates[p.id] = { pressed: false };
-
-    const onBlock = occupied.has(idxOf(content.width, p.x, p.y));
-    let pressed = false;
-
-    // For now we only have blocks in the prototype, but we respect the plate flags:
-    if (p.activatedByBlock && onBlock) pressed = true;
-
-    // (Player activation can be added later)
-    if (p.inverted) pressed = !pressed;
-
-    next.plates[p.id].pressed = pressed;
-  }
-
-  return next;
-}
-
-// ----------------- Block push (prototype) -----------------
-
-export type PushResult =
-  | { ok: true; next: DungeonRuntimeState }
-  | { ok: false; next: DungeonRuntimeState; error: string };
-
-function hasBlockAt(
-  state: DungeonRuntimeState,
-  x: number,
-  y: number,
-  ignoreBlockId?: number,
-): boolean {
-  for (const [idStr, b] of Object.entries(state.blocks)) {
-    const id = Number(idStr);
-    if (ignoreBlockId != null && id === ignoreBlockId) continue;
-    if (b.x === x && b.y === y) return true;
-  }
-  return false;
-}
-
-/**
- * Attempt to push a specific block by (dx,dy).
- * - checks bounds/walls
- * - blocks cannot overlap
- * - doors block movement unless currently open
- */
-export function tryPushBlock(
-  state: DungeonRuntimeState,
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs,
-  blockId: number,
-  dx: number,
-  dy: number,
-): PushResult {
-  const b = state.blocks[blockId];
-  if (!b) return { ok: false, next: state, error: `Unknown block ${blockId}` };
-  if ((dx | 0) === 0 && (dy | 0) === 0)
-    return { ok: false, next: state, error: "No movement" };
-  if (Math.abs(dx) + Math.abs(dy) !== 1)
-    return {
-      ok: false,
-      next: state,
-      error: "Only cardinal pushes are supported",
-    };
-
-  const nx = b.x + dx;
-  const ny = b.y + dy;
-
-  const okWalk = isTileWalkable(dungeon, content, nx, ny, {
-    isDoorOpen: (doorId) => {
-      const door = state.doors?.[doorId];
-      return !!(door?.isOpen || (door as any)?.forcedOpen);
-    },
-    isSecretRevealed: (secretId) => !!state.secrets?.[secretId]?.revealed,
-  });
-
-  if (!okWalk) {
-    return { ok: false, next: state, error: "Blocked" };
-  }
-
-  if (hasBlockAt(state, nx, ny, blockId)) {
-    return { ok: false, next: state, error: "Another block is in the way" };
-  }
-
-  const next = cloneState(state);
-  next.blocks[blockId] = { ...next.blocks[blockId], x: nx, y: ny };
-  return { ok: true, next };
-}
-
-// ----------------- Target application helpers -----------------
-
-export function ensureDoor(
-  state: DungeonRuntimeState,
-  id: number,
-  kind: DoorKind,
-): void {
-  if (!state.doors[id]) state.doors[id] = { kind, isOpen: false };
-}
-
-export function ensureHazard(
-  state: DungeonRuntimeState,
-  id: number,
-  hazardType: HazardType,
-): void {
-  if (!state.hazards[id]) state.hazards[id] = { hazardType, enabled: false };
-}
-
-export function ensureSecret(state: DungeonRuntimeState, id: number): void {
-  if (!state.secrets[id]) state.secrets[id] = { revealed: false };
-}
-
-export function ensurePlate(state: DungeonRuntimeState, id: number): void {
-  if (!state.plates[id]) state.plates[id] = { pressed: false };
-}
-</file>
-
 <file path="src/graphEdgeId.ts">
 // src/graphEdgeId.ts
 //
@@ -5013,72 +5364,6 @@ function clamp01(v: number) {
 function fmt(v: number | null | undefined) {
   if (v == null) return "null";
   return (Math.round(v * 1000) / 1000).toString();
-}
-</file>
-
-<file path="src/walkability.ts">
-// src/walkability.ts
-//
-// Shared walkability rules used by:
-// - runtime movement / pushing (dungeonState.ts)
-// - generation-time reachability validation (puzzlePatterns.ts)
-//
-// IMPORTANT:
-// - Walls are never walkable.
-// - Doors are walkable only if "open" (according to provided resolver).
-// - Hidden passages (featureType=9) are blocked until revealed (according to provided resolver).
-// - Hazards never block movement (consequence-only for now).
-
-import type { BspDungeonOutputs, ContentOutputs } from "./mazeGen";
-
-type DoorOpenResolver = (doorId: number) => boolean;
-type SecretRevealedResolver = (secretId: number) => boolean;
-
-export type WalkabilityResolvers = {
-  isDoorOpen?: DoorOpenResolver;
-  isSecretRevealed?: SecretRevealedResolver;
-};
-
-function idxOf(W: number, x: number, y: number) {
-  return y * W + x;
-}
-
-export function isTileWalkable(
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs,
-  x: number,
-  y: number,
-  resolvers: WalkabilityResolvers = {},
-): boolean {
-  const W = dungeon.width;
-  const H = dungeon.height;
-  if (x < 0 || y < 0 || x >= W || y >= H) return false;
-
-  const i = idxOf(W, x, y);
-
-  // walls
-  if (dungeon.masks.solid[i] === 255) return false;
-
-  const ft = content.masks.featureType[i] | 0;
-  const fid = content.masks.featureId[i] | 0;
-
-  // Hidden passage: blocked until revealed
-  if (ft === 9 && fid !== 0) {
-    const isRevealed = resolvers.isSecretRevealed
-      ? resolvers.isSecretRevealed(fid)
-      : false;
-    if (!isRevealed) return false;
-  }
-
-  // Door: blocked until open
-  if (ft === 4 && fid !== 0) {
-    const isOpen = resolvers.isDoorOpen ? resolvers.isDoorOpen(fid) : false;
-    if (!isOpen) return false;
-  }
-
-  // Hazards do not block (by design, for now)
-
-  return true;
 }
 </file>
 
@@ -6503,6 +6788,179 @@ export default function RoleDiagnosticsSection(
 }
 </file>
 
+<file path="src/examples/MinimalExample.tsx">
+import { useEffect, useState, useMemo } from "react";
+import hotkeys from "hotkeys-js";
+
+import DungeonRenderView from "../rendering/DungeonRenderView";
+import {
+  ContentOptions,
+  generateBspDungeon,
+  generateDungeonContent,
+  BspDungeonOutputs,
+  ContentOutputs,
+  FeatureType,
+} from "../mazeGen";
+
+import { isTileWalkable } from "../walkability";
+
+import { computeStartCell } from "../inspect/computeStartCell";
+
+import { CP437_TILES } from "../rendering/codepage437Tiles";
+
+import "./styles.css";
+
+export interface Player {
+  x: number;
+  y: number;
+}
+
+function isBlocked(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  x: number,
+  y: number,
+) {
+  return !isTileWalkable(dungeon, content, x, y);
+}
+
+export default function MinimalExample() {
+  const seed = "test";
+  const opts = {
+    width: 64,
+    height: 64,
+    seed,
+    CP437_TILES,
+  };
+
+  const contentOpts: ContentOptions = {
+    seed,
+    includeIntroGate: true,
+  };
+
+  const dungeon = useMemo(() => generateBspDungeon(opts), [seed]);
+  const content = useMemo(
+    () => generateDungeonContent(dungeon, contentOpts),
+    [seed],
+  );
+
+  const startCell = useMemo(() => {
+    return computeStartCell(dungeon, content);
+  }, [dungeon, content]);
+
+  const [player, setPlayer] = useState<Player>({
+    x: startCell.x,
+    y: startCell.y,
+  });
+
+  function moveLeft() {
+    setPlayer((p) => {
+      if (isBlocked(dungeon, content, p.x - 1, p.y)) return p;
+      return { x: p.x - 1, y: p.y };
+    });
+  }
+
+  function moveRight() {
+    setPlayer((p) => {
+      if (isBlocked(dungeon, content, p.x + 1, p.y)) return p;
+      return { x: p.x + 1, y: p.y };
+    });
+  }
+
+  function moveDown() {
+    setPlayer((p) => {
+      if (isBlocked(dungeon, content, p.x, p.y + 1)) return p;
+      return { x: p.x, y: p.y + 1 };
+    });
+  }
+
+  function moveUp() {
+    setPlayer((p) => {
+      if (isBlocked(dungeon, content, p.x, p.y - 1)) return p;
+      return { x: p.x, y: p.y - 1 };
+    });
+  }
+
+  useEffect(() => {
+    hotkeys("a", () => {
+      moveLeft();
+    });
+    hotkeys("s", () => {
+      moveDown();
+    });
+    hotkeys("d", () => {
+      moveRight();
+    });
+    hotkeys("w", () => {
+      moveUp();
+    });
+
+    return () => {
+      hotkeys.unbind();
+    };
+  }, []);
+
+  return (
+    <>
+      <DungeonRenderView
+        bsp={dungeon}
+        content={content}
+        focusX={player.x}
+        focusY={player.y}
+        onCellFocus={(cell) => console.log("cell focus", cell)}
+        playerX={player.x}
+        playerY={player.y}
+        playerTile={CP437_TILES.player}
+        floorTile={CP437_TILES.floor}
+        wallTile={CP437_TILES.wall}
+        // Feature tiles (FeatureType → glyph)
+        doorTile={CP437_TILES.doorClosed}
+        keyTile={CP437_TILES.key}
+        leverTile={CP437_TILES.lever}
+        plateTile={CP437_TILES.plate}
+        blockTile={CP437_TILES.block}
+        chestTile={CP437_TILES.chest}
+        monsterTile={CP437_TILES.monster}
+        secretDoorTile={CP437_TILES.secretDoor}
+        hiddenPassageTile={CP437_TILES.hiddenPassage}
+        hazardDefaultTile={CP437_TILES.hazard}
+        atlasUrl={"/textures/codepage437.png"}
+        atlasCols={32}
+        atlasRows={8}
+        hazardTilesByType={{
+          1: 48, // lava
+          2: 49, // poison
+          3: 50, // water
+          4: 51, // spikes
+        }}
+        zoom={32}
+        flipAtlasY={false}
+        flipGridX={false}
+        flipGridY={true}
+        selectedX={player.x}
+        selectedY={player.y}
+        onCellHover={({ x, y, clientX, clientY }) => {
+          console.log(
+            "cell hover",
+            x,
+            y,
+            "clientX",
+            clientX,
+            "clientY",
+            clientY,
+          );
+        }}
+        onCellHoverEnd={() => {}}
+        onCellClick={({ x, y }) => {
+          console.log("cell click", x, y);
+          return true;
+        }}
+      />
+    </>
+  );
+}
+</file>
+
 <file path="src/inspect/computeStartCell.ts">
 // src/inspect/computeStartCell.ts
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
@@ -7753,38 +8211,6 @@ export function validatePacingTargets(
 }
 </file>
 
-<file path="package.json">
-{
-  "name": "mazegen",
-  "version": "0.0.0",
-  "private": true,
-  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
-  "license": "ISC",
-  "author": "",
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.5.0",
-    "framer-motion": "^12.29.0",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "three": "^0.182.0"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.8",
-    "@types/react-dom": "^19.2.3",
-    "typescript": "~5.9.3",
-    "vite": "^7.2.4"
-  }
-}
-</file>
-
 <file path="src/patternDoorPlacement.ts">
 // src/patternDoorPlacement.ts
 //
@@ -8045,6 +8471,39 @@ export function pickOrderedDoorSiteFromCorridors(args: {
   if (!pick.ok) return { ok: false, reason: "NoOrderedCandidate", stats };
 
   return { ...pick, ok: true, stats };
+}
+</file>
+
+<file path="package.json">
+{
+  "name": "mazegen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "framer-motion": "^12.29.0",
+    "hotkeys-js": "^4.0.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
 }
 </file>
 
@@ -12766,341 +13225,6 @@ details[open] > .maze-summary {
 }
 </file>
 
-<file path="src/rendering/tileShader.ts">
-// src/rendering/tileShader.ts
-export const tileVert = /* glsl */ `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-// src/rendering/tileShader.ts
-export const tileFrag = /* glsl */ `
-  precision highp float;
-
-  uniform float uTime;
-  uniform float uHazardOmega;
-  uniform float uInteractOmega;
-  uniform float uAoStrength;
-  uniform vec2  uLightDir;
-
-  uniform sampler2D uSolid;
-  uniform sampler2D uChar;
-  uniform sampler2D uTint;
-  uniform sampler2D uAtlas;
-
-  uniform vec2 uGridSize;
-  uniform vec2 uAtlasGrid;
-  uniform float uWallTile;
-  uniform float uFloorTile;
-  uniform float uDoorTile;
-
-  uniform float uFlipAtlasY;
-  uniform float uFlipGridX;
-  uniform float uFlipGridY;
-
-  uniform vec4 uFloorColor;
-  uniform vec4 uWallColor;
-  uniform vec4 uPlayerColor;
-  uniform vec4 uItemColor;
-  uniform vec4 uHazardColor;
-  uniform vec4 uEnemyColor;
-
-  uniform float uEnemyBreathOmega;
-  uniform float uEnemyBreathAmp;
-  uniform float uMonsterTile;
-
-  // R1.5 affordances (inspection-only)
-  uniform vec2  uHoverCell;
-  uniform float uHoverEnabled;
-  uniform float uHoverStrength;
-
-  // R1.5 selection affordance (inspection-only)
-  uniform vec2  uSelectedCell;
-  uniform float uSelectedEnabled;
-  uniform float uSelectedStrength;
-
-  // M7 visibility + explored
-  uniform sampler2D uVisExplored;
-  uniform float uExploredDim;
-  uniform float uVisFgBoost;
-  uniform float uVisBgBoost;
-
-  varying vec2 vUv;
-
-  // ------------------------------------------------------------
-  // Helpers
-  // ------------------------------------------------------------
-
-  float tileIs(float tile, float target) {
-    return 1.0 - step(0.5, abs(tile - target));
-  }
-
-  float sampleR8(sampler2D tex, vec2 uv) {
-    return texture2D(tex, uv).r;
-  }
-
-  float isWallAtCell(vec2 cell) {
-    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
-    vec2 uv = (c + vec2(0.5)) / uGridSize;
-    return step(0.5, sampleR8(uSolid, uv));
-  }
-
-  vec2 breatheWarp(vec2 local, float t, float amp) {
-    vec2 p = local - vec2(0.5);
-    float sY = 1.0 + amp * t;
-    float sX = 1.0 - amp * 0.6 * t;
-    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
-    return clamp(q, vec2(0.001), vec2(0.999));
-  }
-
-  float atlasAlphaAtLocal(
-    vec2 localCoord,
-    float tx,
-    float ty,
-    float cols,
-    float rows
-  ) {
-    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
-              / vec2(cols, rows);
-    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
-    return texture2D(uAtlas, uv).a;
-  }
-
-  // ------------------------------------------------------------
-  // Main
-  // ------------------------------------------------------------
-
-  void main() {
-    vec2 uvGrid = vUv;
-    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
-    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
-
-    vec2 gridUv = uvGrid * uGridSize;
-    vec2 cell   = floor(gridUv);
-    vec2 local  = fract(gridUv);
-    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
-
-    float curWall = step(0.5, sampleR8(uSolid, texUv));
-
-    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
-    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
-    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
-    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
-
-    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
-    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
-    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
-    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
-
-    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
-    float isEdgeWall = curWall * (1.0 - allWall);
-
-    float chN = sampleR8(uChar, texUv);
-    float ch  = floor(chN * 255.0 + 0.5);
-    float hasChar = step(0.5, ch);
-
-    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
-      gl_FragColor = vec4(0.0);
-      return;
-    }
-
-    // ------------------------------------------------------------
-    // M7 FOG OF WAR — sample vis/explored texture
-    // ------------------------------------------------------------
-    vec4 visData  = texture2D(uVisExplored, texUv);
-    float explored = step(0.5, visData.g);
-    float vis      = visData.a;           // 0..1 (already normalised by GL)
-
-    if (explored < 0.5) {
-      gl_FragColor = vec4(0.0);
-      return;
-    }
-
-    float dim = mix(uExploredDim, 1.0, vis);
-
-    float tile = mix(
-      mix(uFloorTile, uWallTile, isEdgeWall),
-      ch,
-      hasChar
-    );
-
-    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
-
-    float cols = uAtlasGrid.x;
-    float rows = uAtlasGrid.y;
-    float tx = mod(tile, cols);
-    float ty = floor(tile / cols);
-
-    float isMonster = tileIs(tile, uMonsterTile);
-    vec2 local2 = local;
-
-    if (isMonster > 0.5) {
-      float breath = sin(uTime * uEnemyBreathOmega);
-      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
-    }
-
-    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
-    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
-
-    vec4 c = texture2D(uAtlas, atlasUv);
-
-    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
-    float inkA = smoothstep(0.05, 0.20, c.a);
-    vec3 ink = c.rgb;
-
-    // -------------------------
-    // Tint selection
-    // -------------------------
-
-    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
-
-    if (tintId > 0.5 && tintId < 1.5) {
-      float t = 0.5 + 0.5 * sin(uTime * 4.0);
-      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
-    } else if (tintId > 1.5 && tintId < 2.5) {
-      tint = uItemColor;
-    } else if (tintId > 2.5 && tintId < 3.5) {
-      tint = uHazardColor;
-    }
-
-    if (isMonster > 0.5) {
-      tint = uEnemyColor;
-    }
-
-    // -------------------------
-    // Lighting
-    // -------------------------
-
-    float modulate = 1.0;
-    if (tintId > 2.5 && tintId < 3.5)
-      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
-    else if (tintId > 1.5 && tintId < 2.5)
-      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
-
-    float ao = (curWall < 0.5)
-      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
-      : 0.0;
-
-    vec2 dir = normalize(uLightDir + vec2(1e-5));
-    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
-
-    float shade = mix(0.97, 1.08, isEdgeWall);
-    shade *= (1.0 - ao);
-    shade *= (1.0 - shadow);
-    shade *= modulate;
-
-    ink *= tint.rgb * shade;
-
-    // ------------------------------------------------------------
-    // DOOR EFFECT — stronger, calmer, architectural
-    // ------------------------------------------------------------
-
-    float isDoor = tileIs(tile, uDoorTile);
-
-    if (isDoor > 0.5) {
-      vec2 eps = vec2(1.0 / 32.0);
-
-      float aC = inkA;
-      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
-      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
-      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
-      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
-
-      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
-
-      // Slow, weighty pulse (much slower than items)
-      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
-
-      // Vertical bias — doors feel tall and solid
-      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
-
-      float strength = edge * pulse * vertical;
-
-      vec3 hi = vec3(0.92, 0.95, 1.0);
-      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
-    }
-
-    // -------------------------
-    // Item metallic sheen (unchanged)
-    // -------------------------
-
-    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
-      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
-      float d = abs(phase - 0.5);
-      float core = 1.0 - smoothstep(0.01, 0.03, d);
-      float halo = 1.0 - smoothstep(0.04, 0.16, d);
-      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
-      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
-      vec3 hi = vec3(0.96, 0.98, 1.0);
-      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
-    }
-
-    vec3 outRgb = mix(bg, ink, inkA);
-
-    // ------------------------------------------------------------
-    // SELECTED OUTLINE (R1.5) — inspection affordance
-    // ------------------------------------------------------------
-    float sx = 1.0 - step(0.5, abs(cell.x - uSelectedCell.x));
-    float sy = 1.0 - step(0.5, abs(cell.y - uSelectedCell.y));
-    float isSelectedCell = uSelectedEnabled * sx * sy;
-
-    if (isSelectedCell > 0.0) {
-      // Thicker than hover
-      float t = 0.07;
-      float edge =
-        step(local.x, t) +
-        step(local.y, t) +
-        step(1.0 - local.x, t) +
-        step(1.0 - local.y, t);
-      edge = clamp(edge, 0.0, 1.0);
-
-      // Use item color (theme-derived) so we don't hardcode a new RGB
-      vec3 selCol = uItemColor.rgb;
-      outRgb = mix(outRgb, selCol, edge * uSelectedStrength);
-    }
-
-
-    // ------------------------------------------------------------
-    // HOVER OUTLINE (R1.5) — inspection affordance
-    // ------------------------------------------------------------
-    // cell is in the flipped grid space already (matches click mapping if we flip u/v in pointer handlers)
-    float hx = 1.0 - step(0.5, abs(cell.x - uHoverCell.x));
-    float hy = 1.0 - step(0.5, abs(cell.y - uHoverCell.y));
-    float isHoverCell = uHoverEnabled * hx * hy;
-
-    if (isHoverCell > 0.0) {
-      // Thin outline inside the cell (local is 0..1 within the cell)
-      float t = 0.04; // thickness in local space; tweak later if needed
-      float edge =
-        step(local.x, t) +
-        step(local.y, t) +
-        step(1.0 - local.x, t) +
-        step(1.0 - local.y, t);
-      edge = clamp(edge, 0.0, 1.0);
-
-      // High-contrast hover color; keep subtle (strength is uniform-tunable)
-      vec3 hoverCol = vec3(0.95);
-      outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
-    }
-
-    // ------------------------------------------------------------
-    // M7 — apply dim (explored-but-dark) and visibility boost
-    // ------------------------------------------------------------
-    outRgb *= dim;
-    // Warm ambient glow for currently visible cells
-    outRgb += vis * uVisBgBoost * vec3(0.15, 0.10, 0.06);
-    // Slight foreground lift for visible cells (brightens ink pixels)
-    outRgb = clamp(outRgb + vis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
-
-    gl_FragColor = vec4(outRgb, 1.0);
-  }
-
-`;
-</file>
-
 <file path="src/doorSites.ts">
 // src/doorSites.ts
 //
@@ -13551,6 +13675,408 @@ export function findDoorSiteCandidatesAndStatsFromCorridors(
 
   return { candidates: out, stats };
 }
+</file>
+
+<file path="src/rendering/tileShader.ts">
+// src/rendering/tileShader.ts
+export const tileVert = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+// src/rendering/tileShader.ts
+export const tileFrag = /* glsl */ `
+  precision highp float;
+
+  uniform float uTime;
+  uniform float uHazardOmega;
+  uniform float uInteractOmega;
+  uniform float uAoStrength;
+  uniform vec2  uLightDir;
+
+  uniform sampler2D uSolid;
+  uniform sampler2D uChar;
+  uniform sampler2D uTint;
+  uniform sampler2D uAtlas;
+
+  uniform vec2 uGridSize;
+  uniform vec2 uAtlasGrid;
+  uniform float uWallTile;
+  uniform float uFloorTile;
+  uniform float uDoorTile;
+
+  uniform float uFlipAtlasY;
+  uniform float uFlipGridX;
+  uniform float uFlipGridY;
+
+  uniform vec4 uFloorColor;
+  uniform vec4 uWallColor;
+  uniform vec4 uPlayerColor;
+  uniform vec4 uItemColor;
+  uniform vec4 uHazardColor;
+  uniform vec4 uEnemyColor;
+
+  uniform float uEnemyBreathOmega;
+  uniform float uEnemyBreathAmp;
+  uniform float uMonsterTile;
+
+  // R1.5 affordances (inspection-only)
+  uniform vec2  uHoverCell;
+  uniform float uHoverEnabled;
+  uniform float uHoverStrength;
+
+  // R1.5 selection affordance (inspection-only)
+  uniform vec2  uSelectedCell;
+  uniform float uSelectedEnabled;
+  uniform float uSelectedStrength;
+
+  // M7 visibility + explored
+  uniform sampler2D uVisExplored;
+  uniform float uExploredDim;
+  uniform float uVisFgBoost;
+  uniform float uVisBgBoost;
+
+  // M8 path mask
+  uniform sampler2D uPathMask;
+  uniform float uPathStrength;
+  uniform float uPathAnimSpeed;
+
+  varying vec2 vUv;
+
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
+
+  float tileIs(float tile, float target) {
+    return 1.0 - step(0.5, abs(tile - target));
+  }
+
+  float sampleR8(sampler2D tex, vec2 uv) {
+    return texture2D(tex, uv).r;
+  }
+
+  float isWallAtCell(vec2 cell) {
+    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
+    vec2 uv = (c + vec2(0.5)) / uGridSize;
+    return step(0.5, sampleR8(uSolid, uv));
+  }
+
+  vec2 breatheWarp(vec2 local, float t, float amp) {
+    vec2 p = local - vec2(0.5);
+    float sY = 1.0 + amp * t;
+    float sX = 1.0 - amp * 0.6 * t;
+    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
+    return clamp(q, vec2(0.001), vec2(0.999));
+  }
+
+  float atlasAlphaAtLocal(
+    vec2 localCoord,
+    float tx,
+    float ty,
+    float cols,
+    float rows
+  ) {
+    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
+              / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
+    return texture2D(uAtlas, uv).a;
+  }
+
+  // ------------------------------------------------------------
+  // Main
+  // ------------------------------------------------------------
+
+  void main() {
+    vec2 uvGrid = vUv;
+    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
+    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
+
+    vec2 gridUv = uvGrid * uGridSize;
+    vec2 cell   = floor(gridUv);
+    vec2 local  = fract(gridUv);
+    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
+
+    float curWall = step(0.5, sampleR8(uSolid, texUv));
+
+    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
+    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
+    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
+    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
+
+    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
+    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
+    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
+    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
+
+    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
+    float isEdgeWall = curWall * (1.0 - allWall);
+
+    float chN = sampleR8(uChar, texUv);
+    float ch  = floor(chN * 255.0 + 0.5);
+    float hasChar = step(0.5, ch);
+
+    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    // ------------------------------------------------------------
+    // M7 FOG OF WAR — sample vis/explored texture
+    // ------------------------------------------------------------
+    vec4 visData  = texture2D(uVisExplored, texUv);
+    float explored = step(0.5, visData.g);
+    float vis      = visData.a;           // 0..1 (already normalised by GL)
+
+    if (explored < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    float dim = mix(uExploredDim, 1.0, vis);
+
+    float baseTile = mix(uFloorTile, uWallTile, isEdgeWall);
+
+    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
+
+    float cols = uAtlasGrid.x;
+    float rows = uAtlasGrid.y;
+
+    // --- Base tile (floor or wall) ---
+    float btx = mod(baseTile, cols);
+    float bty = floor(baseTile / cols);
+    vec2 baseAtlasUv = (vec2(btx, bty) + local) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) baseAtlasUv.y = 1.0 - baseAtlasUv.y;
+    vec4 baseC = texture2D(uAtlas, baseAtlasUv);
+
+    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
+    float baseInkA = smoothstep(0.05, 0.20, baseC.a);
+    vec3 baseInk = baseC.rgb;
+
+    // --- M8 PATH GRADIENT — sampled before entity glyph ---
+    vec4 pathData = texture2D(uPathMask, texUv);
+    float pathStep = pathData.a * 255.0; // 0 = no path; 1..255 = step index
+
+    // Apply path overlay only on explored, walkable (non-wall) cells that have a path
+    float onPath = step(0.5, pathData.a) * explored * (1.0 - curWall);
+
+    // Infer direction-of-travel from stepped alpha neighbors
+    // Sample the 4 cardinal neighbor alphas (cheaper than 8)
+    vec2 oneCell = vec2(1.0) / uGridSize;
+    float aN = texture2D(uPathMask, texUv + vec2( 0.0, -oneCell.y)).a * 255.0;
+    float aS = texture2D(uPathMask, texUv + vec2( 0.0,  oneCell.y)).a * 255.0;
+    float aE = texture2D(uPathMask, texUv + vec2( oneCell.x,  0.0)).a * 255.0;
+    float aW = texture2D(uPathMask, texUv + vec2(-oneCell.x,  0.0)).a * 255.0;
+
+    // Direction toward start = neighbor with step = pathStep - 1
+    vec2 towardStart = vec2(0.0);
+    float target = pathStep - 1.0;
+    if (abs(aN - target) < 0.5) towardStart += vec2( 0.0,  1.0);
+    if (abs(aS - target) < 0.5) towardStart += vec2( 0.0, -1.0);
+    if (abs(aE - target) < 0.5) towardStart += vec2(-1.0,  0.0);
+    if (abs(aW - target) < 0.5) towardStart += vec2( 1.0,  0.0);
+    float tLen = length(towardStart);
+    vec2 travelDir = (tLen > 0.001) ? towardStart / tLen : vec2(1.0, 0.0);
+
+    // Animated scrolling gradient along direction of travel
+    float proj = dot(local - vec2(0.5), travelDir);
+    float phase = fract(proj * 1.5 + uTime * uPathAnimSpeed);
+    float gradient = smoothstep(0.0, 0.4, phase) * (1.0 - smoothstep(0.6, 1.0, phase));
+
+    // Step banding for "marching" look
+    float band = fract(pathStep / 8.0);
+    float pathIntensity = mix(gradient, band, 0.3) * uPathStrength * onPath;
+
+    // Path color: pick based on channel (R=enemy, G=npc, B=player)
+    // Blend toward the dominant channel's color
+    vec3 enemyPath  = vec3(1.0, 0.3, 0.3);
+    vec3 npcPath    = vec3(0.3, 1.0, 0.5);
+    vec3 playerPath = vec3(0.3, 0.6, 1.0);
+    float hasEnemy  = step(0.5, pathData.r);
+    float hasNpc    = step(0.5, pathData.g);
+    float hasPlayer = step(0.5, pathData.b);
+    vec3 pathColor = enemyPath * hasEnemy + npcPath * hasNpc + playerPath * hasPlayer;
+    float totalKinds = hasEnemy + hasNpc + hasPlayer;
+    pathColor = (totalKinds > 0.0) ? pathColor / totalKinds : playerPath;
+
+    // --- Entity glyph (if present) ---
+    float isMonster = tileIs(ch, uMonsterTile);
+    vec2 local2 = local;
+
+    if (isMonster > 0.5) {
+      float breath = sin(uTime * uEnemyBreathOmega);
+      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
+    }
+
+    float tx = mod(ch, cols);
+    float ty = floor(ch / cols);
+    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+    vec4 charC = texture2D(uAtlas, atlasUv);
+    float charInkA = smoothstep(0.05, 0.20, charC.a) * hasChar;
+    vec3 charInk = charC.rgb;
+
+    // Use entity sample when present, else base
+    vec4 c = (hasChar > 0.5) ? charC : baseC;
+    float inkA = (hasChar > 0.5) ? charInkA : baseInkA;
+    vec3 ink = (hasChar > 0.5) ? charInk : baseInk;
+
+    // -------------------------
+    // Tint selection
+    // -------------------------
+
+    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
+
+    if (tintId > 0.5 && tintId < 1.5) {
+      float t = 0.5 + 0.5 * sin(uTime * 4.0);
+      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
+    } else if (tintId > 1.5 && tintId < 2.5) {
+      tint = uItemColor;
+    } else if (tintId > 2.5 && tintId < 3.5) {
+      tint = uHazardColor;
+    }
+
+    if (isMonster > 0.5) {
+      tint = uEnemyColor;
+    }
+
+    // -------------------------
+    // Lighting
+    // -------------------------
+
+    float modulate = 1.0;
+    if (tintId > 2.5 && tintId < 3.5)
+      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
+    else if (tintId > 1.5 && tintId < 2.5)
+      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
+
+    float ao = (curWall < 0.5)
+      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
+      : 0.0;
+
+    vec2 dir = normalize(uLightDir + vec2(1e-5));
+    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
+
+    float shade = mix(0.97, 1.08, isEdgeWall);
+    shade *= (1.0 - ao);
+    shade *= (1.0 - shadow);
+    shade *= modulate;
+
+    ink *= tint.rgb * shade;
+
+    // ------------------------------------------------------------
+    // DOOR EFFECT — stronger, calmer, architectural
+    // ------------------------------------------------------------
+
+    float isDoor = tileIs(ch, uDoorTile);
+
+    if (isDoor > 0.5) {
+      vec2 eps = vec2(1.0 / 32.0);
+
+      float aC = inkA;
+      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
+      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
+      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
+      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
+
+      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
+
+      // Slow, weighty pulse (much slower than items)
+      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
+
+      // Vertical bias — doors feel tall and solid
+      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
+
+      float strength = edge * pulse * vertical;
+
+      vec3 hi = vec3(0.92, 0.95, 1.0);
+      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
+    }
+
+    // -------------------------
+    // Item metallic sheen (unchanged)
+    // -------------------------
+
+    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
+      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
+      float d = abs(phase - 0.5);
+      float core = 1.0 - smoothstep(0.01, 0.03, d);
+      float halo = 1.0 - smoothstep(0.04, 0.16, d);
+      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
+      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
+      vec3 hi = vec3(0.96, 0.98, 1.0);
+      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
+    }
+
+    // --- Layer 1: base floor/wall ---
+    vec3 outRgb = mix(bg, ink, inkA);
+
+    // --- Layer 2: path gradient overlay (under entity glyph, over floor) ---
+    // Only blend the path where entity glyph is absent (ink alpha is low)
+    float pathBlend = pathIntensity * (1.0 - inkA * hasChar);
+    outRgb = mix(outRgb, pathColor, pathBlend * 0.5);
+
+    // ------------------------------------------------------------
+    // SELECTED OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    float sx = 1.0 - step(0.5, abs(cell.x - uSelectedCell.x));
+    float sy = 1.0 - step(0.5, abs(cell.y - uSelectedCell.y));
+    float isSelectedCell = uSelectedEnabled * sx * sy;
+
+    if (isSelectedCell > 0.0) {
+      // Thicker than hover
+      float t = 0.07;
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // Use item color (theme-derived) so we don't hardcode a new RGB
+      vec3 selCol = uItemColor.rgb;
+      outRgb = mix(outRgb, selCol, edge * uSelectedStrength);
+    }
+
+
+    // ------------------------------------------------------------
+    // HOVER OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    // cell is in the flipped grid space already (matches click mapping if we flip u/v in pointer handlers)
+    float hx = 1.0 - step(0.5, abs(cell.x - uHoverCell.x));
+    float hy = 1.0 - step(0.5, abs(cell.y - uHoverCell.y));
+    float isHoverCell = uHoverEnabled * hx * hy;
+
+    if (isHoverCell > 0.0) {
+      // Thin outline inside the cell (local is 0..1 within the cell)
+      float t = 0.04; // thickness in local space; tweak later if needed
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // High-contrast hover color; keep subtle (strength is uniform-tunable)
+      vec3 hoverCol = vec3(0.95);
+      outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
+    }
+
+    // ------------------------------------------------------------
+    // M7 — apply dim (explored-but-dark) and visibility boost
+    // ------------------------------------------------------------
+    outRgb *= dim;
+    // Warm ambient glow for currently visible cells
+    outRgb += vis * uVisBgBoost * vec3(0.15, 0.10, 0.06);
+    // Slight foreground lift for visible cells (brightens ink pixels)
+    outRgb = clamp(outRgb + vis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
+
+    gl_FragColor = vec4(outRgb, 1.0);
+  }
+
+`;
 </file>
 
 <file path="src/rendering/RENDERING-CONTEXT.md">
@@ -14705,7 +15231,8 @@ export function wizardReducer(
 //
 // This is an adapter carved from the old App.tsx inspection logic.
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { imageDataToPngDataUrl } from "../mazeGen";
 import DungeonRenderView from "../rendering/DungeonRenderView";
@@ -14724,6 +15251,13 @@ import type {
   CircuitEvalResult,
 } from "../evaluateCircuits";
 import { evaluateCircuits } from "../evaluateCircuits";
+
+import { aStar8 } from "../pathfinding/aStar8";
+import {
+  createPathMaskRGBA,
+  clearPathMaskRGBA,
+  stampPath,
+} from "../rendering/pathMask";
 
 import CircuitDiagnosticsSection from "../debug/CircuitDiagnosticsSection";
 import type {
@@ -15315,6 +15849,11 @@ export function InspectionShell(props: InspectionShellProps) {
 
   const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
 
+  // M8: path mask — owned here, passed to DungeonRenderView
+  const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  // Track current texture reference so we can force React re-renders on change
+  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
+
   // Hover tooltip state
   const hoverTimerRef = useRef<number | null>(null);
   const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
@@ -15340,6 +15879,18 @@ export function InspectionShell(props: InspectionShellProps) {
     return computeStartCell(dungeon, content);
   }, [dungeon, content]);
 
+  // M8: create/recreate path mask when dungeon dimensions change
+  useEffect(() => {
+    if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
+    const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
+    pathMaskRef.current = pm;
+    setPathMaskTex(pm.tex);
+    return () => {
+      pm.tex.dispose();
+      pathMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
   // -------------------------
   // Render-pane local state
   // -------------------------
@@ -15349,6 +15900,28 @@ export function InspectionShell(props: InspectionShellProps) {
     x: startCell.x,
     y: startCell.y,
   }));
+
+  // M8: recompute player path to selected cell whenever selection or player moves
+  const recomputePlayerPath = useCallback(
+    (targetX: number, targetY: number) => {
+      const pm = pathMaskRef.current;
+      if (!pm) return;
+      clearPathMaskRGBA(pm.data);
+      const result = aStar8(
+        dungeon,
+        content,
+        { x: player.x, y: player.y },
+        { x: targetX, y: targetY },
+      );
+      if (result) {
+        stampPath(pm.data, dungeon.width, result.path, "player");
+      }
+      pm.tex.needsUpdate = true;
+      // Force DungeonRenderView to pick up the refreshed texture
+      setPathMaskTex(pm.tex);
+    },
+    [dungeon, content, player.x, player.y],
+  );
 
   // "focus" is the camera target; click-to-focus updates this
   const [focus, setFocus] = useState<{ x: number; y: number }>(() => ({
@@ -16227,9 +16800,12 @@ export function InspectionShell(props: InspectionShellProps) {
                 setTooltip((t) => (t.visible ? { ...t, visible: false } : t));
               }}
               onCellClick={({ x, y }) => {
+                // Compute player path to clicked cell (debug/inspection mode)
+                recomputePlayerPath(x, y);
                 // Interactions win; only if false will render view fall back to camera focus
                 return tryInteractAtCell(x, y);
               }}
+              pathMaskTex={pathMaskTex ?? undefined}
             />
           )}
         </div>
@@ -16239,1160 +16815,6 @@ export function InspectionShell(props: InspectionShellProps) {
 }
 
 export default InspectionShell;
-</file>
-
-<file path="src/rendering/DungeonRenderView.tsx">
-// src/rendering/DungeonRenderView.tsx
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
-import { createVisExploredRGBA, updateVisExploredRGBA } from "./visibility";
-import { tileFrag, tileVert } from "./tileShader";
-import type { RenderTheme } from "./renderTheme";
-import { THEME_DEFAULT } from "./renderTheme";
-
-function featureTypeName(ft: number) {
-  switch (ft | 0) {
-    case 0:
-      return "none";
-    case 3:
-      return "secret door";
-    case 4:
-      return "door";
-    case 5:
-      return "key";
-    case 6:
-      return "lever";
-    case 7:
-      return "plate";
-    case 8:
-      return "block";
-    case 9:
-      return "hidden passage";
-    case 10:
-      return "hazard";
-    default:
-      return `feature(${ft})`;
-  }
-}
-
-function buildTooltipLines(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  x: number,
-  y: number,
-  visData?: Uint8Array | null,
-) {
-  const w = bsp.width;
-  const i = y * w + x;
-
-  // M7 vis/explored
-  const visA = visData ? visData[i * 4 + 3] : -1;
-  const exploredG = visData ? visData[i * 4 + 1] : -1;
-
-  // --- BSP masks ---
-  const solid = (bsp.masks?.solid?.[i] ?? 0) ? 1 : 0;
-  const regionId = (bsp.masks?.regionId?.[i] ?? 0) | 0;
-  const dist = (bsp.masks?.distanceToWall?.[i] ?? 0) | 0;
-
-  // --- content masks ---
-  const ft = (content.masks?.featureType?.[i] ?? 0) | 0;
-  const fid = (content.masks?.featureId?.[i] ?? 0) | 0;
-  const fp = (content.masks?.featureParam?.[i] ?? 0) | 0;
-
-  const danger = (content.masks?.danger?.[i] ?? 0) | 0;
-  const loot = (content.masks?.lootTier?.[i] ?? 0) | 0;
-  const hz = (content.masks?.hazardType?.[i] ?? 0) | 0;
-
-  const lines: string[] = [];
-
-  // --- raw (matches InspectionShell style) ---
-  lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
-  if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
-  if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
-  if (hz !== 0) lines.push(`hazardType=${hz}`);
-  if (danger !== 0) lines.push(`danger=${danger}`);
-  if (loot !== 0) lines.push(`lootTier=${loot}`);
-
-  // --- readable section ---
-  if (ft !== 0) {
-    lines.push(""); // spacer
-    lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
-
-    // Circuit membership (no diagnostics here)
-    const circuits: any[] = (content.meta as any)?.circuits ?? [];
-    const memberships: string[] = [];
-
-    const triggerKind =
-      ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
-
-    const targetKind =
-      ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
-
-    for (let ci = 0; ci < circuits.length; ci++) {
-      const c: any = circuits[ci];
-      const cid = (c?.id ?? ci) | 0;
-
-      // triggers
-      if (triggerKind && Array.isArray(c?.triggers)) {
-        for (const t of c.triggers) {
-          if (t?.kind === triggerKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
-            memberships.push(`• circuit[${ci}] id=${cid}: trigger ${t.kind}`);
-            break;
-          }
-        }
-      }
-
-      // targets
-      if (targetKind && Array.isArray(c?.targets)) {
-        for (const t of c.targets) {
-          if (t?.kind === targetKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
-            const eff = t?.effect ? ` ${t.effect}` : "";
-            memberships.push(
-              `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}`,
-            );
-            break;
-          }
-        }
-      }
-    }
-
-    if (memberships.length) lines.push(...memberships);
-    else lines.push(`• circuits: none`);
-  }
-
-  return { lines, ft, fid };
-}
-
-type Props = {
-  bsp: BspDungeonOutputs;
-  content: ContentOutputs;
-
-  // tileset atlas image URL (PNG) and layout
-  atlasUrl: string;
-  atlasCols: number;
-  atlasRows: number;
-
-  // which tiles to use for floor/wall; everything else comes from char mask
-  wallTile: number;
-  floorTile: number;
-
-  // camera target (typically player coords)
-  focusX: number;
-  focusY: number;
-
-  // CLICK -> set focus target (camera only)
-  onCellFocus?: (cell: { x: number; y: number }) => void;
-
-  // if your atlas origin is top-left, set true (shader handles flip)
-  flipAtlasY?: boolean;
-
-  doorTile?: number;
-  keyTile?: number;
-  leverTile?: number;
-  plateTile?: number;
-  blockTile?: number;
-  chestTile?: number;
-  monsterTile?: number;
-  secretDoorTile?: number;
-  hiddenPassageTile?: number;
-
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>;
-
-  playerX?: number;
-  playerY?: number;
-  playerTile?: number;
-  selectedX?: number;
-  selectedY?: number;
-
-  // R2 groundwork: tint colors (multiply atlas RGB)
-  floorColor?: [number, number, number, number]; // rgba 0..1
-  wallColor?: [number, number, number, number];
-  playerColor?: [number, number, number, number];
-  itemColor?: [number, number, number, number];
-  hazardColor?: [number, number, number, number];
-
-  // pixels per cell (world units are pixels)
-  zoom?: number;
-
-  onCameraSettled?: (cell: { x: number; y: number }) => void;
-
-  // grid orientation fixes (defaults true/true to match your current convention)
-  flipGridX?: boolean;
-  flipGridY?: boolean;
-
-  theme?: RenderTheme;
-
-  onCellHover?: (info: {
-    x: number;
-    y: number;
-    clientX: number;
-    clientY: number;
-  }) => void;
-  onCellHoverEnd?: () => void;
-
-  // Return true if you handled the click (interaction), false to fall back to camera focus.
-  onCellClick?: (cell: { x: number; y: number }) => boolean;
-
-  handleHoverCell?: (x: number, y: number) => void;
-
-  // M7: internal — populated by DungeonRenderScene so the wrapper tooltip can read vis data.
-  _visDataRef?: React.MutableRefObject<Uint8Array | null>;
-};
-
-// -------------------------------
-// Canvas-internal scene
-// -------------------------------
-
-function cellToWorldPx(
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  pxPerCell: number,
-  flipGridX: boolean,
-) {
-  // X flip still applies (mirroring)
-  const fx = flipGridX ? w - 1 - x : x;
-
-  // IMPORTANT:
-  // DO NOT flip Y here.
-  // y is already top-left–origin, y-down.
-  const fy = y;
-
-  const worldX = (fx + 0.5 - w / 2) * pxPerCell;
-  const worldY = (h / 2 - (fy + 0.5)) * pxPerCell;
-
-  return { worldX, worldY };
-}
-
-function DungeonRenderScene(props: Props) {
-  const {
-    bsp,
-    content,
-    atlasUrl,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-
-    focusX,
-    focusY,
-    zoom,
-
-    onCameraSettled,
-
-    handleHoverCell,
-  } = props;
-
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const pxPerCell = zoom ?? 32;
-
-  const flipGridX = props.flipGridX ?? true;
-  const flipGridY = props.flipGridY ?? true;
-
-  const theme = props.theme ?? THEME_DEFAULT;
-
-  // Convert "#RRGGBB" + alpha to vec4 0..1
-  const hexToVec4 = (hex: string, a = 1) => {
-    const c = new THREE.Color(hex);
-    return [c.r, c.g, c.b, a] as [number, number, number, number];
-  };
-
-  // Apply strength as a "mix from white" (same semantics as: rgb *= mix(1, tint, strength))
-  // This keeps strength intuitive without needing shader changes.
-  const applyStrength = (
-    rgba: [number, number, number, number],
-    strength: number,
-  ): [number, number, number, number] => {
-    const s = Math.max(0, Math.min(1.5, strength)); // allow mild >1 boost; clamp for safety
-    const r = 1 + (rgba[0] - 1) * s;
-    const g = 1 + (rgba[1] - 1) * s;
-    const b = 1 + (rgba[2] - 1) * s;
-    return [r, g, b, rgba[3]];
-  };
-
-  // Theme-first colors (preferred)
-  const themeFloor = applyStrength(
-    hexToVec4(theme.colors.floor, 1),
-    theme.strength.floor,
-  );
-  const themeWall = applyStrength(
-    hexToVec4(theme.colors.wallEdge, 1),
-    theme.strength.wallEdge,
-  );
-  const themePlayer = applyStrength(
-    hexToVec4(theme.colors.player, 1),
-    theme.strength.player,
-  );
-  const themeItem = applyStrength(
-    hexToVec4(theme.colors.interactable, 1),
-    theme.strength.interactable,
-  );
-  const themeHazard = applyStrength(
-    hexToVec4(theme.colors.hazard, 1),
-    theme.strength.hazard,
-  );
-
-  // Backward-compatible overrides (props win only if explicitly provided)
-  const floorColor = props.floorColor ?? themeFloor;
-  const wallColor = props.wallColor ?? themeWall;
-  const playerColor = props.playerColor ?? themePlayer;
-  const itemColor = props.itemColor ?? themeItem;
-  const hazardColor = props.hazardColor ?? themeHazard;
-
-  // --- Load atlas texture (inside Canvas tree = safe) ---
-  const atlas = useMemo(() => {
-    const loader = new THREE.TextureLoader();
-    const t = loader.load(atlasUrl);
-
-    // Pixel art correctness
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.generateMipmaps = false;
-    t.wrapS = THREE.ClampToEdgeWrapping;
-    t.wrapT = THREE.ClampToEdgeWrapping;
-
-    // IMPORTANT: do not double-flip; shader handles optional flip
-    t.flipY = false;
-
-    // Atlas is color
-    t.colorSpace = THREE.SRGBColorSpace;
-
-    return t;
-  }, [atlasUrl]);
-
-  // --- Build char texture (R8) ---
-  const charTex = useMemo(() => {
-    const mask = buildCharMask(bsp, content, {
-      wallTile,
-      floorTile,
-
-      doorTile: props.doorTile,
-      keyTile: props.keyTile,
-      leverTile: props.leverTile,
-      plateTile: props.plateTile,
-      blockTile: props.blockTile,
-      chestTile: props.chestTile,
-      monsterTile: props.monsterTile,
-      secretDoorTile: props.secretDoorTile,
-      hiddenPassageTile: props.hiddenPassageTile,
-
-      hazardDefaultTile: props.hazardDefaultTile,
-      hazardTilesByType: props.hazardTilesByType,
-
-      playerX: props.playerX,
-      playerY: props.playerY,
-      playerTile: props.playerTile,
-    });
-
-    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
-  }, [
-    bsp,
-    content,
-    W,
-    H,
-    wallTile,
-    floorTile,
-    props.doorTile,
-    props.keyTile,
-    props.leverTile,
-    props.plateTile,
-    props.blockTile,
-    props.chestTile,
-    props.monsterTile,
-    props.secretDoorTile,
-    props.hiddenPassageTile,
-    props.hazardDefaultTile,
-    props.hazardTilesByType,
-    props.playerX,
-    props.playerY,
-    props.playerTile,
-  ]);
-
-  // tint channel texture (R8)
-  const tintTex = useMemo(() => {
-    //Enemies/monsters are currently detected by tile == monsterTile and shaded via uEnemyColor (not a tint ID)
-    // Tint channel remains reserved for player/items/hazards.
-    const mask = buildTintMask(bsp, content, {
-      playerX: props.playerX,
-      playerY: props.playerY,
-    });
-    return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
-  }, [bsp, content, W, H, props.playerX, props.playerY]);
-
-  // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
-  const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
-  const visTex = useMemo(() => {
-    if (visRef.current) visRef.current.tex.dispose();
-    const vr = createVisExploredRGBA(W, H, "vis_explored_rgba");
-    visRef.current = vr;
-    // Expose the data buffer to the wrapper via the shared ref
-    if (props._visDataRef) props._visDataRef.current = vr.data;
-    return vr.tex;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [W, H]);
-
-  // --- Shader material ---
-  const mat = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      vertexShader: tileVert,
-      fragmentShader: tileFrag,
-      uniforms: {
-        uSolid: { value: bsp.textures.solid },
-        uChar: { value: charTex },
-        uTint: { value: tintTex },
-        uAtlas: { value: atlas },
-        uGridSize: { value: new THREE.Vector2(W, H) },
-        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
-        uWallTile: { value: wallTile },
-        uFloorTile: { value: floorTile },
-        uDoorTile: { value: props.doorTile ?? 0 },
-        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
-        uFlipGridX: { value: flipGridX ? 1 : 0 },
-        uFlipGridY: { value: flipGridY ? 1 : 0 },
-        uFloorColor: { value: new THREE.Vector4(...floorColor) },
-        uWallColor: { value: new THREE.Vector4(...wallColor) },
-        uPlayerColor: { value: new THREE.Vector4(...playerColor) },
-        uItemColor: { value: new THREE.Vector4(...itemColor) },
-        uHazardColor: { value: new THREE.Vector4(...hazardColor) },
-        // R1.5 shader effects
-        uTime: { value: 0 },
-        uHazardOmega: { value: 6.0 },
-        uInteractOmega: { value: 2.0 },
-        uOutlineStrength: { value: 0.65 },
-        uAoStrength: { value: 0.35 },
-        uLightDir: { value: new THREE.Vector2(-1, -1) },
-        uEnemyColor: { value: new THREE.Vector4(1.0, 0.35, 0.35, 1.0) },
-        uEnemyBreathOmega: { value: 5.0 }, // try 2.0–4.0
-        uEnemyBreathAmp: { value: 0.06 }, // try 0.02–0.06
-        uMonsterTile: { value: props.monsterTile ?? 0 },
-        // R1.5 affordances: hover outline (inspection-only)
-        uHoverCell: { value: new THREE.Vector2(-1, -1) },
-        uHoverEnabled: { value: 0 },
-        uHoverStrength: { value: 0.25 },
-        uSelectedCell: { value: new THREE.Vector2(-1, -1) },
-        uSelectedEnabled: { value: 0 },
-        uSelectedStrength: { value: 0.55 }, // stronger than hover
-        // M7 visibility + explored
-        uVisExplored: { value: visTex },
-        uExploredDim: { value: 0.25 },
-        uVisFgBoost: { value: 0.15 },
-        uVisBgBoost: { value: 0.08 },
-      },
-      depthTest: false,
-      depthWrite: false,
-      transparent: true,
-    });
-  }, [
-    bsp.textures.solid,
-    charTex,
-    tintTex,
-    visTex,
-    atlas,
-    W,
-    H,
-    atlasCols,
-    atlasRows,
-    wallTile,
-    floorTile,
-    flipAtlasY,
-    flipGridX,
-    flipGridY,
-    floorColor,
-    wallColor,
-    playerColor,
-    itemColor,
-    hazardColor,
-    props.theme,
-  ]);
-
-  // -------------------------------
-  // Smooth camera rig (inside Canvas)
-  // -------------------------------
-
-  const { camera, size, viewport, gl } = useThree();
-  const lastHoverRef = useRef<{ x: number; y: number } | null>(null);
-
-  // --- Hover stability fix (frame-driven raycast) ---
-  const meshRef = useRef<THREE.Mesh | null>(null);
-  const raycasterRef = useRef(new THREE.Raycaster());
-  const pointerNdcRef = useRef(new THREE.Vector2(0, 0)); // [-1,+1]
-  const pointerInsideRef = useRef(false);
-
-  // We still want tooltip anchoring while mouse is stationary.
-  const lastClientRef = useRef<{ clientX: number; clientY: number } | null>(
-    null,
-  );
-
-  // Avoid spamming hover end when we momentarily miss.
-  const hoverActiveRef = useRef(false);
-
-  // camera current + target positions in world pixels
-  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
-  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
-
-  // Track last focus to detect changes
-  const lastFocus = useRef<{ x: number; y: number } | null>(null);
-
-  // Stable target tracking (refs, not state)
-  const targetCellRef = useRef<{ x: number; y: number } | null>(null);
-  const settlingRef = useRef<{ x: number; y: number; frames: number } | null>(
-    null,
-  );
-
-  // Initialize camera when map size / zoom changes (NOT on focus changes)
-  useEffect(() => {
-    const { worldX, worldY } = cellToWorldPx(
-      focusX,
-      focusY,
-      W,
-      H,
-      pxPerCell,
-      flipGridX,
-    );
-    const cam = camera as THREE.OrthographicCamera;
-
-    camWorld.current.set(worldX, worldY, 10);
-    targetWorld.current.set(worldX, worldY, 10);
-
-    // Clamp during chase so we never pan beyond dungeon extents.
-    const planeW = W * pxPerCell;
-    const planeH = H * pxPerCell;
-
-    const halfVw = viewport.width / 2;
-    const halfVh = viewport.height / 2;
-
-    // If viewport is larger than plane, lock to center (0,0).
-    const minX = Math.min(-planeW / 2 + halfVw, 0);
-    const maxX = Math.max(planeW / 2 - halfVw, 0);
-    const minY = Math.min(-planeH / 2 + halfVh, 0);
-    const maxY = Math.max(planeH / 2 - halfVh, 0);
-
-    targetWorld.current.x = Math.max(
-      minX,
-      Math.min(maxX, targetWorld.current.x),
-    );
-    targetWorld.current.y = Math.max(
-      minY,
-      Math.min(maxY, targetWorld.current.y),
-    );
-
-    camera.position.set(worldX, worldY, 10);
-
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-
-    // baseline for change detection
-    lastFocus.current = { x: focusX, y: focusY };
-
-    // clear any in-flight chase (map/zoom swap)
-    targetCellRef.current = null;
-    settlingRef.current = null;
-  }, [
-    W,
-    H,
-    pxPerCell,
-    camera,
-    flipGridX,
-    focusX,
-    focusY,
-    size.width,
-    size.height,
-  ]);
-
-  // When focus changes, set a new target cell (without spam)
-  useEffect(() => {
-    const prev = lastFocus.current;
-    if (!prev || prev.x !== focusX || prev.y !== focusY) {
-      lastFocus.current = { x: focusX, y: focusY };
-
-      const curTarget = targetCellRef.current;
-      if (!curTarget || curTarget.x !== focusX || curTarget.y !== focusY) {
-        targetCellRef.current = { x: focusX, y: focusY };
-        settlingRef.current = { x: focusX, y: focusY, frames: 0 };
-      }
-    }
-  }, [focusX, focusY]);
-
-  useEffect(() => {
-    const rawX = props.selectedX ?? -1;
-    const rawY = props.selectedY ?? -1;
-
-    if (rawX < 0 || rawY < 0) {
-      mat.uniforms.uSelectedEnabled.value = 0;
-      mat.uniforms.uSelectedCell.value.set(-1, -1);
-      return;
-    }
-
-    // Convert logical grid coords -> shader cell coords (which are flipped when flipGridX/Y are true)
-    const sx = flipGridX ? W - 1 - rawX : rawX;
-    const sy = flipGridY ? H - 1 - rawY : rawY;
-
-    mat.uniforms.uSelectedCell.value.set(sx, sy);
-    mat.uniforms.uSelectedEnabled.value = 1;
-  }, [mat, props.selectedX, props.selectedY, flipGridX, flipGridY, W, H]);
-
-  useEffect(() => {
-    return () => {
-      atlas.dispose();
-    };
-  }, [atlas]);
-
-  // M7: recompute visibility every time the player moves (or W/H change).
-  useEffect(() => {
-    const vr = visRef.current;
-    if (!vr) return;
-    updateVisExploredRGBA(vr.data, W, H, props.playerX ?? 0, props.playerY ?? 0, {
-      radius: 6,
-      innerRadius: 1.5,
-      exploredOnVisible: true,
-    });
-    vr.tex.needsUpdate = true;
-    mat.uniforms.uVisExplored.value = vr.tex;
-    // Keep wrapper tooltip data in sync
-    if (props._visDataRef) props._visDataRef.current = vr.data;
-  }, [mat, W, H, props.playerX, props.playerY, props._visDataRef]);
-
-  useFrame((_state, delta) => {
-    const cam = camera as THREE.OrthographicCamera;
-    const targetCell = targetCellRef.current;
-
-    if ((mat as any).uniforms?.uTime) {
-      (mat as any).uniforms.uTime.value = _state.clock.getElapsedTime();
-    }
-
-    if (!targetCell) {
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-    } else {
-      const { worldX, worldY } = cellToWorldPx(
-        targetCell.x,
-        targetCell.y,
-        W,
-        H,
-        pxPerCell,
-        flipGridX,
-      );
-      targetWorld.current.set(worldX, worldY, 10);
-
-      // frame-rate independent smoothing
-      const speed = 14; // 10-20 range
-      const t = 1 - Math.exp(-speed * delta);
-      camWorld.current.lerp(targetWorld.current, t);
-
-      cam.position.copy(camWorld.current);
-      cam.updateProjectionMatrix();
-
-      // stop within a few pixels (world units are pixels)
-      const dx = camWorld.current.x - targetWorld.current.x;
-      const dy = camWorld.current.y - targetWorld.current.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      // increment frames for this chase
-      const s = settlingRef.current;
-      if (s && s.x === targetCell.x && s.y === targetCell.y) {
-        s.frames += 1;
-      }
-
-      const stopPx = 3;
-      const maxFrames = 90; // ~1.5s @ 60fps
-      const shouldForceSettle = !!s && s.frames >= maxFrames;
-
-      if (dist <= stopPx || shouldForceSettle) {
-        camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
-        cam.position.copy(camWorld.current);
-        cam.updateProjectionMatrix();
-
-        onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
-
-        targetCellRef.current = null;
-        settlingRef.current = null;
-      }
-    }
-
-    // -------------------------------
-    // Hover (frame-driven raycast)
-    // -------------------------------
-    if (!pointerInsideRef.current || !meshRef.current) {
-      // If pointer is not inside, ensure hover is cleared once.
-      if (hoverActiveRef.current) {
-        hoverActiveRef.current = false;
-        lastHoverRef.current = null;
-        mat.uniforms.uHoverEnabled.value = 0;
-        props.onCellHoverEnd?.();
-      }
-      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
-      mat.uniforms.uSelectedEnabled.value = 1;
-      mat.uniforms.uSelectedStrength.value = 1.0;
-      return;
-    }
-
-    const rc = raycasterRef.current;
-    rc.setFromCamera(pointerNdcRef.current, camera);
-
-    const hits = rc.intersectObject(meshRef.current, false);
-    if (hits.length === 0 || !hits[0].uv) {
-      // Pointer is inside canvas but ray missed this frame.
-      // Clear hover once, but do NOT thrash.
-      if (hoverActiveRef.current) {
-        hoverActiveRef.current = false;
-        lastHoverRef.current = null;
-        mat.uniforms.uHoverEnabled.value = 0;
-        props.onCellHoverEnd?.();
-      }
-      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
-      mat.uniforms.uSelectedEnabled.value = 1;
-      mat.uniforms.uSelectedStrength.value = 1.0;
-      return;
-    }
-
-    let u = hits[0].uv.x;
-    let v = hits[0].uv.y;
-
-    // IMPORTANT: match click mapping (flip fixes)
-    if (flipGridX) u = 1 - u;
-    if (flipGridY) v = 1 - v;
-
-    u = Math.min(0.999999, Math.max(0, u));
-    v = Math.min(0.999999, Math.max(0, v));
-
-    const cx = Math.floor(u * W);
-    const cy = Math.floor(v * H);
-    if (cx < 0 || cx >= W || cy < 0 || cy >= H) {
-      if (hoverActiveRef.current) {
-        hoverActiveRef.current = false;
-        lastHoverRef.current = null;
-        mat.uniforms.uHoverEnabled.value = 0;
-        props.onCellHoverEnd?.();
-      }
-      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
-      mat.uniforms.uSelectedEnabled.value = 1;
-      mat.uniforms.uSelectedStrength.value = 1.0;
-      return;
-    }
-
-    const last = lastHoverRef.current;
-    const sameCell = !!last && last.x === cx && last.y === cy;
-
-    // Always keep hover “on” when we have a valid hit.
-    hoverActiveRef.current = true;
-    mat.uniforms.uHoverEnabled.value = 1;
-
-    // Only update the hover cell uniform + callbacks when it changes.
-    if (!sameCell) {
-      lastHoverRef.current = { x: cx, y: cy };
-      mat.uniforms.uHoverCell.value.set(cx, cy);
-
-      const cc = lastClientRef.current;
-      if (cc) {
-        props.onCellHover?.({
-          x: cx,
-          y: cy,
-          clientX: cc.clientX,
-          clientY: cc.clientY,
-        });
-      }
-    }
-
-    // --- OPTIONAL DEBUG: mirror hover -> selected continuously (sanity test) ---
-    mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
-    mat.uniforms.uSelectedEnabled.value = 1;
-    mat.uniforms.uSelectedStrength.value = 0.7;
-
-    // New hovered cell
-    lastHoverRef.current = { x: cx, y: cy };
-    hoverActiveRef.current = true;
-
-    mat.uniforms.uHoverCell.value.set(cx, cy);
-    mat.uniforms.uHoverEnabled.value = 1;
-
-    const cc = lastClientRef.current;
-    if (cc) {
-      props.onCellHover?.({
-        x: cx,
-        y: cy,
-        clientX: cc.clientX,
-        clientY: cc.clientY,
-      });
-    }
-  });
-
-  // -------------------------------
-  // Draw the plane (pixel-world units)
-  // -------------------------------
-  return (
-    <mesh
-      ref={meshRef}
-      position={[0, 0, 0]}
-      onPointerEnter={(e) => {
-        pointerInsideRef.current = true;
-
-        // initialize tooltip anchor + NDC immediately on enter
-        lastClientRef.current = { clientX: e.clientX, clientY: e.clientY };
-
-        const rect = gl.domElement.getBoundingClientRect();
-        const x = (e.clientX - rect.left) / rect.width;
-        const y = (e.clientY - rect.top) / rect.height;
-        pointerNdcRef.current.set(x * 2 - 1, -(y * 2 - 1));
-      }}
-      onPointerMove={(e) => {
-        e.stopPropagation();
-
-        // mark pointer inside canvas/mesh
-        pointerInsideRef.current = true;
-
-        // tooltip anchor needs stable client coords even while stationary
-        lastClientRef.current = { clientX: e.clientX, clientY: e.clientY };
-
-        // compute NDC from domElement rect (authoritative fix)
-        const rect = gl.domElement.getBoundingClientRect();
-
-        const x = (e.clientX - rect.left) / rect.width;
-        const y = (e.clientY - rect.top) / rect.height;
-
-        pointerNdcRef.current.set(x * 2 - 1, -(y * 2 - 1));
-      }}
-      onPointerOut={() => {
-        pointerInsideRef.current = false;
-        lastClientRef.current = null;
-
-        // Clear hover once (frame loop will also guard, but do it immediately)
-        if (hoverActiveRef.current) {
-          hoverActiveRef.current = false;
-          lastHoverRef.current = null;
-          mat.uniforms.uHoverEnabled.value = 0;
-          props.onCellHoverEnd?.();
-        }
-      }}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        const uv = e.uv;
-        if (!uv) return;
-
-        let u = uv.x;
-        let v = uv.y;
-        if (flipGridX) u = 1 - u;
-        if (flipGridY) v = 1 - v;
-
-        u = Math.min(0.999999, Math.max(0, u));
-        v = Math.min(0.999999, Math.max(0, v));
-
-        const cx = Math.floor(u * W);
-        const cy = Math.floor(v * H);
-        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
-
-        // 1) Let inspection logic handle interactables first.
-        const handled = props.onCellClick?.({ x: cx, y: cy }) ?? false;
-        if (handled) return;
-
-        // 2) Otherwise, camera-only focus.
-        props.onCellFocus?.({ x: cx, y: cy });
-      }}
-    >
-      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
-      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
-      <primitive object={mat} attach="material" />
-    </mesh>
-  );
-}
-
-// -------------------------------
-// Wrapper (NO R3F hooks here)
-// -------------------------------
-
-export default function DungeonRenderView(props: Props) {
-  const pxPerCell = props.zoom ?? 32;
-
-  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
-
-  // M7: shared ref populated by DungeonRenderScene so tooltip can read vis data.
-  const visDataRef = useRef<Uint8Array | null>(null);
-
-  const [tooltip, setTooltip] = useState<{
-    x: number;
-    y: number;
-    visible: boolean;
-    pending: boolean;
-    lines: string[];
-    clientX: number | null;
-    clientY: number | null;
-  }>({
-    visible: false,
-    pending: false,
-    x: 0,
-    y: 0,
-    lines: [],
-    clientX: null,
-    clientY: null,
-  });
-
-  // ---- Debounce / delay ----
-  const TOOLTIP_DELAY_MS = 120;
-  const hoverTimerRef = useRef<number | null>(null);
-  const lastHoverKeyRef = useRef<string | null>(null);
-
-  function clearHoverTimer() {
-    if (hoverTimerRef.current != null) {
-      window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-  }
-
-  useEffect(() => {
-    return () => clearHoverTimer();
-  }, []);
-
-  // ---- Tooltip positioning (your adapted version) ----
-  function getTooltipStyle(): React.CSSProperties {
-    const wrap = canvasWrapRef.current;
-    if (!wrap) return { left: 0, top: 0 };
-
-    const rect = wrap.getBoundingClientRect();
-    const wrapW = wrap.clientWidth;
-    const wrapH = wrap.clientHeight;
-
-    const pad = 8;
-    const estTipW = 320;
-    const estTipH = 140;
-
-    const anchorX = tooltip.clientX != null ? tooltip.clientX - rect.left : pad;
-    const anchorY = tooltip.clientY != null ? tooltip.clientY - rect.top : pad;
-
-    let left = anchorX;
-    let top = anchorY + pad;
-
-    left = Math.max(pad, Math.min(left, wrapW - estTipW - pad));
-    if (top + estTipH > wrapH - pad) {
-      top = Math.max(pad, anchorY - estTipH - pad);
-    }
-    console.log("tooltip style", left, top, 999);
-    return { left, top, zIndex: 999 };
-  }
-
-  // ---- Your buildTooltipLines, adapted to THIS component (no runtime/diagnostics) ----
-  function buildTooltipLines(x: number, y: number) {
-    const dungeon = props.bsp;
-    const content = props.content;
-
-    const w = dungeon.width;
-    const i = y * w + x;
-
-    const solid = dungeon.masks.solid[i] ? 1 : 0;
-    const regionId = dungeon.masks.regionId[i] | 0;
-    const dist = dungeon.masks.distanceToWall[i] | 0;
-
-    const ft = content.masks.featureType[i] | 0;
-    const fid = content.masks.featureId[i] | 0;
-    const fp = content.masks.featureParam[i] | 0;
-
-    const danger = content.masks.danger[i] | 0;
-    const loot = content.masks.lootTier[i] | 0;
-    const hz = content.masks.hazardType[i] | 0; // meaningful when ft==10 per repomix
-
-    // M7 vis/explored
-    const vd = visDataRef.current;
-    const visA = vd ? vd[i * 4 + 3] : -1;
-    const exploredG = vd ? vd[i * 4 + 1] : -1;
-
-    const lines: string[] = [];
-
-    // --- raw (keep) ---
-    lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
-    if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
-    if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
-    if (hz !== 0) lines.push(`hazardType=${hz}`);
-    if (danger !== 0) lines.push(`danger=${danger}`);
-    if (loot !== 0) lines.push(`lootTier=${loot}`);
-
-    // --- readable section ---
-    if (ft !== 0) {
-      lines.push(""); // spacer line
-      lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
-
-      // --- circuit membership (no diagnostics in render view) ---
-      const circuits = props.content.meta?.circuits ?? [];
-      const memberships: string[] = [];
-
-      const triggerKind =
-        ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
-
-      const targetKind =
-        ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
-
-      for (let ci = 0; ci < circuits.length; ci++) {
-        const c: any = circuits[ci];
-        const cid = (c?.id ?? ci) | 0;
-
-        if (triggerKind && Array.isArray(c?.triggers)) {
-          for (const t of c.triggers) {
-            if (
-              t?.kind === triggerKind &&
-              ((t?.refId ?? -1) | 0) === (fid | 0)
-            ) {
-              memberships.push(`• circuit[${ci}] id=${cid}: trigger ${t.kind}`);
-              break;
-            }
-          }
-        }
-
-        if (targetKind && Array.isArray(c?.targets)) {
-          for (const t of c.targets) {
-            if (
-              t?.kind === targetKind &&
-              ((t?.refId ?? -1) | 0) === (fid | 0)
-            ) {
-              const eff = t?.effect ? ` ${t.effect}` : "";
-              memberships.push(
-                `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}`,
-              );
-              break;
-            }
-          }
-        }
-      }
-
-      //lines.push(memberships.length ? ...memberships : `• circuits: none`);
-      if (memberships.length > 0) {
-        lines.push(...memberships);
-      } else {
-        lines.push("• circuits: none");
-      }
-    }
-
-    return { lines, ft, fid };
-  }
-  console.log("tooltip.visible", tooltip.visible);
-  return (
-    <div
-      ref={canvasWrapRef}
-      style={{ width: "100%", height: "100%", position: "relative" }}
-    >
-      <Canvas
-        orthographic
-        camera={{
-          position: [0, 0, 10],
-          zoom: 1,
-          near: 0.1,
-          far: 1000,
-        }}
-        gl={{ antialias: false, alpha: false }}
-      >
-        <OrthoFrustum pxPerCell={pxPerCell} />
-        <DungeonRenderScene
-          {...props}
-          _visDataRef={visDataRef}
-          onCellHover={({ x, y, clientX, clientY }) => {
-            const key = `${x},${y}`;
-
-            // If we're still hovering the same cell, just keep the anchor fresh.
-            // DO NOT clear/re-arm the timer (or you'll starve the debounce forever).
-            if (lastHoverKeyRef.current === key) {
-              setTooltip((t) => ({
-                ...t,
-                clientX,
-                clientY,
-              }));
-              return;
-            }
-
-            // New hovered cell
-            lastHoverKeyRef.current = key;
-
-            // Arm tooltip (but do not show yet)
-            setTooltip((t) => ({
-              ...t,
-              x,
-              y,
-              clientX,
-              clientY,
-              pending: true,
-              visible: false,
-            }));
-
-            clearHoverTimer();
-
-            hoverTimerRef.current = window.setTimeout(() => {
-              // still on same cell?
-              if (lastHoverKeyRef.current !== key) return;
-
-              const { lines } = buildTooltipLines(x, y);
-
-              setTooltip((t) => ({
-                ...t,
-                x,
-                y,
-                clientX,
-                clientY,
-                lines,
-                pending: false,
-                visible: true,
-              }));
-            }, TOOLTIP_DELAY_MS);
-          }}
-          onCellHoverEnd={() => {
-            lastHoverKeyRef.current = null;
-            clearHoverTimer();
-            setTooltip((t) => ({
-              ...t,
-              visible: false,
-              pending: false,
-              clientX: null,
-              clientY: null,
-            }));
-          }}
-        />
-      </Canvas>
-
-      {tooltip.visible && (
-        <div
-          className="maze-tooltip"
-          style={{
-            position: "absolute",
-            ...getTooltipStyle(),
-            pointerEvents: "none",
-          }}
-        >
-          {tooltip.lines.map((ln, idx) => (
-            <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Keeps ortho frustum stable and sized in “pixel world units”
-function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
-  const { camera, size } = useThree();
-
-  useEffect(() => {
-    const cam = camera as THREE.OrthographicCamera;
-
-    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
-    const halfW = size.width / 2;
-    const halfH = size.height / 2;
-
-    cam.left = -halfW;
-    cam.right = halfW;
-    cam.top = halfH;
-    cam.bottom = -halfH;
-
-    cam.near = 0.1;
-    cam.far = 1000;
-
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-  }, [camera, size.width, size.height, pxPerCell]);
-
-  return null;
-}
 </file>
 
 <file path="src/batchStats.ts">
@@ -18387,6 +17809,1183 @@ export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
     failedCount,
     seeds,
   };
+}
+</file>
+
+<file path="src/rendering/DungeonRenderView.tsx">
+// src/rendering/DungeonRenderView.tsx
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import * as THREE from "three";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
+import { createVisExploredRGBA, updateVisExploredRGBA } from "./visibility";
+import { tileFrag, tileVert } from "./tileShader";
+import type { RenderTheme } from "./renderTheme";
+import { THEME_DEFAULT } from "./renderTheme";
+
+function featureTypeName(ft: number) {
+  switch (ft | 0) {
+    case 0:
+      return "none";
+    case 3:
+      return "secret door";
+    case 4:
+      return "door";
+    case 5:
+      return "key";
+    case 6:
+      return "lever";
+    case 7:
+      return "plate";
+    case 8:
+      return "block";
+    case 9:
+      return "hidden passage";
+    case 10:
+      return "hazard";
+    default:
+      return `feature(${ft})`;
+  }
+}
+
+function buildTooltipLines(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  x: number,
+  y: number,
+  visData?: Uint8Array | null,
+) {
+  const w = bsp.width;
+  const i = y * w + x;
+
+  // M7 vis/explored
+  const visA = visData ? visData[i * 4 + 3] : -1;
+  const exploredG = visData ? visData[i * 4 + 1] : -1;
+
+  // --- BSP masks ---
+  const solid = (bsp.masks?.solid?.[i] ?? 0) ? 1 : 0;
+  const regionId = (bsp.masks?.regionId?.[i] ?? 0) | 0;
+  const dist = (bsp.masks?.distanceToWall?.[i] ?? 0) | 0;
+
+  // --- content masks ---
+  const ft = (content.masks?.featureType?.[i] ?? 0) | 0;
+  const fid = (content.masks?.featureId?.[i] ?? 0) | 0;
+  const fp = (content.masks?.featureParam?.[i] ?? 0) | 0;
+
+  const danger = (content.masks?.danger?.[i] ?? 0) | 0;
+  const loot = (content.masks?.lootTier?.[i] ?? 0) | 0;
+  const hz = (content.masks?.hazardType?.[i] ?? 0) | 0;
+
+  const lines: string[] = [];
+
+  // --- raw (matches InspectionShell style) ---
+  lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+  if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
+  if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
+  if (hz !== 0) lines.push(`hazardType=${hz}`);
+  if (danger !== 0) lines.push(`danger=${danger}`);
+  if (loot !== 0) lines.push(`lootTier=${loot}`);
+
+  // --- readable section ---
+  if (ft !== 0) {
+    lines.push(""); // spacer
+    lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
+
+    // Circuit membership (no diagnostics here)
+    const circuits: any[] = (content.meta as any)?.circuits ?? [];
+    const memberships: string[] = [];
+
+    const triggerKind =
+      ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
+
+    const targetKind =
+      ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
+
+    for (let ci = 0; ci < circuits.length; ci++) {
+      const c: any = circuits[ci];
+      const cid = (c?.id ?? ci) | 0;
+
+      // triggers
+      if (triggerKind && Array.isArray(c?.triggers)) {
+        for (const t of c.triggers) {
+          if (t?.kind === triggerKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
+            memberships.push(`• circuit[${ci}] id=${cid}: trigger ${t.kind}`);
+            break;
+          }
+        }
+      }
+
+      // targets
+      if (targetKind && Array.isArray(c?.targets)) {
+        for (const t of c.targets) {
+          if (t?.kind === targetKind && ((t?.refId ?? -1) | 0) === (fid | 0)) {
+            const eff = t?.effect ? ` ${t.effect}` : "";
+            memberships.push(
+              `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}`,
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    if (memberships.length) lines.push(...memberships);
+    else lines.push(`• circuits: none`);
+  }
+
+  return { lines, ft, fid };
+}
+
+type Props = {
+  bsp: BspDungeonOutputs;
+  content: ContentOutputs;
+
+  // tileset atlas image URL (PNG) and layout
+  atlasUrl: string;
+  atlasCols: number;
+  atlasRows: number;
+
+  // which tiles to use for floor/wall; everything else comes from char mask
+  wallTile: number;
+  floorTile: number;
+
+  // camera target (typically player coords)
+  focusX: number;
+  focusY: number;
+
+  // CLICK -> set focus target (camera only)
+  onCellFocus?: (cell: { x: number; y: number }) => void;
+
+  // if your atlas origin is top-left, set true (shader handles flip)
+  flipAtlasY?: boolean;
+
+  doorTile?: number;
+  keyTile?: number;
+  leverTile?: number;
+  plateTile?: number;
+  blockTile?: number;
+  chestTile?: number;
+  monsterTile?: number;
+  secretDoorTile?: number;
+  hiddenPassageTile?: number;
+
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>;
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+  selectedX?: number;
+  selectedY?: number;
+
+  // R2 groundwork: tint colors (multiply atlas RGB)
+  floorColor?: [number, number, number, number]; // rgba 0..1
+  wallColor?: [number, number, number, number];
+  playerColor?: [number, number, number, number];
+  itemColor?: [number, number, number, number];
+  hazardColor?: [number, number, number, number];
+
+  // pixels per cell (world units are pixels)
+  zoom?: number;
+
+  onCameraSettled?: (cell: { x: number; y: number }) => void;
+
+  // grid orientation fixes (defaults true/true to match your current convention)
+  flipGridX?: boolean;
+  flipGridY?: boolean;
+
+  theme?: RenderTheme;
+
+  onCellHover?: (info: {
+    x: number;
+    y: number;
+    clientX: number;
+    clientY: number;
+  }) => void;
+  onCellHoverEnd?: () => void;
+
+  // Return true if you handled the click (interaction), false to fall back to camera focus.
+  onCellClick?: (cell: { x: number; y: number }) => boolean;
+
+  handleHoverCell?: (x: number, y: number) => void;
+
+  // M7: internal — populated by DungeonRenderScene so the wrapper tooltip can read vis data.
+  _visDataRef?: React.MutableRefObject<Uint8Array | null>;
+
+  // M8: path mask texture (RGBA8 — R=enemy, G=npc, B=player, A=step index)
+  pathMaskTex?: THREE.DataTexture;
+  pathStrength?: number;
+  pathAnimSpeed?: number;
+};
+
+// -------------------------------
+// Canvas-internal scene
+// -------------------------------
+
+function cellToWorldPx(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pxPerCell: number,
+  flipGridX: boolean,
+) {
+  // X flip still applies (mirroring)
+  const fx = flipGridX ? w - 1 - x : x;
+
+  // IMPORTANT:
+  // DO NOT flip Y here.
+  // y is already top-left–origin, y-down.
+  const fy = y;
+
+  const worldX = (fx + 0.5 - w / 2) * pxPerCell;
+  const worldY = (h / 2 - (fy + 0.5)) * pxPerCell;
+
+  return { worldX, worldY };
+}
+
+function DungeonRenderScene(props: Props) {
+  const {
+    bsp,
+    content,
+    atlasUrl,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+
+    focusX,
+    focusY,
+    zoom,
+
+    onCameraSettled,
+
+    handleHoverCell,
+  } = props;
+
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const pxPerCell = zoom ?? 32;
+
+  const flipGridX = props.flipGridX ?? true;
+  const flipGridY = props.flipGridY ?? true;
+
+  const theme = props.theme ?? THEME_DEFAULT;
+
+  // Convert "#RRGGBB" + alpha to vec4 0..1
+  const hexToVec4 = (hex: string, a = 1) => {
+    const c = new THREE.Color(hex);
+    return [c.r, c.g, c.b, a] as [number, number, number, number];
+  };
+
+  // Apply strength as a "mix from white" (same semantics as: rgb *= mix(1, tint, strength))
+  // This keeps strength intuitive without needing shader changes.
+  const applyStrength = (
+    rgba: [number, number, number, number],
+    strength: number,
+  ): [number, number, number, number] => {
+    const s = Math.max(0, Math.min(1.5, strength)); // allow mild >1 boost; clamp for safety
+    const r = 1 + (rgba[0] - 1) * s;
+    const g = 1 + (rgba[1] - 1) * s;
+    const b = 1 + (rgba[2] - 1) * s;
+    return [r, g, b, rgba[3]];
+  };
+
+  // Theme-first colors (preferred)
+  const themeFloor = applyStrength(
+    hexToVec4(theme.colors.floor, 1),
+    theme.strength.floor,
+  );
+  const themeWall = applyStrength(
+    hexToVec4(theme.colors.wallEdge, 1),
+    theme.strength.wallEdge,
+  );
+  const themePlayer = applyStrength(
+    hexToVec4(theme.colors.player, 1),
+    theme.strength.player,
+  );
+  const themeItem = applyStrength(
+    hexToVec4(theme.colors.interactable, 1),
+    theme.strength.interactable,
+  );
+  const themeHazard = applyStrength(
+    hexToVec4(theme.colors.hazard, 1),
+    theme.strength.hazard,
+  );
+
+  // Backward-compatible overrides (props win only if explicitly provided)
+  const floorColor = props.floorColor ?? themeFloor;
+  const wallColor = props.wallColor ?? themeWall;
+  const playerColor = props.playerColor ?? themePlayer;
+  const itemColor = props.itemColor ?? themeItem;
+  const hazardColor = props.hazardColor ?? themeHazard;
+
+  // --- Load atlas texture (inside Canvas tree = safe) ---
+  const atlas = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    const t = loader.load(atlasUrl);
+
+    // Pixel art correctness
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+
+    // IMPORTANT: do not double-flip; shader handles optional flip
+    t.flipY = false;
+
+    // Atlas is color
+    t.colorSpace = THREE.SRGBColorSpace;
+
+    return t;
+  }, [atlasUrl]);
+
+  // --- Build char texture (R8) ---
+  const charTex = useMemo(() => {
+    const mask = buildCharMask(bsp, content, {
+      wallTile,
+      floorTile,
+
+      doorTile: props.doorTile,
+      keyTile: props.keyTile,
+      leverTile: props.leverTile,
+      plateTile: props.plateTile,
+      blockTile: props.blockTile,
+      chestTile: props.chestTile,
+      monsterTile: props.monsterTile,
+      secretDoorTile: props.secretDoorTile,
+      hiddenPassageTile: props.hiddenPassageTile,
+
+      hazardDefaultTile: props.hazardDefaultTile,
+      hazardTilesByType: props.hazardTilesByType,
+
+      playerX: props.playerX,
+      playerY: props.playerY,
+      playerTile: props.playerTile,
+    });
+
+    return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
+  }, [
+    bsp,
+    content,
+    W,
+    H,
+    wallTile,
+    floorTile,
+    props.doorTile,
+    props.keyTile,
+    props.leverTile,
+    props.plateTile,
+    props.blockTile,
+    props.chestTile,
+    props.monsterTile,
+    props.secretDoorTile,
+    props.hiddenPassageTile,
+    props.hazardDefaultTile,
+    props.hazardTilesByType,
+    props.playerX,
+    props.playerY,
+    props.playerTile,
+  ]);
+
+  // tint channel texture (R8)
+  const tintTex = useMemo(() => {
+    //Enemies/monsters are currently detected by tile == monsterTile and shaded via uEnemyColor (not a tint ID)
+    // Tint channel remains reserved for player/items/hazards.
+    const mask = buildTintMask(bsp, content, {
+      playerX: props.playerX,
+      playerY: props.playerY,
+    });
+    return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
+  }, [bsp, content, W, H, props.playerX, props.playerY]);
+
+  // M8: 1×1 transparent fallback for uPathMask when no prop is supplied
+  const fallbackPathTex = useMemo(() => {
+    const d = new Uint8Array(4); // all zeros
+    const t = new THREE.DataTexture(d, 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    t.name = "path_mask_fallback";
+    t.needsUpdate = true;
+    return t;
+  }, []);
+
+  // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
+  const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  const visTex = useMemo(() => {
+    if (visRef.current) visRef.current.tex.dispose();
+    const vr = createVisExploredRGBA(W, H, "vis_explored_rgba");
+    visRef.current = vr;
+    // Expose the data buffer to the wrapper via the shared ref
+    if (props._visDataRef) props._visDataRef.current = vr.data;
+    return vr.tex;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [W, H]);
+
+  // --- Shader material ---
+  const mat = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      vertexShader: tileVert,
+      fragmentShader: tileFrag,
+      uniforms: {
+        uSolid: { value: bsp.textures.solid },
+        uChar: { value: charTex },
+        uTint: { value: tintTex },
+        uAtlas: { value: atlas },
+        uGridSize: { value: new THREE.Vector2(W, H) },
+        uAtlasGrid: { value: new THREE.Vector2(atlasCols, atlasRows) },
+        uWallTile: { value: wallTile },
+        uFloorTile: { value: floorTile },
+        uDoorTile: { value: props.doorTile ?? 0 },
+        uFlipAtlasY: { value: flipAtlasY ? 1 : 0 },
+        uFlipGridX: { value: flipGridX ? 1 : 0 },
+        uFlipGridY: { value: flipGridY ? 1 : 0 },
+        uFloorColor: { value: new THREE.Vector4(...floorColor) },
+        uWallColor: { value: new THREE.Vector4(...wallColor) },
+        uPlayerColor: { value: new THREE.Vector4(...playerColor) },
+        uItemColor: { value: new THREE.Vector4(...itemColor) },
+        uHazardColor: { value: new THREE.Vector4(...hazardColor) },
+        // R1.5 shader effects
+        uTime: { value: 0 },
+        uHazardOmega: { value: 6.0 },
+        uInteractOmega: { value: 2.0 },
+        uOutlineStrength: { value: 0.65 },
+        uAoStrength: { value: 0.35 },
+        uLightDir: { value: new THREE.Vector2(-1, -1) },
+        uEnemyColor: { value: new THREE.Vector4(1.0, 0.35, 0.35, 1.0) },
+        uEnemyBreathOmega: { value: 5.0 }, // try 2.0–4.0
+        uEnemyBreathAmp: { value: 0.06 }, // try 0.02–0.06
+        uMonsterTile: { value: props.monsterTile ?? 0 },
+        // R1.5 affordances: hover outline (inspection-only)
+        uHoverCell: { value: new THREE.Vector2(-1, -1) },
+        uHoverEnabled: { value: 0 },
+        uHoverStrength: { value: 0.25 },
+        uSelectedCell: { value: new THREE.Vector2(-1, -1) },
+        uSelectedEnabled: { value: 0 },
+        uSelectedStrength: { value: 0.55 }, // stronger than hover
+        // M7 visibility + explored
+        uVisExplored: { value: visTex },
+        uExploredDim: { value: 0.25 },
+        uVisFgBoost: { value: 0.15 },
+        uVisBgBoost: { value: 0.08 },
+        // M8 path mask
+        uPathMask: { value: props.pathMaskTex ?? fallbackPathTex },
+        uPathStrength: { value: props.pathStrength ?? 0.7 },
+        uPathAnimSpeed: { value: props.pathAnimSpeed ?? 0.5 },
+      },
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+    });
+  }, [
+    bsp.textures.solid,
+    charTex,
+    tintTex,
+    visTex,
+    atlas,
+    W,
+    H,
+    atlasCols,
+    atlasRows,
+    wallTile,
+    floorTile,
+    flipAtlasY,
+    flipGridX,
+    flipGridY,
+    floorColor,
+    wallColor,
+    playerColor,
+    itemColor,
+    hazardColor,
+    props.theme,
+  ]);
+
+  // -------------------------------
+  // Smooth camera rig (inside Canvas)
+  // -------------------------------
+
+  const { camera, size, viewport, gl } = useThree();
+  const lastHoverRef = useRef<{ x: number; y: number } | null>(null);
+
+  // --- Hover stability fix (frame-driven raycast) ---
+  const meshRef = useRef<THREE.Mesh | null>(null);
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const pointerNdcRef = useRef(new THREE.Vector2(0, 0)); // [-1,+1]
+  const pointerInsideRef = useRef(false);
+
+  // We still want tooltip anchoring while mouse is stationary.
+  const lastClientRef = useRef<{ clientX: number; clientY: number } | null>(
+    null,
+  );
+
+  // Avoid spamming hover end when we momentarily miss.
+  const hoverActiveRef = useRef(false);
+
+  // camera current + target positions in world pixels
+  const camWorld = useRef(new THREE.Vector3(0, 0, 10));
+  const targetWorld = useRef(new THREE.Vector3(0, 0, 10));
+
+  // Track last focus to detect changes
+  const lastFocus = useRef<{ x: number; y: number } | null>(null);
+
+  // Stable target tracking (refs, not state)
+  const targetCellRef = useRef<{ x: number; y: number } | null>(null);
+  const settlingRef = useRef<{ x: number; y: number; frames: number } | null>(
+    null,
+  );
+
+  // Initialize camera when map size / zoom changes (NOT on focus changes)
+  useEffect(() => {
+    const { worldX, worldY } = cellToWorldPx(
+      focusX,
+      focusY,
+      W,
+      H,
+      pxPerCell,
+      flipGridX,
+    );
+    const cam = camera as THREE.OrthographicCamera;
+
+    camWorld.current.set(worldX, worldY, 10);
+    targetWorld.current.set(worldX, worldY, 10);
+
+    // Clamp during chase so we never pan beyond dungeon extents.
+    const planeW = W * pxPerCell;
+    const planeH = H * pxPerCell;
+
+    const halfVw = viewport.width / 2;
+    const halfVh = viewport.height / 2;
+
+    // If viewport is larger than plane, lock to center (0,0).
+    const minX = Math.min(-planeW / 2 + halfVw, 0);
+    const maxX = Math.max(planeW / 2 - halfVw, 0);
+    const minY = Math.min(-planeH / 2 + halfVh, 0);
+    const maxY = Math.max(planeH / 2 - halfVh, 0);
+
+    targetWorld.current.x = Math.max(
+      minX,
+      Math.min(maxX, targetWorld.current.x),
+    );
+    targetWorld.current.y = Math.max(
+      minY,
+      Math.min(maxY, targetWorld.current.y),
+    );
+
+    camera.position.set(worldX, worldY, 10);
+
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+
+    // baseline for change detection
+    lastFocus.current = { x: focusX, y: focusY };
+
+    // clear any in-flight chase (map/zoom swap)
+    targetCellRef.current = null;
+    settlingRef.current = null;
+  }, [
+    W,
+    H,
+    pxPerCell,
+    camera,
+    flipGridX,
+    focusX,
+    focusY,
+    size.width,
+    size.height,
+  ]);
+
+  // When focus changes, set a new target cell (without spam)
+  useEffect(() => {
+    const prev = lastFocus.current;
+    if (!prev || prev.x !== focusX || prev.y !== focusY) {
+      lastFocus.current = { x: focusX, y: focusY };
+
+      const curTarget = targetCellRef.current;
+      if (!curTarget || curTarget.x !== focusX || curTarget.y !== focusY) {
+        targetCellRef.current = { x: focusX, y: focusY };
+        settlingRef.current = { x: focusX, y: focusY, frames: 0 };
+      }
+    }
+  }, [focusX, focusY]);
+
+  useEffect(() => {
+    const rawX = props.selectedX ?? -1;
+    const rawY = props.selectedY ?? -1;
+
+    if (rawX < 0 || rawY < 0) {
+      mat.uniforms.uSelectedEnabled.value = 0;
+      mat.uniforms.uSelectedCell.value.set(-1, -1);
+      return;
+    }
+
+    // Convert logical grid coords -> shader cell coords (which are flipped when flipGridX/Y are true)
+    const sx = flipGridX ? W - 1 - rawX : rawX;
+    const sy = flipGridY ? H - 1 - rawY : rawY;
+
+    mat.uniforms.uSelectedCell.value.set(sx, sy);
+    mat.uniforms.uSelectedEnabled.value = 1;
+  }, [mat, props.selectedX, props.selectedY, flipGridX, flipGridY, W, H]);
+
+  useEffect(() => {
+    return () => {
+      atlas.dispose();
+    };
+  }, [atlas]);
+
+  // M7: recompute visibility every time the player moves (or W/H change).
+  useEffect(() => {
+    const vr = visRef.current;
+    if (!vr) return;
+    updateVisExploredRGBA(vr.data, W, H, props.playerX ?? 0, props.playerY ?? 0, {
+      radius: 6,
+      innerRadius: 1.5,
+      exploredOnVisible: true,
+    });
+    vr.tex.needsUpdate = true;
+    mat.uniforms.uVisExplored.value = vr.tex;
+    // Keep wrapper tooltip data in sync
+    if (props._visDataRef) props._visDataRef.current = vr.data;
+  }, [mat, W, H, props.playerX, props.playerY, props._visDataRef]);
+
+  // M8: update path mask uniform when prop changes
+  useEffect(() => {
+    mat.uniforms.uPathMask.value = props.pathMaskTex ?? fallbackPathTex;
+  }, [mat, props.pathMaskTex, fallbackPathTex]);
+
+  useFrame((_state, delta) => {
+    const cam = camera as THREE.OrthographicCamera;
+    const targetCell = targetCellRef.current;
+
+    if ((mat as any).uniforms?.uTime) {
+      (mat as any).uniforms.uTime.value = _state.clock.getElapsedTime();
+    }
+
+    if (!targetCell) {
+      cam.position.copy(camWorld.current);
+      cam.updateProjectionMatrix();
+    } else {
+      const { worldX, worldY } = cellToWorldPx(
+        targetCell.x,
+        targetCell.y,
+        W,
+        H,
+        pxPerCell,
+        flipGridX,
+      );
+      targetWorld.current.set(worldX, worldY, 10);
+
+      // frame-rate independent smoothing
+      const speed = 14; // 10-20 range
+      const t = 1 - Math.exp(-speed * delta);
+      camWorld.current.lerp(targetWorld.current, t);
+
+      cam.position.copy(camWorld.current);
+      cam.updateProjectionMatrix();
+
+      // stop within a few pixels (world units are pixels)
+      const dx = camWorld.current.x - targetWorld.current.x;
+      const dy = camWorld.current.y - targetWorld.current.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // increment frames for this chase
+      const s = settlingRef.current;
+      if (s && s.x === targetCell.x && s.y === targetCell.y) {
+        s.frames += 1;
+      }
+
+      const stopPx = 3;
+      const maxFrames = 90; // ~1.5s @ 60fps
+      const shouldForceSettle = !!s && s.frames >= maxFrames;
+
+      if (dist <= stopPx || shouldForceSettle) {
+        camWorld.current.set(targetWorld.current.x, targetWorld.current.y, 10);
+        cam.position.copy(camWorld.current);
+        cam.updateProjectionMatrix();
+
+        onCameraSettled?.({ x: targetCell.x, y: targetCell.y });
+
+        targetCellRef.current = null;
+        settlingRef.current = null;
+      }
+    }
+
+    // -------------------------------
+    // Hover (frame-driven raycast)
+    // -------------------------------
+    if (!pointerInsideRef.current || !meshRef.current) {
+      // If pointer is not inside, ensure hover is cleared once.
+      if (hoverActiveRef.current) {
+        hoverActiveRef.current = false;
+        lastHoverRef.current = null;
+        mat.uniforms.uHoverEnabled.value = 0;
+        props.onCellHoverEnd?.();
+      }
+      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+      mat.uniforms.uSelectedEnabled.value = 1;
+      mat.uniforms.uSelectedStrength.value = 1.0;
+      return;
+    }
+
+    const rc = raycasterRef.current;
+    rc.setFromCamera(pointerNdcRef.current, camera);
+
+    const hits = rc.intersectObject(meshRef.current, false);
+    if (hits.length === 0 || !hits[0].uv) {
+      // Pointer is inside canvas but ray missed this frame.
+      // Clear hover once, but do NOT thrash.
+      if (hoverActiveRef.current) {
+        hoverActiveRef.current = false;
+        lastHoverRef.current = null;
+        mat.uniforms.uHoverEnabled.value = 0;
+        props.onCellHoverEnd?.();
+      }
+      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+      mat.uniforms.uSelectedEnabled.value = 1;
+      mat.uniforms.uSelectedStrength.value = 1.0;
+      return;
+    }
+
+    let u = hits[0].uv.x;
+    let v = hits[0].uv.y;
+
+    // IMPORTANT: match click mapping (flip fixes)
+    if (flipGridX) u = 1 - u;
+    if (flipGridY) v = 1 - v;
+
+    u = Math.min(0.999999, Math.max(0, u));
+    v = Math.min(0.999999, Math.max(0, v));
+
+    const cx = Math.floor(u * W);
+    const cy = Math.floor(v * H);
+    if (cx < 0 || cx >= W || cy < 0 || cy >= H) {
+      if (hoverActiveRef.current) {
+        hoverActiveRef.current = false;
+        lastHoverRef.current = null;
+        mat.uniforms.uHoverEnabled.value = 0;
+        props.onCellHoverEnd?.();
+      }
+      mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+      mat.uniforms.uSelectedEnabled.value = 1;
+      mat.uniforms.uSelectedStrength.value = 1.0;
+      return;
+    }
+
+    const last = lastHoverRef.current;
+    const sameCell = !!last && last.x === cx && last.y === cy;
+
+    // Always keep hover “on” when we have a valid hit.
+    hoverActiveRef.current = true;
+    mat.uniforms.uHoverEnabled.value = 1;
+
+    // Only update the hover cell uniform + callbacks when it changes.
+    if (!sameCell) {
+      lastHoverRef.current = { x: cx, y: cy };
+      mat.uniforms.uHoverCell.value.set(cx, cy);
+
+      const cc = lastClientRef.current;
+      if (cc) {
+        props.onCellHover?.({
+          x: cx,
+          y: cy,
+          clientX: cc.clientX,
+          clientY: cc.clientY,
+        });
+      }
+    }
+
+    // --- OPTIONAL DEBUG: mirror hover -> selected continuously (sanity test) ---
+    mat.uniforms.uSelectedCell.value.copy(mat.uniforms.uHoverCell.value);
+    mat.uniforms.uSelectedEnabled.value = 1;
+    mat.uniforms.uSelectedStrength.value = 0.7;
+
+    // New hovered cell
+    lastHoverRef.current = { x: cx, y: cy };
+    hoverActiveRef.current = true;
+
+    mat.uniforms.uHoverCell.value.set(cx, cy);
+    mat.uniforms.uHoverEnabled.value = 1;
+
+    const cc = lastClientRef.current;
+    if (cc) {
+      props.onCellHover?.({
+        x: cx,
+        y: cy,
+        clientX: cc.clientX,
+        clientY: cc.clientY,
+      });
+    }
+  });
+
+  // -------------------------------
+  // Draw the plane (pixel-world units)
+  // -------------------------------
+  return (
+    <mesh
+      ref={meshRef}
+      position={[0, 0, 0]}
+      onPointerEnter={(e) => {
+        pointerInsideRef.current = true;
+
+        // initialize tooltip anchor + NDC immediately on enter
+        lastClientRef.current = { clientX: e.clientX, clientY: e.clientY };
+
+        const rect = gl.domElement.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
+        pointerNdcRef.current.set(x * 2 - 1, -(y * 2 - 1));
+      }}
+      onPointerMove={(e) => {
+        e.stopPropagation();
+
+        // mark pointer inside canvas/mesh
+        pointerInsideRef.current = true;
+
+        // tooltip anchor needs stable client coords even while stationary
+        lastClientRef.current = { clientX: e.clientX, clientY: e.clientY };
+
+        // compute NDC from domElement rect (authoritative fix)
+        const rect = gl.domElement.getBoundingClientRect();
+
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
+
+        pointerNdcRef.current.set(x * 2 - 1, -(y * 2 - 1));
+      }}
+      onPointerOut={() => {
+        pointerInsideRef.current = false;
+        lastClientRef.current = null;
+
+        // Clear hover once (frame loop will also guard, but do it immediately)
+        if (hoverActiveRef.current) {
+          hoverActiveRef.current = false;
+          lastHoverRef.current = null;
+          mat.uniforms.uHoverEnabled.value = 0;
+          props.onCellHoverEnd?.();
+        }
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        const uv = e.uv;
+        if (!uv) return;
+
+        let u = uv.x;
+        let v = uv.y;
+        if (flipGridX) u = 1 - u;
+        if (flipGridY) v = 1 - v;
+
+        u = Math.min(0.999999, Math.max(0, u));
+        v = Math.min(0.999999, Math.max(0, v));
+
+        const cx = Math.floor(u * W);
+        const cy = Math.floor(v * H);
+        if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+
+        // 1) Let inspection logic handle interactables first.
+        const handled = props.onCellClick?.({ x: cx, y: cy }) ?? false;
+        if (handled) return;
+
+        // 2) Otherwise, camera-only focus.
+        props.onCellFocus?.({ x: cx, y: cy });
+      }}
+    >
+      {/* World is pixels: plane is W*pxPerCell by H*pxPerCell */}
+      <planeGeometry args={[W * pxPerCell, H * pxPerCell, 1, 1]} />
+      <primitive object={mat} attach="material" />
+    </mesh>
+  );
+}
+
+// -------------------------------
+// Wrapper (NO R3F hooks here)
+// -------------------------------
+
+export default function DungeonRenderView(props: Props) {
+  const pxPerCell = props.zoom ?? 32;
+
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
+
+  // M7: shared ref populated by DungeonRenderScene so tooltip can read vis data.
+  const visDataRef = useRef<Uint8Array | null>(null);
+
+  const [tooltip, setTooltip] = useState<{
+    x: number;
+    y: number;
+    visible: boolean;
+    pending: boolean;
+    lines: string[];
+    clientX: number | null;
+    clientY: number | null;
+  }>({
+    visible: false,
+    pending: false,
+    x: 0,
+    y: 0,
+    lines: [],
+    clientX: null,
+    clientY: null,
+  });
+
+  // ---- Debounce / delay ----
+  const TOOLTIP_DELAY_MS = 120;
+  const hoverTimerRef = useRef<number | null>(null);
+  const lastHoverKeyRef = useRef<string | null>(null);
+
+  function clearHoverTimer() {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => clearHoverTimer();
+  }, []);
+
+  // ---- Tooltip positioning (your adapted version) ----
+  function getTooltipStyle(): React.CSSProperties {
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return { left: 0, top: 0 };
+
+    const rect = wrap.getBoundingClientRect();
+    const wrapW = wrap.clientWidth;
+    const wrapH = wrap.clientHeight;
+
+    const pad = 8;
+    const estTipW = 320;
+    const estTipH = 140;
+
+    const anchorX = tooltip.clientX != null ? tooltip.clientX - rect.left : pad;
+    const anchorY = tooltip.clientY != null ? tooltip.clientY - rect.top : pad;
+
+    let left = anchorX;
+    let top = anchorY + pad;
+
+    left = Math.max(pad, Math.min(left, wrapW - estTipW - pad));
+    if (top + estTipH > wrapH - pad) {
+      top = Math.max(pad, anchorY - estTipH - pad);
+    }
+    console.log("tooltip style", left, top, 999);
+    return { left, top, zIndex: 999 };
+  }
+
+  // ---- Your buildTooltipLines, adapted to THIS component (no runtime/diagnostics) ----
+  function buildTooltipLines(x: number, y: number) {
+    const dungeon = props.bsp;
+    const content = props.content;
+
+    const w = dungeon.width;
+    const i = y * w + x;
+
+    const solid = dungeon.masks.solid[i] ? 1 : 0;
+    const regionId = dungeon.masks.regionId[i] | 0;
+    const dist = dungeon.masks.distanceToWall[i] | 0;
+
+    const ft = content.masks.featureType[i] | 0;
+    const fid = content.masks.featureId[i] | 0;
+    const fp = content.masks.featureParam[i] | 0;
+
+    const danger = content.masks.danger[i] | 0;
+    const loot = content.masks.lootTier[i] | 0;
+    const hz = content.masks.hazardType[i] | 0; // meaningful when ft==10 per repomix
+
+    // M7 vis/explored
+    const vd = visDataRef.current;
+    const visA = vd ? vd[i * 4 + 3] : -1;
+    const exploredG = vd ? vd[i * 4 + 1] : -1;
+
+    const lines: string[] = [];
+
+    // --- raw (keep) ---
+    lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
+    if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
+    if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
+    if (hz !== 0) lines.push(`hazardType=${hz}`);
+    if (danger !== 0) lines.push(`danger=${danger}`);
+    if (loot !== 0) lines.push(`lootTier=${loot}`);
+
+    // --- readable section ---
+    if (ft !== 0) {
+      lines.push(""); // spacer line
+      lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
+
+      // --- circuit membership (no diagnostics in render view) ---
+      const circuits = props.content.meta?.circuits ?? [];
+      const memberships: string[] = [];
+
+      const triggerKind =
+        ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
+
+      const targetKind =
+        ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
+
+      for (let ci = 0; ci < circuits.length; ci++) {
+        const c: any = circuits[ci];
+        const cid = (c?.id ?? ci) | 0;
+
+        if (triggerKind && Array.isArray(c?.triggers)) {
+          for (const t of c.triggers) {
+            if (
+              t?.kind === triggerKind &&
+              ((t?.refId ?? -1) | 0) === (fid | 0)
+            ) {
+              memberships.push(`• circuit[${ci}] id=${cid}: trigger ${t.kind}`);
+              break;
+            }
+          }
+        }
+
+        if (targetKind && Array.isArray(c?.targets)) {
+          for (const t of c.targets) {
+            if (
+              t?.kind === targetKind &&
+              ((t?.refId ?? -1) | 0) === (fid | 0)
+            ) {
+              const eff = t?.effect ? ` ${t.effect}` : "";
+              memberships.push(
+                `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}`,
+              );
+              break;
+            }
+          }
+        }
+      }
+
+      //lines.push(memberships.length ? ...memberships : `• circuits: none`);
+      if (memberships.length > 0) {
+        lines.push(...memberships);
+      } else {
+        lines.push("• circuits: none");
+      }
+    }
+
+    return { lines, ft, fid };
+  }
+  console.log("tooltip.visible", tooltip.visible);
+  return (
+    <div
+      ref={canvasWrapRef}
+      style={{ width: "100%", height: "100%", position: "relative" }}
+    >
+      <Canvas
+        orthographic
+        camera={{
+          position: [0, 0, 10],
+          zoom: 1,
+          near: 0.1,
+          far: 1000,
+        }}
+        gl={{ antialias: false, alpha: false }}
+      >
+        <OrthoFrustum pxPerCell={pxPerCell} />
+        <DungeonRenderScene
+          {...props}
+          _visDataRef={visDataRef}
+          onCellHover={({ x, y, clientX, clientY }) => {
+            const key = `${x},${y}`;
+
+            // If we're still hovering the same cell, just keep the anchor fresh.
+            // DO NOT clear/re-arm the timer (or you'll starve the debounce forever).
+            if (lastHoverKeyRef.current === key) {
+              setTooltip((t) => ({
+                ...t,
+                clientX,
+                clientY,
+              }));
+              return;
+            }
+
+            // New hovered cell
+            lastHoverKeyRef.current = key;
+
+            // Arm tooltip (but do not show yet)
+            setTooltip((t) => ({
+              ...t,
+              x,
+              y,
+              clientX,
+              clientY,
+              pending: true,
+              visible: false,
+            }));
+
+            clearHoverTimer();
+
+            hoverTimerRef.current = window.setTimeout(() => {
+              // still on same cell?
+              if (lastHoverKeyRef.current !== key) return;
+
+              const { lines } = buildTooltipLines(x, y);
+
+              setTooltip((t) => ({
+                ...t,
+                x,
+                y,
+                clientX,
+                clientY,
+                lines,
+                pending: false,
+                visible: true,
+              }));
+            }, TOOLTIP_DELAY_MS);
+          }}
+          onCellHoverEnd={() => {
+            lastHoverKeyRef.current = null;
+            clearHoverTimer();
+            setTooltip((t) => ({
+              ...t,
+              visible: false,
+              pending: false,
+              clientX: null,
+              clientY: null,
+            }));
+          }}
+        />
+      </Canvas>
+
+      {tooltip.visible && (
+        <div
+          className="maze-tooltip"
+          style={{
+            position: "absolute",
+            ...getTooltipStyle(),
+            pointerEvents: "none",
+          }}
+        >
+          {tooltip.lines.map((ln, idx) => (
+            <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Keeps ortho frustum stable and sized in “pixel world units”
+function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    const cam = camera as THREE.OrthographicCamera;
+
+    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
+    const halfW = size.width / 2;
+    const halfH = size.height / 2;
+
+    cam.left = -halfW;
+    cam.right = halfW;
+    cam.top = halfH;
+    cam.bottom = -halfH;
+
+    cam.near = 0.1;
+    cam.far = 1000;
+
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+  }, [camera, size.width, size.height, pxPerCell]);
+
+  return null;
 }
 </file>
 
@@ -24383,12 +24982,246 @@ Visibility defaults: `radius=6`, `innerRadius=1.5`.
 
 ---
 
+# Milestone 8 — PATHFINDING (PLANNED)
+
+Efficient **8-way A*** pathfinding (with diagonals) plus a **renderable path mask** (`THREE.DataTexture RGBA8`) that the shader can display as an **animated direction-of-travel gradient** **under entity glyphs** (but **over floor glyphs**).
+
+---
+
+## Goals
+
+1. **Pathfinding core**
+
+   * Implement fast **8-directional A*** (N, NE, E, SE, S, SW, W, NW).
+   * Use an efficient open-set (binary heap / priority queue).
+   * Use an admissible heuristic for 8-way grids (**octile distance**).
+   * Integrate walkability via the existing shared rules (`isTileWalkable`) including optional resolvers.
+
+2. **Path mask texture (RGBA8)**
+
+   * Create/update a **stable** `THREE.DataTexture` sized `W×H`:
+
+     * **R** = enemy path coverage (0/255)
+     * **G** = npc/neutral path coverage (0/255)
+     * **B** = player path coverage (0/255)
+     * **A** = **step index from the path start** (0–255), giving a “stepped” look.
+   * Intended usage: for each mobile entity, compute its path-to-target; stamp the mask along the path.
+
+3. **Shader integration**
+
+   * Add a new uniform sampler: `uPathMask` (RGBA8).
+   * Render an **animated gradient** aligned with the inferred direction of travel (derived from stepped alpha neighbors).
+   * Composite order per-cell:
+
+     1. floor/wall base glyph
+     2. **path gradient overlay** (only on walkable cells; clipped by fog-of-war explored)
+     3. entity glyph ink on top
+
+---
+
+## New files to add
+
+### 1) `src/pathfinding/aStar8.ts` (new)
+
+Exports:
+
+* `export type GridPos = { x: number; y: number }`
+* `export type AStarPath = { path: GridPos[]; cost: number } | null`
+* `export function aStar8(...)`
+
+Key implementation notes:
+
+* Neighbor expansion: 8 dirs; cost `(10 orthogonal, 14 diagonal)` (integer math; avoids `sqrt`).
+* Heuristic: **octile**: `h = 10*(dx+dy) + (14-20)*min(dx,dy)`
+* Early-exit when reaching goal; reconstruct path via `cameFrom`.
+
+### 2) `src/pathfinding/minHeap.ts` (new)
+
+Exports:
+
+* `export class MinHeap<T>` with `push`, `pop`, `peek`, `size`, `updateKey` (optional), or implement lazy duplicate entries + best-known `gScore`.
+
+### 3) `src/rendering/pathMask.ts` (new)
+
+Exports:
+
+* `export type PathMaskKind = "enemy" | "npc" | "player"`
+* `export function createPathMaskRGBA(W: number, H: number, name: string)`
+  returns `{ data: Uint8Array; tex: THREE.DataTexture }` (same pattern as visibility)
+* `export function clearPathMaskRGBA(data: Uint8Array)` (sets all to 0)
+* `export function stampPath(...)` (writes channel + alpha step indices along a path)
+
+Stamping policy (simple + deterministic):
+
+* For each cell on the path at step `s`:
+
+  * set channel (R/G/B) to `255`
+  * set alpha to `max(existingA, s)` OR (preferably) `min(existingA==0?255:existingA, s)` — pick one and lock it in the spec.
+
+(Use `maskToTileTextureRGBA8` conventions: nearest filtering, clamp-to-edge, `NoColorSpace`, `flipY=false`.)
+
+---
+
+## Existing files to change
+
+### A) Shared walkability integration
+
+**File:** `src/walkability.ts`
+**Symbol:** `isTileWalkable(...)`
+**Lines:** 27–63
+Usage requirement for A*:
+
+* A* must call `isTileWalkable(dungeon, content, nx, ny, resolvers)` when expanding neighbors.
+* The A* API should accept the optional `WalkabilityResolvers` and pass it through.
+
+---
+
+### B) RGBA8 texture helper (already exists; reuse)
+
+**File:** `src/rendering/tiles.ts`
+**Symbol:** `maskToTileTextureRGBA8(...)`
+**Lines:** 207–235
+Plan:
+
+* Reuse this helper inside `createPathMaskRGBA(...)` to ensure texture parameters match other mask textures.
+
+---
+
+### C) Follow the visibility texture pattern (mirror it for path mask)
+
+**File:** `src/rendering/visibility.ts`
+**Symbols:**
+
+* `createVisExploredRGBA(...)` (lines 25–55)
+* `updateVisExploredRGBA(...)` (lines 60–102)
+  Plan:
+* Implement path-mask creation/update using the same “stable ref + needsUpdate” approach (create only on W/H change; mutate data per tick).
+
+---
+
+### D) Add a `uPathMask` uniform + shader compositing changes
+
+**File:** `src/rendering/tileShader.ts`
+Edits:
+
+1. **Uniform declaration**
+
+* Add: `uniform sampler2D uPathMask;`
+  Where: near the other samplers (currently `uSolid/uChar/uTint/uAtlas` at lines 20–23, and `uVisExplored` at line 57).
+
+2. **Sampling + fog gating**
+
+* Sample `vec4 pathData = texture2D(uPathMask, texUv);`
+* Apply only if `explored >= 0.5` (same explored discard logic at lines 148–151).
+
+3. **Direction-of-travel inference**
+
+* Use stepped alpha to infer local direction:
+
+  * `a = pathData.a * 255.0`
+  * Check the 8 neighbors’ alpha; prefer the neighbor with `alpha == a - 1` (toward start) or `a + 1` (toward goal) depending on the visual you want.
+  * Convert that neighbor offset into a direction vector `dir`.
+
+4. **Animated gradient**
+
+* Compute a scrolling phase using `uTime` + projection onto `dir`:
+
+  * e.g. `float phase = fract(dot(local - 0.5, dir) * freq + uTime * speed);`
+* Use `a` (step index) to “lock” banding (stepped quality):
+
+  * e.g. `float band = fract(a / bandSize);` or `float band = step(0.5, fract(a / k));`
+* Final path intensity should be subtle and sit “under” entity ink.
+
+5. **Correct draw order: path under entity glyph, over floor**
+   Current shader mixes floor/wall tile with `ch` directly (lines 155–160), then samples the atlas once (lines 176–179).
+   Refactor plan:
+
+* Always render a **base** tile first (`floor` or `wall`).
+* Then, if `hasChar > 0.5`, render the **entity glyph** as a second sample and alpha-composite it over the base.
+* Apply the **path overlay between** those two passes.
+
+**Lines to focus:**
+
+* Tile selection + atlas sample: ~155–180
+* Output composition: ~272–329
+
+---
+
+### E) Hook up `uPathMask` in the R3F renderer
+
+**File:** `src/rendering/DungeonRenderView.tsx`
+
+1. **Props**
+   **Symbol:** `type Props = { ... }`
+   **Lines:** 125–190 (props block starts at 125)
+   Add:
+
+* `pathMaskTex?: THREE.DataTexture;` (or a `{ dataRef }` pattern like M7)
+* Optional tuning props: `pathStrength?: number`, `pathAnimSpeed?: number` (or keep hardcoded in shader initially).
+
+2. **ShaderMaterial uniforms**
+   **Symbol:** `const mat = useMemo(() => new THREE.ShaderMaterial({ ... uniforms ... }))`
+   **Lines:** 398–445
+   Add:
+
+* `uPathMask: { value: props.pathMaskTex ?? someDefault1x1 }`
+
+3. **Update effect**
+   Add a `useEffect` that updates `mat.uniforms.uPathMask.value = props.pathMaskTex` when it changes (similar to the M7 `uVisExplored` update at lines 604–617).
+
+---
+
+### F) Provide the path mask texture from the inspection/runtime shell
+
+**File:** `src/inspect/InspectionShell.tsx`
+**Symbol:** `<DungeonRenderView ... />` usage
+**Lines:** 1487–1524
+
+Plan:
+
+* Create and own a path-mask `{data, tex}` ref in the shell (mirrors the vis/explored ownership pattern).
+* When the “target” changes (e.g. selected cell, hovered cell, or a chosen AI target), compute a path:
+
+  * `aStar8(...)` using `isTileWalkable(...)`
+  * `clearPathMaskRGBA(data)` then `stampPath(..., kind="player")` (or `"enemy"`, `"npc"`)
+  * set `tex.needsUpdate = true`
+* Pass `pathMaskTex={pathRef.current.tex}` into `DungeonRenderView`.
+
+(If you don’t want to commit to UI behavior yet, still wire the infrastructure with a simple “player path to selected cell” debug mode.)
+
+---
+
+## Minimal integration milestone checklist (agent-friendly)
+
+1. **Pathfinding core**
+
+   * Add `src/pathfinding/minHeap.ts`
+   * Add `src/pathfinding/aStar8.ts` (uses `isTileWalkable`)
+
+2. **Mask texture**
+
+   * Add `src/rendering/pathMask.ts` (modeled after `visibility.ts` lines 25–102)
+   * Reuse `maskToTileTextureRGBA8` (`tiles.ts` lines 207–235)
+
+3. **Shader**
+
+   * Add uniform `uPathMask` in `tileShader.ts` near lines 20–60
+   * Refactor composite around lines 155–180 and 272–329 so the path overlay is between base floor/wall and entity glyph
+
+4. **Renderer hookup**
+
+   * `DungeonRenderView.tsx`: add prop + uniform at lines 125–190 and 398–445
+   * `InspectionShell.tsx`: create path mask ref + pass into `<DungeonRenderView>` at lines 1487–1524
+
+---
+
+
 ## CURRENT STATE SUMMARY
 
 * Milestone 5 is **closed**; seed curation workflow is canonical.
 * Milestone 6 is **closed** — all 5 phases shipped.
-* Milestone 7 is **open**: ready to begin.
----
+* Milestone 7 is **closed**: shipped.
+* Milestone 8 is **open**: ready to begin.
 
 ## GENERAL PROJECT PLAN (HIGH LEVEL, SHORT)
 
