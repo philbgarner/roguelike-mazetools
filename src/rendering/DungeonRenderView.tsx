@@ -952,7 +952,7 @@ export default function DungeonRenderView(props: Props) {
     const wrapW = wrap.clientWidth;
     const wrapH = wrap.clientHeight;
 
-    const pad = 8;
+    const pad = 24;
     const estTipW = 320;
     const estTipH = 140;
 
@@ -1150,20 +1150,19 @@ export default function DungeonRenderView(props: Props) {
         />
       </Canvas>
 
-      {tooltip.visible && (
-        <div
-          className="maze-tooltip"
-          style={{
-            position: "absolute",
-            ...getTooltipStyle(),
-            pointerEvents: "none",
-          }}
-        >
-          {tooltip.lines.map((ln, idx) => (
-            <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
-          ))}
-        </div>
-      )}
+      <div
+        className="maze-tooltip"
+        style={{
+          position: "absolute",
+          ...getTooltipStyle(),
+          pointerEvents: "none",
+          opacity: tooltip.visible ? 1.0 : 0.0,
+        }}
+      >
+        {tooltip.lines.map((ln, idx) => (
+          <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
+        ))}
+      </div>
     </div>
   );
 }
