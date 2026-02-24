@@ -161,6 +161,13 @@ type Props = {
   playerX?: number;
   playerY?: number;
   playerTile?: number;
+
+  // Exit glyph (stairs at centre of farthest room). If exitX/exitY are omitted,
+  // the component derives them from content.meta.farthestRoomId automatically.
+  exitTile?: number;
+  exitX?: number;
+  exitY?: number;
+
   selectedX?: number;
   selectedY?: number;
 
@@ -329,6 +336,30 @@ function DungeonRenderScene(props: Props) {
     return t;
   }, [atlasUrl]);
 
+  // --- Derive exit cell from farthestRoomId when not explicitly provided ---
+  const exitCell = useMemo(() => {
+    if (props.exitX !== undefined && props.exitY !== undefined) {
+      return { x: props.exitX, y: props.exitY };
+    }
+    const exitRoomId = (content.meta.farthestRoomId ?? 0) | 0;
+    if (exitRoomId <= 0) return null;
+    const regionId = bsp.masks.regionId;
+    let minX = 1e9, minY = 1e9, maxX = -1, maxY = -1, found = false;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if ((regionId[y * W + x] | 0) === exitRoomId) {
+          found = true;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (!found) return null;
+    return { x: Math.floor((minX + maxX) / 2), y: Math.floor((minY + maxY) / 2) };
+  }, [bsp, content, W, H, props.exitX, props.exitY]);
+
   // --- Build char texture (R8) ---
   const charTex = useMemo(() => {
     const mask = buildCharMask(bsp, content, {
@@ -347,6 +378,10 @@ function DungeonRenderScene(props: Props) {
 
       hazardDefaultTile: props.hazardDefaultTile,
       hazardTilesByType: props.hazardTilesByType,
+
+      exitTile: props.exitTile,
+      exitX: exitCell?.x,
+      exitY: exitCell?.y,
 
       playerX: props.playerX,
       playerY: props.playerY,
@@ -372,6 +407,8 @@ function DungeonRenderScene(props: Props) {
     props.hiddenPassageTile,
     props.hazardDefaultTile,
     props.hazardTilesByType,
+    props.exitTile,
+    exitCell,
     props.playerX,
     props.playerY,
     props.playerTile,

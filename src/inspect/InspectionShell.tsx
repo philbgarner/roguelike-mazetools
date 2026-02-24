@@ -1553,6 +1553,7 @@ export function InspectionShell(props: InspectionShellProps) {
               secretDoorTile={CP437_TILES.secretDoor}
               hiddenPassageTile={CP437_TILES.hiddenPassage}
               hazardDefaultTile={CP437_TILES.hazard}
+              exitTile={CP437_TILES.exit}
               atlasUrl={"/textures/codepage437.png"}
               atlasCols={32}
               atlasRows={8}

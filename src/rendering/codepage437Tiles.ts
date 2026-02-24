@@ -22,4 +22,5 @@ export const CP437_TILES = {
   hazard: 126, // '~'
 
   player: 64, // '@'
+  exit: 69, // 'E' — stairs/exit in farthest room
 } as const;

@@ -25,6 +25,10 @@ export type TileBuildParams = {
   playerX?: number;
   playerY?: number;
   playerTile?: number;
+
+  exitX?: number;
+  exitY?: number;
+  exitTile?: number;
 };
 
 // 0=base, 1=player, 2=item/interactable, 3=hazard
@@ -151,6 +155,22 @@ export function buildCharMask(
     }
 
     out[i] = t & 0xff;
+  }
+
+  // --- Exit overlay (stairs at centre of farthest room) ---------------------
+  if (
+    params.exitTile !== undefined &&
+    params.exitX !== undefined &&
+    params.exitY !== undefined
+  ) {
+    const ex = params.exitX | 0;
+    const ey = params.exitY | 0;
+    if (ex >= 0 && ex < W && ey >= 0 && ey < H) {
+      const ei = ey * W + ex;
+      if (solid[ei] !== 255) {
+        out[ei] = params.exitTile & 0xff;
+      }
+    }
   }
 
   // --- Player overlay (highest priority) ------------------------------------
