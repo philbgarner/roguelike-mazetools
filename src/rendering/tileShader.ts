@@ -150,6 +150,8 @@ export const tileFrag = /* glsl */ `
     float explored = step(0.5, visData.g);
     float vis      = visData.a;           // 0..1 (already normalised by GL)
 
+    vec4 pathData = texture2D(uPathMask, texUv);
+
     if (explored < 0.5) {
       gl_FragColor = vec4(0.0);
       return;
@@ -175,39 +177,52 @@ export const tileFrag = /* glsl */ `
     float baseInkA = smoothstep(0.05, 0.20, baseC.a);
     vec3 baseInk = baseC.rgb;
 
-    // --- M8 PATH GRADIENT — sampled before entity glyph ---
-    vec4 pathData = texture2D(uPathMask, texUv);
+    // --- M8 PATH GRADIENT — sampled before entity glyph (pathData already sampled above) ---
     float pathStep = pathData.a * 255.0; // 0 = no path; 1..255 = step index
 
     // Apply path overlay only on explored, walkable (non-wall) cells that have a path
-    float onPath = step(0.5, pathData.a) * explored * (1.0 - curWall);
+    // pathData.a encodes step index / 255; step 1 = 1/255 ≈ 0.004, so threshold must be < 1/255
+    float onPath = step(0.5 / 255.0, pathData.a) * explored * (1.0 - curWall);
 
-    // Infer direction-of-travel from stepped alpha neighbors
-    // Sample the 4 cardinal neighbor alphas (cheaper than 8)
+    // Infer direction-of-travel from stepped alpha neighbors (8-directional)
     vec2 oneCell = vec2(1.0) / uGridSize;
-    float aN = texture2D(uPathMask, texUv + vec2( 0.0, -oneCell.y)).a * 255.0;
-    float aS = texture2D(uPathMask, texUv + vec2( 0.0,  oneCell.y)).a * 255.0;
-    float aE = texture2D(uPathMask, texUv + vec2( oneCell.x,  0.0)).a * 255.0;
-    float aW = texture2D(uPathMask, texUv + vec2(-oneCell.x,  0.0)).a * 255.0;
+    float aN  = texture2D(uPathMask, texUv + vec2( 0.0,        -oneCell.y)).a * 255.0;
+    float aS  = texture2D(uPathMask, texUv + vec2( 0.0,         oneCell.y)).a * 255.0;
+    float aE  = texture2D(uPathMask, texUv + vec2( oneCell.x,   0.0      )).a * 255.0;
+    float aW  = texture2D(uPathMask, texUv + vec2(-oneCell.x,   0.0      )).a * 255.0;
+    float aNE = texture2D(uPathMask, texUv + vec2( oneCell.x,  -oneCell.y)).a * 255.0;
+    float aNW = texture2D(uPathMask, texUv + vec2(-oneCell.x,  -oneCell.y)).a * 255.0;
+    float aSE = texture2D(uPathMask, texUv + vec2( oneCell.x,   oneCell.y)).a * 255.0;
+    float aSW = texture2D(uPathMask, texUv + vec2(-oneCell.x,   oneCell.y)).a * 255.0;
 
-    // Direction toward start = neighbor with step = pathStep - 1
-    vec2 towardStart = vec2(0.0);
-    float target = pathStep - 1.0;
-    if (abs(aN - target) < 0.5) towardStart += vec2( 0.0,  1.0);
-    if (abs(aS - target) < 0.5) towardStart += vec2( 0.0, -1.0);
-    if (abs(aE - target) < 0.5) towardStart += vec2(-1.0,  0.0);
-    if (abs(aW - target) < 0.5) towardStart += vec2( 1.0,  0.0);
-    float tLen = length(towardStart);
-    vec2 travelDir = (tLen > 0.001) ? towardStart / tLen : vec2(1.0, 0.0);
+    // Direction toward goal = neighbor with step = pathStep + 1
+    vec2 towardGoal = vec2(0.0);
+    float target = pathStep + 1.0;
+    float diag = 0.7071; // 1/sqrt(2) — pre-normalised diagonal unit vectors
+    if (abs(aN  - target) < 0.5) towardGoal += vec2( 0.0,  -1.0);
+    if (abs(aS  - target) < 0.5) towardGoal += vec2( 0.0,   1.0);
+    if (abs(aE  - target) < 0.5) towardGoal += vec2( 1.0,   0.0);
+    if (abs(aW  - target) < 0.5) towardGoal += vec2(-1.0,   0.0);
+    if (abs(aNE - target) < 0.5) towardGoal += vec2( diag, -diag);
+    if (abs(aNW - target) < 0.5) towardGoal += vec2(-diag, -diag);
+    if (abs(aSE - target) < 0.5) towardGoal += vec2( diag,  diag);
+    if (abs(aSW - target) < 0.5) towardGoal += vec2(-diag,  diag);
+    float tLen = length(towardGoal);
+    vec2 travelDir = (tLen > 0.001) ? towardGoal / tLen : vec2(1.0, 0.0);
 
-    // Animated scrolling gradient along direction of travel
+    // Terminus cell: no neighbor has pathStep+1, so tLen == 0
+    float isTerminus = step(tLen, 0.001);
+
+    // Animated scrolling gradient along direction of travel (non-terminus only)
     float proj = dot(local - vec2(0.5), travelDir);
-    float phase = fract(proj * 1.5 + uTime * uPathAnimSpeed);
+    float phase = fract(proj * 1.5 - uTime * uPathAnimSpeed);
     float gradient = smoothstep(0.0, 0.4, phase) * (1.0 - smoothstep(0.6, 1.0, phase));
 
     // Step banding for "marching" look
     float band = fract(pathStep / 8.0);
-    float pathIntensity = mix(gradient, band, 0.3) * uPathStrength * onPath;
+    float animIntensity = mix(gradient, band, 0.3);
+    // Terminus: flat full-strength colour; other cells: animated gradient
+    float pathIntensity = mix(animIntensity, 1.0, isTerminus) * uPathStrength * onPath;
 
     // Path color: pick based on channel (R=enemy, G=npc, B=player)
     // Blend toward the dominant channel's color
@@ -333,10 +348,7 @@ export const tileFrag = /* glsl */ `
     // --- Layer 1: base floor/wall ---
     vec3 outRgb = mix(bg, ink, inkA);
 
-    // --- Layer 2: path gradient overlay (under entity glyph, over floor) ---
-    // Only blend the path where entity glyph is absent (ink alpha is low)
-    float pathBlend = pathIntensity * (1.0 - inkA * hasChar);
-    outRgb = mix(outRgb, pathColor, pathBlend * 0.5);
+    // (path overlay is applied after fog-of-war below)
 
     // ------------------------------------------------------------
     // SELECTED OUTLINE (R1.5) — inspection affordance
@@ -392,6 +404,15 @@ export const tileFrag = /* glsl */ `
     outRgb += vis * uVisBgBoost * vec3(0.15, 0.10, 0.06);
     // Slight foreground lift for visible cells (brightens ink pixels)
     outRgb = clamp(outRgb + vis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
+
+    // Explored but not currently visible: render glyph in dark grey
+    float notVisible = 1.0 - step(0.5 / 255.0, vis);
+    outRgb = mix(outRgb, mix(bg, vec3(0.05), inkA), notVisible);
+
+    // Path overlay applied after fog-of-war so it shows at full strength
+    // even on unexplored / not-visible cells
+    float pathBlendFinal = pathIntensity;
+    outRgb = mix(outRgb, pathColor, pathBlendFinal * 0.5);
 
     gl_FragColor = vec4(outRgb, 1.0);
   }

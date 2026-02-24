@@ -45,7 +45,10 @@ function isBlocked(
   runtime?: any,
 ) {
   return !isTileWalkable(dungeon, content, x, y, {
-    isDoorOpen: (doorId) => !!runtime?.doors?.[doorId]?.isOpen,
+    isDoorOpen: (doorId) => {
+      console.log("doorId", doorId, "runtime", runtime);
+      return !!runtime?.doors?.[doorId]?.isOpen;
+    },
     isSecretRevealed: (secretId) => !!runtime?.secrets?.[secretId]?.revealed,
   });
 }
@@ -129,6 +132,11 @@ export default function MinimalExample() {
         content,
         { x: player.x, y: player.y },
         { x: targetX, y: targetY },
+        {
+          isDoorOpen: (doorId) => !!runtime?.doors?.[doorId]?.isOpen,
+          isSecretRevealed: (secretId) =>
+            !!runtime?.secrets?.[secretId]?.revealed,
+        },
       );
       if (result) stampPath(pm.data, dungeon.width, result.path, "player");
       pm.tex.needsUpdate = true;
@@ -240,7 +248,6 @@ export default function MinimalExample() {
           if (last && last.x === x && last.y === y) return;
           lastHoverCellRef.current = { x, y };
 
-          console.log("recomputing path for", x, y);
           // Update *player* path visualization on hover
           recomputePlayerPath(x, y);
         }}
@@ -273,6 +280,11 @@ export default function MinimalExample() {
             content,
             { x: player.x, y: player.y },
             { x, y },
+            {
+              isDoorOpen: (doorId) => !!runtime?.doors?.[doorId]?.isOpen,
+              isSecretRevealed: (secretId) =>
+                !!runtime?.secrets?.[secretId]?.revealed,
+            },
           );
           if (!result) return true; // still handled; no move if unreachable
 

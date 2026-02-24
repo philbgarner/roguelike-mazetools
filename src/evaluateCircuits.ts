@@ -729,12 +729,14 @@ export function evaluateCircuits(
       lastSatisfiedCount: 0,
     };
 
-    const satisfiedRisingEdge = !prev.lastSatisfied && now.lastSatisfied;
+    const activeChanged = prev.active !== now.active;
 
     for (const t of c.targets) {
       if (t.effect === "TOGGLE") {
-        if (satisfiedRisingEdge) {
-          applyTarget(next, t, "TOGGLE");
+        // Fire whenever active changes — apply OPEN/CLOSE to match active,
+        // so the target stays in sync with the circuit's toggle state.
+        if (activeChanged) {
+          applyTarget(next, t, now.active ? "OPEN" : "CLOSE");
         }
       } else {
         if (now.active) {
