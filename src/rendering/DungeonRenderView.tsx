@@ -209,6 +209,9 @@ type Props = {
   pathMaskTex?: THREE.DataTexture;
   pathStrength?: number;
   pathAnimSpeed?: number;
+
+  // Actor overlay: runtime monster glyphs stamped into R8 DataTexture
+  actorCharTex?: THREE.DataTexture | null;
 };
 
 // -------------------------------
@@ -440,6 +443,24 @@ function DungeonRenderScene(props: Props) {
     return t;
   }, []);
 
+  // 1×1 zero R8 fallback for uActorChar when no actor overlay exists
+  const fallbackActorCharTex = useMemo(() => {
+    const d = new Uint8Array([0]);
+    const t = new THREE.DataTexture(
+      d,
+      1,
+      1,
+      THREE.RedFormat,
+      THREE.UnsignedByteType,
+    );
+    t.name = "actor_char_fallback";
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    return t;
+  }, []);
+
   // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
   const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(
     null,
@@ -462,6 +483,7 @@ function DungeonRenderScene(props: Props) {
       uniforms: {
         uSolid: { value: bsp.textures.solid },
         uChar: { value: charTex },
+        uActorChar: { value: props.actorCharTex ?? fallbackActorCharTex },
         uTint: { value: tintTex },
         uAtlas: { value: atlas },
         uGridSize: { value: new THREE.Vector2(W, H) },
@@ -690,6 +712,11 @@ function DungeonRenderScene(props: Props) {
   useEffect(() => {
     mat.uniforms.uPathMask.value = props.pathMaskTex ?? fallbackPathTex;
   }, [mat, props.pathMaskTex, fallbackPathTex]);
+
+  // Actor overlay: update uActorChar uniform when prop changes
+  useEffect(() => {
+    mat.uniforms.uActorChar.value = props.actorCharTex ?? fallbackActorCharTex;
+  }, [mat, props.actorCharTex, fallbackActorCharTex]);
 
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;

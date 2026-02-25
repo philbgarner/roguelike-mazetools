@@ -115,8 +115,8 @@ export function buildCharMask(
 
     let t = 0;
     switch (featureType) {
-      case 1: // monster (if used)
-        t = params.monsterTile ?? 0;
+      case 1: // monster — rendered via runtime actor overlay (actorCharMask), not here
+        t = 0;
         break;
       case 2: // chest
         t = params.chestTile ?? 0;

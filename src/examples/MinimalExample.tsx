@@ -12,6 +12,12 @@ import {
   stampPath,
 } from "../rendering/pathMask";
 import {
+  clearActorCharMask,
+  createActorCharMaskR8,
+  stampMonstersToActorCharMask,
+  type ActorCharMask,
+} from "../rendering/actorCharMask";
+import {
   initDungeonRuntimeState,
   derivePlatesFromBlocks,
   toggleLever,
@@ -138,6 +144,10 @@ export default function MinimalExample() {
   const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
   const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
 
+  // --- Actor char overlay ---
+  const actorMaskRef = useRef<ActorCharMask | null>(null);
+  const [actorCharTex, setActorCharTex] = useState<THREE.DataTexture | null>(null);
+
   useEffect(() => {
     if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
     const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
@@ -148,6 +158,40 @@ export default function MinimalExample() {
       pathMaskRef.current = null;
     };
   }, [dungeon.width, dungeon.height]);
+
+  // Create actor overlay texture once per dungeon dimensions
+  useEffect(() => {
+    if (actorMaskRef.current) actorMaskRef.current.tex.dispose();
+    const am = createActorCharMaskR8(dungeon.width, dungeon.height, "actor_char_r8");
+    actorMaskRef.current = am;
+    setActorCharTex(am.tex);
+    return () => {
+      am.tex.dispose();
+      actorMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
+  // Stamp monsters into the actor overlay whenever turn state or player position changes
+  useEffect(() => {
+    const am = actorMaskRef.current;
+    if (!am) return;
+    const W = dungeon.width;
+    const H = dungeon.height;
+    clearActorCharMask(am.data);
+    const monsters = Object.values(turnState.actors).filter(
+      (a) => a.kind === "monster" && a.alive,
+    );
+    stampMonstersToActorCharMask({
+      data: am.data,
+      W,
+      H,
+      monsters: monsters.map((m) => ({ id: m.id, x: m.x, y: m.y })),
+      monsterTile: CP437_TILES.monster,
+      avoidCell: { x: playerX, y: playerY },
+      blocked: (x, y) => dungeon.masks.solid[y * W + x] === 255,
+    });
+    am.tex.needsUpdate = true;
+  }, [turnState.actors, playerX, playerY, dungeon]);
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
@@ -319,6 +363,7 @@ export default function MinimalExample() {
           return true;
         }}
         pathMaskTex={pathMaskTex ?? undefined}
+        actorCharTex={actorCharTex}
       />
     </>
   );

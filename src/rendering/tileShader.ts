@@ -19,6 +19,7 @@ export const tileFrag = /* glsl */ `
 
   uniform sampler2D uSolid;
   uniform sampler2D uChar;
+  uniform sampler2D uActorChar;
   uniform sampler2D uTint;
   uniform sampler2D uAtlas;
 
@@ -136,6 +137,12 @@ export const tileFrag = /* glsl */ `
 
     float chN = sampleR8(uChar, texUv);
     float ch  = floor(chN * 255.0 + 0.5);
+
+    // Actor overlay: runtime-stamped monsters override the static char mask
+    float aChN = sampleR8(uActorChar, texUv);
+    float aCh  = floor(aChN * 255.0 + 0.5);
+    if (aCh > 0.5) ch = aCh;
+
     float hasChar = step(0.5, ch);
 
     if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
