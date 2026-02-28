@@ -30,7 +30,10 @@ import { generateDungeon } from "../api/generateDungeon";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
 
 // Turn system
-import { createPlayerActor, createMonstersFromResolved } from "../turn/createActors";
+import {
+  createPlayerActor,
+  createMonstersFromResolved,
+} from "../turn/createActors";
 import {
   createTurnSystemState,
   tickUntilPlayer,
@@ -41,14 +44,20 @@ import {
   type TurnSystemDeps,
 } from "../turn/turnSystem";
 import { decideChasePlayer } from "../turn/monsterAI";
-import { computeEnemyPlannedPaths, type PlannedPath } from "../turn/plannedPaths";
+import {
+  computeEnemyPlannedPaths,
+  type PlannedPath,
+} from "../turn/plannedPaths";
 import {
   type AutoWalkState,
   startAutoWalk,
   cancelAutoWalk,
   consumeNextAutoWalkStep,
 } from "../turn/playerAutoWalk";
-import { createWorldEffectsState, advanceWorldEffects } from "../world/worldEffects";
+import {
+  createWorldEffectsState,
+  advanceWorldEffects,
+} from "../world/worldEffects";
 
 import "./styles.css";
 
@@ -87,7 +96,10 @@ export default function MinimalExample() {
   const dungeon = result.bsp;
   const content = result.content;
 
-  const startCell = useMemo(() => computeStartCell(dungeon, content), [dungeon, content]);
+  const startCell = useMemo(
+    () => computeStartCell(dungeon, content),
+    [dungeon, content],
+  );
 
   // --- Runtime puzzle state (levers / doors / secrets) ---
   const [runtime, setRuntime] = useState(() => {
@@ -105,7 +117,14 @@ export default function MinimalExample() {
   // Keep a ref so AI / walkability callbacks can always read the latest runtime
   // without stale closure issues.
   const runtimeRef = useRef(runtime);
-  useEffect(() => { runtimeRef.current = runtime; }, [runtime]);
+  useEffect(() => {
+    runtimeRef.current = runtime;
+  }, [runtime]);
+
+  // --- World effects clock (accumulates scheduler time → ticks for fire/water etc.) ---
+  // Must be declared before turnState useState so the initializer's tickUntilPlayer
+  // can call onTimeAdvanced without hitting the TDZ.
+  const worldEffectsRef = useRef(createWorldEffectsState());
 
   // --- Turn system ---
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
@@ -118,13 +137,12 @@ export default function MinimalExample() {
 
   // Stable ref to current turnState actors for cost computation.
   const turnStateRef = useRef(turnState);
-  useEffect(() => { turnStateRef.current = turnState; }, [turnState]);
+  useEffect(() => {
+    turnStateRef.current = turnState;
+  }, [turnState]);
 
   // --- Auto-walk (click-to-navigate route follower) ---
   const [autoWalk, setAutoWalk] = useState<AutoWalkState>({ kind: "idle" });
-
-  // --- World effects clock (accumulates scheduler time → ticks for fire/water etc.) ---
-  const worldEffectsRef = useRef(createWorldEffectsState());
 
   function buildDeps(
     _dungeon: typeof dungeon,
@@ -143,7 +161,14 @@ export default function MinimalExample() {
             !!runtimeRef.current?.secrets?.[secretId]?.revealed,
         }),
       monsterDecide: (state, monsterId) =>
-        decideChasePlayer(state, monsterId, _dungeon, _content, runtimeRef.current, PLAYER_VIS_RADIUS),
+        decideChasePlayer(
+          state,
+          monsterId,
+          _dungeon,
+          _content,
+          runtimeRef.current,
+          PLAYER_VIS_RADIUS,
+        ),
       computeCost: (actorId, action) =>
         defaultComputeCost(actorId, action, turnStateRef.current.actors),
       applyAction: defaultApplyAction,
@@ -163,19 +188,32 @@ export default function MinimalExample() {
   const playerY = playerActor?.y ?? startCell.y;
 
   // --- Path mask ---
-  const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
-  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
+  const pathMaskRef = useRef<{
+    data: Uint8Array;
+    tex: THREE.DataTexture;
+  } | null>(null);
+  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(
+    null,
+  );
   const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
-  const playerPreviewPathRef = useRef<import("../pathfinding/aStar8").GridPos[] | null>(null);
+  const playerPreviewPathRef = useRef<
+    import("../pathfinding/aStar8").GridPos[] | null
+  >(null);
   const enemyPlannedPathsRef = useRef<PlannedPath[]>([]);
 
   // --- Actor char overlay ---
   const actorMaskRef = useRef<ActorCharMask | null>(null);
-  const [actorCharTex, setActorCharTex] = useState<THREE.DataTexture | null>(null);
+  const [actorCharTex, setActorCharTex] = useState<THREE.DataTexture | null>(
+    null,
+  );
 
   useEffect(() => {
     if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
-    const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
+    const pm = createPathMaskRGBA(
+      dungeon.width,
+      dungeon.height,
+      "path_mask_rgba",
+    );
     pathMaskRef.current = pm;
     setPathMaskTex(pm.tex);
     return () => {
@@ -187,7 +225,11 @@ export default function MinimalExample() {
   // Create actor overlay texture once per dungeon dimensions
   useEffect(() => {
     if (actorMaskRef.current) actorMaskRef.current.tex.dispose();
-    const am = createActorCharMaskR8(dungeon.width, dungeon.height, "actor_char_r8");
+    const am = createActorCharMaskR8(
+      dungeon.width,
+      dungeon.height,
+      "actor_char_r8",
+    );
     actorMaskRef.current = am;
     setActorCharTex(am.tex);
     return () => {
@@ -222,7 +264,7 @@ export default function MinimalExample() {
       maxSteps: 32,
     });
     rebuildPathMaskFromPlans();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnState.actors, dungeon, content, rebuildPathMaskFromPlans]);
 
   // Stamp monsters into the actor overlay whenever turn state or player position changes
@@ -289,11 +331,11 @@ export default function MinimalExample() {
 
   // --- Keyboard input ---
   useEffect(() => {
-    hotkeys("a,left",  () => tryCommitMove(-1, 0));
+    hotkeys("a,left", () => tryCommitMove(-1, 0));
     hotkeys("d,right", () => tryCommitMove(1, 0));
-    hotkeys("s,down",  () => tryCommitMove(0, 1));
-    hotkeys("w,up",    () => tryCommitMove(0, -1));
-    hotkeys(".",       () => tryCommitWait());
+    hotkeys("s,down", () => tryCommitMove(0, 1));
+    hotkeys("w,up", () => tryCommitMove(0, -1));
+    hotkeys(".", () => tryCommitWait());
 
     return () => hotkeys.unbind();
   }, [dungeon, content]);
@@ -330,8 +372,15 @@ export default function MinimalExample() {
       const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
       return commitPlayerAction(prev, deps, action);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turnState.awaitingPlayerInput, turnState.actors, autoWalk, dungeon, content, rebuildPathMaskFromPlans]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    turnState.awaitingPlayerInput,
+    turnState.actors,
+    autoWalk,
+    dungeon,
+    content,
+    rebuildPathMaskFromPlans,
+  ]);
 
   // Reset turn state when start cell changes (new dungeon)
   useEffect(() => {
