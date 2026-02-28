@@ -105,6 +105,7 @@ src/
     actionCosts.ts
     createActors.ts
     monsterAI.ts
+    plannedPaths.ts
     turnDebug.ts
     turnScheduler.ts
     turnSystem.ts
@@ -4383,129 +4384,59 @@ export function clamp(min: number, max: number, value: number): number {
 }
 </file>
 
-<file path="src/turn/createActors.ts">
-// src/turn/createActors.ts
+<file path="src/turn/plannedPaths.ts">
+// src/turn/plannedPaths.ts
 //
-// Deterministic conversion from generator output into runtime actors.
-// The same dungeon + resolved spawns always produces the same actor set.
+// Computes each living monster's planned chase path for rendering overlays.
+// Respects alert state: idle monsters have no planned path.
+// Reuses the same A* logic as the AI so the visualised path matches what
+// the monster will actually do on its next turn.
 
-import type { ResolvedSpawns } from "../resolve/resolveTypes";
-import { clamp } from "./actionCosts";
-import type { PlayerActor, MonsterActor } from "./turnTypes";
-
-/** Default player speed (acts 10x per BASE_TIME unit with default BASE_TIME=100). */
-const PLAYER_SPEED = 10;
-
-/**
- * Create the player actor at the given start position.
- * Uses the id "player" for single-floor scenarios.
- */
-export function createPlayerActor(startX: number, startY: number): PlayerActor {
-  return {
-    id: "player",
-    kind: "player",
-    x: startX,
-    y: startY,
-    speed: PLAYER_SPEED,
-    alive: true,
-    blocksMovement: true,
-  };
-}
-
-/**
- * Map resolved monster spawns to runtime MonsterActor instances.
- * Returns an empty array if resolved is null (theme-less path).
- *
- * Speed is derived deterministically from danger level so that more
- * dangerous monsters act more frequently:
- *   speed = clamp(1, 10, 4 + danger)
- */
-export function createMonstersFromResolved(
-  resolved: ResolvedSpawns | null,
-): MonsterActor[] {
-  if (!resolved) return [];
-
-  return resolved.monsters.map((spawn) => {
-    const speed = clamp(1, 10, 4 + spawn.danger);
-    return {
-      id: spawn.entityId,
-      kind: "monster" as const,
-      x: spawn.x,
-      y: spawn.y,
-      speed,
-      alive: true,
-      blocksMovement: true,
-      spawnId: spawn.spawnId,
-      danger: spawn.danger,
-      roomId: spawn.roomId,
-    };
-  });
-}
-</file>
-
-<file path="src/turn/monsterAI.ts">
-// src/turn/monsterAI.ts
-//
-// Phase-2 monster AI: chase the player using A*.
-//
-// Replaces the phase-1 waitAI stub in turnSystem.ts.
-
-import { aStar8 } from "../pathfinding/aStar8";
+import type { TurnSystemState } from "./turnSystem";
+import type { ActorId } from "./turnTypes";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import type { DungeonRuntimeState } from "../dungeonState";
-import type { TurnAction, ActorId } from "./turnTypes";
-import type { TurnSystemState } from "./turnSystem";
+import type { GridPos } from "../pathfinding/aStar8";
+import { computeChasePathForOverlay } from "./monsterAI";
+
+export type PlannedPath = { actorId: ActorId; path: GridPos[] };
 
 /**
- * Monster AI that chases the player using 8-directional A*.
+ * Compute the planned path for every living, alerted monster.
  *
- * Computes the full path to the player and returns a move action for the
- * first step. Falls back to wait if no path exists (player unreachable or
- * monster is already adjacent).
+ * Returns one entry per monster that is chasing or searching and has a
+ * reachable path. Idle monsters and unreachable targets are omitted.
  *
- * Usage:
- *   deps.monsterDecide = (state, monsterId) =>
- *     decideChasePlayer(state, monsterId, dungeon, content, runtime);
+ * @param maxSteps  Cap path length to keep alpha-gradient meaningful (default 32).
  */
-export function decideChasePlayer(
-  state: TurnSystemState,
-  monsterId: ActorId,
-  dungeon: BspDungeonOutputs,
-  content: ContentOutputs,
-  runtime: DungeonRuntimeState,
-): TurnAction {
-  const monster = state.actors[monsterId];
-  const player = state.actors[state.playerId];
+export function computeEnemyPlannedPaths(args: {
+  state: TurnSystemState;
+  dungeon: BspDungeonOutputs;
+  content: ContentOutputs;
+  runtime: DungeonRuntimeState;
+  maxSteps?: number;
+}): PlannedPath[] {
+  const { state, dungeon, content, runtime, maxSteps = 32 } = args;
+  const results: PlannedPath[] = [];
 
-  if (!monster || !player || !monster.alive || !player.alive) {
-    return { kind: "wait" };
+  for (const actor of Object.values(state.actors)) {
+    if (actor.kind !== "monster" || !actor.alive) continue;
+
+    const path = computeChasePathForOverlay(
+      state,
+      actor.id,
+      dungeon,
+      content,
+      runtime,
+      { maxSteps },
+    );
+
+    if (path) {
+      results.push({ actorId: actor.id, path });
+    }
   }
 
-  const resolvers = {
-    isDoorOpen: (doorId: number) => !!runtime.doors?.[doorId]?.isOpen,
-    isSecretRevealed: (secretId: number) =>
-      !!runtime.secrets?.[secretId]?.revealed,
-  };
-
-  const result = aStar8(
-    dungeon,
-    content,
-    { x: monster.x, y: monster.y },
-    { x: player.x, y: player.y },
-    resolvers,
-  );
-
-  if (!result || result.path.length < 2) {
-    // Already at target or unreachable.
-    return { kind: "wait" };
-  }
-
-  // path[0] is the monster's current cell; path[1] is the next step.
-  const next = result.path[1];
-  const dx = next.x - monster.x;
-  const dy = next.y - monster.y;
-
-  return { kind: "move", dx, dy };
+  return results;
 }
 </file>
 
@@ -4689,350 +4620,6 @@ export class TurnScheduler {
     return this.heap.size;
   }
 }
-</file>
-
-<file path="src/turn/turnSystem.ts">
-// src/turn/turnSystem.ts
-//
-// High-level turn-loop brain.
-//
-// Owns actors (player + monsters) and a TurnScheduler.
-// Pauses when it is the player's turn (UI-driven); auto-advances monsters.
-//
-// React integration:
-//   - hover / inspect → does NOT advance turns
-//   - committed click / keypress → commitPlayerAction() → advances until next player turn
-
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-import type { DungeonRuntimeState } from "../dungeonState";
-import { TurnScheduler } from "./turnScheduler";
-import { actionDelay } from "./actionCosts";
-import type {
-  ActorId,
-  PlayerActor,
-  MonsterActor,
-  TurnAction,
-  ActionCost,
-} from "./turnTypes";
-import type { TurnLogEntry } from "./turnDebug";
-
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
-export type TurnSystemState = {
-  actors: Record<ActorId, PlayerActor | MonsterActor>;
-  playerId: ActorId;
-  scheduler: TurnScheduler;
-  awaitingPlayerInput: boolean;
-  activeActorId: ActorId | null;
-  /** Optional bounded turn log (populated when deps.log is true). */
-  log: TurnLogEntry[];
-};
-
-// ---------------------------------------------------------------------------
-// Deps
-// ---------------------------------------------------------------------------
-
-export type TurnSystemDeps = {
-  dungeon: BspDungeonOutputs;
-  content: ContentOutputs;
-  runtime: DungeonRuntimeState;
-  isWalkable: (x: number, y: number) => boolean;
-  /** AI callback: decide what a monster does this turn. */
-  monsterDecide: (
-    state: TurnSystemState,
-    monsterId: ActorId,
-  ) => TurnAction;
-  /** Cost callback: how much time does this action cost for this actor? */
-  computeCost: (actorId: ActorId, action: TurnAction) => ActionCost;
-  /** Apply an action: returns a new TurnSystemState with mutated actors. */
-  applyAction: (
-    state: TurnSystemState,
-    actorId: ActorId,
-    action: TurnAction,
-    deps: TurnSystemDeps,
-  ) => TurnSystemState;
-  /** Set to true to record turns into state.log (bounded at 200 entries). */
-  log?: boolean;
-};
-
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
-
-/**
- * Build the initial TurnSystemState from a player + monster list.
- * Every actor is scheduled with its normal move delay so the initial ordering
- * is consistent (RogueBasin recommendation).
- */
-export function createTurnSystemState(
-  player: PlayerActor,
-  monsters: MonsterActor[],
-): TurnSystemState {
-  const actors: Record<ActorId, PlayerActor | MonsterActor> = {};
-  const scheduler = new TurnScheduler();
-
-  actors[player.id] = player;
-  const playerDelay = actionDelay(player.speed, { kind: "move" });
-  scheduler.add(player.id, playerDelay);
-
-  for (const m of monsters) {
-    actors[m.id] = m;
-    const monsterDelay = actionDelay(m.speed, { kind: "move" });
-    scheduler.add(m.id, monsterDelay);
-  }
-
-  return {
-    actors,
-    playerId: player.id,
-    scheduler,
-    awaitingPlayerInput: false,
-    activeActorId: null,
-    log: [],
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function isAlive(state: TurnSystemState, actorId: ActorId): boolean {
-  const actor = state.actors[actorId];
-  return !!actor && actor.alive;
-}
-
-function appendLog(
-  state: TurnSystemState,
-  deps: TurnSystemDeps,
-  entry: TurnLogEntry,
-): void {
-  if (!deps.log) return;
-  state.log.push(entry);
-  // Bound to last 200 entries.
-  if (state.log.length > 200) state.log.splice(0, state.log.length - 200);
-}
-
-// ---------------------------------------------------------------------------
-// Core loop
-// ---------------------------------------------------------------------------
-
-const MAX_MONSTER_TICKS_PER_CALL = 500;
-
-/**
- * Advance the schedule until it is the player's turn (or the schedule is empty).
- * Mutates the scheduler in-place (it is a class), returns new state for actors/flags.
- *
- * Monster ticks are bounded per call to prevent infinite loops in pathological cases.
- */
-export function tickUntilPlayer(
-  state: TurnSystemState,
-  deps: TurnSystemDeps,
-): TurnSystemState {
-  let current: TurnSystemState = { ...state, awaitingPlayerInput: false, activeActorId: null };
-  let safetyCounter = 0;
-
-  while (safetyCounter++ < MAX_MONSTER_TICKS_PER_CALL) {
-    const evt = current.scheduler.next();
-    if (!evt) {
-      // Schedule exhausted — shouldn't happen in a normal game.
-      break;
-    }
-
-    const { actorId } = evt;
-
-    // Skip dead actors.
-    if (!isAlive(current, actorId)) {
-      continue;
-    }
-
-    // Player's turn — pause and hand control back to UI.
-    if (actorId === current.playerId) {
-      current = {
-        ...current,
-        awaitingPlayerInput: true,
-        activeActorId: actorId,
-      };
-      return current;
-    }
-
-    // Monster's turn — run AI, apply action, reschedule.
-    const action = deps.monsterDecide(current, actorId);
-    const cost = deps.computeCost(actorId, action);
-    const actor = current.actors[actorId];
-
-    appendLog(current, deps, {
-      t: current.scheduler.getNow(),
-      actorId,
-      action,
-      cost: cost.time,
-    });
-
-    current = deps.applyAction(current, actorId, action, deps);
-    current.scheduler.reschedule(actorId, cost.time);
-
-    // If monster died during its own action, skip reschedule already done above —
-    // the scheduler will lazily discard it next time.
-    void actor; // suppress unused warning
-  }
-
-  return current;
-}
-
-// ---------------------------------------------------------------------------
-// Player commit
-// ---------------------------------------------------------------------------
-
-/**
- * Commit the player's chosen action, advance the turn, then run monsters until
- * the player's next turn.
- *
- * Precondition: state.awaitingPlayerInput === true
- */
-export function commitPlayerAction(
-  state: TurnSystemState,
-  deps: TurnSystemDeps,
-  action: TurnAction,
-): TurnSystemState {
-  if (!state.awaitingPlayerInput) {
-    // Guard — caller should not commit when it's not the player's turn.
-    return state;
-  }
-
-  const cost = deps.computeCost(state.playerId, action);
-
-  appendLog(state, deps, {
-    t: state.scheduler.getNow(),
-    actorId: state.playerId,
-    action,
-    cost: cost.time,
-  });
-
-  let next = deps.applyAction(state, state.playerId, action, deps);
-  next = {
-    ...next,
-    awaitingPlayerInput: false,
-    activeActorId: null,
-  };
-  next.scheduler.reschedule(state.playerId, cost.time);
-
-  return tickUntilPlayer(next, deps);
-}
-
-// ---------------------------------------------------------------------------
-// Default callbacks (suitable for phase-1 "infrastructure only" usage)
-// ---------------------------------------------------------------------------
-
-/**
- * Default computeCost: uses actionDelay from actionCosts.ts.
- */
-export function defaultComputeCost(
-  actorId: ActorId,
-  action: TurnAction,
-  actors: Record<ActorId, PlayerActor | MonsterActor>,
-): ActionCost {
-  const actor = actors[actorId];
-  const speed = actor?.speed ?? 1;
-  return { time: actionDelay(speed, action) };
-}
-
-/**
- * Default applyAction: moves actor if dx/dy are set and target is walkable,
- * skips otherwise. No damage calculations yet (phase 1).
- */
-export function defaultApplyAction(
-  state: TurnSystemState,
-  actorId: ActorId,
-  action: TurnAction,
-  deps: TurnSystemDeps,
-): TurnSystemState {
-  if (action.kind !== "move" || action.dx == null || action.dy == null) {
-    return state;
-  }
-
-  const actor = state.actors[actorId];
-  if (!actor) return state;
-
-  const nx = actor.x + action.dx;
-  const ny = actor.y + action.dy;
-
-  if (!deps.isWalkable(nx, ny)) return state;
-
-  // Check occupancy by other blocking actors.
-  for (const other of Object.values(state.actors)) {
-    if (other.id === actorId) continue;
-    if (other.alive && other.blocksMovement && other.x === nx && other.y === ny) {
-      return state;
-    }
-  }
-
-  const updatedActor = { ...actor, x: nx, y: ny };
-  return {
-    ...state,
-    actors: { ...state.actors, [actorId]: updatedActor },
-  };
-}
-
-/**
- * Phase-1 monster AI: always waits.
- * Replace with monsterAI.ts's decideChasePlayer in phase 2.
- */
-export function waitAI(
-  _state: TurnSystemState,
-  _monsterId: ActorId,
-): TurnAction {
-  return { kind: "wait" };
-}
-</file>
-
-<file path="src/turn/turnTypes.ts">
-// src/turn/turnTypes.ts
-//
-// Shared types for the priority-queue turn system.
-// Generator-independent; works with both API result and direct generator output.
-
-export type ActorId = string;
-
-export type ActorKind = "player" | "monster";
-
-export type ActorBase = {
-  id: ActorId;
-  kind: ActorKind;
-  x: number;
-  y: number;
-  /** >0; used to compute delay. Higher speed = smaller delay = acts more often. */
-  speed: number;
-  alive: boolean;
-  blocksMovement: boolean;
-};
-
-export type PlayerActor = ActorBase & { kind: "player" };
-
-export type MonsterActor = ActorBase & {
-  kind: "monster";
-  spawnId: string;
-  danger: number;
-  roomId: number;
-};
-
-export type TurnActionKind = "wait" | "move" | "attack" | "interact";
-
-export type TurnAction = {
-  kind: TurnActionKind;
-  /** For move actions: delta x */
-  dx?: number;
-  /** For move actions: delta y */
-  dy?: number;
-  /** For attack actions: target actor id */
-  targetId?: ActorId;
-  /** Future hooks: door/lever ids, item ids, etc. */
-  meta?: Record<string, unknown>;
-};
-
-export type ActionCost = {
-  /** The delay value used by the scheduler (RogueBasin: faster = smaller delay). */
-  time: number;
-};
 </file>
 
 <file path="src/compositionDiagnostics.ts">
@@ -8731,6 +8318,792 @@ export type ThemeResolvedPayload = {
   roomTagsByRoomId: Map<number, Set<import("./roomTags").RoomTag>>;
   /** Per-room selected theme (roomId → RoomTheme). */
   roomThemesByRoomId: Map<number, RoomTheme>;
+};
+</file>
+
+<file path="src/turn/createActors.ts">
+// src/turn/createActors.ts
+//
+// Deterministic conversion from generator output into runtime actors.
+// The same dungeon + resolved spawns always produces the same actor set.
+
+import type { ResolvedSpawns } from "../resolve/resolveTypes";
+import { clamp } from "./actionCosts";
+import type { PlayerActor, MonsterActor } from "./turnTypes";
+
+/** Default player speed (acts 10x per BASE_TIME unit with default BASE_TIME=100). */
+const PLAYER_SPEED = 10;
+
+/**
+ * Create the player actor at the given start position.
+ * Uses the id "player" for single-floor scenarios.
+ */
+export function createPlayerActor(startX: number, startY: number): PlayerActor {
+  return {
+    id: "player",
+    kind: "player",
+    x: startX,
+    y: startY,
+    speed: PLAYER_SPEED,
+    alive: true,
+    blocksMovement: true,
+  };
+}
+
+/**
+ * Map resolved monster spawns to runtime MonsterActor instances.
+ * Returns an empty array if resolved is null (theme-less path).
+ *
+ * Speed is derived deterministically from danger level so that more
+ * dangerous monsters act more frequently:
+ *   speed = clamp(1, 10, 4 + danger)
+ */
+export function createMonstersFromResolved(
+  resolved: ResolvedSpawns | null,
+): MonsterActor[] {
+  if (!resolved) return [];
+
+  return resolved.monsters.map((spawn) => {
+    const speed = clamp(1, 10, 4 + spawn.danger);
+    return {
+      id: spawn.entityId,
+      kind: "monster" as const,
+      x: spawn.x,
+      y: spawn.y,
+      speed,
+      alive: true,
+      blocksMovement: true,
+      spawnId: spawn.spawnId,
+      danger: spawn.danger,
+      roomId: spawn.roomId,
+      alertState: "idle" as const,
+      searchTurnsLeft: 0,
+      lastKnownPlayerPos: null,
+    };
+  });
+}
+</file>
+
+<file path="src/turn/monsterAI.ts">
+// src/turn/monsterAI.ts
+//
+// Phase-2 monster AI: chase the player using A* with a visibility-gated
+// alert state machine.
+//
+// Alert states:
+//   idle      — monster is unaware; does nothing until the player enters
+//               its detection radius.
+//   chasing   — monster is actively pursuing the player.
+//   searching — monster lost sight of the player; keeps heading to the
+//               last known position for `giveUpTurns` turns before going
+//               back to idle.
+//
+// Config is derived from danger level so that more dangerous monsters
+// detect the player from farther away and give up less easily.
+
+import { aStar8 } from "../pathfinding/aStar8";
+import type { GridPos } from "../pathfinding/aStar8";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import type { DungeonRuntimeState } from "../dungeonState";
+import type { TurnAction, ActorId, MonsterActor, MonsterAlertState } from "./turnTypes";
+import type { TurnSystemState } from "./turnSystem";
+
+// ---------------------------------------------------------------------------
+// Alert config
+// ---------------------------------------------------------------------------
+
+export type MonsterAlertConfig = {
+  /** How many cells away the monster can spot the player (must be within
+   *  the player's own FOV radius to count as "visible").  Higher danger
+   *  monsters have a larger detection range. */
+  detectionRadius: number;
+  /** Turns of searching before the monster gives up and goes idle.
+   *  Higher danger monsters are more persistent. */
+  giveUpTurns: number;
+};
+
+/**
+ * Derive alert config from a monster's danger level.
+ *
+ * danger 0  → detectionRadius 4,  giveUpTurns 3
+ * danger 5  → detectionRadius 7,  giveUpTurns 8
+ * danger 10 → detectionRadius 10, giveUpTurns 12
+ */
+export function monsterAlertConfig(danger: number): MonsterAlertConfig {
+  return {
+    detectionRadius: Math.min(10, 4 + danger),
+    giveUpTurns: Math.min(12, 3 + danger),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Visibility helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * True if the monster can "see" the player — i.e. the monster is inside
+ * the player's FOV circle.  We mirror the renderer's simple radial check
+ * (no wall occlusion) so that the AI and the visual fog-of-war agree.
+ *
+ * @param playerVisRadius  The `radius` value used by the visibility renderer
+ *                         (default 6 in DungeonRenderView).
+ */
+function isMonsterInPlayerFov(
+  monsterX: number,
+  monsterY: number,
+  playerX: number,
+  playerY: number,
+  playerVisRadius: number,
+): boolean {
+  return Math.hypot(monsterX - playerX, monsterY - playerY) <= playerVisRadius;
+}
+
+// ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the A* path from a monster to the player.
+ *
+ * Returns the path (from monster's cell to player's cell), optionally clamped
+ * to maxSteps cells. Returns null if the player is unreachable or the monster
+ * is already at the player's cell.
+ */
+export function computeChasePathToPlayer(
+  state: TurnSystemState,
+  monsterId: ActorId,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  runtime: DungeonRuntimeState,
+  opts?: { maxSteps?: number },
+): GridPos[] | null {
+  const monster = state.actors[monsterId];
+  const player = state.actors[state.playerId];
+
+  if (!monster || !player || !monster.alive || !player.alive) {
+    return null;
+  }
+
+  return _pathTo(
+    monster.x, monster.y,
+    player.x, player.y,
+    dungeon, content, runtime, opts?.maxSteps,
+  );
+}
+
+/** Internal: run A* from (sx,sy) to (gx,gy). */
+function _pathTo(
+  sx: number, sy: number,
+  gx: number, gy: number,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  runtime: DungeonRuntimeState,
+  maxSteps?: number,
+): GridPos[] | null {
+  const resolvers = {
+    isDoorOpen: (doorId: number) => !!runtime.doors?.[doorId]?.isOpen,
+    isSecretRevealed: (secretId: number) =>
+      !!runtime.secrets?.[secretId]?.revealed,
+  };
+
+  const result = aStar8(dungeon, content, { x: sx, y: sy }, { x: gx, y: gy }, resolvers);
+
+  if (!result || result.path.length < 2) return null;
+
+  return maxSteps != null ? result.path.slice(0, maxSteps) : result.path;
+}
+
+// ---------------------------------------------------------------------------
+// Alert state transition
+// ---------------------------------------------------------------------------
+
+type AlertTransition = {
+  newAlertState: MonsterAlertState;
+  newSearchTurnsLeft: number;
+  newLastKnownPlayerPos: { x: number; y: number } | null;
+};
+
+function transitionAlertState(
+  monster: MonsterActor,
+  playerX: number,
+  playerY: number,
+  playerVisRadius: number,
+  config: MonsterAlertConfig,
+): AlertTransition {
+  const canSeePlayer = isMonsterInPlayerFov(
+    monster.x, monster.y, playerX, playerY, playerVisRadius,
+  );
+  const withinDetection = Math.hypot(monster.x - playerX, monster.y - playerY)
+    <= config.detectionRadius;
+
+  switch (monster.alertState) {
+    case "idle": {
+      if (canSeePlayer && withinDetection) {
+        // Player entered detection radius while visible → start chasing.
+        return {
+          newAlertState: "chasing",
+          newSearchTurnsLeft: 0,
+          newLastKnownPlayerPos: { x: playerX, y: playerY },
+        };
+      }
+      return {
+        newAlertState: "idle",
+        newSearchTurnsLeft: 0,
+        newLastKnownPlayerPos: null,
+      };
+    }
+
+    case "chasing": {
+      if (canSeePlayer) {
+        // Still has line-of-sight — keep chasing, update last known pos.
+        return {
+          newAlertState: "chasing",
+          newSearchTurnsLeft: 0,
+          newLastKnownPlayerPos: { x: playerX, y: playerY },
+        };
+      }
+      // Lost sight — start searching.
+      return {
+        newAlertState: "searching",
+        newSearchTurnsLeft: config.giveUpTurns,
+        newLastKnownPlayerPos: monster.lastKnownPlayerPos,
+      };
+    }
+
+    case "searching": {
+      if (canSeePlayer) {
+        // Re-acquired — resume chasing.
+        return {
+          newAlertState: "chasing",
+          newSearchTurnsLeft: 0,
+          newLastKnownPlayerPos: { x: playerX, y: playerY },
+        };
+      }
+      const turnsLeft = monster.searchTurnsLeft - 1;
+      if (turnsLeft <= 0) {
+        // Gave up.
+        return {
+          newAlertState: "idle",
+          newSearchTurnsLeft: 0,
+          newLastKnownPlayerPos: null,
+        };
+      }
+      return {
+        newAlertState: "searching",
+        newSearchTurnsLeft: turnsLeft,
+        newLastKnownPlayerPos: monster.lastKnownPlayerPos,
+      };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main AI entry point
+// ---------------------------------------------------------------------------
+
+export type DecideResult = {
+  action: TurnAction;
+  /** Updated monster fields to apply alongside the action. */
+  monsterPatch: Partial<Pick<
+    MonsterActor,
+    "alertState" | "searchTurnsLeft" | "lastKnownPlayerPos"
+  >>;
+};
+
+/**
+ * Decide what a monster does this turn, also returning the alert-state
+ * patch to apply.
+ *
+ * @param playerVisRadius  The FOV radius used by the renderer (default 6).
+ */
+export function decideChasePlayer(
+  state: TurnSystemState,
+  monsterId: ActorId,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  runtime: DungeonRuntimeState,
+  playerVisRadius = 6,
+): DecideResult {
+  const monster = state.actors[monsterId] as MonsterActor | undefined;
+  const player = state.actors[state.playerId];
+
+  if (!monster || !player || !monster.alive || !player.alive) {
+    return { action: { kind: "wait" }, monsterPatch: {} };
+  }
+
+  const config = monsterAlertConfig(monster.danger);
+
+  const transition = transitionAlertState(
+    monster, player.x, player.y, playerVisRadius, config,
+  );
+
+  const patch: DecideResult["monsterPatch"] = {
+    alertState: transition.newAlertState,
+    searchTurnsLeft: transition.newSearchTurnsLeft,
+    lastKnownPlayerPos: transition.newLastKnownPlayerPos,
+  };
+
+  // --- Idle: do nothing ---
+  if (transition.newAlertState === "idle") {
+    return { action: { kind: "wait" }, monsterPatch: patch };
+  }
+
+  // --- Chasing: path to current player position ---
+  if (transition.newAlertState === "chasing") {
+    const path = _pathTo(
+      monster.x, monster.y,
+      player.x, player.y,
+      dungeon, content, runtime,
+    );
+    if (!path) {
+      return { action: { kind: "wait" }, monsterPatch: patch };
+    }
+    const next = path[1];
+    return {
+      action: { kind: "move", dx: next.x - monster.x, dy: next.y - monster.y },
+      monsterPatch: patch,
+    };
+  }
+
+  // --- Searching: path to last known player position ---
+  const target = transition.newLastKnownPlayerPos;
+  if (!target) {
+    return { action: { kind: "wait" }, monsterPatch: patch };
+  }
+
+  // If we've reached the last known position, just wait (and count down).
+  if (monster.x === target.x && monster.y === target.y) {
+    return { action: { kind: "wait" }, monsterPatch: patch };
+  }
+
+  const path = _pathTo(
+    monster.x, monster.y,
+    target.x, target.y,
+    dungeon, content, runtime,
+  );
+  if (!path) {
+    return { action: { kind: "wait" }, monsterPatch: patch };
+  }
+  const next = path[1];
+  return {
+    action: { kind: "move", dx: next.x - monster.x, dy: next.y - monster.y },
+    monsterPatch: patch,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Planned-path helper (used by rendering overlay, not turn loop)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the A* path from a monster toward its current target.
+ * Respects alert state: idle monsters return null (no planned path).
+ */
+export function computeChasePathForOverlay(
+  state: TurnSystemState,
+  monsterId: ActorId,
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  runtime: DungeonRuntimeState,
+  opts?: { maxSteps?: number },
+): GridPos[] | null {
+  const monster = state.actors[monsterId] as MonsterActor | undefined;
+  const player = state.actors[state.playerId];
+
+  if (!monster || !player || !monster.alive || !player.alive) return null;
+  if (monster.alertState === "idle") return null;
+
+  const target = monster.alertState === "chasing"
+    ? { x: player.x, y: player.y }
+    : monster.lastKnownPlayerPos;
+
+  if (!target) return null;
+
+  return _pathTo(
+    monster.x, monster.y,
+    target.x, target.y,
+    dungeon, content, runtime,
+    opts?.maxSteps,
+  );
+}
+</file>
+
+<file path="src/turn/turnSystem.ts">
+// src/turn/turnSystem.ts
+//
+// High-level turn-loop brain.
+//
+// Owns actors (player + monsters) and a TurnScheduler.
+// Pauses when it is the player's turn (UI-driven); auto-advances monsters.
+//
+// React integration:
+//   - hover / inspect → does NOT advance turns
+//   - committed click / keypress → commitPlayerAction() → advances until next player turn
+
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import type { DungeonRuntimeState } from "../dungeonState";
+import { TurnScheduler } from "./turnScheduler";
+import { actionDelay } from "./actionCosts";
+import type {
+  ActorId,
+  PlayerActor,
+  MonsterActor,
+  TurnAction,
+  ActionCost,
+} from "./turnTypes";
+import type { DecideResult } from "./monsterAI";
+import type { TurnLogEntry } from "./turnDebug";
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+export type TurnSystemState = {
+  actors: Record<ActorId, PlayerActor | MonsterActor>;
+  playerId: ActorId;
+  scheduler: TurnScheduler;
+  awaitingPlayerInput: boolean;
+  activeActorId: ActorId | null;
+  /** Optional bounded turn log (populated when deps.log is true). */
+  log: TurnLogEntry[];
+};
+
+// ---------------------------------------------------------------------------
+// Deps
+// ---------------------------------------------------------------------------
+
+export type TurnSystemDeps = {
+  dungeon: BspDungeonOutputs;
+  content: ContentOutputs;
+  runtime: DungeonRuntimeState;
+  isWalkable: (x: number, y: number) => boolean;
+  /**
+   * AI callback: decide what a monster does this turn.
+   * Returns the action plus an alert-state patch to apply to the actor.
+   */
+  monsterDecide: (
+    state: TurnSystemState,
+    monsterId: ActorId,
+  ) => DecideResult;
+  /** Cost callback: how much time does this action cost for this actor? */
+  computeCost: (actorId: ActorId, action: TurnAction) => ActionCost;
+  /** Apply an action: returns a new TurnSystemState with mutated actors. */
+  applyAction: (
+    state: TurnSystemState,
+    actorId: ActorId,
+    action: TurnAction,
+    deps: TurnSystemDeps,
+  ) => TurnSystemState;
+  /** Set to true to record turns into state.log (bounded at 200 entries). */
+  log?: boolean;
+};
+
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the initial TurnSystemState from a player + monster list.
+ * Every actor is scheduled with its normal move delay so the initial ordering
+ * is consistent (RogueBasin recommendation).
+ */
+export function createTurnSystemState(
+  player: PlayerActor,
+  monsters: MonsterActor[],
+): TurnSystemState {
+  const actors: Record<ActorId, PlayerActor | MonsterActor> = {};
+  const scheduler = new TurnScheduler();
+
+  actors[player.id] = player;
+  const playerDelay = actionDelay(player.speed, { kind: "move" });
+  scheduler.add(player.id, playerDelay);
+
+  for (const m of monsters) {
+    actors[m.id] = m;
+    const monsterDelay = actionDelay(m.speed, { kind: "move" });
+    scheduler.add(m.id, monsterDelay);
+  }
+
+  return {
+    actors,
+    playerId: player.id,
+    scheduler,
+    awaitingPlayerInput: false,
+    activeActorId: null,
+    log: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function isAlive(state: TurnSystemState, actorId: ActorId): boolean {
+  const actor = state.actors[actorId];
+  return !!actor && actor.alive;
+}
+
+function appendLog(
+  state: TurnSystemState,
+  deps: TurnSystemDeps,
+  entry: TurnLogEntry,
+): void {
+  if (!deps.log) return;
+  state.log.push(entry);
+  // Bound to last 200 entries.
+  if (state.log.length > 200) state.log.splice(0, state.log.length - 200);
+}
+
+// ---------------------------------------------------------------------------
+// Core loop
+// ---------------------------------------------------------------------------
+
+const MAX_MONSTER_TICKS_PER_CALL = 500;
+
+/**
+ * Advance the schedule until it is the player's turn (or the schedule is empty).
+ * Mutates the scheduler in-place (it is a class), returns new state for actors/flags.
+ *
+ * Monster ticks are bounded per call to prevent infinite loops in pathological cases.
+ */
+export function tickUntilPlayer(
+  state: TurnSystemState,
+  deps: TurnSystemDeps,
+): TurnSystemState {
+  let current: TurnSystemState = { ...state, awaitingPlayerInput: false, activeActorId: null };
+  let safetyCounter = 0;
+
+  while (safetyCounter++ < MAX_MONSTER_TICKS_PER_CALL) {
+    const evt = current.scheduler.next();
+    if (!evt) {
+      // Schedule exhausted — shouldn't happen in a normal game.
+      break;
+    }
+
+    const { actorId } = evt;
+
+    // Skip dead actors.
+    if (!isAlive(current, actorId)) {
+      continue;
+    }
+
+    // Player's turn — pause and hand control back to UI.
+    if (actorId === current.playerId) {
+      current = {
+        ...current,
+        awaitingPlayerInput: true,
+        activeActorId: actorId,
+      };
+      return current;
+    }
+
+    // Monster's turn — run AI, apply alert-state patch, apply action, reschedule.
+    const { action, monsterPatch } = deps.monsterDecide(current, actorId);
+    const cost = deps.computeCost(actorId, action);
+    const actor = current.actors[actorId];
+
+    // Apply alert-state changes (alertState, searchTurnsLeft, lastKnownPlayerPos).
+    if (Object.keys(monsterPatch).length > 0) {
+      current = {
+        ...current,
+        actors: {
+          ...current.actors,
+          [actorId]: { ...actor, ...monsterPatch },
+        },
+      };
+    }
+
+    appendLog(current, deps, {
+      t: current.scheduler.getNow(),
+      actorId,
+      action,
+      cost: cost.time,
+    });
+
+    current = deps.applyAction(current, actorId, action, deps);
+    current.scheduler.reschedule(actorId, cost.time);
+
+    // If monster died during its own action, skip reschedule already done above —
+    // the scheduler will lazily discard it next time.
+    void actor; // suppress unused warning
+  }
+
+  return current;
+}
+
+// ---------------------------------------------------------------------------
+// Player commit
+// ---------------------------------------------------------------------------
+
+/**
+ * Commit the player's chosen action, advance the turn, then run monsters until
+ * the player's next turn.
+ *
+ * Precondition: state.awaitingPlayerInput === true
+ */
+export function commitPlayerAction(
+  state: TurnSystemState,
+  deps: TurnSystemDeps,
+  action: TurnAction,
+): TurnSystemState {
+  if (!state.awaitingPlayerInput) {
+    // Guard — caller should not commit when it's not the player's turn.
+    return state;
+  }
+
+  const cost = deps.computeCost(state.playerId, action);
+
+  appendLog(state, deps, {
+    t: state.scheduler.getNow(),
+    actorId: state.playerId,
+    action,
+    cost: cost.time,
+  });
+
+  let next = deps.applyAction(state, state.playerId, action, deps);
+  next = {
+    ...next,
+    awaitingPlayerInput: false,
+    activeActorId: null,
+  };
+  next.scheduler.reschedule(state.playerId, cost.time);
+
+  return tickUntilPlayer(next, deps);
+}
+
+// ---------------------------------------------------------------------------
+// Default callbacks (suitable for phase-1 "infrastructure only" usage)
+// ---------------------------------------------------------------------------
+
+/**
+ * Default computeCost: uses actionDelay from actionCosts.ts.
+ */
+export function defaultComputeCost(
+  actorId: ActorId,
+  action: TurnAction,
+  actors: Record<ActorId, PlayerActor | MonsterActor>,
+): ActionCost {
+  const actor = actors[actorId];
+  const speed = actor?.speed ?? 1;
+  return { time: actionDelay(speed, action) };
+}
+
+/**
+ * Default applyAction: moves actor if dx/dy are set and target is walkable,
+ * skips otherwise. No damage calculations yet (phase 1).
+ */
+export function defaultApplyAction(
+  state: TurnSystemState,
+  actorId: ActorId,
+  action: TurnAction,
+  deps: TurnSystemDeps,
+): TurnSystemState {
+  if (action.kind !== "move" || action.dx == null || action.dy == null) {
+    return state;
+  }
+
+  const actor = state.actors[actorId];
+  if (!actor) return state;
+
+  const nx = actor.x + action.dx;
+  const ny = actor.y + action.dy;
+
+  if (!deps.isWalkable(nx, ny)) return state;
+
+  // Check occupancy by other blocking actors.
+  for (const other of Object.values(state.actors)) {
+    if (other.id === actorId) continue;
+    if (other.alive && other.blocksMovement && other.x === nx && other.y === ny) {
+      return state;
+    }
+  }
+
+  const updatedActor = { ...actor, x: nx, y: ny };
+  return {
+    ...state,
+    actors: { ...state.actors, [actorId]: updatedActor },
+  };
+}
+
+/**
+ * Phase-1 monster AI: always waits.
+ * Replace with monsterAI.ts's decideChasePlayer in phase 2.
+ */
+export function waitAI(
+  _state: TurnSystemState,
+  _monsterId: ActorId,
+): DecideResult {
+  return { action: { kind: "wait" }, monsterPatch: {} };
+}
+</file>
+
+<file path="src/turn/turnTypes.ts">
+// src/turn/turnTypes.ts
+//
+// Shared types for the priority-queue turn system.
+// Generator-independent; works with both API result and direct generator output.
+
+export type ActorId = string;
+
+export type ActorKind = "player" | "monster";
+
+export type ActorBase = {
+  id: ActorId;
+  kind: ActorKind;
+  x: number;
+  y: number;
+  /** >0; used to compute delay. Higher speed = smaller delay = acts more often. */
+  speed: number;
+  alive: boolean;
+  blocksMovement: boolean;
+};
+
+export type PlayerActor = ActorBase & { kind: "player" };
+
+/**
+ * Alert state machine for monster AI:
+ *   idle      – not aware of player; waits or patrols
+ *   chasing   – has seen the player; actively pursuing
+ *   searching – lost sight; counting down before giving up
+ */
+export type MonsterAlertState = "idle" | "chasing" | "searching";
+
+export type MonsterActor = ActorBase & {
+  kind: "monster";
+  spawnId: string;
+  danger: number;
+  roomId: number;
+  /** Current awareness state. */
+  alertState: MonsterAlertState;
+  /**
+   * Turns remaining before an alerted monster gives up and goes idle.
+   * Only meaningful when alertState === "searching"; ignored otherwise.
+   */
+  searchTurnsLeft: number;
+  /**
+   * Last known player position — used for pathfinding while searching.
+   * null when alertState === "idle".
+   */
+  lastKnownPlayerPos: { x: number; y: number } | null;
+};
+
+export type TurnActionKind = "wait" | "move" | "attack" | "interact";
+
+export type TurnAction = {
+  kind: TurnActionKind;
+  /** For move actions: delta x */
+  dx?: number;
+  /** For move actions: delta y */
+  dy?: number;
+  /** For attack actions: target actor id */
+  targetId?: ActorId;
+  /** Future hooks: door/lever ids, item ids, etc. */
+  meta?: Record<string, unknown>;
+};
+
+export type ActionCost = {
+  /** The delay value used by the scheduler (RogueBasin: faster = smaller delay). */
+  time: number;
 };
 </file>
 
@@ -14588,379 +14961,6 @@ details[open] > .maze-summary {
 }
 </file>
 
-<file path="src/examples/MinimalExample.tsx">
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import hotkeys from "hotkeys-js";
-import * as THREE from "three";
-
-import DungeonRenderView from "../rendering/DungeonRenderView";
-
-import { isTileWalkable } from "../walkability";
-import { aStar8 } from "../pathfinding/aStar8";
-import {
-  clearPathMaskRGBA,
-  createPathMaskRGBA,
-  stampPath,
-} from "../rendering/pathMask";
-import {
-  clearActorCharMask,
-  createActorCharMaskR8,
-  stampMonstersToActorCharMask,
-  type ActorCharMask,
-} from "../rendering/actorCharMask";
-import {
-  initDungeonRuntimeState,
-  derivePlatesFromBlocks,
-  toggleLever,
-} from "../dungeonState";
-import { evaluateCircuits } from "../evaluateCircuits";
-
-import { computeStartCell } from "../inspect/computeStartCell";
-import { generateDungeon } from "../api/generateDungeon";
-
-import { CP437_TILES } from "../rendering/codepage437Tiles";
-
-// Turn system
-import { createPlayerActor, createMonstersFromResolved } from "../turn/createActors";
-import {
-  createTurnSystemState,
-  tickUntilPlayer,
-  commitPlayerAction,
-  defaultComputeCost,
-  defaultApplyAction,
-  type TurnSystemState,
-  type TurnSystemDeps,
-} from "../turn/turnSystem";
-import { decideChasePlayer } from "../turn/monsterAI";
-
-import "./styles.css";
-
-export interface Player {
-  x: number;
-  y: number;
-}
-
-// ---------------------------------------------------------------------------
-// Dungeon generation (via API so we get resolved monster spawns)
-// ---------------------------------------------------------------------------
-
-const SEED = "test";
-const THEME_ID = "medieval_keep";
-
-function buildDungeon() {
-  return generateDungeon({
-    seed: SEED,
-    level: 1,
-    themeId: THEME_ID,
-    width: 64,
-    height: 64,
-    pattern: { includeIntroGate: true },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export default function MinimalExample() {
-  const result = useMemo(() => buildDungeon(), []);
-  const dungeon = result.bsp;
-  const content = result.content;
-
-  const startCell = useMemo(() => computeStartCell(dungeon, content), [dungeon, content]);
-
-  // --- Runtime puzzle state (levers / doors / secrets) ---
-  const [runtime, setRuntime] = useState(() => {
-    let rt = initDungeonRuntimeState(content);
-    rt = derivePlatesFromBlocks(rt, content);
-    return evaluateCircuits(rt, content.meta.circuits).next;
-  });
-
-  useEffect(() => {
-    let rt = initDungeonRuntimeState(content);
-    rt = derivePlatesFromBlocks(rt, content);
-    setRuntime(evaluateCircuits(rt, content.meta.circuits).next);
-  }, [content]);
-
-  // Keep a ref so AI / walkability callbacks can always read the latest runtime
-  // without stale closure issues.
-  const runtimeRef = useRef(runtime);
-  useEffect(() => { runtimeRef.current = runtime; }, [runtime]);
-
-  // --- Turn system ---
-  const [turnState, setTurnState] = useState<TurnSystemState>(() => {
-    const player = createPlayerActor(startCell.x, startCell.y);
-    const monsters = createMonstersFromResolved(result.resolved);
-    const ts = createTurnSystemState(player, monsters);
-    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
-    return tickUntilPlayer(ts, deps);
-  });
-
-  // Stable ref to current turnState actors for cost computation.
-  const turnStateRef = useRef(turnState);
-  useEffect(() => { turnStateRef.current = turnState; }, [turnState]);
-
-  function buildDeps(
-    _dungeon: typeof dungeon,
-    _content: typeof content,
-    _runtime: typeof runtime,
-    _actors: TurnSystemState["actors"],
-  ): TurnSystemDeps {
-    return {
-      dungeon: _dungeon,
-      content: _content,
-      runtime: _runtime,
-      isWalkable: (x, y) =>
-        isTileWalkable(_dungeon, _content, x, y, {
-          isDoorOpen: (doorId) => !!runtimeRef.current?.doors?.[doorId]?.isOpen,
-          isSecretRevealed: (secretId) =>
-            !!runtimeRef.current?.secrets?.[secretId]?.revealed,
-        }),
-      monsterDecide: (state, monsterId) =>
-        decideChasePlayer(state, monsterId, _dungeon, _content, runtimeRef.current),
-      computeCost: (actorId, action) =>
-        defaultComputeCost(actorId, action, turnStateRef.current.actors),
-      applyAction: defaultApplyAction,
-      log: true,
-    };
-  }
-
-  // --- Convenience: player position from turn state ---
-  const playerActor = turnState.actors[turnState.playerId];
-  const playerX = playerActor?.x ?? startCell.x;
-  const playerY = playerActor?.y ?? startCell.y;
-
-  // --- Path mask ---
-  const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
-  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
-  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
-
-  // --- Actor char overlay ---
-  const actorMaskRef = useRef<ActorCharMask | null>(null);
-  const [actorCharTex, setActorCharTex] = useState<THREE.DataTexture | null>(null);
-
-  useEffect(() => {
-    if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
-    const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
-    pathMaskRef.current = pm;
-    setPathMaskTex(pm.tex);
-    return () => {
-      pm.tex.dispose();
-      pathMaskRef.current = null;
-    };
-  }, [dungeon.width, dungeon.height]);
-
-  // Create actor overlay texture once per dungeon dimensions
-  useEffect(() => {
-    if (actorMaskRef.current) actorMaskRef.current.tex.dispose();
-    const am = createActorCharMaskR8(dungeon.width, dungeon.height, "actor_char_r8");
-    actorMaskRef.current = am;
-    setActorCharTex(am.tex);
-    return () => {
-      am.tex.dispose();
-      actorMaskRef.current = null;
-    };
-  }, [dungeon.width, dungeon.height]);
-
-  // Stamp monsters into the actor overlay whenever turn state or player position changes
-  useEffect(() => {
-    const am = actorMaskRef.current;
-    if (!am) return;
-    const W = dungeon.width;
-    const H = dungeon.height;
-    clearActorCharMask(am.data);
-    const monsters = Object.values(turnState.actors).filter(
-      (a) => a.kind === "monster" && a.alive,
-    );
-    stampMonstersToActorCharMask({
-      data: am.data,
-      W,
-      H,
-      monsters: monsters.map((m) => ({ id: m.id, x: m.x, y: m.y })),
-      monsterTile: CP437_TILES.monster,
-      avoidCell: { x: playerX, y: playerY },
-      blocked: (x, y) => dungeon.masks.solid[y * W + x] === 255,
-    });
-    am.tex.needsUpdate = true;
-  }, [turnState.actors, playerX, playerY, dungeon]);
-
-  const recomputePlayerPath = useCallback(
-    (targetX: number, targetY: number) => {
-      const pm = pathMaskRef.current;
-      if (!pm) return;
-      clearPathMaskRGBA(pm.data);
-      const rt = runtimeRef.current;
-      const pathResult = aStar8(
-        dungeon,
-        content,
-        { x: playerX, y: playerY },
-        { x: targetX, y: targetY },
-        {
-          isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
-          isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
-        },
-      );
-      if (pathResult) stampPath(pm.data, dungeon.width, pathResult.path, "player");
-      pm.tex.needsUpdate = true;
-      setPathMaskTex(pm.tex);
-    },
-    [dungeon, content, playerX, playerY],
-  );
-
-  // --- Committed move helper ---
-  function tryCommitMove(dx: number, dy: number) {
-    setTurnState((prev) => {
-      if (!prev.awaitingPlayerInput) return prev;
-      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-      return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
-    });
-  }
-
-  function tryCommitWait() {
-    setTurnState((prev) => {
-      if (!prev.awaitingPlayerInput) return prev;
-      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-      return commitPlayerAction(prev, deps, { kind: "wait" });
-    });
-  }
-
-  // --- Keyboard input ---
-  useEffect(() => {
-    hotkeys("a,left",  () => tryCommitMove(-1, 0));
-    hotkeys("d,right", () => tryCommitMove(1, 0));
-    hotkeys("s,down",  () => tryCommitMove(0, 1));
-    hotkeys("w,up",    () => tryCommitMove(0, -1));
-    hotkeys(".",       () => tryCommitWait());
-
-    return () => hotkeys.unbind();
-  }, [dungeon, content]);
-
-  // Reset turn state when start cell changes (new dungeon)
-  useEffect(() => {
-    lastHoverCellRef.current = null;
-    const pm = pathMaskRef.current;
-    if (pm) {
-      clearPathMaskRGBA(pm.data);
-      pm.tex.needsUpdate = true;
-      setPathMaskTex(pm.tex);
-    }
-    const newPlayer = createPlayerActor(startCell.x, startCell.y);
-    const monsters = createMonstersFromResolved(result.resolved);
-    const ts = createTurnSystemState(newPlayer, monsters);
-    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
-    setTurnState(tickUntilPlayer(ts, deps));
-  }, [startCell.x, startCell.y]);
-
-  return (
-    <>
-      <DungeonRenderView
-        bsp={dungeon}
-        content={content}
-        focusX={playerX}
-        focusY={playerY}
-        onCellFocus={(cell) => console.log("cell focus", cell)}
-        playerX={playerX}
-        playerY={playerY}
-        playerTile={CP437_TILES.player}
-        floorTile={CP437_TILES.floor}
-        wallTile={CP437_TILES.wall}
-        doorTile={CP437_TILES.doorClosed}
-        keyTile={CP437_TILES.key}
-        leverTile={CP437_TILES.lever}
-        plateTile={CP437_TILES.plate}
-        blockTile={CP437_TILES.block}
-        chestTile={CP437_TILES.chest}
-        monsterTile={CP437_TILES.monster}
-        secretDoorTile={CP437_TILES.secretDoor}
-        hiddenPassageTile={CP437_TILES.hiddenPassage}
-        hazardDefaultTile={CP437_TILES.hazard}
-        exitTile={CP437_TILES.exit}
-        atlasUrl={"/textures/codepage437.png"}
-        atlasCols={32}
-        atlasRows={8}
-        hazardTilesByType={{
-          1: 48, // lava
-          2: 49, // poison
-          3: 50, // water
-          4: 51, // spikes
-        }}
-        zoom={32}
-        flipAtlasY={false}
-        flipGridX={false}
-        flipGridY={true}
-        selectedX={playerX}
-        selectedY={playerY}
-        onCellHover={({ x, y }) => {
-          const last = lastHoverCellRef.current;
-          if (last && last.x === x && last.y === y) return;
-          lastHoverCellRef.current = { x, y };
-          recomputePlayerPath(x, y);
-        }}
-        onCellHoverEnd={() => {
-          lastHoverCellRef.current = null;
-          const pm = pathMaskRef.current;
-          if (!pm) return;
-          clearPathMaskRGBA(pm.data);
-          pm.tex.needsUpdate = true;
-          setPathMaskTex(pm.tex);
-        }}
-        onCellClick={({ x, y }) => {
-          const w = dungeon.width;
-          const i = y * w + x;
-          const ft = content.masks.featureType[i] | 0;
-          const fid = content.masks.featureId[i] | 0;
-
-          // Lever toggle (FeatureType 6)
-          if (ft === 6 && fid) {
-            setRuntime((prev) => {
-              const next0 = toggleLever(prev, fid);
-              const next1 = derivePlatesFromBlocks(next0, content);
-              return evaluateCircuits(next1, content.meta.circuits).next;
-            });
-            return true;
-          }
-
-          // Click-to-navigate: commit a move for the first step toward target.
-          const rt = runtimeRef.current;
-          const pathResult = aStar8(
-            dungeon,
-            content,
-            { x: playerX, y: playerY },
-            { x, y },
-            {
-              isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
-              isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
-            },
-          );
-          if (!pathResult || pathResult.path.length < 2) return true;
-
-          const nextStep = pathResult.path[1];
-          const dx = nextStep.x - playerX;
-          const dy = nextStep.y - playerY;
-
-          setTurnState((prev) => {
-            if (!prev.awaitingPlayerInput) return prev;
-            const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-            return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
-          });
-
-          const pm = pathMaskRef.current;
-          if (pm) {
-            clearPathMaskRGBA(pm.data);
-            pm.tex.needsUpdate = true;
-            setPathMaskTex(pm.tex);
-          }
-
-          return true;
-        }}
-        pathMaskTex={pathMaskTex ?? undefined}
-        actorCharTex={actorCharTex}
-      />
-    </>
-  );
-}
-</file>
-
 <file path="src/rendering/tiles.ts">
 // src/rendering/tiles.ts
 import * as THREE from "three";
@@ -15216,6 +15216,400 @@ export function maskToTileTextureRGBA8(
   tex.flipY = false;
 
   return tex;
+}
+</file>
+
+<file path="src/examples/MinimalExample.tsx">
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import hotkeys from "hotkeys-js";
+import * as THREE from "three";
+
+import DungeonRenderView from "../rendering/DungeonRenderView";
+
+import { isTileWalkable } from "../walkability";
+import { aStar8 } from "../pathfinding/aStar8";
+import {
+  clearPathMaskRGBA,
+  createPathMaskRGBA,
+  stampPath,
+} from "../rendering/pathMask";
+import {
+  clearActorCharMask,
+  createActorCharMaskR8,
+  stampMonstersToActorCharMask,
+  type ActorCharMask,
+} from "../rendering/actorCharMask";
+import {
+  initDungeonRuntimeState,
+  derivePlatesFromBlocks,
+  toggleLever,
+} from "../dungeonState";
+import { evaluateCircuits } from "../evaluateCircuits";
+
+import { computeStartCell } from "../inspect/computeStartCell";
+import { generateDungeon } from "../api/generateDungeon";
+
+import { CP437_TILES } from "../rendering/codepage437Tiles";
+
+// Turn system
+import { createPlayerActor, createMonstersFromResolved } from "../turn/createActors";
+import {
+  createTurnSystemState,
+  tickUntilPlayer,
+  commitPlayerAction,
+  defaultComputeCost,
+  defaultApplyAction,
+  type TurnSystemState,
+  type TurnSystemDeps,
+} from "../turn/turnSystem";
+import { decideChasePlayer } from "../turn/monsterAI";
+import { computeEnemyPlannedPaths, type PlannedPath } from "../turn/plannedPaths";
+
+import "./styles.css";
+
+export interface Player {
+  x: number;
+  y: number;
+}
+
+// ---------------------------------------------------------------------------
+// Dungeon generation (via API so we get resolved monster spawns)
+// ---------------------------------------------------------------------------
+
+const SEED = "test";
+const THEME_ID = "medieval_keep";
+
+/** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
+const PLAYER_VIS_RADIUS = 6;
+
+function buildDungeon() {
+  return generateDungeon({
+    seed: SEED,
+    level: 1,
+    themeId: THEME_ID,
+    width: 64,
+    height: 64,
+    pattern: { includeIntroGate: true },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export default function MinimalExample() {
+  const result = useMemo(() => buildDungeon(), []);
+  const dungeon = result.bsp;
+  const content = result.content;
+
+  const startCell = useMemo(() => computeStartCell(dungeon, content), [dungeon, content]);
+
+  // --- Runtime puzzle state (levers / doors / secrets) ---
+  const [runtime, setRuntime] = useState(() => {
+    let rt = initDungeonRuntimeState(content);
+    rt = derivePlatesFromBlocks(rt, content);
+    return evaluateCircuits(rt, content.meta.circuits).next;
+  });
+
+  useEffect(() => {
+    let rt = initDungeonRuntimeState(content);
+    rt = derivePlatesFromBlocks(rt, content);
+    setRuntime(evaluateCircuits(rt, content.meta.circuits).next);
+  }, [content]);
+
+  // Keep a ref so AI / walkability callbacks can always read the latest runtime
+  // without stale closure issues.
+  const runtimeRef = useRef(runtime);
+  useEffect(() => { runtimeRef.current = runtime; }, [runtime]);
+
+  // --- Turn system ---
+  const [turnState, setTurnState] = useState<TurnSystemState>(() => {
+    const player = createPlayerActor(startCell.x, startCell.y);
+    const monsters = createMonstersFromResolved(result.resolved);
+    const ts = createTurnSystemState(player, monsters);
+    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
+    return tickUntilPlayer(ts, deps);
+  });
+
+  // Stable ref to current turnState actors for cost computation.
+  const turnStateRef = useRef(turnState);
+  useEffect(() => { turnStateRef.current = turnState; }, [turnState]);
+
+  function buildDeps(
+    _dungeon: typeof dungeon,
+    _content: typeof content,
+    _runtime: typeof runtime,
+    _actors: TurnSystemState["actors"],
+  ): TurnSystemDeps {
+    return {
+      dungeon: _dungeon,
+      content: _content,
+      runtime: _runtime,
+      isWalkable: (x, y) =>
+        isTileWalkable(_dungeon, _content, x, y, {
+          isDoorOpen: (doorId) => !!runtimeRef.current?.doors?.[doorId]?.isOpen,
+          isSecretRevealed: (secretId) =>
+            !!runtimeRef.current?.secrets?.[secretId]?.revealed,
+        }),
+      monsterDecide: (state, monsterId) =>
+        decideChasePlayer(state, monsterId, _dungeon, _content, runtimeRef.current, PLAYER_VIS_RADIUS),
+      computeCost: (actorId, action) =>
+        defaultComputeCost(actorId, action, turnStateRef.current.actors),
+      applyAction: defaultApplyAction,
+      log: true,
+    };
+  }
+
+  // --- Convenience: player position from turn state ---
+  const playerActor = turnState.actors[turnState.playerId];
+  const playerX = playerActor?.x ?? startCell.x;
+  const playerY = playerActor?.y ?? startCell.y;
+
+  // --- Path mask ---
+  const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
+  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
+  const playerPreviewPathRef = useRef<import("../pathfinding/aStar8").GridPos[] | null>(null);
+  const enemyPlannedPathsRef = useRef<PlannedPath[]>([]);
+
+  // --- Actor char overlay ---
+  const actorMaskRef = useRef<ActorCharMask | null>(null);
+  const [actorCharTex, setActorCharTex] = useState<THREE.DataTexture | null>(null);
+
+  useEffect(() => {
+    if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
+    const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
+    pathMaskRef.current = pm;
+    setPathMaskTex(pm.tex);
+    return () => {
+      pm.tex.dispose();
+      pathMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
+  // Create actor overlay texture once per dungeon dimensions
+  useEffect(() => {
+    if (actorMaskRef.current) actorMaskRef.current.tex.dispose();
+    const am = createActorCharMaskR8(dungeon.width, dungeon.height, "actor_char_r8");
+    actorMaskRef.current = am;
+    setActorCharTex(am.tex);
+    return () => {
+      am.tex.dispose();
+      actorMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
+  // Single authoritative rebuild: clears the mask once then stamps enemy paths
+  // followed by the player preview path. Call whenever either source changes.
+  const rebuildPathMaskFromPlans = useCallback(() => {
+    const pm = pathMaskRef.current;
+    if (!pm) return;
+    clearPathMaskRGBA(pm.data);
+    for (const ep of enemyPlannedPathsRef.current) {
+      stampPath(pm.data, dungeon.width, ep.path, "enemy");
+    }
+    if (playerPreviewPathRef.current) {
+      stampPath(pm.data, dungeon.width, playerPreviewPathRef.current, "player");
+    }
+    pm.tex.needsUpdate = true;
+    setPathMaskTex(pm.tex);
+  }, [dungeon.width]);
+
+  // Recompute enemy planned paths and rebuild the path mask whenever actors move.
+  useEffect(() => {
+    enemyPlannedPathsRef.current = computeEnemyPlannedPaths({
+      state: turnState,
+      dungeon,
+      content,
+      runtime: runtimeRef.current,
+      maxSteps: 32,
+    });
+    rebuildPathMaskFromPlans();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState.actors, dungeon, content, rebuildPathMaskFromPlans]);
+
+  // Stamp monsters into the actor overlay whenever turn state or player position changes
+  useEffect(() => {
+    const am = actorMaskRef.current;
+    if (!am) return;
+    const W = dungeon.width;
+    const H = dungeon.height;
+    clearActorCharMask(am.data);
+    const monsters = Object.values(turnState.actors).filter(
+      (a) => a.kind === "monster" && a.alive,
+    );
+    stampMonstersToActorCharMask({
+      data: am.data,
+      W,
+      H,
+      monsters: monsters.map((m) => ({ id: m.id, x: m.x, y: m.y })),
+      monsterTile: CP437_TILES.monster,
+      avoidCell: { x: playerX, y: playerY },
+      blocked: (x, y) => dungeon.masks.solid[y * W + x] === 255,
+    });
+    am.tex.needsUpdate = true;
+  }, [turnState.actors, playerX, playerY, dungeon]);
+
+  const recomputePlayerPath = useCallback(
+    (targetX: number, targetY: number) => {
+      const rt = runtimeRef.current;
+      const pathResult = aStar8(
+        dungeon,
+        content,
+        { x: playerX, y: playerY },
+        { x: targetX, y: targetY },
+        {
+          isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
+          isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
+        },
+      );
+      playerPreviewPathRef.current = pathResult?.path ?? null;
+      rebuildPathMaskFromPlans();
+    },
+    [dungeon, content, playerX, playerY, rebuildPathMaskFromPlans],
+  );
+
+  // --- Committed move helper ---
+  function tryCommitMove(dx: number, dy: number) {
+    setTurnState((prev) => {
+      if (!prev.awaitingPlayerInput) return prev;
+      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
+      return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
+    });
+  }
+
+  function tryCommitWait() {
+    setTurnState((prev) => {
+      if (!prev.awaitingPlayerInput) return prev;
+      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
+      return commitPlayerAction(prev, deps, { kind: "wait" });
+    });
+  }
+
+  // --- Keyboard input ---
+  useEffect(() => {
+    hotkeys("a,left",  () => tryCommitMove(-1, 0));
+    hotkeys("d,right", () => tryCommitMove(1, 0));
+    hotkeys("s,down",  () => tryCommitMove(0, 1));
+    hotkeys("w,up",    () => tryCommitMove(0, -1));
+    hotkeys(".",       () => tryCommitWait());
+
+    return () => hotkeys.unbind();
+  }, [dungeon, content]);
+
+  // Reset turn state when start cell changes (new dungeon)
+  useEffect(() => {
+    lastHoverCellRef.current = null;
+    playerPreviewPathRef.current = null;
+    enemyPlannedPathsRef.current = [];
+    rebuildPathMaskFromPlans();
+    const newPlayer = createPlayerActor(startCell.x, startCell.y);
+    const monsters = createMonstersFromResolved(result.resolved);
+    const ts = createTurnSystemState(newPlayer, monsters);
+    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
+    setTurnState(tickUntilPlayer(ts, deps));
+  }, [startCell.x, startCell.y]);
+
+  return (
+    <>
+      <DungeonRenderView
+        bsp={dungeon}
+        content={content}
+        focusX={playerX}
+        focusY={playerY}
+        onCellFocus={(cell) => console.log("cell focus", cell)}
+        playerX={playerX}
+        playerY={playerY}
+        playerTile={CP437_TILES.player}
+        floorTile={CP437_TILES.floor}
+        wallTile={CP437_TILES.wall}
+        doorTile={CP437_TILES.doorClosed}
+        keyTile={CP437_TILES.key}
+        leverTile={CP437_TILES.lever}
+        plateTile={CP437_TILES.plate}
+        blockTile={CP437_TILES.block}
+        chestTile={CP437_TILES.chest}
+        monsterTile={CP437_TILES.monster}
+        secretDoorTile={CP437_TILES.secretDoor}
+        hiddenPassageTile={CP437_TILES.hiddenPassage}
+        hazardDefaultTile={CP437_TILES.hazard}
+        exitTile={CP437_TILES.exit}
+        atlasUrl={"/textures/codepage437.png"}
+        atlasCols={32}
+        atlasRows={8}
+        hazardTilesByType={{
+          1: 48, // lava
+          2: 49, // poison
+          3: 50, // water
+          4: 51, // spikes
+        }}
+        zoom={32}
+        flipAtlasY={false}
+        flipGridX={false}
+        flipGridY={true}
+        selectedX={playerX}
+        selectedY={playerY}
+        onCellHover={({ x, y }) => {
+          const last = lastHoverCellRef.current;
+          if (last && last.x === x && last.y === y) return;
+          lastHoverCellRef.current = { x, y };
+          recomputePlayerPath(x, y);
+        }}
+        onCellHoverEnd={() => {
+          lastHoverCellRef.current = null;
+          playerPreviewPathRef.current = null;
+          rebuildPathMaskFromPlans();
+        }}
+        onCellClick={({ x, y }) => {
+          const w = dungeon.width;
+          const i = y * w + x;
+          const ft = content.masks.featureType[i] | 0;
+          const fid = content.masks.featureId[i] | 0;
+
+          // Lever toggle (FeatureType 6)
+          if (ft === 6 && fid) {
+            setRuntime((prev) => {
+              const next0 = toggleLever(prev, fid);
+              const next1 = derivePlatesFromBlocks(next0, content);
+              return evaluateCircuits(next1, content.meta.circuits).next;
+            });
+            return true;
+          }
+
+          // Click-to-navigate: commit a move for the first step toward target.
+          const rt = runtimeRef.current;
+          const pathResult = aStar8(
+            dungeon,
+            content,
+            { x: playerX, y: playerY },
+            { x, y },
+            {
+              isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
+              isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
+            },
+          );
+          if (!pathResult || pathResult.path.length < 2) return true;
+
+          const nextStep = pathResult.path[1];
+          const dx = nextStep.x - playerX;
+          const dy = nextStep.y - playerY;
+
+          setTurnState((prev) => {
+            if (!prev.awaitingPlayerInput) return prev;
+            const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
+            return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
+          });
+
+          playerPreviewPathRef.current = null;
+          rebuildPathMaskFromPlans();
+
+          return true;
+        }}
+        pathMaskTex={pathMaskTex ?? undefined}
+        actorCharTex={actorCharTex}
+      />
+    </>
+  );
 }
 </file>
 
@@ -16784,6 +17178,1001 @@ export function wizardReducer(
     default:
       return state;
   }
+}
+</file>
+
+<file path="src/batchStats.ts">
+// src/batchStats.ts
+//
+// Batch runner aggregation helpers.
+// This file is intentionally framework-agnostic (no React) so it can be reused
+// by UI panels, scripts, or future CLI harnesses.
+//
+
+import type { DoorSiteStatsBundle } from "./doorSites";
+import type { BudgetResult, DifficultyResult } from "./contentBudget";
+import type { PacingResult } from "./pacingTargets";
+import type { InclusionResult } from "./inclusionRules";
+
+export type SampleFailureSeedV1 = {
+  schemaVersion: 1;
+  seed: string;
+  seedUsed: number;
+  reason: string;
+  // parsed out of "(edgeConsidered=.. gateElim=..)" when present
+  edgeStats?: Record<string, number>;
+};
+
+export type SampleLeverCaseSeedV1 = {
+  schemaVersion: 1;
+  seed: string;
+  seedUsed: number;
+  gateDoorId: number;
+  leverId: number;
+
+  // Gate join fields (for fast root-cause inspection without inference)
+  gateRoomA: number;
+  gateRoomB: number;
+  leverRoomId: number;
+
+  // Closure model used for these booleans (explicit contract label)
+  closureModel: string;
+
+  // Only meaningful when blockedByOtherDoor === true (0/undefined = unknown)
+  blockingDoorId?: number;
+
+  leverX: number;
+  leverY: number;
+
+  reachableWithGateClosed: boolean;
+  reachableIfGateWereOpen: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+
+  isBehindOwnGate: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
+export type LeverBehindOwnGateDiagV1 = {
+  schemaVersion: 1;
+  gateDoorId: number; // the door id the lever controls (same id for this pattern)
+  leverId: number; // lever fixture id (same id for this pattern)
+  leverX: number;
+  leverY: number;
+
+  // Gate join fields (avoid UI-side inference / ambiguity)
+  gateRoomA: number;
+  gateRoomB: number;
+  leverRoomId: number;
+
+  // Closure model used for these booleans (explicit contract label)
+  closureModel: string;
+
+  // Only meaningful when blockedByOtherDoor === true (0/undefined = unknown)
+  blockingDoorId?: number;
+
+  // Reachability of the lever from entrance with all doors closed:
+  reachableWithGateClosed: boolean;
+
+  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
+  reachableIfGateWereOpen: boolean;
+
+  // The actual diagnostic flag we care about:
+  isBehindOwnGate: boolean;
+  reachableIfAllDoorsWereOpen: boolean;
+  blockedByOtherDoor: boolean;
+  unreachableEvenIfAllDoorsOpen: boolean;
+};
+
+export type GateEdgeReuseDiagV1 = {
+  schemaVersion: 1;
+
+  // Total doors placed by the pattern run (typically 0, 1, or 2)
+  doorsPlaced: number;
+
+  // Unique graph edges among those doors
+  uniqueEdgesPlaced: number;
+
+  // Count of doors whose edge was already occupied BEFORE this pattern committed
+  reusedExistingCount: number;
+
+  // Count of doors that reuse an edge already placed earlier in THIS pattern commit
+  // (should usually be 0; helpful as a sanity check)
+  reusedInternalCount: number;
+
+  // Small list of edgeIds that were reused (best-effort; keep short)
+  reusedEdgeIds: string[];
+};
+
+export type PatternDiag = {
+  name: string;
+  ok: boolean;
+  didCarve: boolean;
+  reason?: string;
+  ms?: number;
+  stats?: DoorSiteStatsBundle;
+  reachability?: ReachabilityStats;
+  gateEdgeReuse?: GateEdgeReuseDiagV1;
+  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
+};
+
+export type Point = { x: number; y: number };
+
+export type ReachabilityStats = {
+  start: Point;
+  connector: Point;
+  pocketCenter: Point;
+  goal: Point;
+  reachablePre: boolean;
+  reachablePost: boolean;
+  shortestPathPost: number | null;
+};
+
+export type CircuitBatchMetrics = {
+  schemaVersion: 1;
+
+  circuitCount: number;
+  signalEdgeCount: number;
+
+  maxTopoDepth: number;
+  avgTopoDepth: number;
+
+  circuitsWithSignalDeps: number;
+  pctWithSignalDeps: number; // 0..1
+
+  cycleGroupCount: number;
+  cycleCircuitCount: number;
+
+  blockedByCycleCount: number;
+
+  largestCycleSize: number;
+};
+
+export type BatchRunInput = {
+  seed: string;
+  seedUsed: number;
+  rooms: number;
+  corridors: number;
+  patternDiagnostics: PatternDiag[];
+  circuitMetrics: CircuitBatchMetrics | null;
+  budgetResult?: BudgetResult | null;
+  difficultyResult?: DifficultyResult | null;
+  pacingResult?: PacingResult | null;
+  inclusionResult?: InclusionResult | null;
+};
+
+export type BatchPatternSummary = {
+  name: string;
+  runs: number;
+  ok: number;
+  fail: number;
+  okRate: number; // 0..1
+  carved: number;
+  carvedRate: number; // 0..1
+  msTotal: number;
+  msAvg: number;
+  reasons: Record<string, number>;
+  topReasons: Array<[string, number]>;
+  doorSitesAvg?: Record<string, number>;
+  // Optional: reachability diagnostics (present when any run reported it)
+  reachabilityPreReachable?: number;
+  reachabilityPreReachableRate?: number; // 0..1
+  reachabilityPostUnreachable?: number;
+  reachabilityPostUnreachableRate?: number; // 0..1
+  shortestPathPostAvg?: number;
+
+  // Optional: graph-edge reuse diagnostics (present when any run reported it)
+  gateEdgeReuseAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    doorsPlacedAvg: number;
+    uniqueEdgesPlacedAvg: number;
+
+    reusedExistingCountAvg: number;
+    reusedInternalCountAvg: number;
+
+    runsWithExistingReuse: number;
+    pctRunsWithExistingReuse: number; // 0..1
+  };
+
+  leverAccessAvg?: {
+    runsWithDiag: number;
+    pctRunsWithDiag: number; // 0..1
+
+    // A) Lever is behind *its own* gate (opening only that gate makes it reachable)
+    leverBehindOwnGateCount: number;
+    pctLeverBehindOwnGate: number; // 0..1
+
+    // B) Lever becomes reachable if ALL doors are opened, but NOT if only its own gate is opened
+    // => blocked by some other door(s)
+    leverBlockedByOtherDoorCount: number;
+    pctLeverBlockedByOtherDoor: number; // 0..1
+
+    // C) Lever is unreachable even if all doors are opened
+    // => topology/disconnect/walls/hidden etc.
+    leverUnreachableEvenIfAllDoorsOpenCount: number;
+    pctLeverUnreachableEvenIfAllDoorsOpen: number; // 0..1
+
+    // (Optional but useful) Old signal: unreachable even when only gate is opened (other doors still closed)
+    leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+    pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
+
+    // Phase 4: total times the post-commit hard constraint fired (should be 0 under normal operation)
+    hardConstraintRejections: number;
+  };
+
+  samples?: {
+    failureSeeds?: SampleFailureSeedV1[];
+    leverBehindOwnGateSeeds?: SampleLeverCaseSeedV1[];
+    leverBlockedByOtherDoorSeeds?: SampleLeverCaseSeedV1[];
+  };
+};
+
+export type BatchSummary = {
+  runs: number;
+  roomsAvg: number;
+  corridorsAvg: number;
+  patterns: BatchPatternSummary[];
+
+  circuits?: {
+    runsWithMetrics: number;
+
+    circuitCountAvg: number;
+    signalEdgeCountAvg: number;
+
+    maxTopoDepthAvg: number;
+    avgTopoDepthAvg: number;
+
+    circuitsWithSignalDepsAvg: number;
+    pctWithSignalDepsAvg: number;
+
+    cycleGroupCountAvg: number;
+    cycleCircuitCountAvg: number;
+
+    blockedByCycleCountAvg: number;
+
+    largestCycleSizeAvg: number;
+  };
+
+  budget?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByCategory: Record<string, number>;
+  };
+
+  difficulty?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByMetric: Record<string, number>;
+  };
+
+  pacing?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByMetric: Record<string, number>;
+  };
+
+  inclusion?: {
+    checkedCount: number;
+    passCount: number;
+    failCount: number;
+    violationsByName: Record<string, number>;
+  };
+};
+
+function safeNum(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function parseParenKeyVals(reason: string): Record<string, number> | undefined {
+  const m = reason.match(/\(([^)]*)\)\s*$/);
+  if (!m) return undefined;
+  const body = m[1];
+  const out: Record<string, number> = {};
+  for (const part of body.split(/\s+/g)) {
+    const kv = part.split("=");
+    if (kv.length !== 2) continue;
+    const k = kv[0].trim();
+    const v = Number(kv[1]);
+    if (!k) continue;
+    if (Number.isFinite(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
+  const totalRuns = runs.length;
+
+  let roomsSum = 0;
+  let corridorsSum = 0;
+  let circuitRuns = 0;
+
+  let circuitCountSum = 0;
+  let signalEdgeCountSum = 0;
+
+  let maxTopoDepthSum = 0;
+  let avgTopoDepthSum = 0;
+
+  let circuitsWithSignalDepsSum = 0;
+  let pctWithSignalDepsSum = 0;
+
+  let cycleGroupCountSum = 0;
+  let cycleCircuitCountSum = 0;
+
+  let blockedByCycleCountSum = 0;
+
+  let largestCycleSizeSum = 0;
+
+  // Milestone 6: budget aggregation
+  let budgetChecked = 0;
+  let budgetPass = 0;
+  let budgetFail = 0;
+  const budgetViolationsByCategory: Record<string, number> = {};
+
+  // Milestone 6: difficulty aggregation
+  let diffChecked = 0;
+  let diffPass = 0;
+  let diffFail = 0;
+  const diffViolationsByMetric: Record<string, number> = {};
+
+  // Milestone 6: pacing aggregation
+  let pacingChecked = 0;
+  let pacingPass = 0;
+  let pacingFail = 0;
+  const pacingViolationsByMetric: Record<string, number> = {};
+
+  // Milestone 6: inclusion rules aggregation
+  let inclusionChecked = 0;
+  let inclusionPass = 0;
+  let inclusionFail = 0;
+  const inclusionViolationsByName: Record<string, number> = {};
+
+  function makeAcc() {
+    return {
+      runs: 0,
+      ok: 0,
+      fail: 0,
+      carved: 0,
+      msTotal: 0,
+      reasons: {} as Record<string, number>,
+      doorSitesSum: {} as Record<string, number>,
+      doorSitesCount: 0,
+      reachabilityCount: 0,
+      reachabilityPreReachable: 0,
+      reachabilityPostUnreachable: 0,
+      shortestPathPostSum: 0,
+      shortestPathPostCount: 0,
+      gateEdgeReuseCount: 0,
+      gateDoorsPlacedSum: 0,
+      gateUniqueEdgesSum: 0,
+      gateReusedExistingSum: 0,
+      gateReusedInternalSum: 0,
+      gateRunsWithExistingReuse: 0,
+      leverAccessDiagCount: 0,
+      leverBehindOwnGateCount: 0,
+      leverBlockedByOtherDoorCount: 0,
+      leverUnreachableEvenIfAllDoorsOpenCount: 0,
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
+      hardConstraintRejections: 0,
+      // --- sample seed capture (capped) ---
+      sampleFailureSeeds: [] as SampleFailureSeedV1[],
+      sampleLeverBehindOwnGateSeeds: [] as SampleLeverCaseSeedV1[],
+      sampleLeverBlockedByOtherDoorSeeds: [] as SampleLeverCaseSeedV1[],
+    };
+  }
+
+  const byPattern = new Map<
+    string,
+    {
+      runs: number;
+      ok: number;
+      fail: number;
+      carved: number;
+      msTotal: number;
+      reasons: Record<string, number>;
+      doorSitesSum: Record<string, number>;
+      doorSitesCount: number;
+      reachabilityCount: number;
+      reachabilityPreReachable: number;
+      reachabilityPostUnreachable: number;
+      shortestPathPostSum: number;
+      shortestPathPostCount: number;
+      gateEdgeReuseCount: number;
+      gateDoorsPlacedSum: number;
+      gateUniqueEdgesSum: number;
+      gateReusedExistingSum: number;
+      gateReusedInternalSum: number;
+      gateRunsWithExistingReuse: number;
+      leverAccessDiagCount: number;
+      leverBehindOwnGateCount: number;
+      leverBlockedByOtherDoorCount: number;
+      leverUnreachableEvenIfAllDoorsOpenCount: number;
+      leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
+      hardConstraintRejections: number;
+
+      sampleFailureSeeds: SampleFailureSeedV1[];
+      sampleLeverBehindOwnGateSeeds: SampleLeverCaseSeedV1[];
+      sampleLeverBlockedByOtherDoorSeeds: SampleLeverCaseSeedV1[];
+    }
+  >();
+
+  for (const r of runs) {
+    roomsSum += safeNum(r.rooms);
+    corridorsSum += safeNum(r.corridors);
+
+    for (const d of r.patternDiagnostics ?? []) {
+      const name = String(d.name ?? "unknown");
+      let next = byPattern.get(name);
+      if (!next) {
+        next = makeAcc();
+        byPattern.set(name, next);
+      }
+
+      // --- Sample seed capture (Phase 2.5 drilldowns) -----------------------
+
+      // 1) gateThenOptionalReward failures (want ~4)
+      if (name === "gateThenOptionalReward" && !d.ok) {
+        if (next.sampleFailureSeeds.length < 4) {
+          const reason = String(d.reason ?? "Failed");
+          next.sampleFailureSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            reason,
+            edgeStats: parseParenKeyVals(reason),
+          });
+        }
+      }
+
+      // 2) lever behind own gate (want ~10)
+      const leverDiag = (d as any).leverBehindOwnGate as
+        | LeverBehindOwnGateDiagV1
+        | undefined;
+
+      if (name === "gateThenOptionalReward" && leverDiag) {
+        if (
+          leverDiag.isBehindOwnGate &&
+          next.sampleLeverBehindOwnGateSeeds.length < 10
+        ) {
+          next.sampleLeverBehindOwnGateSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            gateDoorId: leverDiag.gateDoorId,
+            leverId: leverDiag.leverId,
+            gateRoomA: leverDiag.gateRoomA,
+            gateRoomB: leverDiag.gateRoomB,
+            leverRoomId: leverDiag.leverRoomId,
+            closureModel: leverDiag.closureModel,
+            blockingDoorId: leverDiag.blockingDoorId,
+            leverX: leverDiag.leverX,
+            leverY: leverDiag.leverY,
+            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
+            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
+            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
+            isBehindOwnGate: leverDiag.isBehindOwnGate,
+            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
+            unreachableEvenIfAllDoorsOpen:
+              leverDiag.unreachableEvenIfAllDoorsOpen,
+          });
+        }
+
+        // 3) blocked by other door (want ~10)
+        if (
+          leverDiag.blockedByOtherDoor &&
+          next.sampleLeverBlockedByOtherDoorSeeds.length < 10
+        ) {
+          next.sampleLeverBlockedByOtherDoorSeeds.push({
+            schemaVersion: 1,
+            seed: r.seed,
+            seedUsed: r.seedUsed,
+            gateDoorId: leverDiag.gateDoorId,
+            leverId: leverDiag.leverId,
+            gateRoomA: leverDiag.gateRoomA,
+            gateRoomB: leverDiag.gateRoomB,
+            leverRoomId: leverDiag.leverRoomId,
+            closureModel: leverDiag.closureModel,
+            blockingDoorId: leverDiag.blockingDoorId,
+            leverX: leverDiag.leverX,
+            leverY: leverDiag.leverY,
+            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
+            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
+            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
+            isBehindOwnGate: leverDiag.isBehindOwnGate,
+            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
+            unreachableEvenIfAllDoorsOpen:
+              leverDiag.unreachableEvenIfAllDoorsOpen,
+          });
+        }
+      }
+
+      next.runs += 1;
+      if (d.ok) next.ok += 1;
+      else next.fail += 1;
+
+      if (d.didCarve) next.carved += 1;
+
+      const ms = safeNum(d.ms);
+      if (ms > 0) next.msTotal += ms;
+
+      if (!d.ok) {
+        const reason = String(d.reason ?? "unknown");
+        next.reasons[reason] = (next.reasons[reason] ?? 0) + 1;
+      }
+
+      const ds = d.stats?.doorSites;
+      if (ds) {
+        next.doorSitesCount += 1;
+        for (const [k, v] of Object.entries(ds)) {
+          const n = safeNum(v);
+          next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
+        }
+      }
+      const rs = d.reachability;
+      if (rs) {
+        next.reachabilityCount += 1;
+        if (rs.reachablePre) next.reachabilityPreReachable += 1;
+        if (!rs.reachablePost) next.reachabilityPostUnreachable += 1;
+
+        const sp = rs.shortestPathPost;
+        if (typeof sp === "number" && Number.isFinite(sp) && sp >= 0) {
+          next.shortestPathPostSum += sp;
+          next.shortestPathPostCount += 1;
+        }
+      }
+
+      const gr = d.gateEdgeReuse;
+      if (gr) {
+        next.gateEdgeReuseCount += 1;
+        next.gateDoorsPlacedSum += safeNum(gr.doorsPlaced);
+        next.gateUniqueEdgesSum += safeNum(gr.uniqueEdgesPlaced);
+        next.gateReusedExistingSum += safeNum(gr.reusedExistingCount);
+        next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
+        if ((gr.reusedExistingCount | 0) > 0)
+          next.gateRunsWithExistingReuse += 1;
+      }
+      const lb = d.leverBehindOwnGate;
+      if (lb) {
+        next.leverAccessDiagCount += 1;
+
+        if (lb.isBehindOwnGate) next.leverBehindOwnGateCount += 1;
+
+        if (lb.blockedByOtherDoor) next.leverBlockedByOtherDoorCount += 1;
+
+        if (lb.unreachableEvenIfAllDoorsOpen)
+          next.leverUnreachableEvenIfAllDoorsOpenCount += 1;
+
+        // Keep the old diagnostic bucket (but renamed to reflect what it really means)
+        if (!lb.reachableIfGateWereOpen)
+          next.leverUnreachableWithGateOpenButOtherDoorsClosedCount += 1;
+      }
+
+      // Phase 4: accumulate hard constraint rejections from pattern stats
+      const hcr = safeNum((d as any).failHardConstraint);
+      if (hcr > 0) next.hardConstraintRejections += hcr;
+
+      byPattern.set(name, next);
+    }
+
+    const cm = r.circuitMetrics;
+    if (cm) {
+      circuitRuns += 1;
+
+      circuitCountSum += safeNum(cm.circuitCount);
+      signalEdgeCountSum += safeNum(cm.signalEdgeCount);
+
+      maxTopoDepthSum += safeNum(cm.maxTopoDepth);
+      avgTopoDepthSum += safeNum(cm.avgTopoDepth);
+
+      circuitsWithSignalDepsSum += safeNum(cm.circuitsWithSignalDeps);
+      pctWithSignalDepsSum += safeNum(cm.pctWithSignalDeps);
+
+      cycleGroupCountSum += safeNum(cm.cycleGroupCount);
+      cycleCircuitCountSum += safeNum(cm.cycleCircuitCount);
+
+      blockedByCycleCountSum += safeNum(cm.blockedByCycleCount);
+
+      largestCycleSizeSum += safeNum(cm.largestCycleSize);
+    }
+
+    // Milestone 6: budget accumulation
+    if (r.budgetResult) {
+      budgetChecked++;
+      if (r.budgetResult.pass) {
+        budgetPass++;
+      } else {
+        budgetFail++;
+        for (const v of r.budgetResult.violations) {
+          budgetViolationsByCategory[v.category] =
+            (budgetViolationsByCategory[v.category] ?? 0) + 1;
+        }
+      }
+    }
+
+    // Milestone 6: difficulty accumulation
+    if (r.difficultyResult) {
+      diffChecked++;
+      if (r.difficultyResult.pass) {
+        diffPass++;
+      } else {
+        diffFail++;
+        for (const v of r.difficultyResult.violations) {
+          diffViolationsByMetric[v.metric] =
+            (diffViolationsByMetric[v.metric] ?? 0) + 1;
+        }
+      }
+    }
+
+    // Milestone 6: pacing accumulation
+    if (r.pacingResult) {
+      pacingChecked++;
+      if (r.pacingResult.pass) {
+        pacingPass++;
+      } else {
+        pacingFail++;
+        for (const v of r.pacingResult.violations) {
+          pacingViolationsByMetric[v.metric] =
+            (pacingViolationsByMetric[v.metric] ?? 0) + 1;
+        }
+      }
+    }
+
+    // Milestone 6: inclusion rules accumulation
+    if (r.inclusionResult) {
+      inclusionChecked++;
+      if (r.inclusionResult.pass) {
+        inclusionPass++;
+      } else {
+        inclusionFail++;
+        for (const v of r.inclusionResult.violations) {
+          inclusionViolationsByName[v.name] =
+            (inclusionViolationsByName[v.name] ?? 0) + 1;
+        }
+      }
+    }
+  }
+
+  const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, acc]) => {
+      const okRate = acc.runs ? acc.ok / acc.runs : 0;
+      const carvedRate = acc.runs ? acc.carved / acc.runs : 0;
+      const msAvg = acc.runs ? acc.msTotal / acc.runs : 0;
+
+      const topReasons = Object.entries(acc.reasons)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+      let doorSitesAvg: Record<string, number> | undefined = undefined;
+      if (acc.doorSitesCount > 0) {
+        doorSitesAvg = {};
+        for (const [k, sum] of Object.entries(acc.doorSitesSum)) {
+          doorSitesAvg[k] = round2(sum / acc.doorSitesCount);
+        }
+      }
+
+      const hasReach = acc.reachabilityCount > 0;
+      const reachabilityPreReachableRate = hasReach
+        ? acc.reachabilityPreReachable / acc.reachabilityCount
+        : 0;
+      const reachabilityPostUnreachableRate = hasReach
+        ? acc.reachabilityPostUnreachable / acc.reachabilityCount
+        : 0;
+      const shortestPathPostAvg = acc.shortestPathPostCount
+        ? acc.shortestPathPostSum / acc.shortestPathPostCount
+        : 0;
+
+      const out: BatchPatternSummary = {
+        name,
+        runs: acc.runs,
+        ok: acc.ok,
+        fail: acc.fail,
+        okRate: round2(okRate),
+        carved: acc.carved,
+        carvedRate: round2(carvedRate),
+        msTotal: Math.round(acc.msTotal),
+        msAvg: round2(msAvg),
+        reasons: acc.reasons,
+        topReasons,
+        doorSitesAvg,
+      };
+
+      if (hasReach) {
+        out.reachabilityPreReachable = acc.reachabilityPreReachable;
+        out.reachabilityPreReachableRate = round2(reachabilityPreReachableRate);
+        out.reachabilityPostUnreachable = acc.reachabilityPostUnreachable;
+        out.reachabilityPostUnreachableRate = round2(
+          reachabilityPostUnreachableRate,
+        );
+        if (acc.shortestPathPostCount > 0) {
+          out.shortestPathPostAvg = round2(shortestPathPostAvg);
+        }
+      }
+
+      if (acc.gateEdgeReuseCount > 0) {
+        const runsWithDiag = acc.gateEdgeReuseCount;
+        const doorsPlacedAvg = acc.gateDoorsPlacedSum / runsWithDiag;
+        const uniqueEdgesPlacedAvg = acc.gateUniqueEdgesSum / runsWithDiag;
+        const reusedExistingCountAvg = acc.gateReusedExistingSum / runsWithDiag;
+        const reusedInternalCountAvg = acc.gateReusedInternalSum / runsWithDiag;
+
+        out.gateEdgeReuseAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          doorsPlacedAvg: round2(doorsPlacedAvg),
+          uniqueEdgesPlacedAvg: round2(uniqueEdgesPlacedAvg),
+
+          reusedExistingCountAvg: round2(reusedExistingCountAvg),
+          reusedInternalCountAvg: round2(reusedInternalCountAvg),
+
+          runsWithExistingReuse: acc.gateRunsWithExistingReuse,
+          pctRunsWithExistingReuse: round2(
+            runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
+          ),
+        };
+      }
+
+      if (acc.leverAccessDiagCount > 0) {
+        const runsWithDiag = acc.leverAccessDiagCount;
+
+        out.leverAccessAvg = {
+          runsWithDiag,
+          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
+
+          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
+          pctLeverBehindOwnGate: round2(
+            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
+          ),
+
+          leverBlockedByOtherDoorCount: acc.leverBlockedByOtherDoorCount,
+          pctLeverBlockedByOtherDoor: round2(
+            runsWithDiag ? acc.leverBlockedByOtherDoorCount / runsWithDiag : 0,
+          ),
+
+          leverUnreachableEvenIfAllDoorsOpenCount:
+            acc.leverUnreachableEvenIfAllDoorsOpenCount,
+          pctLeverUnreachableEvenIfAllDoorsOpen: round2(
+            runsWithDiag
+              ? acc.leverUnreachableEvenIfAllDoorsOpenCount / runsWithDiag
+              : 0,
+          ),
+
+          leverUnreachableWithGateOpenButOtherDoorsClosedCount:
+            acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount,
+          pctLeverUnreachableWithGateOpenButOtherDoorsClosed: round2(
+            runsWithDiag
+              ? acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount /
+                  runsWithDiag
+              : 0,
+          ),
+
+          hardConstraintRejections: acc.hardConstraintRejections,
+        };
+      }
+
+      // Emit sample seed drilldowns (if any were captured)
+      if (
+        acc.sampleFailureSeeds.length ||
+        acc.sampleLeverBehindOwnGateSeeds.length ||
+        acc.sampleLeverBlockedByOtherDoorSeeds.length
+      ) {
+        out.samples = {
+          failureSeeds: acc.sampleFailureSeeds,
+          leverBehindOwnGateSeeds: acc.sampleLeverBehindOwnGateSeeds,
+          leverBlockedByOtherDoorSeeds: acc.sampleLeverBlockedByOtherDoorSeeds,
+        };
+      }
+
+      return out;
+    });
+
+  const circuits =
+    circuitRuns > 0
+      ? {
+          runsWithMetrics: circuitRuns,
+
+          circuitCountAvg: round2(circuitCountSum / circuitRuns),
+          signalEdgeCountAvg: round2(signalEdgeCountSum / circuitRuns),
+
+          maxTopoDepthAvg: round2(maxTopoDepthSum / circuitRuns),
+          avgTopoDepthAvg: round2(avgTopoDepthSum / circuitRuns),
+
+          circuitsWithSignalDepsAvg: round2(
+            circuitsWithSignalDepsSum / circuitRuns,
+          ),
+          pctWithSignalDepsAvg: round2(pctWithSignalDepsSum / circuitRuns),
+
+          cycleGroupCountAvg: round2(cycleGroupCountSum / circuitRuns),
+          cycleCircuitCountAvg: round2(cycleCircuitCountSum / circuitRuns),
+
+          blockedByCycleCountAvg: round2(blockedByCycleCountSum / circuitRuns),
+
+          largestCycleSizeAvg: round2(largestCycleSizeSum / circuitRuns),
+        }
+      : undefined;
+
+  const budget =
+    budgetChecked > 0
+      ? {
+          checkedCount: budgetChecked,
+          passCount: budgetPass,
+          failCount: budgetFail,
+          violationsByCategory: budgetViolationsByCategory,
+        }
+      : undefined;
+
+  const difficulty =
+    diffChecked > 0
+      ? {
+          checkedCount: diffChecked,
+          passCount: diffPass,
+          failCount: diffFail,
+          violationsByMetric: diffViolationsByMetric,
+        }
+      : undefined;
+
+  const pacing =
+    pacingChecked > 0
+      ? {
+          checkedCount: pacingChecked,
+          passCount: pacingPass,
+          failCount: pacingFail,
+          violationsByMetric: pacingViolationsByMetric,
+        }
+      : undefined;
+
+  const inclusion =
+    inclusionChecked > 0
+      ? {
+          checkedCount: inclusionChecked,
+          passCount: inclusionPass,
+          failCount: inclusionFail,
+          violationsByName: inclusionViolationsByName,
+        }
+      : undefined;
+
+  return {
+    runs: totalRuns,
+    roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
+    corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
+    patterns,
+    circuits,
+    budget,
+    difficulty,
+    pacing,
+    inclusion,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Seed Bank — per-seed classification for the "ship only good seeds" workflow
+// ---------------------------------------------------------------------------
+
+export type SeedAnnotation = {
+  difficultyLabel?: string;
+  themeTags?: string[];
+  notes?: string;
+  curated?: boolean;
+};
+
+export type SeedBankEntry = {
+  seed: string;
+  seedUsed: number;
+  rooms: number;
+  corridors: number;
+  tags: string[];
+  patternResults: Array<{
+    name: string;
+    ok: boolean;
+    reason?: string;
+  }>;
+  annotation?: SeedAnnotation;
+};
+
+export type SeedBank = {
+  schemaVersion: 1 | 2;
+  generatedAt: string;
+  totalSeeds: number;
+  goodCount: number;
+  failedCount: number;
+  seeds: SeedBankEntry[];
+};
+
+/**
+ * Build a per-seed classification bank from the same BatchRunInput[] used by
+ * aggregateBatchRuns(). Each seed is tagged:
+ *
+ *  - "good"              — all patterns ok, no lever anomalies, no budget violations
+ *  - "patternFailure"    — at least one pattern failed (+ pattern name tag)
+ *  - "hasLeverAnomaly"   — lever diagnostic reported an anomaly (future-proof)
+ *  - "budgetViolation"   — content budget constraint violated (Milestone 6)
+ */
+export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
+  let goodCount = 0;
+  let failedCount = 0;
+  const seeds: SeedBankEntry[] = [];
+
+  for (const r of runs) {
+    const tags: string[] = [];
+    const patternResults: SeedBankEntry["patternResults"] = [];
+    let anyFailure = false;
+    let anyLeverAnomaly = false;
+
+    for (const d of r.patternDiagnostics ?? []) {
+      const name = String(d.name ?? "unknown");
+      patternResults.push({
+        name,
+        ok: !!d.ok,
+        reason: d.ok ? undefined : String(d.reason ?? "unknown"),
+      });
+
+      if (!d.ok) {
+        anyFailure = true;
+        tags.push(name); // tag with the failing pattern name
+      }
+
+      const lb = d.leverBehindOwnGate as LeverBehindOwnGateDiagV1 | undefined;
+      if (
+        lb &&
+        (lb.isBehindOwnGate ||
+          lb.blockedByOtherDoor ||
+          lb.unreachableEvenIfAllDoorsOpen)
+      ) {
+        anyLeverAnomaly = true;
+      }
+    }
+
+    const anyBudgetViolation = r.budgetResult?.pass === false;
+    const anyDifficultyViolation = r.difficultyResult?.pass === false;
+    const anyPacingViolation = r.pacingResult?.pass === false;
+    const anyInclusionViolation = r.inclusionResult?.pass === false;
+
+    if (anyFailure) tags.unshift("patternFailure");
+    if (anyLeverAnomaly) tags.push("hasLeverAnomaly");
+    if (anyBudgetViolation) tags.push("budgetViolation");
+    if (anyDifficultyViolation) tags.push("difficultyOutOfBand");
+    if (anyPacingViolation) tags.push("pacingFailure");
+    if (anyInclusionViolation) tags.push("inclusionViolation");
+    const isGood =
+      !anyFailure &&
+      !anyLeverAnomaly &&
+      !anyBudgetViolation &&
+      !anyDifficultyViolation &&
+      !anyPacingViolation &&
+      !anyInclusionViolation;
+    if (isGood) tags.push("good");
+
+    if (isGood) goodCount++;
+    else failedCount++;
+
+    seeds.push({
+      seed: r.seed,
+      seedUsed: r.seedUsed,
+      rooms: r.rooms,
+      corridors: r.corridors,
+      tags,
+      patternResults,
+    });
+  }
+
+  return {
+    schemaVersion: 2,
+    generatedAt: new Date().toISOString(),
+    totalSeeds: runs.length,
+    goodCount,
+    failedCount,
+    seeds,
+  };
 }
 </file>
 
@@ -19014,1001 +20403,6 @@ export function generateDungeonContent(
     },
 
     meta,
-  };
-}
-</file>
-
-<file path="src/batchStats.ts">
-// src/batchStats.ts
-//
-// Batch runner aggregation helpers.
-// This file is intentionally framework-agnostic (no React) so it can be reused
-// by UI panels, scripts, or future CLI harnesses.
-//
-
-import type { DoorSiteStatsBundle } from "./doorSites";
-import type { BudgetResult, DifficultyResult } from "./contentBudget";
-import type { PacingResult } from "./pacingTargets";
-import type { InclusionResult } from "./inclusionRules";
-
-export type SampleFailureSeedV1 = {
-  schemaVersion: 1;
-  seed: string;
-  seedUsed: number;
-  reason: string;
-  // parsed out of "(edgeConsidered=.. gateElim=..)" when present
-  edgeStats?: Record<string, number>;
-};
-
-export type SampleLeverCaseSeedV1 = {
-  schemaVersion: 1;
-  seed: string;
-  seedUsed: number;
-  gateDoorId: number;
-  leverId: number;
-
-  // Gate join fields (for fast root-cause inspection without inference)
-  gateRoomA: number;
-  gateRoomB: number;
-  leverRoomId: number;
-
-  // Closure model used for these booleans (explicit contract label)
-  closureModel: string;
-
-  // Only meaningful when blockedByOtherDoor === true (0/undefined = unknown)
-  blockingDoorId?: number;
-
-  leverX: number;
-  leverY: number;
-
-  reachableWithGateClosed: boolean;
-  reachableIfGateWereOpen: boolean;
-  reachableIfAllDoorsWereOpen: boolean;
-
-  isBehindOwnGate: boolean;
-  blockedByOtherDoor: boolean;
-  unreachableEvenIfAllDoorsOpen: boolean;
-};
-
-export type LeverBehindOwnGateDiagV1 = {
-  schemaVersion: 1;
-  gateDoorId: number; // the door id the lever controls (same id for this pattern)
-  leverId: number; // lever fixture id (same id for this pattern)
-  leverX: number;
-  leverY: number;
-
-  // Gate join fields (avoid UI-side inference / ambiguity)
-  gateRoomA: number;
-  gateRoomB: number;
-  leverRoomId: number;
-
-  // Closure model used for these booleans (explicit contract label)
-  closureModel: string;
-
-  // Only meaningful when blockedByOtherDoor === true (0/undefined = unknown)
-  blockingDoorId?: number;
-
-  // Reachability of the lever from entrance with all doors closed:
-  reachableWithGateClosed: boolean;
-
-  // Reachability if we "open" ONLY the gate door tile (treat as floor) for analysis:
-  reachableIfGateWereOpen: boolean;
-
-  // The actual diagnostic flag we care about:
-  isBehindOwnGate: boolean;
-  reachableIfAllDoorsWereOpen: boolean;
-  blockedByOtherDoor: boolean;
-  unreachableEvenIfAllDoorsOpen: boolean;
-};
-
-export type GateEdgeReuseDiagV1 = {
-  schemaVersion: 1;
-
-  // Total doors placed by the pattern run (typically 0, 1, or 2)
-  doorsPlaced: number;
-
-  // Unique graph edges among those doors
-  uniqueEdgesPlaced: number;
-
-  // Count of doors whose edge was already occupied BEFORE this pattern committed
-  reusedExistingCount: number;
-
-  // Count of doors that reuse an edge already placed earlier in THIS pattern commit
-  // (should usually be 0; helpful as a sanity check)
-  reusedInternalCount: number;
-
-  // Small list of edgeIds that were reused (best-effort; keep short)
-  reusedEdgeIds: string[];
-};
-
-export type PatternDiag = {
-  name: string;
-  ok: boolean;
-  didCarve: boolean;
-  reason?: string;
-  ms?: number;
-  stats?: DoorSiteStatsBundle;
-  reachability?: ReachabilityStats;
-  gateEdgeReuse?: GateEdgeReuseDiagV1;
-  leverBehindOwnGate?: LeverBehindOwnGateDiagV1;
-};
-
-export type Point = { x: number; y: number };
-
-export type ReachabilityStats = {
-  start: Point;
-  connector: Point;
-  pocketCenter: Point;
-  goal: Point;
-  reachablePre: boolean;
-  reachablePost: boolean;
-  shortestPathPost: number | null;
-};
-
-export type CircuitBatchMetrics = {
-  schemaVersion: 1;
-
-  circuitCount: number;
-  signalEdgeCount: number;
-
-  maxTopoDepth: number;
-  avgTopoDepth: number;
-
-  circuitsWithSignalDeps: number;
-  pctWithSignalDeps: number; // 0..1
-
-  cycleGroupCount: number;
-  cycleCircuitCount: number;
-
-  blockedByCycleCount: number;
-
-  largestCycleSize: number;
-};
-
-export type BatchRunInput = {
-  seed: string;
-  seedUsed: number;
-  rooms: number;
-  corridors: number;
-  patternDiagnostics: PatternDiag[];
-  circuitMetrics: CircuitBatchMetrics | null;
-  budgetResult?: BudgetResult | null;
-  difficultyResult?: DifficultyResult | null;
-  pacingResult?: PacingResult | null;
-  inclusionResult?: InclusionResult | null;
-};
-
-export type BatchPatternSummary = {
-  name: string;
-  runs: number;
-  ok: number;
-  fail: number;
-  okRate: number; // 0..1
-  carved: number;
-  carvedRate: number; // 0..1
-  msTotal: number;
-  msAvg: number;
-  reasons: Record<string, number>;
-  topReasons: Array<[string, number]>;
-  doorSitesAvg?: Record<string, number>;
-  // Optional: reachability diagnostics (present when any run reported it)
-  reachabilityPreReachable?: number;
-  reachabilityPreReachableRate?: number; // 0..1
-  reachabilityPostUnreachable?: number;
-  reachabilityPostUnreachableRate?: number; // 0..1
-  shortestPathPostAvg?: number;
-
-  // Optional: graph-edge reuse diagnostics (present when any run reported it)
-  gateEdgeReuseAvg?: {
-    runsWithDiag: number;
-    pctRunsWithDiag: number; // 0..1
-
-    doorsPlacedAvg: number;
-    uniqueEdgesPlacedAvg: number;
-
-    reusedExistingCountAvg: number;
-    reusedInternalCountAvg: number;
-
-    runsWithExistingReuse: number;
-    pctRunsWithExistingReuse: number; // 0..1
-  };
-
-  leverAccessAvg?: {
-    runsWithDiag: number;
-    pctRunsWithDiag: number; // 0..1
-
-    // A) Lever is behind *its own* gate (opening only that gate makes it reachable)
-    leverBehindOwnGateCount: number;
-    pctLeverBehindOwnGate: number; // 0..1
-
-    // B) Lever becomes reachable if ALL doors are opened, but NOT if only its own gate is opened
-    // => blocked by some other door(s)
-    leverBlockedByOtherDoorCount: number;
-    pctLeverBlockedByOtherDoor: number; // 0..1
-
-    // C) Lever is unreachable even if all doors are opened
-    // => topology/disconnect/walls/hidden etc.
-    leverUnreachableEvenIfAllDoorsOpenCount: number;
-    pctLeverUnreachableEvenIfAllDoorsOpen: number; // 0..1
-
-    // (Optional but useful) Old signal: unreachable even when only gate is opened (other doors still closed)
-    leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
-    pctLeverUnreachableWithGateOpenButOtherDoorsClosed: number; // 0..1
-
-    // Phase 4: total times the post-commit hard constraint fired (should be 0 under normal operation)
-    hardConstraintRejections: number;
-  };
-
-  samples?: {
-    failureSeeds?: SampleFailureSeedV1[];
-    leverBehindOwnGateSeeds?: SampleLeverCaseSeedV1[];
-    leverBlockedByOtherDoorSeeds?: SampleLeverCaseSeedV1[];
-  };
-};
-
-export type BatchSummary = {
-  runs: number;
-  roomsAvg: number;
-  corridorsAvg: number;
-  patterns: BatchPatternSummary[];
-
-  circuits?: {
-    runsWithMetrics: number;
-
-    circuitCountAvg: number;
-    signalEdgeCountAvg: number;
-
-    maxTopoDepthAvg: number;
-    avgTopoDepthAvg: number;
-
-    circuitsWithSignalDepsAvg: number;
-    pctWithSignalDepsAvg: number;
-
-    cycleGroupCountAvg: number;
-    cycleCircuitCountAvg: number;
-
-    blockedByCycleCountAvg: number;
-
-    largestCycleSizeAvg: number;
-  };
-
-  budget?: {
-    checkedCount: number;
-    passCount: number;
-    failCount: number;
-    violationsByCategory: Record<string, number>;
-  };
-
-  difficulty?: {
-    checkedCount: number;
-    passCount: number;
-    failCount: number;
-    violationsByMetric: Record<string, number>;
-  };
-
-  pacing?: {
-    checkedCount: number;
-    passCount: number;
-    failCount: number;
-    violationsByMetric: Record<string, number>;
-  };
-
-  inclusion?: {
-    checkedCount: number;
-    passCount: number;
-    failCount: number;
-    violationsByName: Record<string, number>;
-  };
-};
-
-function safeNum(v: unknown): number {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
-function parseParenKeyVals(reason: string): Record<string, number> | undefined {
-  const m = reason.match(/\(([^)]*)\)\s*$/);
-  if (!m) return undefined;
-  const body = m[1];
-  const out: Record<string, number> = {};
-  for (const part of body.split(/\s+/g)) {
-    const kv = part.split("=");
-    if (kv.length !== 2) continue;
-    const k = kv[0].trim();
-    const v = Number(kv[1]);
-    if (!k) continue;
-    if (Number.isFinite(v)) out[k] = v;
-  }
-  return Object.keys(out).length ? out : undefined;
-}
-
-export function aggregateBatchRuns(runs: BatchRunInput[]): BatchSummary {
-  const totalRuns = runs.length;
-
-  let roomsSum = 0;
-  let corridorsSum = 0;
-  let circuitRuns = 0;
-
-  let circuitCountSum = 0;
-  let signalEdgeCountSum = 0;
-
-  let maxTopoDepthSum = 0;
-  let avgTopoDepthSum = 0;
-
-  let circuitsWithSignalDepsSum = 0;
-  let pctWithSignalDepsSum = 0;
-
-  let cycleGroupCountSum = 0;
-  let cycleCircuitCountSum = 0;
-
-  let blockedByCycleCountSum = 0;
-
-  let largestCycleSizeSum = 0;
-
-  // Milestone 6: budget aggregation
-  let budgetChecked = 0;
-  let budgetPass = 0;
-  let budgetFail = 0;
-  const budgetViolationsByCategory: Record<string, number> = {};
-
-  // Milestone 6: difficulty aggregation
-  let diffChecked = 0;
-  let diffPass = 0;
-  let diffFail = 0;
-  const diffViolationsByMetric: Record<string, number> = {};
-
-  // Milestone 6: pacing aggregation
-  let pacingChecked = 0;
-  let pacingPass = 0;
-  let pacingFail = 0;
-  const pacingViolationsByMetric: Record<string, number> = {};
-
-  // Milestone 6: inclusion rules aggregation
-  let inclusionChecked = 0;
-  let inclusionPass = 0;
-  let inclusionFail = 0;
-  const inclusionViolationsByName: Record<string, number> = {};
-
-  function makeAcc() {
-    return {
-      runs: 0,
-      ok: 0,
-      fail: 0,
-      carved: 0,
-      msTotal: 0,
-      reasons: {} as Record<string, number>,
-      doorSitesSum: {} as Record<string, number>,
-      doorSitesCount: 0,
-      reachabilityCount: 0,
-      reachabilityPreReachable: 0,
-      reachabilityPostUnreachable: 0,
-      shortestPathPostSum: 0,
-      shortestPathPostCount: 0,
-      gateEdgeReuseCount: 0,
-      gateDoorsPlacedSum: 0,
-      gateUniqueEdgesSum: 0,
-      gateReusedExistingSum: 0,
-      gateReusedInternalSum: 0,
-      gateRunsWithExistingReuse: 0,
-      leverAccessDiagCount: 0,
-      leverBehindOwnGateCount: 0,
-      leverBlockedByOtherDoorCount: 0,
-      leverUnreachableEvenIfAllDoorsOpenCount: 0,
-      leverUnreachableWithGateOpenButOtherDoorsClosedCount: 0,
-      hardConstraintRejections: 0,
-      // --- sample seed capture (capped) ---
-      sampleFailureSeeds: [] as SampleFailureSeedV1[],
-      sampleLeverBehindOwnGateSeeds: [] as SampleLeverCaseSeedV1[],
-      sampleLeverBlockedByOtherDoorSeeds: [] as SampleLeverCaseSeedV1[],
-    };
-  }
-
-  const byPattern = new Map<
-    string,
-    {
-      runs: number;
-      ok: number;
-      fail: number;
-      carved: number;
-      msTotal: number;
-      reasons: Record<string, number>;
-      doorSitesSum: Record<string, number>;
-      doorSitesCount: number;
-      reachabilityCount: number;
-      reachabilityPreReachable: number;
-      reachabilityPostUnreachable: number;
-      shortestPathPostSum: number;
-      shortestPathPostCount: number;
-      gateEdgeReuseCount: number;
-      gateDoorsPlacedSum: number;
-      gateUniqueEdgesSum: number;
-      gateReusedExistingSum: number;
-      gateReusedInternalSum: number;
-      gateRunsWithExistingReuse: number;
-      leverAccessDiagCount: number;
-      leverBehindOwnGateCount: number;
-      leverBlockedByOtherDoorCount: number;
-      leverUnreachableEvenIfAllDoorsOpenCount: number;
-      leverUnreachableWithGateOpenButOtherDoorsClosedCount: number;
-      hardConstraintRejections: number;
-
-      sampleFailureSeeds: SampleFailureSeedV1[];
-      sampleLeverBehindOwnGateSeeds: SampleLeverCaseSeedV1[];
-      sampleLeverBlockedByOtherDoorSeeds: SampleLeverCaseSeedV1[];
-    }
-  >();
-
-  for (const r of runs) {
-    roomsSum += safeNum(r.rooms);
-    corridorsSum += safeNum(r.corridors);
-
-    for (const d of r.patternDiagnostics ?? []) {
-      const name = String(d.name ?? "unknown");
-      let next = byPattern.get(name);
-      if (!next) {
-        next = makeAcc();
-        byPattern.set(name, next);
-      }
-
-      // --- Sample seed capture (Phase 2.5 drilldowns) -----------------------
-
-      // 1) gateThenOptionalReward failures (want ~4)
-      if (name === "gateThenOptionalReward" && !d.ok) {
-        if (next.sampleFailureSeeds.length < 4) {
-          const reason = String(d.reason ?? "Failed");
-          next.sampleFailureSeeds.push({
-            schemaVersion: 1,
-            seed: r.seed,
-            seedUsed: r.seedUsed,
-            reason,
-            edgeStats: parseParenKeyVals(reason),
-          });
-        }
-      }
-
-      // 2) lever behind own gate (want ~10)
-      const leverDiag = (d as any).leverBehindOwnGate as
-        | LeverBehindOwnGateDiagV1
-        | undefined;
-
-      if (name === "gateThenOptionalReward" && leverDiag) {
-        if (
-          leverDiag.isBehindOwnGate &&
-          next.sampleLeverBehindOwnGateSeeds.length < 10
-        ) {
-          next.sampleLeverBehindOwnGateSeeds.push({
-            schemaVersion: 1,
-            seed: r.seed,
-            seedUsed: r.seedUsed,
-            gateDoorId: leverDiag.gateDoorId,
-            leverId: leverDiag.leverId,
-            gateRoomA: leverDiag.gateRoomA,
-            gateRoomB: leverDiag.gateRoomB,
-            leverRoomId: leverDiag.leverRoomId,
-            closureModel: leverDiag.closureModel,
-            blockingDoorId: leverDiag.blockingDoorId,
-            leverX: leverDiag.leverX,
-            leverY: leverDiag.leverY,
-            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
-            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
-            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
-            isBehindOwnGate: leverDiag.isBehindOwnGate,
-            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
-            unreachableEvenIfAllDoorsOpen:
-              leverDiag.unreachableEvenIfAllDoorsOpen,
-          });
-        }
-
-        // 3) blocked by other door (want ~10)
-        if (
-          leverDiag.blockedByOtherDoor &&
-          next.sampleLeverBlockedByOtherDoorSeeds.length < 10
-        ) {
-          next.sampleLeverBlockedByOtherDoorSeeds.push({
-            schemaVersion: 1,
-            seed: r.seed,
-            seedUsed: r.seedUsed,
-            gateDoorId: leverDiag.gateDoorId,
-            leverId: leverDiag.leverId,
-            gateRoomA: leverDiag.gateRoomA,
-            gateRoomB: leverDiag.gateRoomB,
-            leverRoomId: leverDiag.leverRoomId,
-            closureModel: leverDiag.closureModel,
-            blockingDoorId: leverDiag.blockingDoorId,
-            leverX: leverDiag.leverX,
-            leverY: leverDiag.leverY,
-            reachableWithGateClosed: leverDiag.reachableWithGateClosed,
-            reachableIfGateWereOpen: leverDiag.reachableIfGateWereOpen,
-            reachableIfAllDoorsWereOpen: leverDiag.reachableIfAllDoorsWereOpen,
-            isBehindOwnGate: leverDiag.isBehindOwnGate,
-            blockedByOtherDoor: leverDiag.blockedByOtherDoor,
-            unreachableEvenIfAllDoorsOpen:
-              leverDiag.unreachableEvenIfAllDoorsOpen,
-          });
-        }
-      }
-
-      next.runs += 1;
-      if (d.ok) next.ok += 1;
-      else next.fail += 1;
-
-      if (d.didCarve) next.carved += 1;
-
-      const ms = safeNum(d.ms);
-      if (ms > 0) next.msTotal += ms;
-
-      if (!d.ok) {
-        const reason = String(d.reason ?? "unknown");
-        next.reasons[reason] = (next.reasons[reason] ?? 0) + 1;
-      }
-
-      const ds = d.stats?.doorSites;
-      if (ds) {
-        next.doorSitesCount += 1;
-        for (const [k, v] of Object.entries(ds)) {
-          const n = safeNum(v);
-          next.doorSitesSum[k] = (next.doorSitesSum[k] ?? 0) + n;
-        }
-      }
-      const rs = d.reachability;
-      if (rs) {
-        next.reachabilityCount += 1;
-        if (rs.reachablePre) next.reachabilityPreReachable += 1;
-        if (!rs.reachablePost) next.reachabilityPostUnreachable += 1;
-
-        const sp = rs.shortestPathPost;
-        if (typeof sp === "number" && Number.isFinite(sp) && sp >= 0) {
-          next.shortestPathPostSum += sp;
-          next.shortestPathPostCount += 1;
-        }
-      }
-
-      const gr = d.gateEdgeReuse;
-      if (gr) {
-        next.gateEdgeReuseCount += 1;
-        next.gateDoorsPlacedSum += safeNum(gr.doorsPlaced);
-        next.gateUniqueEdgesSum += safeNum(gr.uniqueEdgesPlaced);
-        next.gateReusedExistingSum += safeNum(gr.reusedExistingCount);
-        next.gateReusedInternalSum += safeNum(gr.reusedInternalCount);
-        if ((gr.reusedExistingCount | 0) > 0)
-          next.gateRunsWithExistingReuse += 1;
-      }
-      const lb = d.leverBehindOwnGate;
-      if (lb) {
-        next.leverAccessDiagCount += 1;
-
-        if (lb.isBehindOwnGate) next.leverBehindOwnGateCount += 1;
-
-        if (lb.blockedByOtherDoor) next.leverBlockedByOtherDoorCount += 1;
-
-        if (lb.unreachableEvenIfAllDoorsOpen)
-          next.leverUnreachableEvenIfAllDoorsOpenCount += 1;
-
-        // Keep the old diagnostic bucket (but renamed to reflect what it really means)
-        if (!lb.reachableIfGateWereOpen)
-          next.leverUnreachableWithGateOpenButOtherDoorsClosedCount += 1;
-      }
-
-      // Phase 4: accumulate hard constraint rejections from pattern stats
-      const hcr = safeNum((d as any).failHardConstraint);
-      if (hcr > 0) next.hardConstraintRejections += hcr;
-
-      byPattern.set(name, next);
-    }
-
-    const cm = r.circuitMetrics;
-    if (cm) {
-      circuitRuns += 1;
-
-      circuitCountSum += safeNum(cm.circuitCount);
-      signalEdgeCountSum += safeNum(cm.signalEdgeCount);
-
-      maxTopoDepthSum += safeNum(cm.maxTopoDepth);
-      avgTopoDepthSum += safeNum(cm.avgTopoDepth);
-
-      circuitsWithSignalDepsSum += safeNum(cm.circuitsWithSignalDeps);
-      pctWithSignalDepsSum += safeNum(cm.pctWithSignalDeps);
-
-      cycleGroupCountSum += safeNum(cm.cycleGroupCount);
-      cycleCircuitCountSum += safeNum(cm.cycleCircuitCount);
-
-      blockedByCycleCountSum += safeNum(cm.blockedByCycleCount);
-
-      largestCycleSizeSum += safeNum(cm.largestCycleSize);
-    }
-
-    // Milestone 6: budget accumulation
-    if (r.budgetResult) {
-      budgetChecked++;
-      if (r.budgetResult.pass) {
-        budgetPass++;
-      } else {
-        budgetFail++;
-        for (const v of r.budgetResult.violations) {
-          budgetViolationsByCategory[v.category] =
-            (budgetViolationsByCategory[v.category] ?? 0) + 1;
-        }
-      }
-    }
-
-    // Milestone 6: difficulty accumulation
-    if (r.difficultyResult) {
-      diffChecked++;
-      if (r.difficultyResult.pass) {
-        diffPass++;
-      } else {
-        diffFail++;
-        for (const v of r.difficultyResult.violations) {
-          diffViolationsByMetric[v.metric] =
-            (diffViolationsByMetric[v.metric] ?? 0) + 1;
-        }
-      }
-    }
-
-    // Milestone 6: pacing accumulation
-    if (r.pacingResult) {
-      pacingChecked++;
-      if (r.pacingResult.pass) {
-        pacingPass++;
-      } else {
-        pacingFail++;
-        for (const v of r.pacingResult.violations) {
-          pacingViolationsByMetric[v.metric] =
-            (pacingViolationsByMetric[v.metric] ?? 0) + 1;
-        }
-      }
-    }
-
-    // Milestone 6: inclusion rules accumulation
-    if (r.inclusionResult) {
-      inclusionChecked++;
-      if (r.inclusionResult.pass) {
-        inclusionPass++;
-      } else {
-        inclusionFail++;
-        for (const v of r.inclusionResult.violations) {
-          inclusionViolationsByName[v.name] =
-            (inclusionViolationsByName[v.name] ?? 0) + 1;
-        }
-      }
-    }
-  }
-
-  const patterns: BatchPatternSummary[] = Array.from(byPattern.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([name, acc]) => {
-      const okRate = acc.runs ? acc.ok / acc.runs : 0;
-      const carvedRate = acc.runs ? acc.carved / acc.runs : 0;
-      const msAvg = acc.runs ? acc.msTotal / acc.runs : 0;
-
-      const topReasons = Object.entries(acc.reasons)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-
-      let doorSitesAvg: Record<string, number> | undefined = undefined;
-      if (acc.doorSitesCount > 0) {
-        doorSitesAvg = {};
-        for (const [k, sum] of Object.entries(acc.doorSitesSum)) {
-          doorSitesAvg[k] = round2(sum / acc.doorSitesCount);
-        }
-      }
-
-      const hasReach = acc.reachabilityCount > 0;
-      const reachabilityPreReachableRate = hasReach
-        ? acc.reachabilityPreReachable / acc.reachabilityCount
-        : 0;
-      const reachabilityPostUnreachableRate = hasReach
-        ? acc.reachabilityPostUnreachable / acc.reachabilityCount
-        : 0;
-      const shortestPathPostAvg = acc.shortestPathPostCount
-        ? acc.shortestPathPostSum / acc.shortestPathPostCount
-        : 0;
-
-      const out: BatchPatternSummary = {
-        name,
-        runs: acc.runs,
-        ok: acc.ok,
-        fail: acc.fail,
-        okRate: round2(okRate),
-        carved: acc.carved,
-        carvedRate: round2(carvedRate),
-        msTotal: Math.round(acc.msTotal),
-        msAvg: round2(msAvg),
-        reasons: acc.reasons,
-        topReasons,
-        doorSitesAvg,
-      };
-
-      if (hasReach) {
-        out.reachabilityPreReachable = acc.reachabilityPreReachable;
-        out.reachabilityPreReachableRate = round2(reachabilityPreReachableRate);
-        out.reachabilityPostUnreachable = acc.reachabilityPostUnreachable;
-        out.reachabilityPostUnreachableRate = round2(
-          reachabilityPostUnreachableRate,
-        );
-        if (acc.shortestPathPostCount > 0) {
-          out.shortestPathPostAvg = round2(shortestPathPostAvg);
-        }
-      }
-
-      if (acc.gateEdgeReuseCount > 0) {
-        const runsWithDiag = acc.gateEdgeReuseCount;
-        const doorsPlacedAvg = acc.gateDoorsPlacedSum / runsWithDiag;
-        const uniqueEdgesPlacedAvg = acc.gateUniqueEdgesSum / runsWithDiag;
-        const reusedExistingCountAvg = acc.gateReusedExistingSum / runsWithDiag;
-        const reusedInternalCountAvg = acc.gateReusedInternalSum / runsWithDiag;
-
-        out.gateEdgeReuseAvg = {
-          runsWithDiag,
-          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
-
-          doorsPlacedAvg: round2(doorsPlacedAvg),
-          uniqueEdgesPlacedAvg: round2(uniqueEdgesPlacedAvg),
-
-          reusedExistingCountAvg: round2(reusedExistingCountAvg),
-          reusedInternalCountAvg: round2(reusedInternalCountAvg),
-
-          runsWithExistingReuse: acc.gateRunsWithExistingReuse,
-          pctRunsWithExistingReuse: round2(
-            runsWithDiag ? acc.gateRunsWithExistingReuse / runsWithDiag : 0,
-          ),
-        };
-      }
-
-      if (acc.leverAccessDiagCount > 0) {
-        const runsWithDiag = acc.leverAccessDiagCount;
-
-        out.leverAccessAvg = {
-          runsWithDiag,
-          pctRunsWithDiag: round2(acc.runs ? runsWithDiag / acc.runs : 0),
-
-          leverBehindOwnGateCount: acc.leverBehindOwnGateCount,
-          pctLeverBehindOwnGate: round2(
-            runsWithDiag ? acc.leverBehindOwnGateCount / runsWithDiag : 0,
-          ),
-
-          leverBlockedByOtherDoorCount: acc.leverBlockedByOtherDoorCount,
-          pctLeverBlockedByOtherDoor: round2(
-            runsWithDiag ? acc.leverBlockedByOtherDoorCount / runsWithDiag : 0,
-          ),
-
-          leverUnreachableEvenIfAllDoorsOpenCount:
-            acc.leverUnreachableEvenIfAllDoorsOpenCount,
-          pctLeverUnreachableEvenIfAllDoorsOpen: round2(
-            runsWithDiag
-              ? acc.leverUnreachableEvenIfAllDoorsOpenCount / runsWithDiag
-              : 0,
-          ),
-
-          leverUnreachableWithGateOpenButOtherDoorsClosedCount:
-            acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount,
-          pctLeverUnreachableWithGateOpenButOtherDoorsClosed: round2(
-            runsWithDiag
-              ? acc.leverUnreachableWithGateOpenButOtherDoorsClosedCount /
-                  runsWithDiag
-              : 0,
-          ),
-
-          hardConstraintRejections: acc.hardConstraintRejections,
-        };
-      }
-
-      // Emit sample seed drilldowns (if any were captured)
-      if (
-        acc.sampleFailureSeeds.length ||
-        acc.sampleLeverBehindOwnGateSeeds.length ||
-        acc.sampleLeverBlockedByOtherDoorSeeds.length
-      ) {
-        out.samples = {
-          failureSeeds: acc.sampleFailureSeeds,
-          leverBehindOwnGateSeeds: acc.sampleLeverBehindOwnGateSeeds,
-          leverBlockedByOtherDoorSeeds: acc.sampleLeverBlockedByOtherDoorSeeds,
-        };
-      }
-
-      return out;
-    });
-
-  const circuits =
-    circuitRuns > 0
-      ? {
-          runsWithMetrics: circuitRuns,
-
-          circuitCountAvg: round2(circuitCountSum / circuitRuns),
-          signalEdgeCountAvg: round2(signalEdgeCountSum / circuitRuns),
-
-          maxTopoDepthAvg: round2(maxTopoDepthSum / circuitRuns),
-          avgTopoDepthAvg: round2(avgTopoDepthSum / circuitRuns),
-
-          circuitsWithSignalDepsAvg: round2(
-            circuitsWithSignalDepsSum / circuitRuns,
-          ),
-          pctWithSignalDepsAvg: round2(pctWithSignalDepsSum / circuitRuns),
-
-          cycleGroupCountAvg: round2(cycleGroupCountSum / circuitRuns),
-          cycleCircuitCountAvg: round2(cycleCircuitCountSum / circuitRuns),
-
-          blockedByCycleCountAvg: round2(blockedByCycleCountSum / circuitRuns),
-
-          largestCycleSizeAvg: round2(largestCycleSizeSum / circuitRuns),
-        }
-      : undefined;
-
-  const budget =
-    budgetChecked > 0
-      ? {
-          checkedCount: budgetChecked,
-          passCount: budgetPass,
-          failCount: budgetFail,
-          violationsByCategory: budgetViolationsByCategory,
-        }
-      : undefined;
-
-  const difficulty =
-    diffChecked > 0
-      ? {
-          checkedCount: diffChecked,
-          passCount: diffPass,
-          failCount: diffFail,
-          violationsByMetric: diffViolationsByMetric,
-        }
-      : undefined;
-
-  const pacing =
-    pacingChecked > 0
-      ? {
-          checkedCount: pacingChecked,
-          passCount: pacingPass,
-          failCount: pacingFail,
-          violationsByMetric: pacingViolationsByMetric,
-        }
-      : undefined;
-
-  const inclusion =
-    inclusionChecked > 0
-      ? {
-          checkedCount: inclusionChecked,
-          passCount: inclusionPass,
-          failCount: inclusionFail,
-          violationsByName: inclusionViolationsByName,
-        }
-      : undefined;
-
-  return {
-    runs: totalRuns,
-    roomsAvg: totalRuns ? round2(roomsSum / totalRuns) : 0,
-    corridorsAvg: totalRuns ? round2(corridorsSum / totalRuns) : 0,
-    patterns,
-    circuits,
-    budget,
-    difficulty,
-    pacing,
-    inclusion,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Seed Bank — per-seed classification for the "ship only good seeds" workflow
-// ---------------------------------------------------------------------------
-
-export type SeedAnnotation = {
-  difficultyLabel?: string;
-  themeTags?: string[];
-  notes?: string;
-  curated?: boolean;
-};
-
-export type SeedBankEntry = {
-  seed: string;
-  seedUsed: number;
-  rooms: number;
-  corridors: number;
-  tags: string[];
-  patternResults: Array<{
-    name: string;
-    ok: boolean;
-    reason?: string;
-  }>;
-  annotation?: SeedAnnotation;
-};
-
-export type SeedBank = {
-  schemaVersion: 1 | 2;
-  generatedAt: string;
-  totalSeeds: number;
-  goodCount: number;
-  failedCount: number;
-  seeds: SeedBankEntry[];
-};
-
-/**
- * Build a per-seed classification bank from the same BatchRunInput[] used by
- * aggregateBatchRuns(). Each seed is tagged:
- *
- *  - "good"              — all patterns ok, no lever anomalies, no budget violations
- *  - "patternFailure"    — at least one pattern failed (+ pattern name tag)
- *  - "hasLeverAnomaly"   — lever diagnostic reported an anomaly (future-proof)
- *  - "budgetViolation"   — content budget constraint violated (Milestone 6)
- */
-export function buildSeedBank(runs: BatchRunInput[]): SeedBank {
-  let goodCount = 0;
-  let failedCount = 0;
-  const seeds: SeedBankEntry[] = [];
-
-  for (const r of runs) {
-    const tags: string[] = [];
-    const patternResults: SeedBankEntry["patternResults"] = [];
-    let anyFailure = false;
-    let anyLeverAnomaly = false;
-
-    for (const d of r.patternDiagnostics ?? []) {
-      const name = String(d.name ?? "unknown");
-      patternResults.push({
-        name,
-        ok: !!d.ok,
-        reason: d.ok ? undefined : String(d.reason ?? "unknown"),
-      });
-
-      if (!d.ok) {
-        anyFailure = true;
-        tags.push(name); // tag with the failing pattern name
-      }
-
-      const lb = d.leverBehindOwnGate as LeverBehindOwnGateDiagV1 | undefined;
-      if (
-        lb &&
-        (lb.isBehindOwnGate ||
-          lb.blockedByOtherDoor ||
-          lb.unreachableEvenIfAllDoorsOpen)
-      ) {
-        anyLeverAnomaly = true;
-      }
-    }
-
-    const anyBudgetViolation = r.budgetResult?.pass === false;
-    const anyDifficultyViolation = r.difficultyResult?.pass === false;
-    const anyPacingViolation = r.pacingResult?.pass === false;
-    const anyInclusionViolation = r.inclusionResult?.pass === false;
-
-    if (anyFailure) tags.unshift("patternFailure");
-    if (anyLeverAnomaly) tags.push("hasLeverAnomaly");
-    if (anyBudgetViolation) tags.push("budgetViolation");
-    if (anyDifficultyViolation) tags.push("difficultyOutOfBand");
-    if (anyPacingViolation) tags.push("pacingFailure");
-    if (anyInclusionViolation) tags.push("inclusionViolation");
-    const isGood =
-      !anyFailure &&
-      !anyLeverAnomaly &&
-      !anyBudgetViolation &&
-      !anyDifficultyViolation &&
-      !anyPacingViolation &&
-      !anyInclusionViolation;
-    if (isGood) tags.push("good");
-
-    if (isGood) goodCount++;
-    else failedCount++;
-
-    seeds.push({
-      seed: r.seed,
-      seedUsed: r.seedUsed,
-      rooms: r.rooms,
-      corridors: r.corridors,
-      tags,
-      patternResults,
-    });
-  }
-
-  return {
-    schemaVersion: 2,
-    generatedAt: new Date().toISOString(),
-    totalSeeds: runs.length,
-    goodCount,
-    failedCount,
-    seeds,
   };
 }
 </file>

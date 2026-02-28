@@ -65,6 +65,19 @@ export type TurnSystemDeps = {
   ) => TurnSystemState;
   /** Set to true to record turns into state.log (bounded at 200 entries). */
   log?: boolean;
+  /**
+   * Called whenever the scheduler advances to a new time (between actor turns).
+   * Use this to step time-based world simulations (water/fire propagation, etc.)
+   * so they stay in sync with the actor timeline.
+   *
+   * deltaTime = nextTime - prevTime is guaranteed > 0 when this fires.
+   */
+  onTimeAdvanced?: (args: {
+    prevTime: number;
+    nextTime: number;
+    activeActorId: ActorId;
+    state: TurnSystemState;
+  }) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -143,6 +156,7 @@ export function tickUntilPlayer(
   let safetyCounter = 0;
 
   while (safetyCounter++ < MAX_MONSTER_TICKS_PER_CALL) {
+    const prevT = current.scheduler.getNow();
     const evt = current.scheduler.next();
     if (!evt) {
       // Schedule exhausted — shouldn't happen in a normal game.
@@ -150,6 +164,10 @@ export function tickUntilPlayer(
     }
 
     const { actorId } = evt;
+    const nextT = evt.now;
+    if (nextT !== prevT) {
+      deps.onTimeAdvanced?.({ prevTime: prevT, nextTime: nextT, activeActorId: actorId, state: current });
+    }
 
     // Skip dead actors.
     if (!isAlive(current, actorId)) {
