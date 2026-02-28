@@ -347,7 +347,11 @@ function DungeonRenderScene(props: Props) {
     const exitRoomId = (content.meta.farthestRoomId ?? 0) | 0;
     if (exitRoomId <= 0) return null;
     const regionId = bsp.masks.regionId;
-    let minX = 1e9, minY = 1e9, maxX = -1, maxY = -1, found = false;
+    let minX = 1e9,
+      minY = 1e9,
+      maxX = -1,
+      maxY = -1,
+      found = false;
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         if ((regionId[y * W + x] | 0) === exitRoomId) {
@@ -360,7 +364,10 @@ function DungeonRenderScene(props: Props) {
       }
     }
     if (!found) return null;
-    return { x: Math.floor((minX + maxX) / 2), y: Math.floor((minY + maxY) / 2) };
+    return {
+      x: Math.floor((minX + maxX) / 2),
+      y: Math.floor((minY + maxY) / 2),
+    };
   }, [bsp, content, W, H, props.exitX, props.exitY]);
 
   // --- Build char texture (R8) ---
@@ -1213,7 +1220,7 @@ export default function DungeonRenderView(props: Props) {
           }}
         />
       </Canvas>
-
+      {/*
       <div
         className="maze-tooltip"
         style={{
@@ -1226,7 +1233,7 @@ export default function DungeonRenderView(props: Props) {
         {tooltip.lines.map((ln, idx) => (
           <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
         ))}
-      </div>
+      </div>*/}
     </div>
   );
 }
