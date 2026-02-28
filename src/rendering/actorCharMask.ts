@@ -30,7 +30,7 @@ export function clearActorCharMask(data: Uint8Array): void {
   data.fill(0);
 }
 
-export type ActorStamp = { id: string; x: number; y: number };
+export type ActorStamp = { id: string; x: number; y: number; tile?: number };
 
 export function stampBlocksToActorCharMask(args: {
   data: Uint8Array;
@@ -43,7 +43,7 @@ export function stampBlocksToActorCharMask(args: {
   for (const b of blocks) {
     const { x, y } = b;
     if (x < 0 || x >= W || y < 0 || y >= H) continue;
-    data[y * W + x] = blockTile & 0xff;
+    data[y * W + x] = (blockTile & 0x7f) | 0x80;
   }
 }
 
@@ -62,6 +62,6 @@ export function stampMonstersToActorCharMask(args: {
     if (x < 0 || x >= W || y < 0 || y >= H) continue;
     if (avoidCell && avoidCell.x === x && avoidCell.y === y) continue;
     if (blocked && blocked(x, y)) continue;
-    data[y * W + x] = monsterTile & 0xff;
+    data[y * W + x] = (m.tile ?? monsterTile) & 0xff;
   }
 }

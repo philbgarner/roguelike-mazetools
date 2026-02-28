@@ -138,10 +138,12 @@ export const tileFrag = /* glsl */ `
     float chN = sampleR8(uChar, texUv);
     float ch  = floor(chN * 255.0 + 0.5);
 
-    // Actor overlay: runtime-stamped monsters override the static char mask
-    float aChN = sampleR8(uActorChar, texUv);
-    float aCh  = floor(aChN * 255.0 + 0.5);
-    if (aCh > 0.5) ch = aCh;
+    // Actor overlay: runtime-stamped actors override the static char mask.
+    // Encoding: high bit (0x80) set = non-monster actor (block); clear = monster.
+    float aChN   = sampleR8(uActorChar, texUv);
+    float rawAch = floor(aChN * 255.0 + 0.5);
+    float aChGlyph = mod(rawAch, 128.0);
+    if (rawAch > 0.5) ch = aChGlyph;
 
     float hasChar = step(0.5, ch);
 
@@ -244,7 +246,7 @@ export const tileFrag = /* glsl */ `
     pathColor = (totalKinds > 0.0) ? pathColor / totalKinds : playerPath;
 
     // --- Entity glyph (if present) ---
-    float isMonster = tileIs(ch, uMonsterTile);
+    float isMonster = step(0.5, rawAch) * (1.0 - step(128.5, rawAch));
     vec2 local2 = local;
 
     if (isMonster > 0.5) {

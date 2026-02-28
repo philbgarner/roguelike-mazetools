@@ -25,7 +25,7 @@ import {
   getBlockIdAt,
   tryPushBlock,
 } from "../dungeonState";
-import type { TurnAction } from "../turn/turnTypes";
+import type { TurnAction, MonsterActor } from "../turn/turnTypes";
 import { evaluateCircuits } from "../evaluateCircuits";
 
 import { computeStartCell } from "../inspect/computeStartCell";
@@ -308,7 +308,12 @@ export default function MinimalExample() {
       data: am.data,
       W,
       H,
-      monsters: monsters.map((m) => ({ id: m.id, x: m.x, y: m.y })),
+      monsters: (monsters as MonsterActor[]).map((m) => ({
+        id: m.id,
+        x: m.x,
+        y: m.y,
+        tile: m.glyph.charCodeAt(0),
+      })),
       monsterTile: CP437_TILES.monster,
       avoidCell: { x: playerX, y: playerY },
       blocked: (x, y) => dungeon.masks.solid[y * W + x] === 255,

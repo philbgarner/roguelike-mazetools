@@ -31,8 +31,15 @@ export type MonsterAlertState = "idle" | "chasing" | "searching";
 export type MonsterActor = ActorBase & {
   kind: "monster";
   spawnId: string;
+  /** Single ASCII/Unicode glyph from the stat block, used for rendering. */
+  glyph: string;
   danger: number;
   roomId: number;
+  hp: number;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  xp: number;
   /** Current awareness state. */
   alertState: MonsterAlertState;
   /**
