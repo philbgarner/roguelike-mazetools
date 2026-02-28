@@ -1,12 +1,7 @@
 /**
  * Default stat blocks for all spawnable entities across the three starter themes.
  *
- * Creature speed reference (player = 10):
- *   ≤6  — sluggish (golems, zombies)
- *   7–9 — slower than player (guards, guardians)
- *  10   — matches player
- *  11–13 — faster than player (rats, wraiths, swarms)
- *  14+  — very fast (experiments, escaped subjects)
+ * Creature speed reference (player = 10)
  *
  * HP / attack / defense are abstract units for the combat resolver.
  * xp is awarded to the player on kill; 0 for friendly NPCs.
@@ -58,7 +53,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   skeleton_warrior: {
     glyph: "s",
     name: "Skeleton Warrior",
-    speed: 8,
+    speed: 10,
     hp: 14,
     attack: 4,
     defense: 2,
@@ -67,7 +62,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   armored_guard: {
     glyph: "G",
     name: "Armored Guard",
-    speed: 7,
+    speed: 10,
     hp: 22,
     attack: 5,
     defense: 5,
@@ -76,7 +71,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   giant_rat: {
     glyph: "r",
     name: "Giant Rat",
-    speed: 13,
+    speed: 10,
     hp: 5,
     attack: 2,
     defense: 0,
@@ -85,7 +80,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   ghost_knight: {
     glyph: "k",
     name: "Ghost Knight",
-    speed: 9,
+    speed: 10,
     hp: 10,
     attack: 7,
     defense: 1,
@@ -96,7 +91,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   clay_golem: {
     glyph: "g",
     name: "Clay Golem",
-    speed: 5,
+    speed: 10,
     hp: 30,
     attack: 8,
     defense: 7,
@@ -114,7 +109,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   temple_guardian: {
     glyph: "T",
     name: "Temple Guardian",
-    speed: 8,
+    speed: 10,
     hp: 24,
     attack: 6,
     defense: 4,
@@ -134,7 +129,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   animated_cadaver: {
     glyph: "z",
     name: "Animated Cadaver",
-    speed: 6,
+    speed: 10,
     hp: 16,
     attack: 4,
     defense: 1,
@@ -152,7 +147,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
   surgical_drone: {
     glyph: "d",
     name: "Surgical Drone",
-    speed: 9,
+    speed: 10,
     hp: 22,
     attack: 6,
     defense: 5,
@@ -178,7 +173,7 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
   black_knight: {
     glyph: "K",
     name: "Black Knight",
-    speed: 8,
+    speed: 10,
     hp: 60,
     attack: 10,
     defense: 8,
@@ -198,7 +193,7 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
   bull_of_heaven: {
     glyph: "B",
     name: "Bull of Heaven",
-    speed: 9,
+    speed: 10,
     hp: 80,
     attack: 14,
     defense: 8,
@@ -207,7 +202,7 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
   lamassu: {
     glyph: "M",
     name: "Lamassu",
-    speed: 8,
+    speed: 10,
     hp: 75,
     attack: 12,
     defense: 10,
