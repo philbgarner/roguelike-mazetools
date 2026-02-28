@@ -30,6 +30,8 @@ import { evaluateCircuits } from "../evaluateCircuits";
 
 import { computeStartCell } from "../inspect/computeStartCell";
 import { generateDungeon } from "../api/generateDungeon";
+import { getTheme } from "../theme/themeRegistry";
+import { dungeonThemeToRenderTheme } from "../rendering/renderTheme";
 
 import { CP437_TILES } from "../rendering/codepage437Tiles";
 
@@ -76,7 +78,8 @@ export interface Player {
 // ---------------------------------------------------------------------------
 
 const SEED = "test";
-const THEME_ID = "medieval_keep";
+//const THEME_ID = "medieval_keep";
+const THEME_ID = "babylon_ziggurat";
 
 const AUTOWALK_DELAY = 63;
 
@@ -102,6 +105,10 @@ export default function MinimalExample() {
   const result = useMemo(() => buildDungeon(), []);
   const dungeon = result.bsp;
   const content = result.content;
+  const renderTheme = useMemo(
+    () => dungeonThemeToRenderTheme(getTheme(THEME_ID)),
+    [],
+  );
 
   const startCell = useMemo(
     () => computeStartCell(dungeon, content),
@@ -515,6 +522,7 @@ export default function MinimalExample() {
     <DungeonRenderView
       bsp={dungeon}
       content={content}
+      theme={renderTheme}
       focusX={playerX}
       focusY={playerY}
       onCellFocus={(cell) => console.log("cell focus", cell)}
