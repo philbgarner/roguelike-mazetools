@@ -207,6 +207,35 @@ export default function MinimalExample() {
   const playerX = playerActor?.x ?? startCell.x;
   const playerY = playerActor?.y ?? startCell.y;
 
+  // --- Exit cell (centre of farthest room, same logic as DungeonRenderView) ---
+  const exitCell = useMemo(() => {
+    const exitRoomId = (content.meta.farthestRoomId ?? 0) | 0;
+    if (exitRoomId <= 0) return null;
+    const W = dungeon.width;
+    const H = dungeon.height;
+    const regionId = dungeon.masks.regionId;
+    let minX = 1e9, minY = 1e9, maxX = -1, maxY = -1, found = false;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if ((regionId[y * W + x] | 0) === exitRoomId) {
+          found = true;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (!found) return null;
+    return { x: Math.floor((minX + maxX) / 2), y: Math.floor((minY + maxY) / 2) };
+  }, [dungeon, content]);
+
+  useEffect(() => {
+    if (exitCell && playerX === exitCell.x && playerY === exitCell.y) {
+      alert("You reached the exit!");
+    }
+  }, [playerX, playerY, exitCell]);
+
   // --- Path mask ---
   const pathMaskRef = useRef<{
     data: Uint8Array;
