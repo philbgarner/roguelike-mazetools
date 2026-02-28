@@ -41,6 +41,7 @@ import {
   type TurnSystemDeps,
 } from "../turn/turnSystem";
 import { decideChasePlayer } from "../turn/monsterAI";
+import { computeEnemyPlannedPaths, type PlannedPath } from "../turn/plannedPaths";
 
 import "./styles.css";
 
@@ -55,6 +56,9 @@ export interface Player {
 
 const SEED = "test";
 const THEME_ID = "medieval_keep";
+
+/** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
+const PLAYER_VIS_RADIUS = 6;
 
 function buildDungeon() {
   return generateDungeon({
@@ -126,7 +130,7 @@ export default function MinimalExample() {
             !!runtimeRef.current?.secrets?.[secretId]?.revealed,
         }),
       monsterDecide: (state, monsterId) =>
-        decideChasePlayer(state, monsterId, _dungeon, _content, runtimeRef.current),
+        decideChasePlayer(state, monsterId, _dungeon, _content, runtimeRef.current, PLAYER_VIS_RADIUS),
       computeCost: (actorId, action) =>
         defaultComputeCost(actorId, action, turnStateRef.current.actors),
       applyAction: defaultApplyAction,
@@ -143,6 +147,8 @@ export default function MinimalExample() {
   const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
   const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
   const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
+  const playerPreviewPathRef = useRef<import("../pathfinding/aStar8").GridPos[] | null>(null);
+  const enemyPlannedPathsRef = useRef<PlannedPath[]>([]);
 
   // --- Actor char overlay ---
   const actorMaskRef = useRef<ActorCharMask | null>(null);
@@ -171,6 +177,35 @@ export default function MinimalExample() {
     };
   }, [dungeon.width, dungeon.height]);
 
+  // Single authoritative rebuild: clears the mask once then stamps enemy paths
+  // followed by the player preview path. Call whenever either source changes.
+  const rebuildPathMaskFromPlans = useCallback(() => {
+    const pm = pathMaskRef.current;
+    if (!pm) return;
+    clearPathMaskRGBA(pm.data);
+    for (const ep of enemyPlannedPathsRef.current) {
+      stampPath(pm.data, dungeon.width, ep.path, "enemy");
+    }
+    if (playerPreviewPathRef.current) {
+      stampPath(pm.data, dungeon.width, playerPreviewPathRef.current, "player");
+    }
+    pm.tex.needsUpdate = true;
+    setPathMaskTex(pm.tex);
+  }, [dungeon.width]);
+
+  // Recompute enemy planned paths and rebuild the path mask whenever actors move.
+  useEffect(() => {
+    enemyPlannedPathsRef.current = computeEnemyPlannedPaths({
+      state: turnState,
+      dungeon,
+      content,
+      runtime: runtimeRef.current,
+      maxSteps: 32,
+    });
+    rebuildPathMaskFromPlans();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState.actors, dungeon, content, rebuildPathMaskFromPlans]);
+
   // Stamp monsters into the actor overlay whenever turn state or player position changes
   useEffect(() => {
     const am = actorMaskRef.current;
@@ -195,9 +230,6 @@ export default function MinimalExample() {
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
-      const pm = pathMaskRef.current;
-      if (!pm) return;
-      clearPathMaskRGBA(pm.data);
       const rt = runtimeRef.current;
       const pathResult = aStar8(
         dungeon,
@@ -209,11 +241,10 @@ export default function MinimalExample() {
           isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
         },
       );
-      if (pathResult) stampPath(pm.data, dungeon.width, pathResult.path, "player");
-      pm.tex.needsUpdate = true;
-      setPathMaskTex(pm.tex);
+      playerPreviewPathRef.current = pathResult?.path ?? null;
+      rebuildPathMaskFromPlans();
     },
-    [dungeon, content, playerX, playerY],
+    [dungeon, content, playerX, playerY, rebuildPathMaskFromPlans],
   );
 
   // --- Committed move helper ---
@@ -247,12 +278,9 @@ export default function MinimalExample() {
   // Reset turn state when start cell changes (new dungeon)
   useEffect(() => {
     lastHoverCellRef.current = null;
-    const pm = pathMaskRef.current;
-    if (pm) {
-      clearPathMaskRGBA(pm.data);
-      pm.tex.needsUpdate = true;
-      setPathMaskTex(pm.tex);
-    }
+    playerPreviewPathRef.current = null;
+    enemyPlannedPathsRef.current = [];
+    rebuildPathMaskFromPlans();
     const newPlayer = createPlayerActor(startCell.x, startCell.y);
     const monsters = createMonstersFromResolved(result.resolved);
     const ts = createTurnSystemState(newPlayer, monsters);
@@ -307,11 +335,8 @@ export default function MinimalExample() {
         }}
         onCellHoverEnd={() => {
           lastHoverCellRef.current = null;
-          const pm = pathMaskRef.current;
-          if (!pm) return;
-          clearPathMaskRGBA(pm.data);
-          pm.tex.needsUpdate = true;
-          setPathMaskTex(pm.tex);
+          playerPreviewPathRef.current = null;
+          rebuildPathMaskFromPlans();
         }}
         onCellClick={({ x, y }) => {
           const w = dungeon.width;
@@ -353,12 +378,8 @@ export default function MinimalExample() {
             return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
           });
 
-          const pm = pathMaskRef.current;
-          if (pm) {
-            clearPathMaskRGBA(pm.data);
-            pm.tex.needsUpdate = true;
-            setPathMaskTex(pm.tex);
-          }
+          playerPreviewPathRef.current = null;
+          rebuildPathMaskFromPlans();
 
           return true;
         }}

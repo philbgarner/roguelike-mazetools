@@ -20,11 +20,31 @@ export type ActorBase = {
 
 export type PlayerActor = ActorBase & { kind: "player" };
 
+/**
+ * Alert state machine for monster AI:
+ *   idle      – not aware of player; waits or patrols
+ *   chasing   – has seen the player; actively pursuing
+ *   searching – lost sight; counting down before giving up
+ */
+export type MonsterAlertState = "idle" | "chasing" | "searching";
+
 export type MonsterActor = ActorBase & {
   kind: "monster";
   spawnId: string;
   danger: number;
   roomId: number;
+  /** Current awareness state. */
+  alertState: MonsterAlertState;
+  /**
+   * Turns remaining before an alerted monster gives up and goes idle.
+   * Only meaningful when alertState === "searching"; ignored otherwise.
+   */
+  searchTurnsLeft: number;
+  /**
+   * Last known player position — used for pathfinding while searching.
+   * null when alertState === "idle".
+   */
+  lastKnownPlayerPos: { x: number; y: number } | null;
 };
 
 export type TurnActionKind = "wait" | "move" | "attack" | "interact";

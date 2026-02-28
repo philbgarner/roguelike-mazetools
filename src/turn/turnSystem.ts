@@ -20,6 +20,7 @@ import type {
   TurnAction,
   ActionCost,
 } from "./turnTypes";
+import type { DecideResult } from "./monsterAI";
 import type { TurnLogEntry } from "./turnDebug";
 
 // ---------------------------------------------------------------------------
@@ -45,11 +46,14 @@ export type TurnSystemDeps = {
   content: ContentOutputs;
   runtime: DungeonRuntimeState;
   isWalkable: (x: number, y: number) => boolean;
-  /** AI callback: decide what a monster does this turn. */
+  /**
+   * AI callback: decide what a monster does this turn.
+   * Returns the action plus an alert-state patch to apply to the actor.
+   */
   monsterDecide: (
     state: TurnSystemState,
     monsterId: ActorId,
-  ) => TurnAction;
+  ) => DecideResult;
   /** Cost callback: how much time does this action cost for this actor? */
   computeCost: (actorId: ActorId, action: TurnAction) => ActionCost;
   /** Apply an action: returns a new TurnSystemState with mutated actors. */
@@ -162,10 +166,21 @@ export function tickUntilPlayer(
       return current;
     }
 
-    // Monster's turn — run AI, apply action, reschedule.
-    const action = deps.monsterDecide(current, actorId);
+    // Monster's turn — run AI, apply alert-state patch, apply action, reschedule.
+    const { action, monsterPatch } = deps.monsterDecide(current, actorId);
     const cost = deps.computeCost(actorId, action);
     const actor = current.actors[actorId];
+
+    // Apply alert-state changes (alertState, searchTurnsLeft, lastKnownPlayerPos).
+    if (Object.keys(monsterPatch).length > 0) {
+      current = {
+        ...current,
+        actors: {
+          ...current.actors,
+          [actorId]: { ...actor, ...monsterPatch },
+        },
+      };
+    }
 
     appendLog(current, deps, {
       t: current.scheduler.getNow(),
@@ -286,6 +301,6 @@ export function defaultApplyAction(
 export function waitAI(
   _state: TurnSystemState,
   _monsterId: ActorId,
-): TurnAction {
-  return { kind: "wait" };
+): DecideResult {
+  return { action: { kind: "wait" }, monsterPatch: {} };
 }

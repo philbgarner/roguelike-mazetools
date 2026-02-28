@@ -80,6 +80,7 @@ src/
     aStar8.ts
     minHeap.ts
   rendering/
+    actorCharMask.ts
     codepage437Tiles.ts
     DungeonRenderView.tsx
     pathMask.ts
@@ -131,6 +132,7 @@ src/
   roleDiagnostics.ts
   SCHEDULING.md
   styles.css
+  TURN-RENDERING.md
   walkability.ts
 .gitignore
 API-QUICKSTART.md
@@ -3106,6 +3108,61 @@ export class MinHeap<T> {
       this._heap[i] = tmp;
       i = smallest;
     }
+  }
+}
+</file>
+
+<file path="src/rendering/actorCharMask.ts">
+// src/rendering/actorCharMask.ts
+import * as THREE from "three";
+
+export type ActorCharMask = { data: Uint8Array; tex: THREE.DataTexture };
+
+export function createActorCharMaskR8(
+  W: number,
+  H: number,
+  name: string,
+): ActorCharMask {
+  const data = new Uint8Array(W * H);
+  const tex = new THREE.DataTexture(
+    data,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  tex.name = name;
+  return { data, tex };
+}
+
+export function clearActorCharMask(data: Uint8Array): void {
+  data.fill(0);
+}
+
+export type ActorStamp = { id: string; x: number; y: number };
+
+export function stampMonstersToActorCharMask(args: {
+  data: Uint8Array;
+  W: number;
+  H: number;
+  monsters: ActorStamp[];
+  monsterTile: number;
+  avoidCell?: { x: number; y: number };
+  blocked?: (x: number, y: number) => boolean;
+}): void {
+  const { data, W, H, monsters, monsterTile, avoidCell, blocked } = args;
+  for (const m of monsters) {
+    const { x, y } = m;
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+    if (avoidCell && avoidCell.x === x && avoidCell.y === y) continue;
+    if (blocked && blocked(x, y)) continue;
+    data[y * W + x] = monsterTile & 0xff;
   }
 }
 </file>
@@ -6413,6 +6470,220 @@ This will match your project’s diagnostic-first approach and help validate “
 
 ---
 [1]: https://roguebasin.com/index.php/A_priority_queue_based_turn_scheduling_system "A priority queue based turn scheduling system - RogueBasin"
+</file>
+
+<file path="src/TURN-RENDERING.md">
+# Plan: Render monsters via `turnScheduler` into a runtime DataTexture overlay (Option A)
+
+## Goal
+
+Render monster glyphs from the **runtime turn system** (via `turnScheduler` / `TurnSystemState.actors`) by stamping them into a **mutable R8 `THREE.DataTexture`** (`uActorChar`) that is updated whenever monster positions change.
+
+**Option A:** keep any generation-time monster markers as-is, but **ignore `FeatureType=1` in `buildCharMask()`** to prevent double-rendering.
+
+---
+
+## 1) Create a runtime “actor glyph overlay” mask module
+
+### New file: `src/rendering/actorCharMask.ts`
+
+**Symbols to add:**
+
+* `export type ActorCharMask = { data: Uint8Array; tex: THREE.DataTexture }`
+
+* `export function createActorCharMaskR8(W: number, H: number, name: string): ActorCharMask`
+
+  * Allocate `const data = new Uint8Array(W * H)`
+  * Create `const tex = new THREE.DataTexture(data, W, H, THREE.RedFormat, THREE.UnsignedByteType)`
+  * Configure:
+
+    * `tex.minFilter = THREE.NearestFilter`
+    * `tex.magFilter = THREE.NearestFilter`
+    * `tex.wrapS = THREE.ClampToEdgeWrapping`
+    * `tex.wrapT = THREE.ClampToEdgeWrapping`
+    * `tex.generateMipmaps = false`
+    * `tex.needsUpdate = true`
+    * `tex.name = name`
+  * Return `{ data, tex }`
+
+* `export function clearActorCharMask(data: Uint8Array): void`
+
+  * `data.fill(0)`
+
+* `export type ActorStamp = { id: string; x: number; y: number }`
+
+* `export function stampMonstersToActorCharMask(args: {`
+
+  * `data: Uint8Array; W: number; H: number;`
+  * `monsters: ActorStamp[];`
+  * `monsterTile: number;`
+  * `avoidCell?: { x: number; y: number };`
+  * `blocked?: (x: number, y: number) => boolean;`
+  * `}): void`
+  * Logic:
+
+    * For each monster:
+
+      * Bounds check `(x,y)`
+      * If `avoidCell` matches `(x,y)`, skip (player wins)
+      * If `blocked` returns true, skip (don’t draw on walls)
+      * Write: `data[y * W + x] = monsterTile & 0xff`
+
+---
+
+## 2) Extend the tile shader with an actor overlay sampler
+
+### Edit: `src/rendering/tileShader.ts`
+
+**Add uniform:**
+
+* `uniform sampler2D uActorChar;`
+
+**Overlay behavior:**
+
+* Sample `uActorChar` at the same UV used for `uChar`
+* If the sampled tile index is non-zero, it replaces the base `ch` used for rendering the glyph
+* Player remains top priority by ensuring the stamping step never writes onto the player cell
+
+**Implementation shape (high level):**
+
+* After computing `ch` from `uChar`, compute `aCh` from `uActorChar`
+* If `aCh > 0`, set `ch = aCh` (and ensure `hasChar = 1` if your shader uses a separate flag)
+
+---
+
+## 3) Plumb `uActorChar` through the render view
+
+### Edit: `src/rendering/DungeonRenderView.tsx`
+
+**Props:**
+
+* Add: `actorCharTex?: THREE.DataTexture | null`
+
+**Fallback texture:**
+
+* Create a 1×1 R8 “zero” DataTexture for cases where no actor overlay exists yet:
+
+  * `Uint8Array([0])`
+  * `THREE.RedFormat`, `THREE.UnsignedByteType`
+  * `NearestFilter`, `ClampToEdge`, `generateMipmaps=false`
+
+**Uniform wiring:**
+
+* Add to `uniforms`:
+
+  * `uActorChar: { value: props.actorCharTex ?? fallbackActorCharTex }`
+
+Ensure the material/uniform update pattern matches how you already handle dynamic textures (like `uPathMask`).
+
+---
+
+## 4) Create + update the actor overlay mask from the turn system
+
+### Edit: `src/examples/MinimalExample.tsx`
+
+#### 4.1 Create the overlay texture once per dungeon size
+
+Add:
+
+* `const actorMaskRef = useRef<ActorCharMask | null>(null);`
+* `const [actorCharTex, setActorCharTex] = useState<THREE.DataTexture | null>(null);`
+
+In an effect keyed on dungeon dimensions:
+
+* Dispose old `actorMaskRef.current?.tex`
+* `actorMaskRef.current = createActorCharMaskR8(W, H, "actor_char_r8")`
+* `setActorCharTex(actorMaskRef.current.tex)`
+* Cleanup: dispose on unmount / regen
+
+#### 4.2 Stamp monsters whenever the turn state changes
+
+Add an effect keyed on:
+
+* `turnState.actors` (or `turnState` if your updates aren’t structurally stable)
+* player cell (`player.x`, `player.y`) so the avoidCell logic stays correct
+
+Effect steps:
+
+1. `clearActorCharMask(actorMaskRef.current.data)`
+2. Extract monsters from `turnState.actors`
+
+   * Filter: `kind === "monster"` and (if present) `alive === true`
+3. Call `stampMonstersToActorCharMask({`
+
+   * `data, W, H`
+   * `monsters: monsters.map(m => ({ id: m.id, x: m.x, y: m.y }))`
+   * `monsterTile: CP437_TILES.monster` (or whichever tile constant you use)
+   * `avoidCell: { x: player.x, y: player.y }`
+   * Optional `blocked: (x,y) => dungeon.masks.solid[y*W + x] === 255`
+   * `})`
+4. `actorMaskRef.current.tex.needsUpdate = true`
+
+#### 4.3 Pass the overlay texture into the renderer
+
+Update `<DungeonRenderView ... />`:
+
+* Add: `actorCharTex={actorCharTex}`
+
+---
+
+## 5) Option A: Ignore static monster feature tiles to avoid double-rendering
+
+### Edit: `src/rendering/tiles.ts`
+
+In `buildCharMask(...)` (or wherever you map `content.masks.featureType` → tile index):
+
+* For `FeatureType=1` (monster):
+
+  * Set `t = 0` (no glyph)
+  * Do **not** stamp any monster glyph into the base `uChar` from content generation
+
+This ensures the only visible monsters are the runtime-stamped ones from `turnScheduler`.
+
+---
+
+## 6) Touch points checklist
+
+### New
+
+* `src/rendering/actorCharMask.ts`
+
+  * `createActorCharMaskR8`
+  * `clearActorCharMask`
+  * `stampMonstersToActorCharMask`
+
+### Modified
+
+* `src/rendering/tileShader.ts`
+
+  * add `uActorChar`
+  * overlay selection logic (`uActorChar` overrides `uChar` when non-zero)
+
+* `src/rendering/DungeonRenderView.tsx`
+
+  * add prop `actorCharTex`
+  * fallback R8 texture
+  * bind uniform `uActorChar`
+
+* `src/examples/MinimalExample.tsx`
+
+  * create actor overlay texture once per dungeon size
+  * stamp monsters into overlay whenever `turnState.actors` changes
+  * pass `actorCharTex` into `DungeonRenderView`
+
+* `src/rendering/tiles.ts`
+
+  * Option A: ignore `FeatureType=1` in `buildCharMask()`
+
+---
+
+## Expected result
+
+* Monster glyphs appear only when present in `turnState.actors`
+* When a monster moves (scheduler tick / action), the overlay texture buffer updates and the shader renders the new positions immediately
+* No double-rendering from generation-time feature masks (Option A)
+
+---
 </file>
 
 <file path="API-QUICKSTART.md">
@@ -11507,6 +11778,458 @@ function Step5Confirm(props: {
 }
 </file>
 
+<file path="src/doorSites.ts">
+// src/doorSites.ts
+//
+// Shared helpers for locating corridor-based "door sites".
+// Used by:
+// - puzzle patterns (Lever->Door, Plate->Door)
+// - Milestone 2 door-site budgeting (gate placement clamping)
+//
+// Important: keep this module free of non-type imports from mazeGen.ts
+// to avoid runtime import cycles (we only import types).
+
+import type { BspDungeonOutputs } from "./mazeGen";
+
+type Point = { x: number; y: number };
+
+export type DoorSiteStats = {
+  corridorsTotal: number;
+
+  corridorsWithValidRoomPair: number;
+  corridorsRejectedNoRooms: number;
+  corridorsRejectedSameRoom: number;
+
+  // corridor-path evaluation
+  pointsConsidered: number;
+  pointsRejectedWall: number;
+  pointsRejectedOccupied: number;
+  pointsRejectedThroat: number;
+  pointsRejectedDistToWall: number;
+  pointsAccepted: number;
+
+  corridorsWithAnyCandidate: number; // at least one acceptable point exists
+  corridorsYieldedTile: number; // we actually picked a tile for this corridor
+  preferCorridorHits: number; // picked point where regionId==0 in prefer pass
+
+  tilesUnique: number; // computed at end
+};
+
+export type DoorSiteStatsBundle = {
+  doorSites: DoorSiteStats;
+};
+
+function idxOf(W: number, x: number, y: number) {
+  return y * W + x;
+}
+
+function inBounds(W: number, H: number, x: number, y: number) {
+  return x >= 0 && y >= 0 && x < W && y < H;
+}
+
+function findNearestRoomId(
+  regionId: Uint8Array,
+  W: number,
+  H: number,
+  p: Point,
+  maxRadius: number,
+): number {
+  const cx = p.x | 0;
+  const cy = p.y | 0;
+
+  if (inBounds(W, H, cx, cy)) {
+    const v = regionId[idxOf(W, cx, cy)] | 0;
+    if (v !== 0) return v;
+  }
+
+  for (let r = 1; r <= maxRadius; r++) {
+    const x0 = cx - r;
+    const x1 = cx + r;
+    const y0 = cy - r;
+    const y1 = cy + r;
+
+    for (let x = x0; x <= x1; x++) {
+      for (const y of [y0, y1]) {
+        if (!inBounds(W, H, x, y)) continue;
+        const v = regionId[idxOf(W, x, y)] | 0;
+        if (v !== 0) return v;
+      }
+    }
+    for (let y = y0 + 1; y <= y1 - 1; y++) {
+      for (const x of [x0, x1]) {
+        if (!inBounds(W, H, x, y)) continue;
+        const v = regionId[idxOf(W, x, y)] | 0;
+        if (v !== 0) return v;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function pathPointsL(p0: Point, p1: Point, p2: Point): Point[] {
+  const pts: Point[] = [];
+
+  if (p0.x === p1.x) {
+    const sy = p0.y <= p1.y ? 1 : -1;
+    for (let y = p0.y; y !== p1.y + sy; y += sy) pts.push({ x: p0.x, y });
+  } else {
+    const sx = p0.x <= p1.x ? 1 : -1;
+    for (let x = p0.x; x !== p1.x + sx; x += sx) pts.push({ x, y: p0.y });
+  }
+
+  if (p1.x === p2.x) {
+    const sy = p1.y <= p2.y ? 1 : -1;
+    for (let y = p1.y; y !== p2.y + sy; y += sy) pts.push({ x: p2.x, y });
+  } else {
+    const sx = p1.x <= p2.x ? 1 : -1;
+    for (let x = p1.x; x !== p2.x + sx; x += sx) pts.push({ x, y: p2.y });
+  }
+
+  return pts;
+}
+
+function pickDoorTileOnCorridorPath(
+  dungeon: BspDungeonOutputs,
+  featureType: Uint8Array,
+  a: Point,
+  b: Point,
+  opts: {
+    minDistToWall: number;
+    preferCorridor: boolean;
+    trimEnds: number;
+  },
+): Point | null {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  const solid = dungeon.masks.solid;
+  const regionId = dungeon.masks.regionId;
+  const distWall = dungeon.masks.distanceToWall;
+
+  const corner1: Point = { x: a.x, y: b.y };
+  const corner2: Point = { x: b.x, y: a.y };
+
+  const candidates = [pathPointsL(a, corner1, b), pathPointsL(a, corner2, b)];
+
+  function isGood(p: Point) {
+    if (!inBounds(W, H, p.x, p.y)) return false;
+    const i = idxOf(W, p.x, p.y);
+    if (solid[i] !== 0) return false;
+    if (featureType[i] !== 0) return false;
+    if (distWall[i] < opts.minDistToWall) return false;
+    return true;
+  }
+
+  const trim = Math.max(0, opts.trimEnds | 0);
+
+  function iterTrimmed(pts: Point[]) {
+    if (pts.length <= trim * 2) return [];
+    return pts.slice(trim, pts.length - trim);
+  }
+
+  if (opts.preferCorridor) {
+    for (const raw of candidates) {
+      const pts = iterTrimmed(raw);
+      for (const p of pts) {
+        if (!isGood(p)) continue;
+        if (regionId[idxOf(W, p.x, p.y)] === 0) return p;
+      }
+    }
+  }
+
+  for (const raw of candidates) {
+    const pts = iterTrimmed(raw);
+    for (const p of pts) {
+      if (!isGood(p)) continue;
+      return p;
+    }
+  }
+
+  return null;
+}
+
+function pickDoorTileOnCorridorPathWithStats(
+  dungeon: BspDungeonOutputs,
+  featureType: Uint8Array,
+  a: Point,
+  b: Point,
+  opts: {
+    minDistToWall: number;
+    preferCorridor: boolean;
+    trimEnds: number;
+    requireThroat?: boolean; // When true, require door to be a corridor...room boundary throat.
+  },
+  stats: DoorSiteStats,
+): {
+  tile: Point | null;
+  preferCorridorHit: boolean;
+  hadAnyAcceptableCandidate: boolean;
+} {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  const solid = dungeon.masks.solid;
+  const regionId = dungeon.masks.regionId;
+  const distWall = dungeon.masks.distanceToWall;
+
+  const corner1: Point = { x: a.x, y: b.y };
+  const corner2: Point = { x: b.x, y: a.y };
+
+  const candidates = [pathPointsL(a, corner1, b), pathPointsL(a, corner2, b)];
+
+  const trim = Math.max(0, opts.trimEnds | 0);
+
+  function iterTrimmed(pts: Point[]) {
+    if (pts.length <= trim * 2) return [];
+    return pts.slice(trim, pts.length - trim);
+  }
+
+  function classify(
+    p: Point,
+  ): "ok" | "wall" | "occupied" | "dist" | "oob" | "throat" {
+    stats.pointsConsidered += 1;
+    if (!inBounds(W, H, p.x, p.y)) return "oob";
+
+    const i = idxOf(W, p.x, p.y);
+    if (solid[i] !== 0) {
+      stats.pointsRejectedWall += 1;
+      return "wall";
+    }
+    if (featureType[i] !== 0) {
+      stats.pointsRejectedOccupied += 1;
+      return "occupied";
+    }
+
+    // Door fixture type (see puzzlePatterns.ts usage): ft == 4
+    const DOOR_FT = 4;
+
+    // Reject if an adjacent tile already has a door (prevents side-by-side doors).
+    // (4-neighborhood only; diagonals ignored)
+    const n4 = [
+      { x: p.x - 1, y: p.y },
+      { x: p.x + 1, y: p.y },
+      { x: p.x, y: p.y - 1 },
+      { x: p.x, y: p.y + 1 },
+    ];
+    for (const q of n4) {
+      if (!inBounds(W, H, q.x, q.y)) continue;
+      const qi = idxOf(W, q.x, q.y);
+      if ((featureType[qi] | 0) === DOOR_FT) {
+        stats.pointsRejectedOccupied += 1;
+        return "occupied";
+      }
+    }
+
+    // Require "jambs": there must be solid walls on either E+W OR N+S.
+    // This avoids doors placed in open blobs / 2-wide corridors / weird adjacency.
+    // If any neighbor is OOB, treat as invalid (conservative).
+    if (
+      !inBounds(W, H, p.x - 1, p.y) ||
+      !inBounds(W, H, p.x + 1, p.y) ||
+      !inBounds(W, H, p.x, p.y - 1) ||
+      !inBounds(W, H, p.x, p.y + 1)
+    ) {
+      return "oob";
+    }
+    const w = solid[idxOf(W, p.x - 1, p.y)] !== 0;
+    const e = solid[idxOf(W, p.x + 1, p.y)] !== 0;
+    const n = solid[idxOf(W, p.x, p.y - 1)] !== 0;
+    const s = solid[idxOf(W, p.x, p.y + 1)] !== 0;
+    if (!((w && e) || (n && s))) {
+      stats.pointsRejectedWall += 1;
+      return "wall";
+    }
+
+    // We allow the door tile to be on either the corridor side (regionId==0)
+    // or the room boundary side (regionId>0), but it must sit at the interface.
+    if (opts.requireThroat) {
+      const selfRid = regionId[i] | 0;
+
+      // If jambs are E+W, the open axis is Y (north/south).
+      // If jambs are N+S, the open axis is X (east/west).
+      const openY = w && e && !(n && s);
+      const openX = n && s && !(w && e);
+
+      // If ambiguous (both true), be conservative: require that EITHER axis is a valid throat.
+      const checkOpenAxis = (axis: "x" | "y"): boolean => {
+        let aRid = 0,
+          bRid = 0;
+        if (axis === "x") {
+          aRid = regionId[idxOf(W, p.x - 1, p.y)] | 0;
+          bRid = regionId[idxOf(W, p.x + 1, p.y)] | 0;
+        } else {
+          aRid = regionId[idxOf(W, p.x, p.y - 1)] | 0;
+          bRid = regionId[idxOf(W, p.x, p.y + 1)] | 0;
+        }
+
+        // Reject corridor interior: corridor on both sides along open axis.
+        if (aRid === 0 && bRid === 0) return false;
+
+        // Accept only corridor↔room boundary interface.
+        // - If door tile is corridor-side (selfRid==0): one neighbor corridor, one neighbor room.
+        // - If door tile is room-side (selfRid>0): one neighbor corridor, one neighbor same room.
+        if (selfRid === 0) {
+          return (aRid === 0 && bRid > 0) || (bRid === 0 && aRid > 0);
+        }
+        return (
+          (aRid === 0 && bRid === selfRid) || (bRid === 0 && aRid === selfRid)
+        );
+      };
+
+      const ok =
+        (openX && checkOpenAxis("x")) ||
+        (openY && checkOpenAxis("y")) ||
+        (!openX && !openY && (checkOpenAxis("x") || checkOpenAxis("y")));
+
+      if (!ok) {
+        stats.pointsRejectedThroat += 1;
+        return "throat";
+      }
+    }
+
+    if (distWall[i] < opts.minDistToWall) {
+      stats.pointsRejectedDistToWall += 1;
+      return "dist";
+    }
+
+    stats.pointsAccepted += 1;
+    return "ok";
+  }
+
+  let hadAnyAcceptableCandidate = false;
+
+  if (opts.preferCorridor) {
+    for (const raw of candidates) {
+      const pts = iterTrimmed(raw);
+      for (const p of pts) {
+        const r = classify(p);
+        if (r !== "ok") continue;
+        hadAnyAcceptableCandidate = true;
+        if (regionId[idxOf(W, p.x, p.y)] === 0) {
+          stats.preferCorridorHits += 1;
+          return {
+            tile: p,
+            preferCorridorHit: true,
+            hadAnyAcceptableCandidate: true,
+          };
+        }
+      }
+    }
+  }
+
+  for (const raw of candidates) {
+    const pts = iterTrimmed(raw);
+    for (const p of pts) {
+      const r = classify(p);
+      if (r !== "ok") continue;
+      hadAnyAcceptableCandidate = true;
+      return {
+        tile: p,
+        preferCorridorHit: false,
+        hadAnyAcceptableCandidate: true,
+      };
+    }
+  }
+
+  return { tile: null, preferCorridorHit: false, hadAnyAcceptableCandidate };
+}
+
+export function findDoorSiteCandidatesAndStatsFromCorridors(
+  dungeon: BspDungeonOutputs,
+  featureType: Uint8Array,
+  opts?: {
+    requireThroat?: boolean;
+    maxRadius?: number;
+    minDistToWall?: number;
+    preferCorridor?: boolean;
+    trimEnds?: number;
+    duplicateBias?: number;
+  },
+): {
+  candidates: { x: number; y: number; roomA: number; roomB: number }[];
+  stats: DoorSiteStats;
+} {
+  const W = dungeon.width;
+  const H = dungeon.height;
+  const regionId = dungeon.masks.regionId;
+  const requireThroat = (opts && opts.requireThroat) ?? true;
+
+  const maxRadius = opts?.maxRadius ?? 10;
+  const minDistToWall = opts?.minDistToWall ?? 1;
+  const preferCorridor = opts?.preferCorridor ?? true;
+  const trimEnds = opts?.trimEnds ?? 0;
+  const duplicateBias = opts?.duplicateBias ?? 2;
+
+  const stats: DoorSiteStats = {
+    corridorsTotal: 0,
+    corridorsWithValidRoomPair: 0,
+    corridorsRejectedNoRooms: 0,
+    corridorsRejectedSameRoom: 0,
+    pointsConsidered: 0,
+    pointsRejectedWall: 0,
+    pointsRejectedOccupied: 0,
+    pointsRejectedThroat: 0,
+    pointsRejectedDistToWall: 0,
+    pointsAccepted: 0,
+    corridorsWithAnyCandidate: 0,
+    corridorsYieldedTile: 0,
+    preferCorridorHits: 0,
+    tilesUnique: 0,
+  };
+
+  const out: { x: number; y: number; roomA: number; roomB: number }[] = [];
+  const seen = new Set<number>();
+
+  for (const c of dungeon.meta.corridors) {
+    stats.corridorsTotal += 1;
+
+    const roomA = findNearestRoomId(regionId, W, H, c.a, maxRadius);
+    const roomB = findNearestRoomId(regionId, W, H, c.b, maxRadius);
+
+    if (roomA === 0 || roomB === 0) {
+      stats.corridorsRejectedNoRooms += 1;
+      continue;
+    }
+    if (roomA === roomB) {
+      stats.corridorsRejectedSameRoom += 1;
+      continue;
+    }
+
+    stats.corridorsWithValidRoomPair += 1;
+
+    const picked = pickDoorTileOnCorridorPathWithStats(
+      dungeon,
+      featureType,
+      c.a,
+      c.b,
+      {
+        minDistToWall,
+        preferCorridor,
+        trimEnds,
+        requireThroat,
+      },
+      stats,
+    );
+
+    if (picked.hadAnyAcceptableCandidate) stats.corridorsWithAnyCandidate += 1;
+    if (!picked.tile) continue;
+
+    stats.corridorsYieldedTile += 1;
+
+    seen.add(idxOf(W, picked.tile.x, picked.tile.y));
+
+    for (let i = 0; i < duplicateBias; i++) {
+      out.push({ x: picked.tile.x, y: picked.tile.y, roomA, roomB });
+    }
+  }
+
+  stats.tilesUnique = seen.size;
+
+  return { candidates: out, stats };
+}
+</file>
+
 <file path="src/evaluateCircuits.ts">
 // src/evaluateCircuits.ts
 //
@@ -12443,334 +13166,6 @@ export function generateDungeon(
 }
 </file>
 
-<file path="src/examples/MinimalExample.tsx">
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import hotkeys from "hotkeys-js";
-import * as THREE from "three";
-
-import DungeonRenderView from "../rendering/DungeonRenderView";
-
-import { isTileWalkable } from "../walkability";
-import { aStar8 } from "../pathfinding/aStar8";
-import {
-  clearPathMaskRGBA,
-  createPathMaskRGBA,
-  stampPath,
-} from "../rendering/pathMask";
-import {
-  initDungeonRuntimeState,
-  derivePlatesFromBlocks,
-  toggleLever,
-} from "../dungeonState";
-import { evaluateCircuits } from "../evaluateCircuits";
-
-import { computeStartCell } from "../inspect/computeStartCell";
-import { generateDungeon } from "../api/generateDungeon";
-
-import { CP437_TILES } from "../rendering/codepage437Tiles";
-
-// Turn system
-import { createPlayerActor, createMonstersFromResolved } from "../turn/createActors";
-import {
-  createTurnSystemState,
-  tickUntilPlayer,
-  commitPlayerAction,
-  defaultComputeCost,
-  defaultApplyAction,
-  type TurnSystemState,
-  type TurnSystemDeps,
-} from "../turn/turnSystem";
-import { decideChasePlayer } from "../turn/monsterAI";
-
-import "./styles.css";
-
-export interface Player {
-  x: number;
-  y: number;
-}
-
-// ---------------------------------------------------------------------------
-// Dungeon generation (via API so we get resolved monster spawns)
-// ---------------------------------------------------------------------------
-
-const SEED = "test";
-const THEME_ID = "medieval_keep";
-
-function buildDungeon() {
-  return generateDungeon({
-    seed: SEED,
-    level: 1,
-    themeId: THEME_ID,
-    width: 64,
-    height: 64,
-    pattern: { includeIntroGate: true },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export default function MinimalExample() {
-  const result = useMemo(() => buildDungeon(), []);
-  const dungeon = result.bsp;
-  const content = result.content;
-
-  const startCell = useMemo(() => computeStartCell(dungeon, content), [dungeon, content]);
-
-  // --- Runtime puzzle state (levers / doors / secrets) ---
-  const [runtime, setRuntime] = useState(() => {
-    let rt = initDungeonRuntimeState(content);
-    rt = derivePlatesFromBlocks(rt, content);
-    return evaluateCircuits(rt, content.meta.circuits).next;
-  });
-
-  useEffect(() => {
-    let rt = initDungeonRuntimeState(content);
-    rt = derivePlatesFromBlocks(rt, content);
-    setRuntime(evaluateCircuits(rt, content.meta.circuits).next);
-  }, [content]);
-
-  // Keep a ref so AI / walkability callbacks can always read the latest runtime
-  // without stale closure issues.
-  const runtimeRef = useRef(runtime);
-  useEffect(() => { runtimeRef.current = runtime; }, [runtime]);
-
-  // --- Turn system ---
-  const [turnState, setTurnState] = useState<TurnSystemState>(() => {
-    const player = createPlayerActor(startCell.x, startCell.y);
-    const monsters = createMonstersFromResolved(result.resolved);
-    const ts = createTurnSystemState(player, monsters);
-    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
-    return tickUntilPlayer(ts, deps);
-  });
-
-  // Stable ref to current turnState actors for cost computation.
-  const turnStateRef = useRef(turnState);
-  useEffect(() => { turnStateRef.current = turnState; }, [turnState]);
-
-  function buildDeps(
-    _dungeon: typeof dungeon,
-    _content: typeof content,
-    _runtime: typeof runtime,
-    _actors: TurnSystemState["actors"],
-  ): TurnSystemDeps {
-    return {
-      dungeon: _dungeon,
-      content: _content,
-      runtime: _runtime,
-      isWalkable: (x, y) =>
-        isTileWalkable(_dungeon, _content, x, y, {
-          isDoorOpen: (doorId) => !!runtimeRef.current?.doors?.[doorId]?.isOpen,
-          isSecretRevealed: (secretId) =>
-            !!runtimeRef.current?.secrets?.[secretId]?.revealed,
-        }),
-      monsterDecide: (state, monsterId) =>
-        decideChasePlayer(state, monsterId, _dungeon, _content, runtimeRef.current),
-      computeCost: (actorId, action) =>
-        defaultComputeCost(actorId, action, turnStateRef.current.actors),
-      applyAction: defaultApplyAction,
-      log: true,
-    };
-  }
-
-  // --- Convenience: player position from turn state ---
-  const playerActor = turnState.actors[turnState.playerId];
-  const playerX = playerActor?.x ?? startCell.x;
-  const playerY = playerActor?.y ?? startCell.y;
-
-  // --- Path mask ---
-  const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
-  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
-  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
-
-  useEffect(() => {
-    if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
-    const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
-    pathMaskRef.current = pm;
-    setPathMaskTex(pm.tex);
-    return () => {
-      pm.tex.dispose();
-      pathMaskRef.current = null;
-    };
-  }, [dungeon.width, dungeon.height]);
-
-  const recomputePlayerPath = useCallback(
-    (targetX: number, targetY: number) => {
-      const pm = pathMaskRef.current;
-      if (!pm) return;
-      clearPathMaskRGBA(pm.data);
-      const rt = runtimeRef.current;
-      const pathResult = aStar8(
-        dungeon,
-        content,
-        { x: playerX, y: playerY },
-        { x: targetX, y: targetY },
-        {
-          isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
-          isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
-        },
-      );
-      if (pathResult) stampPath(pm.data, dungeon.width, pathResult.path, "player");
-      pm.tex.needsUpdate = true;
-      setPathMaskTex(pm.tex);
-    },
-    [dungeon, content, playerX, playerY],
-  );
-
-  // --- Committed move helper ---
-  function tryCommitMove(dx: number, dy: number) {
-    setTurnState((prev) => {
-      if (!prev.awaitingPlayerInput) return prev;
-      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-      return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
-    });
-  }
-
-  function tryCommitWait() {
-    setTurnState((prev) => {
-      if (!prev.awaitingPlayerInput) return prev;
-      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-      return commitPlayerAction(prev, deps, { kind: "wait" });
-    });
-  }
-
-  // --- Keyboard input ---
-  useEffect(() => {
-    hotkeys("a,left",  () => tryCommitMove(-1, 0));
-    hotkeys("d,right", () => tryCommitMove(1, 0));
-    hotkeys("s,down",  () => tryCommitMove(0, 1));
-    hotkeys("w,up",    () => tryCommitMove(0, -1));
-    hotkeys(".",       () => tryCommitWait());
-
-    return () => hotkeys.unbind();
-  }, [dungeon, content]);
-
-  // Reset turn state when start cell changes (new dungeon)
-  useEffect(() => {
-    lastHoverCellRef.current = null;
-    const pm = pathMaskRef.current;
-    if (pm) {
-      clearPathMaskRGBA(pm.data);
-      pm.tex.needsUpdate = true;
-      setPathMaskTex(pm.tex);
-    }
-    const newPlayer = createPlayerActor(startCell.x, startCell.y);
-    const monsters = createMonstersFromResolved(result.resolved);
-    const ts = createTurnSystemState(newPlayer, monsters);
-    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
-    setTurnState(tickUntilPlayer(ts, deps));
-  }, [startCell.x, startCell.y]);
-
-  return (
-    <>
-      <DungeonRenderView
-        bsp={dungeon}
-        content={content}
-        focusX={playerX}
-        focusY={playerY}
-        onCellFocus={(cell) => console.log("cell focus", cell)}
-        playerX={playerX}
-        playerY={playerY}
-        playerTile={CP437_TILES.player}
-        floorTile={CP437_TILES.floor}
-        wallTile={CP437_TILES.wall}
-        doorTile={CP437_TILES.doorClosed}
-        keyTile={CP437_TILES.key}
-        leverTile={CP437_TILES.lever}
-        plateTile={CP437_TILES.plate}
-        blockTile={CP437_TILES.block}
-        chestTile={CP437_TILES.chest}
-        monsterTile={CP437_TILES.monster}
-        secretDoorTile={CP437_TILES.secretDoor}
-        hiddenPassageTile={CP437_TILES.hiddenPassage}
-        hazardDefaultTile={CP437_TILES.hazard}
-        exitTile={CP437_TILES.exit}
-        atlasUrl={"/textures/codepage437.png"}
-        atlasCols={32}
-        atlasRows={8}
-        hazardTilesByType={{
-          1: 48, // lava
-          2: 49, // poison
-          3: 50, // water
-          4: 51, // spikes
-        }}
-        zoom={32}
-        flipAtlasY={false}
-        flipGridX={false}
-        flipGridY={true}
-        selectedX={playerX}
-        selectedY={playerY}
-        onCellHover={({ x, y }) => {
-          const last = lastHoverCellRef.current;
-          if (last && last.x === x && last.y === y) return;
-          lastHoverCellRef.current = { x, y };
-          recomputePlayerPath(x, y);
-        }}
-        onCellHoverEnd={() => {
-          lastHoverCellRef.current = null;
-          const pm = pathMaskRef.current;
-          if (!pm) return;
-          clearPathMaskRGBA(pm.data);
-          pm.tex.needsUpdate = true;
-          setPathMaskTex(pm.tex);
-        }}
-        onCellClick={({ x, y }) => {
-          const w = dungeon.width;
-          const i = y * w + x;
-          const ft = content.masks.featureType[i] | 0;
-          const fid = content.masks.featureId[i] | 0;
-
-          // Lever toggle (FeatureType 6)
-          if (ft === 6 && fid) {
-            setRuntime((prev) => {
-              const next0 = toggleLever(prev, fid);
-              const next1 = derivePlatesFromBlocks(next0, content);
-              return evaluateCircuits(next1, content.meta.circuits).next;
-            });
-            return true;
-          }
-
-          // Click-to-navigate: commit a move for the first step toward target.
-          const rt = runtimeRef.current;
-          const pathResult = aStar8(
-            dungeon,
-            content,
-            { x: playerX, y: playerY },
-            { x, y },
-            {
-              isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
-              isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
-            },
-          );
-          if (!pathResult || pathResult.path.length < 2) return true;
-
-          const nextStep = pathResult.path[1];
-          const dx = nextStep.x - playerX;
-          const dy = nextStep.y - playerY;
-
-          setTurnState((prev) => {
-            if (!prev.awaitingPlayerInput) return prev;
-            const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-            return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
-          });
-
-          const pm = pathMaskRef.current;
-          if (pm) {
-            clearPathMaskRGBA(pm.data);
-            pm.tex.needsUpdate = true;
-            setPathMaskTex(pm.tex);
-          }
-
-          return true;
-        }}
-        pathMaskTex={pathMaskTex ?? undefined}
-      />
-    </>
-  );
-}
-</file>
-
 <file path="src/inspect/BatchResultsView.tsx">
 // src/inspect/BatchResultsView.tsx
 //
@@ -13574,716 +13969,6 @@ export function BatchResultsView(props: BatchResultsViewProps) {
 export default BatchResultsView;
 </file>
 
-<file path="src/rendering/tiles.ts">
-// src/rendering/tiles.ts
-import * as THREE from "three";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
-// FeatureType values are defined in mazeGen.ts as literal union 0..10.
-
-export type TileBuildParams = {
-  wallTile: number;
-  floorTile: number;
-
-  // FeatureType-specific tiles (adjust to your atlas)
-  monsterTile?: number; // FeatureType=1
-  chestTile?: number; // FeatureType=2
-  secretDoorTile?: number; // FeatureType=3
-  doorTile?: number; // FeatureType=4
-  keyTile?: number; // FeatureType=5
-  leverTile?: number; // FeatureType=6
-  plateTile?: number; // FeatureType=7
-  blockTile?: number; // FeatureType=8
-  hiddenPassageTile?: number; // FeatureType=9
-
-  // Hazards (FeatureType=10)
-  hazardDefaultTile?: number;
-  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
-
-  playerX?: number;
-  playerY?: number;
-  playerTile?: number;
-
-  exitX?: number;
-  exitY?: number;
-  exitTile?: number;
-};
-
-// 0=base, 1=player, 2=item/interactable, 3=hazard
-export function buildTintMask(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  params: Pick<TileBuildParams, "playerX" | "playerY">,
-): Uint8Array {
-  const W = bsp.width;
-  const H = bsp.height;
-  const out = new Uint8Array(W * H);
-
-  const solid = bsp.masks.solid; // 0 floor, 255 wall
-  const ft = content.masks.featureType;
-
-  for (let i = 0; i < out.length; i++) {
-    if (solid[i] === 255) {
-      out[i] = 0;
-      continue;
-    }
-
-    const featureType = ft[i] ?? 0;
-
-    // hazards get danger tint
-    if (featureType === 10) {
-      out[i] = 3;
-      continue;
-    }
-
-    // interactables/items (tinted consistently for now)
-    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
-    if (
-      featureType === 1 ||
-      featureType === 2 ||
-      featureType === 4 ||
-      featureType === 5 ||
-      featureType === 6 ||
-      featureType === 7 ||
-      featureType === 8 ||
-      featureType === 9
-    ) {
-      out[i] = 2;
-      continue;
-    }
-
-    out[i] = 0;
-  }
-
-  // Player wins
-  if (params.playerX !== undefined && params.playerY !== undefined) {
-    const px = params.playerX | 0;
-    const py = params.playerY | 0;
-    if (px >= 0 && px < W && py >= 0 && py < H) {
-      const pi = py * W + px;
-      if (solid[pi] !== 255) out[pi] = 1;
-    }
-  }
-
-  return out;
-}
-
-export function buildCharMask(
-  bsp: BspDungeonOutputs,
-  content: ContentOutputs,
-  params: TileBuildParams,
-): Uint8Array {
-  const W = bsp.width;
-  const H = bsp.height;
-
-  const out = new Uint8Array(W * H);
-
-  const solid = bsp.masks.solid; // 0 floor, 255 wall
-  const ft = content.masks.featureType; // FeatureType enum
-  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
-
-  for (let i = 0; i < out.length; i++) {
-    // Let shader choose base wall/floor. Only override with a non-zero tile index.
-    if (solid[i] === 255) {
-      out[i] = 0;
-      continue;
-    }
-
-    const featureType = ft[i] ?? 0;
-
-    let t = 0;
-    switch (featureType) {
-      case 1: // monster (if used)
-        t = params.monsterTile ?? 0;
-        break;
-      case 2: // chest
-        t = params.chestTile ?? 0;
-        break;
-      case 3: // secret door
-        t = params.secretDoorTile ?? 0;
-        break;
-      case 4: // door
-        t = params.doorTile ?? 0;
-        break;
-      case 5: // key
-        t = params.keyTile ?? 0;
-        break;
-      case 6: // lever
-        t = params.leverTile ?? 0;
-        break;
-      case 7: // plate
-        t = params.plateTile ?? 0;
-        break;
-      case 8: // block
-        t = params.blockTile ?? 0;
-        break;
-      case 9: // hidden passage
-        t = params.hiddenPassageTile ?? 0;
-        break;
-      case 10: {
-        const hazardType = hz ? hz[i] : 0;
-        t =
-          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
-          params.hazardDefaultTile ??
-          0;
-        break;
-      }
-      default:
-        t = 0;
-    }
-
-    out[i] = t & 0xff;
-  }
-
-  // --- Exit overlay (stairs at centre of farthest room) ---------------------
-  if (
-    params.exitTile !== undefined &&
-    params.exitX !== undefined &&
-    params.exitY !== undefined
-  ) {
-    const ex = params.exitX | 0;
-    const ey = params.exitY | 0;
-    if (ex >= 0 && ex < W && ey >= 0 && ey < H) {
-      const ei = ey * W + ex;
-      if (solid[ei] !== 255) {
-        out[ei] = params.exitTile & 0xff;
-      }
-    }
-  }
-
-  // --- Player overlay (highest priority) ------------------------------------
-  if (
-    params.playerTile !== undefined &&
-    params.playerX !== undefined &&
-    params.playerY !== undefined
-  ) {
-    const px = params.playerX | 0;
-    const py = params.playerY | 0;
-    if (px >= 0 && px < W && py >= 0 && py < H) {
-      const pi = py * W + px;
-      // only place player on non-wall cells
-      if (solid[pi] !== 255) {
-        out[pi] = params.playerTile & 0xff;
-      }
-    }
-  }
-
-  return out;
-}
-
-export function maskToTileTextureR8(
-  mask: Uint8Array,
-  W: number,
-  H: number,
-  name: string,
-): THREE.DataTexture {
-  const tex = new THREE.DataTexture(
-    mask,
-    W,
-    H,
-    THREE.RedFormat,
-    THREE.UnsignedByteType,
-  );
-
-  tex.name = name;
-  tex.needsUpdate = true;
-
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-
-  // Match your generator DataTextures
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.flipY = false;
-
-  return tex;
-}
-
-export function maskToTileTextureRGBA8(
-  mask: Uint8Array,
-  W: number,
-  H: number,
-  name: string,
-): THREE.DataTexture {
-  const tex = new THREE.DataTexture(
-    mask,
-    W,
-    H,
-    THREE.RGBAFormat,
-    THREE.UnsignedByteType,
-  );
-
-  tex.name = name;
-  tex.needsUpdate = true;
-
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.flipY = false;
-
-  return tex;
-}
-</file>
-
-<file path="src/doorSites.ts">
-// src/doorSites.ts
-//
-// Shared helpers for locating corridor-based "door sites".
-// Used by:
-// - puzzle patterns (Lever->Door, Plate->Door)
-// - Milestone 2 door-site budgeting (gate placement clamping)
-//
-// Important: keep this module free of non-type imports from mazeGen.ts
-// to avoid runtime import cycles (we only import types).
-
-import type { BspDungeonOutputs } from "./mazeGen";
-
-type Point = { x: number; y: number };
-
-export type DoorSiteStats = {
-  corridorsTotal: number;
-
-  corridorsWithValidRoomPair: number;
-  corridorsRejectedNoRooms: number;
-  corridorsRejectedSameRoom: number;
-
-  // corridor-path evaluation
-  pointsConsidered: number;
-  pointsRejectedWall: number;
-  pointsRejectedOccupied: number;
-  pointsRejectedThroat: number;
-  pointsRejectedDistToWall: number;
-  pointsAccepted: number;
-
-  corridorsWithAnyCandidate: number; // at least one acceptable point exists
-  corridorsYieldedTile: number; // we actually picked a tile for this corridor
-  preferCorridorHits: number; // picked point where regionId==0 in prefer pass
-
-  tilesUnique: number; // computed at end
-};
-
-export type DoorSiteStatsBundle = {
-  doorSites: DoorSiteStats;
-};
-
-function idxOf(W: number, x: number, y: number) {
-  return y * W + x;
-}
-
-function inBounds(W: number, H: number, x: number, y: number) {
-  return x >= 0 && y >= 0 && x < W && y < H;
-}
-
-function findNearestRoomId(
-  regionId: Uint8Array,
-  W: number,
-  H: number,
-  p: Point,
-  maxRadius: number,
-): number {
-  const cx = p.x | 0;
-  const cy = p.y | 0;
-
-  if (inBounds(W, H, cx, cy)) {
-    const v = regionId[idxOf(W, cx, cy)] | 0;
-    if (v !== 0) return v;
-  }
-
-  for (let r = 1; r <= maxRadius; r++) {
-    const x0 = cx - r;
-    const x1 = cx + r;
-    const y0 = cy - r;
-    const y1 = cy + r;
-
-    for (let x = x0; x <= x1; x++) {
-      for (const y of [y0, y1]) {
-        if (!inBounds(W, H, x, y)) continue;
-        const v = regionId[idxOf(W, x, y)] | 0;
-        if (v !== 0) return v;
-      }
-    }
-    for (let y = y0 + 1; y <= y1 - 1; y++) {
-      for (const x of [x0, x1]) {
-        if (!inBounds(W, H, x, y)) continue;
-        const v = regionId[idxOf(W, x, y)] | 0;
-        if (v !== 0) return v;
-      }
-    }
-  }
-
-  return 0;
-}
-
-function pathPointsL(p0: Point, p1: Point, p2: Point): Point[] {
-  const pts: Point[] = [];
-
-  if (p0.x === p1.x) {
-    const sy = p0.y <= p1.y ? 1 : -1;
-    for (let y = p0.y; y !== p1.y + sy; y += sy) pts.push({ x: p0.x, y });
-  } else {
-    const sx = p0.x <= p1.x ? 1 : -1;
-    for (let x = p0.x; x !== p1.x + sx; x += sx) pts.push({ x, y: p0.y });
-  }
-
-  if (p1.x === p2.x) {
-    const sy = p1.y <= p2.y ? 1 : -1;
-    for (let y = p1.y; y !== p2.y + sy; y += sy) pts.push({ x: p2.x, y });
-  } else {
-    const sx = p1.x <= p2.x ? 1 : -1;
-    for (let x = p1.x; x !== p2.x + sx; x += sx) pts.push({ x, y: p2.y });
-  }
-
-  return pts;
-}
-
-function pickDoorTileOnCorridorPath(
-  dungeon: BspDungeonOutputs,
-  featureType: Uint8Array,
-  a: Point,
-  b: Point,
-  opts: {
-    minDistToWall: number;
-    preferCorridor: boolean;
-    trimEnds: number;
-  },
-): Point | null {
-  const W = dungeon.width;
-  const H = dungeon.height;
-
-  const solid = dungeon.masks.solid;
-  const regionId = dungeon.masks.regionId;
-  const distWall = dungeon.masks.distanceToWall;
-
-  const corner1: Point = { x: a.x, y: b.y };
-  const corner2: Point = { x: b.x, y: a.y };
-
-  const candidates = [pathPointsL(a, corner1, b), pathPointsL(a, corner2, b)];
-
-  function isGood(p: Point) {
-    if (!inBounds(W, H, p.x, p.y)) return false;
-    const i = idxOf(W, p.x, p.y);
-    if (solid[i] !== 0) return false;
-    if (featureType[i] !== 0) return false;
-    if (distWall[i] < opts.minDistToWall) return false;
-    return true;
-  }
-
-  const trim = Math.max(0, opts.trimEnds | 0);
-
-  function iterTrimmed(pts: Point[]) {
-    if (pts.length <= trim * 2) return [];
-    return pts.slice(trim, pts.length - trim);
-  }
-
-  if (opts.preferCorridor) {
-    for (const raw of candidates) {
-      const pts = iterTrimmed(raw);
-      for (const p of pts) {
-        if (!isGood(p)) continue;
-        if (regionId[idxOf(W, p.x, p.y)] === 0) return p;
-      }
-    }
-  }
-
-  for (const raw of candidates) {
-    const pts = iterTrimmed(raw);
-    for (const p of pts) {
-      if (!isGood(p)) continue;
-      return p;
-    }
-  }
-
-  return null;
-}
-
-function pickDoorTileOnCorridorPathWithStats(
-  dungeon: BspDungeonOutputs,
-  featureType: Uint8Array,
-  a: Point,
-  b: Point,
-  opts: {
-    minDistToWall: number;
-    preferCorridor: boolean;
-    trimEnds: number;
-    requireThroat?: boolean; // When true, require door to be a corridor...room boundary throat.
-  },
-  stats: DoorSiteStats,
-): {
-  tile: Point | null;
-  preferCorridorHit: boolean;
-  hadAnyAcceptableCandidate: boolean;
-} {
-  const W = dungeon.width;
-  const H = dungeon.height;
-
-  const solid = dungeon.masks.solid;
-  const regionId = dungeon.masks.regionId;
-  const distWall = dungeon.masks.distanceToWall;
-
-  const corner1: Point = { x: a.x, y: b.y };
-  const corner2: Point = { x: b.x, y: a.y };
-
-  const candidates = [pathPointsL(a, corner1, b), pathPointsL(a, corner2, b)];
-
-  const trim = Math.max(0, opts.trimEnds | 0);
-
-  function iterTrimmed(pts: Point[]) {
-    if (pts.length <= trim * 2) return [];
-    return pts.slice(trim, pts.length - trim);
-  }
-
-  function classify(
-    p: Point,
-  ): "ok" | "wall" | "occupied" | "dist" | "oob" | "throat" {
-    stats.pointsConsidered += 1;
-    if (!inBounds(W, H, p.x, p.y)) return "oob";
-
-    const i = idxOf(W, p.x, p.y);
-    if (solid[i] !== 0) {
-      stats.pointsRejectedWall += 1;
-      return "wall";
-    }
-    if (featureType[i] !== 0) {
-      stats.pointsRejectedOccupied += 1;
-      return "occupied";
-    }
-
-    // Door fixture type (see puzzlePatterns.ts usage): ft == 4
-    const DOOR_FT = 4;
-
-    // Reject if an adjacent tile already has a door (prevents side-by-side doors).
-    // (4-neighborhood only; diagonals ignored)
-    const n4 = [
-      { x: p.x - 1, y: p.y },
-      { x: p.x + 1, y: p.y },
-      { x: p.x, y: p.y - 1 },
-      { x: p.x, y: p.y + 1 },
-    ];
-    for (const q of n4) {
-      if (!inBounds(W, H, q.x, q.y)) continue;
-      const qi = idxOf(W, q.x, q.y);
-      if ((featureType[qi] | 0) === DOOR_FT) {
-        stats.pointsRejectedOccupied += 1;
-        return "occupied";
-      }
-    }
-
-    // Require "jambs": there must be solid walls on either E+W OR N+S.
-    // This avoids doors placed in open blobs / 2-wide corridors / weird adjacency.
-    // If any neighbor is OOB, treat as invalid (conservative).
-    if (
-      !inBounds(W, H, p.x - 1, p.y) ||
-      !inBounds(W, H, p.x + 1, p.y) ||
-      !inBounds(W, H, p.x, p.y - 1) ||
-      !inBounds(W, H, p.x, p.y + 1)
-    ) {
-      return "oob";
-    }
-    const w = solid[idxOf(W, p.x - 1, p.y)] !== 0;
-    const e = solid[idxOf(W, p.x + 1, p.y)] !== 0;
-    const n = solid[idxOf(W, p.x, p.y - 1)] !== 0;
-    const s = solid[idxOf(W, p.x, p.y + 1)] !== 0;
-    if (!((w && e) || (n && s))) {
-      stats.pointsRejectedWall += 1;
-      return "wall";
-    }
-
-    // We allow the door tile to be on either the corridor side (regionId==0)
-    // or the room boundary side (regionId>0), but it must sit at the interface.
-    if (opts.requireThroat) {
-      const selfRid = regionId[i] | 0;
-
-      // If jambs are E+W, the open axis is Y (north/south).
-      // If jambs are N+S, the open axis is X (east/west).
-      const openY = w && e && !(n && s);
-      const openX = n && s && !(w && e);
-
-      // If ambiguous (both true), be conservative: require that EITHER axis is a valid throat.
-      const checkOpenAxis = (axis: "x" | "y"): boolean => {
-        let aRid = 0,
-          bRid = 0;
-        if (axis === "x") {
-          aRid = regionId[idxOf(W, p.x - 1, p.y)] | 0;
-          bRid = regionId[idxOf(W, p.x + 1, p.y)] | 0;
-        } else {
-          aRid = regionId[idxOf(W, p.x, p.y - 1)] | 0;
-          bRid = regionId[idxOf(W, p.x, p.y + 1)] | 0;
-        }
-
-        // Reject corridor interior: corridor on both sides along open axis.
-        if (aRid === 0 && bRid === 0) return false;
-
-        // Accept only corridor↔room boundary interface.
-        // - If door tile is corridor-side (selfRid==0): one neighbor corridor, one neighbor room.
-        // - If door tile is room-side (selfRid>0): one neighbor corridor, one neighbor same room.
-        if (selfRid === 0) {
-          return (aRid === 0 && bRid > 0) || (bRid === 0 && aRid > 0);
-        }
-        return (
-          (aRid === 0 && bRid === selfRid) || (bRid === 0 && aRid === selfRid)
-        );
-      };
-
-      const ok =
-        (openX && checkOpenAxis("x")) ||
-        (openY && checkOpenAxis("y")) ||
-        (!openX && !openY && (checkOpenAxis("x") || checkOpenAxis("y")));
-
-      if (!ok) {
-        stats.pointsRejectedThroat += 1;
-        return "throat";
-      }
-    }
-
-    if (distWall[i] < opts.minDistToWall) {
-      stats.pointsRejectedDistToWall += 1;
-      return "dist";
-    }
-
-    stats.pointsAccepted += 1;
-    return "ok";
-  }
-
-  let hadAnyAcceptableCandidate = false;
-
-  if (opts.preferCorridor) {
-    for (const raw of candidates) {
-      const pts = iterTrimmed(raw);
-      for (const p of pts) {
-        const r = classify(p);
-        if (r !== "ok") continue;
-        hadAnyAcceptableCandidate = true;
-        if (regionId[idxOf(W, p.x, p.y)] === 0) {
-          stats.preferCorridorHits += 1;
-          return {
-            tile: p,
-            preferCorridorHit: true,
-            hadAnyAcceptableCandidate: true,
-          };
-        }
-      }
-    }
-  }
-
-  for (const raw of candidates) {
-    const pts = iterTrimmed(raw);
-    for (const p of pts) {
-      const r = classify(p);
-      if (r !== "ok") continue;
-      hadAnyAcceptableCandidate = true;
-      return {
-        tile: p,
-        preferCorridorHit: false,
-        hadAnyAcceptableCandidate: true,
-      };
-    }
-  }
-
-  return { tile: null, preferCorridorHit: false, hadAnyAcceptableCandidate };
-}
-
-export function findDoorSiteCandidatesAndStatsFromCorridors(
-  dungeon: BspDungeonOutputs,
-  featureType: Uint8Array,
-  opts?: {
-    requireThroat?: boolean;
-    maxRadius?: number;
-    minDistToWall?: number;
-    preferCorridor?: boolean;
-    trimEnds?: number;
-    duplicateBias?: number;
-  },
-): {
-  candidates: { x: number; y: number; roomA: number; roomB: number }[];
-  stats: DoorSiteStats;
-} {
-  const W = dungeon.width;
-  const H = dungeon.height;
-  const regionId = dungeon.masks.regionId;
-  const requireThroat = (opts && opts.requireThroat) ?? true;
-
-  const maxRadius = opts?.maxRadius ?? 10;
-  const minDistToWall = opts?.minDistToWall ?? 1;
-  const preferCorridor = opts?.preferCorridor ?? true;
-  const trimEnds = opts?.trimEnds ?? 0;
-  const duplicateBias = opts?.duplicateBias ?? 2;
-
-  const stats: DoorSiteStats = {
-    corridorsTotal: 0,
-    corridorsWithValidRoomPair: 0,
-    corridorsRejectedNoRooms: 0,
-    corridorsRejectedSameRoom: 0,
-    pointsConsidered: 0,
-    pointsRejectedWall: 0,
-    pointsRejectedOccupied: 0,
-    pointsRejectedThroat: 0,
-    pointsRejectedDistToWall: 0,
-    pointsAccepted: 0,
-    corridorsWithAnyCandidate: 0,
-    corridorsYieldedTile: 0,
-    preferCorridorHits: 0,
-    tilesUnique: 0,
-  };
-
-  const out: { x: number; y: number; roomA: number; roomB: number }[] = [];
-  const seen = new Set<number>();
-
-  for (const c of dungeon.meta.corridors) {
-    stats.corridorsTotal += 1;
-
-    const roomA = findNearestRoomId(regionId, W, H, c.a, maxRadius);
-    const roomB = findNearestRoomId(regionId, W, H, c.b, maxRadius);
-
-    if (roomA === 0 || roomB === 0) {
-      stats.corridorsRejectedNoRooms += 1;
-      continue;
-    }
-    if (roomA === roomB) {
-      stats.corridorsRejectedSameRoom += 1;
-      continue;
-    }
-
-    stats.corridorsWithValidRoomPair += 1;
-
-    const picked = pickDoorTileOnCorridorPathWithStats(
-      dungeon,
-      featureType,
-      c.a,
-      c.b,
-      {
-        minDistToWall,
-        preferCorridor,
-        trimEnds,
-        requireThroat,
-      },
-      stats,
-    );
-
-    if (picked.hadAnyAcceptableCandidate) stats.corridorsWithAnyCandidate += 1;
-    if (!picked.tile) continue;
-
-    stats.corridorsYieldedTile += 1;
-
-    seen.add(idxOf(W, picked.tile.x, picked.tile.y));
-
-    for (let i = 0; i < duplicateBias; i++) {
-      out.push({ x: picked.tile.x, y: picked.tile.y, roomA, roomB });
-    }
-  }
-
-  stats.tilesUnique = seen.size;
-
-  return { candidates: out, stats };
-}
-</file>
-
 <file path="src/styles.css">
 /* src/styles.css */
 
@@ -14903,427 +14588,635 @@ details[open] > .maze-summary {
 }
 </file>
 
-<file path="src/rendering/tileShader.ts">
-// src/rendering/tileShader.ts
-export const tileVert = /* glsl */ `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+<file path="src/examples/MinimalExample.tsx">
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import hotkeys from "hotkeys-js";
+import * as THREE from "three";
+
+import DungeonRenderView from "../rendering/DungeonRenderView";
+
+import { isTileWalkable } from "../walkability";
+import { aStar8 } from "../pathfinding/aStar8";
+import {
+  clearPathMaskRGBA,
+  createPathMaskRGBA,
+  stampPath,
+} from "../rendering/pathMask";
+import {
+  clearActorCharMask,
+  createActorCharMaskR8,
+  stampMonstersToActorCharMask,
+  type ActorCharMask,
+} from "../rendering/actorCharMask";
+import {
+  initDungeonRuntimeState,
+  derivePlatesFromBlocks,
+  toggleLever,
+} from "../dungeonState";
+import { evaluateCircuits } from "../evaluateCircuits";
+
+import { computeStartCell } from "../inspect/computeStartCell";
+import { generateDungeon } from "../api/generateDungeon";
+
+import { CP437_TILES } from "../rendering/codepage437Tiles";
+
+// Turn system
+import { createPlayerActor, createMonstersFromResolved } from "../turn/createActors";
+import {
+  createTurnSystemState,
+  tickUntilPlayer,
+  commitPlayerAction,
+  defaultComputeCost,
+  defaultApplyAction,
+  type TurnSystemState,
+  type TurnSystemDeps,
+} from "../turn/turnSystem";
+import { decideChasePlayer } from "../turn/monsterAI";
+
+import "./styles.css";
+
+export interface Player {
+  x: number;
+  y: number;
 }
-`;
 
-// src/rendering/tileShader.ts
-export const tileFrag = /* glsl */ `
-  precision highp float;
+// ---------------------------------------------------------------------------
+// Dungeon generation (via API so we get resolved monster spawns)
+// ---------------------------------------------------------------------------
 
-  uniform float uTime;
-  uniform float uHazardOmega;
-  uniform float uInteractOmega;
-  uniform float uAoStrength;
-  uniform vec2  uLightDir;
+const SEED = "test";
+const THEME_ID = "medieval_keep";
 
-  uniform sampler2D uSolid;
-  uniform sampler2D uChar;
-  uniform sampler2D uTint;
-  uniform sampler2D uAtlas;
+function buildDungeon() {
+  return generateDungeon({
+    seed: SEED,
+    level: 1,
+    themeId: THEME_ID,
+    width: 64,
+    height: 64,
+    pattern: { includeIntroGate: true },
+  });
+}
 
-  uniform vec2 uGridSize;
-  uniform vec2 uAtlasGrid;
-  uniform float uWallTile;
-  uniform float uFloorTile;
-  uniform float uDoorTile;
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
-  uniform float uFlipAtlasY;
-  uniform float uFlipGridX;
-  uniform float uFlipGridY;
+export default function MinimalExample() {
+  const result = useMemo(() => buildDungeon(), []);
+  const dungeon = result.bsp;
+  const content = result.content;
 
-  uniform vec4 uFloorColor;
-  uniform vec4 uWallColor;
-  uniform vec4 uPlayerColor;
-  uniform vec4 uItemColor;
-  uniform vec4 uHazardColor;
-  uniform vec4 uEnemyColor;
+  const startCell = useMemo(() => computeStartCell(dungeon, content), [dungeon, content]);
 
-  uniform float uEnemyBreathOmega;
-  uniform float uEnemyBreathAmp;
-  uniform float uMonsterTile;
+  // --- Runtime puzzle state (levers / doors / secrets) ---
+  const [runtime, setRuntime] = useState(() => {
+    let rt = initDungeonRuntimeState(content);
+    rt = derivePlatesFromBlocks(rt, content);
+    return evaluateCircuits(rt, content.meta.circuits).next;
+  });
 
-  // R1.5 affordances (inspection-only)
-  uniform vec2  uHoverCell;
-  uniform float uHoverEnabled;
-  uniform float uHoverStrength;
+  useEffect(() => {
+    let rt = initDungeonRuntimeState(content);
+    rt = derivePlatesFromBlocks(rt, content);
+    setRuntime(evaluateCircuits(rt, content.meta.circuits).next);
+  }, [content]);
 
-  // R1.5 selection affordance (inspection-only)
-  uniform vec2  uSelectedCell;
-  uniform float uSelectedEnabled;
-  uniform float uSelectedStrength;
+  // Keep a ref so AI / walkability callbacks can always read the latest runtime
+  // without stale closure issues.
+  const runtimeRef = useRef(runtime);
+  useEffect(() => { runtimeRef.current = runtime; }, [runtime]);
 
-  // M7 visibility + explored
-  uniform sampler2D uVisExplored;
-  uniform float uExploredDim;
-  uniform float uVisFgBoost;
-  uniform float uVisBgBoost;
+  // --- Turn system ---
+  const [turnState, setTurnState] = useState<TurnSystemState>(() => {
+    const player = createPlayerActor(startCell.x, startCell.y);
+    const monsters = createMonstersFromResolved(result.resolved);
+    const ts = createTurnSystemState(player, monsters);
+    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
+    return tickUntilPlayer(ts, deps);
+  });
 
-  // M8 path mask
-  uniform sampler2D uPathMask;
-  uniform float uPathStrength;
-  uniform float uPathAnimSpeed;
+  // Stable ref to current turnState actors for cost computation.
+  const turnStateRef = useRef(turnState);
+  useEffect(() => { turnStateRef.current = turnState; }, [turnState]);
 
-  varying vec2 vUv;
-
-  // ------------------------------------------------------------
-  // Helpers
-  // ------------------------------------------------------------
-
-  float tileIs(float tile, float target) {
-    return 1.0 - step(0.5, abs(tile - target));
+  function buildDeps(
+    _dungeon: typeof dungeon,
+    _content: typeof content,
+    _runtime: typeof runtime,
+    _actors: TurnSystemState["actors"],
+  ): TurnSystemDeps {
+    return {
+      dungeon: _dungeon,
+      content: _content,
+      runtime: _runtime,
+      isWalkable: (x, y) =>
+        isTileWalkable(_dungeon, _content, x, y, {
+          isDoorOpen: (doorId) => !!runtimeRef.current?.doors?.[doorId]?.isOpen,
+          isSecretRevealed: (secretId) =>
+            !!runtimeRef.current?.secrets?.[secretId]?.revealed,
+        }),
+      monsterDecide: (state, monsterId) =>
+        decideChasePlayer(state, monsterId, _dungeon, _content, runtimeRef.current),
+      computeCost: (actorId, action) =>
+        defaultComputeCost(actorId, action, turnStateRef.current.actors),
+      applyAction: defaultApplyAction,
+      log: true,
+    };
   }
 
-  float sampleR8(sampler2D tex, vec2 uv) {
-    return texture2D(tex, uv).r;
+  // --- Convenience: player position from turn state ---
+  const playerActor = turnState.actors[turnState.playerId];
+  const playerX = playerActor?.x ?? startCell.x;
+  const playerY = playerActor?.y ?? startCell.y;
+
+  // --- Path mask ---
+  const pathMaskRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(null);
+  const [pathMaskTex, setPathMaskTex] = useState<THREE.DataTexture | null>(null);
+  const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
+
+  // --- Actor char overlay ---
+  const actorMaskRef = useRef<ActorCharMask | null>(null);
+  const [actorCharTex, setActorCharTex] = useState<THREE.DataTexture | null>(null);
+
+  useEffect(() => {
+    if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
+    const pm = createPathMaskRGBA(dungeon.width, dungeon.height, "path_mask_rgba");
+    pathMaskRef.current = pm;
+    setPathMaskTex(pm.tex);
+    return () => {
+      pm.tex.dispose();
+      pathMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
+  // Create actor overlay texture once per dungeon dimensions
+  useEffect(() => {
+    if (actorMaskRef.current) actorMaskRef.current.tex.dispose();
+    const am = createActorCharMaskR8(dungeon.width, dungeon.height, "actor_char_r8");
+    actorMaskRef.current = am;
+    setActorCharTex(am.tex);
+    return () => {
+      am.tex.dispose();
+      actorMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
+  // Stamp monsters into the actor overlay whenever turn state or player position changes
+  useEffect(() => {
+    const am = actorMaskRef.current;
+    if (!am) return;
+    const W = dungeon.width;
+    const H = dungeon.height;
+    clearActorCharMask(am.data);
+    const monsters = Object.values(turnState.actors).filter(
+      (a) => a.kind === "monster" && a.alive,
+    );
+    stampMonstersToActorCharMask({
+      data: am.data,
+      W,
+      H,
+      monsters: monsters.map((m) => ({ id: m.id, x: m.x, y: m.y })),
+      monsterTile: CP437_TILES.monster,
+      avoidCell: { x: playerX, y: playerY },
+      blocked: (x, y) => dungeon.masks.solid[y * W + x] === 255,
+    });
+    am.tex.needsUpdate = true;
+  }, [turnState.actors, playerX, playerY, dungeon]);
+
+  const recomputePlayerPath = useCallback(
+    (targetX: number, targetY: number) => {
+      const pm = pathMaskRef.current;
+      if (!pm) return;
+      clearPathMaskRGBA(pm.data);
+      const rt = runtimeRef.current;
+      const pathResult = aStar8(
+        dungeon,
+        content,
+        { x: playerX, y: playerY },
+        { x: targetX, y: targetY },
+        {
+          isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
+          isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
+        },
+      );
+      if (pathResult) stampPath(pm.data, dungeon.width, pathResult.path, "player");
+      pm.tex.needsUpdate = true;
+      setPathMaskTex(pm.tex);
+    },
+    [dungeon, content, playerX, playerY],
+  );
+
+  // --- Committed move helper ---
+  function tryCommitMove(dx: number, dy: number) {
+    setTurnState((prev) => {
+      if (!prev.awaitingPlayerInput) return prev;
+      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
+      return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
+    });
   }
 
-  float isWallAtCell(vec2 cell) {
-    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
-    vec2 uv = (c + vec2(0.5)) / uGridSize;
-    return step(0.5, sampleR8(uSolid, uv));
+  function tryCommitWait() {
+    setTurnState((prev) => {
+      if (!prev.awaitingPlayerInput) return prev;
+      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
+      return commitPlayerAction(prev, deps, { kind: "wait" });
+    });
   }
 
-  vec2 breatheWarp(vec2 local, float t, float amp) {
-    vec2 p = local - vec2(0.5);
-    float sY = 1.0 + amp * t;
-    float sX = 1.0 - amp * 0.6 * t;
-    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
-    return clamp(q, vec2(0.001), vec2(0.999));
+  // --- Keyboard input ---
+  useEffect(() => {
+    hotkeys("a,left",  () => tryCommitMove(-1, 0));
+    hotkeys("d,right", () => tryCommitMove(1, 0));
+    hotkeys("s,down",  () => tryCommitMove(0, 1));
+    hotkeys("w,up",    () => tryCommitMove(0, -1));
+    hotkeys(".",       () => tryCommitWait());
+
+    return () => hotkeys.unbind();
+  }, [dungeon, content]);
+
+  // Reset turn state when start cell changes (new dungeon)
+  useEffect(() => {
+    lastHoverCellRef.current = null;
+    const pm = pathMaskRef.current;
+    if (pm) {
+      clearPathMaskRGBA(pm.data);
+      pm.tex.needsUpdate = true;
+      setPathMaskTex(pm.tex);
+    }
+    const newPlayer = createPlayerActor(startCell.x, startCell.y);
+    const monsters = createMonstersFromResolved(result.resolved);
+    const ts = createTurnSystemState(newPlayer, monsters);
+    const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
+    setTurnState(tickUntilPlayer(ts, deps));
+  }, [startCell.x, startCell.y]);
+
+  return (
+    <>
+      <DungeonRenderView
+        bsp={dungeon}
+        content={content}
+        focusX={playerX}
+        focusY={playerY}
+        onCellFocus={(cell) => console.log("cell focus", cell)}
+        playerX={playerX}
+        playerY={playerY}
+        playerTile={CP437_TILES.player}
+        floorTile={CP437_TILES.floor}
+        wallTile={CP437_TILES.wall}
+        doorTile={CP437_TILES.doorClosed}
+        keyTile={CP437_TILES.key}
+        leverTile={CP437_TILES.lever}
+        plateTile={CP437_TILES.plate}
+        blockTile={CP437_TILES.block}
+        chestTile={CP437_TILES.chest}
+        monsterTile={CP437_TILES.monster}
+        secretDoorTile={CP437_TILES.secretDoor}
+        hiddenPassageTile={CP437_TILES.hiddenPassage}
+        hazardDefaultTile={CP437_TILES.hazard}
+        exitTile={CP437_TILES.exit}
+        atlasUrl={"/textures/codepage437.png"}
+        atlasCols={32}
+        atlasRows={8}
+        hazardTilesByType={{
+          1: 48, // lava
+          2: 49, // poison
+          3: 50, // water
+          4: 51, // spikes
+        }}
+        zoom={32}
+        flipAtlasY={false}
+        flipGridX={false}
+        flipGridY={true}
+        selectedX={playerX}
+        selectedY={playerY}
+        onCellHover={({ x, y }) => {
+          const last = lastHoverCellRef.current;
+          if (last && last.x === x && last.y === y) return;
+          lastHoverCellRef.current = { x, y };
+          recomputePlayerPath(x, y);
+        }}
+        onCellHoverEnd={() => {
+          lastHoverCellRef.current = null;
+          const pm = pathMaskRef.current;
+          if (!pm) return;
+          clearPathMaskRGBA(pm.data);
+          pm.tex.needsUpdate = true;
+          setPathMaskTex(pm.tex);
+        }}
+        onCellClick={({ x, y }) => {
+          const w = dungeon.width;
+          const i = y * w + x;
+          const ft = content.masks.featureType[i] | 0;
+          const fid = content.masks.featureId[i] | 0;
+
+          // Lever toggle (FeatureType 6)
+          if (ft === 6 && fid) {
+            setRuntime((prev) => {
+              const next0 = toggleLever(prev, fid);
+              const next1 = derivePlatesFromBlocks(next0, content);
+              return evaluateCircuits(next1, content.meta.circuits).next;
+            });
+            return true;
+          }
+
+          // Click-to-navigate: commit a move for the first step toward target.
+          const rt = runtimeRef.current;
+          const pathResult = aStar8(
+            dungeon,
+            content,
+            { x: playerX, y: playerY },
+            { x, y },
+            {
+              isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
+              isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
+            },
+          );
+          if (!pathResult || pathResult.path.length < 2) return true;
+
+          const nextStep = pathResult.path[1];
+          const dx = nextStep.x - playerX;
+          const dy = nextStep.y - playerY;
+
+          setTurnState((prev) => {
+            if (!prev.awaitingPlayerInput) return prev;
+            const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
+            return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
+          });
+
+          const pm = pathMaskRef.current;
+          if (pm) {
+            clearPathMaskRGBA(pm.data);
+            pm.tex.needsUpdate = true;
+            setPathMaskTex(pm.tex);
+          }
+
+          return true;
+        }}
+        pathMaskTex={pathMaskTex ?? undefined}
+        actorCharTex={actorCharTex}
+      />
+    </>
+  );
+}
+</file>
+
+<file path="src/rendering/tiles.ts">
+// src/rendering/tiles.ts
+import * as THREE from "three";
+import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+// FeatureType values are defined in mazeGen.ts as literal union 0..10.
+
+export type TileBuildParams = {
+  wallTile: number;
+  floorTile: number;
+
+  // FeatureType-specific tiles (adjust to your atlas)
+  monsterTile?: number; // FeatureType=1
+  chestTile?: number; // FeatureType=2
+  secretDoorTile?: number; // FeatureType=3
+  doorTile?: number; // FeatureType=4
+  keyTile?: number; // FeatureType=5
+  leverTile?: number; // FeatureType=6
+  plateTile?: number; // FeatureType=7
+  blockTile?: number; // FeatureType=8
+  hiddenPassageTile?: number; // FeatureType=9
+
+  // Hazards (FeatureType=10)
+  hazardDefaultTile?: number;
+  hazardTilesByType?: Partial<Record<number, number>>; // hazardType -> tile index
+
+  playerX?: number;
+  playerY?: number;
+  playerTile?: number;
+
+  exitX?: number;
+  exitY?: number;
+  exitTile?: number;
+};
+
+// 0=base, 1=player, 2=item/interactable, 3=hazard
+export function buildTintMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: Pick<TileBuildParams, "playerX" | "playerY">,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType;
+
+  for (let i = 0; i < out.length; i++) {
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    // hazards get danger tint
+    if (featureType === 10) {
+      out[i] = 3;
+      continue;
+    }
+
+    // interactables/items (tinted consistently for now)
+    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
+    if (
+      featureType === 1 ||
+      featureType === 2 ||
+      featureType === 4 ||
+      featureType === 5 ||
+      featureType === 6 ||
+      featureType === 7 ||
+      featureType === 8 ||
+      featureType === 9
+    ) {
+      out[i] = 2;
+      continue;
+    }
+
+    out[i] = 0;
   }
 
-  float atlasAlphaAtLocal(
-    vec2 localCoord,
-    float tx,
-    float ty,
-    float cols,
-    float rows
+  // Player wins
+  if (params.playerX !== undefined && params.playerY !== undefined) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      if (solid[pi] !== 255) out[pi] = 1;
+    }
+  }
+
+  return out;
+}
+
+export function buildCharMask(
+  bsp: BspDungeonOutputs,
+  content: ContentOutputs,
+  params: TileBuildParams,
+): Uint8Array {
+  const W = bsp.width;
+  const H = bsp.height;
+
+  const out = new Uint8Array(W * H);
+
+  const solid = bsp.masks.solid; // 0 floor, 255 wall
+  const ft = content.masks.featureType; // FeatureType enum
+  const hz = content.masks.hazardType ?? null; // meaningful if ft==10
+
+  for (let i = 0; i < out.length; i++) {
+    // Let shader choose base wall/floor. Only override with a non-zero tile index.
+    if (solid[i] === 255) {
+      out[i] = 0;
+      continue;
+    }
+
+    const featureType = ft[i] ?? 0;
+
+    let t = 0;
+    switch (featureType) {
+      case 1: // monster — rendered via runtime actor overlay (actorCharMask), not here
+        t = 0;
+        break;
+      case 2: // chest
+        t = params.chestTile ?? 0;
+        break;
+      case 3: // secret door
+        t = params.secretDoorTile ?? 0;
+        break;
+      case 4: // door
+        t = params.doorTile ?? 0;
+        break;
+      case 5: // key
+        t = params.keyTile ?? 0;
+        break;
+      case 6: // lever
+        t = params.leverTile ?? 0;
+        break;
+      case 7: // plate
+        t = params.plateTile ?? 0;
+        break;
+      case 8: // block
+        t = params.blockTile ?? 0;
+        break;
+      case 9: // hidden passage
+        t = params.hiddenPassageTile ?? 0;
+        break;
+      case 10: {
+        const hazardType = hz ? hz[i] : 0;
+        t =
+          (params.hazardTilesByType && params.hazardTilesByType[hazardType]) ??
+          params.hazardDefaultTile ??
+          0;
+        break;
+      }
+      default:
+        t = 0;
+    }
+
+    out[i] = t & 0xff;
+  }
+
+  // --- Exit overlay (stairs at centre of farthest room) ---------------------
+  if (
+    params.exitTile !== undefined &&
+    params.exitX !== undefined &&
+    params.exitY !== undefined
   ) {
-    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
-              / vec2(cols, rows);
-    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
-    return texture2D(uAtlas, uv).a;
+    const ex = params.exitX | 0;
+    const ey = params.exitY | 0;
+    if (ex >= 0 && ex < W && ey >= 0 && ey < H) {
+      const ei = ey * W + ex;
+      if (solid[ei] !== 255) {
+        out[ei] = params.exitTile & 0xff;
+      }
+    }
   }
 
-  // ------------------------------------------------------------
-  // Main
-  // ------------------------------------------------------------
-
-  void main() {
-    vec2 uvGrid = vUv;
-    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
-    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
-
-    vec2 gridUv = uvGrid * uGridSize;
-    vec2 cell   = floor(gridUv);
-    vec2 local  = fract(gridUv);
-    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
-
-    float curWall = step(0.5, sampleR8(uSolid, texUv));
-
-    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
-    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
-    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
-    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
-
-    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
-    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
-    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
-    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
-
-    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
-    float isEdgeWall = curWall * (1.0 - allWall);
-
-    float chN = sampleR8(uChar, texUv);
-    float ch  = floor(chN * 255.0 + 0.5);
-    float hasChar = step(0.5, ch);
-
-    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
-      gl_FragColor = vec4(0.0);
-      return;
+  // --- Player overlay (highest priority) ------------------------------------
+  if (
+    params.playerTile !== undefined &&
+    params.playerX !== undefined &&
+    params.playerY !== undefined
+  ) {
+    const px = params.playerX | 0;
+    const py = params.playerY | 0;
+    if (px >= 0 && px < W && py >= 0 && py < H) {
+      const pi = py * W + px;
+      // only place player on non-wall cells
+      if (solid[pi] !== 255) {
+        out[pi] = params.playerTile & 0xff;
+      }
     }
-
-    // ------------------------------------------------------------
-    // M7 FOG OF WAR — sample vis/explored texture
-    // ------------------------------------------------------------
-    vec4 visData  = texture2D(uVisExplored, texUv);
-    float explored = step(0.5, visData.g);
-    float vis      = visData.a;           // 0..1 (already normalised by GL)
-
-    vec4 pathData = texture2D(uPathMask, texUv);
-
-    if (explored < 0.5) {
-      gl_FragColor = vec4(0.0);
-      return;
-    }
-
-    float dim = mix(uExploredDim, 1.0, vis);
-
-    float baseTile = mix(uFloorTile, uWallTile, isEdgeWall);
-
-    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
-
-    float cols = uAtlasGrid.x;
-    float rows = uAtlasGrid.y;
-
-    // --- Base tile (floor or wall) ---
-    float btx = mod(baseTile, cols);
-    float bty = floor(baseTile / cols);
-    vec2 baseAtlasUv = (vec2(btx, bty) + local) / vec2(cols, rows);
-    if (uFlipAtlasY > 0.5) baseAtlasUv.y = 1.0 - baseAtlasUv.y;
-    vec4 baseC = texture2D(uAtlas, baseAtlasUv);
-
-    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
-    float baseInkA = smoothstep(0.05, 0.20, baseC.a);
-    vec3 baseInk = baseC.rgb;
-
-    // --- M8 PATH GRADIENT — sampled before entity glyph (pathData already sampled above) ---
-    float pathStep = pathData.a * 255.0; // 0 = no path; 1..255 = step index
-
-    // Apply path overlay only on explored, walkable (non-wall) cells that have a path
-    // pathData.a encodes step index / 255; step 1 = 1/255 ≈ 0.004, so threshold must be < 1/255
-    float onPath = step(0.5 / 255.0, pathData.a) * explored * (1.0 - curWall);
-
-    // Infer direction-of-travel from stepped alpha neighbors (8-directional)
-    vec2 oneCell = vec2(1.0) / uGridSize;
-    float aN  = texture2D(uPathMask, texUv + vec2( 0.0,        -oneCell.y)).a * 255.0;
-    float aS  = texture2D(uPathMask, texUv + vec2( 0.0,         oneCell.y)).a * 255.0;
-    float aE  = texture2D(uPathMask, texUv + vec2( oneCell.x,   0.0      )).a * 255.0;
-    float aW  = texture2D(uPathMask, texUv + vec2(-oneCell.x,   0.0      )).a * 255.0;
-    float aNE = texture2D(uPathMask, texUv + vec2( oneCell.x,  -oneCell.y)).a * 255.0;
-    float aNW = texture2D(uPathMask, texUv + vec2(-oneCell.x,  -oneCell.y)).a * 255.0;
-    float aSE = texture2D(uPathMask, texUv + vec2( oneCell.x,   oneCell.y)).a * 255.0;
-    float aSW = texture2D(uPathMask, texUv + vec2(-oneCell.x,   oneCell.y)).a * 255.0;
-
-    // Direction toward goal = neighbor with step = pathStep + 1
-    vec2 towardGoal = vec2(0.0);
-    float target = pathStep + 1.0;
-    float diag = 0.7071; // 1/sqrt(2) — pre-normalised diagonal unit vectors
-    if (abs(aN  - target) < 0.5) towardGoal += vec2( 0.0,  -1.0);
-    if (abs(aS  - target) < 0.5) towardGoal += vec2( 0.0,   1.0);
-    if (abs(aE  - target) < 0.5) towardGoal += vec2( 1.0,   0.0);
-    if (abs(aW  - target) < 0.5) towardGoal += vec2(-1.0,   0.0);
-    if (abs(aNE - target) < 0.5) towardGoal += vec2( diag, -diag);
-    if (abs(aNW - target) < 0.5) towardGoal += vec2(-diag, -diag);
-    if (abs(aSE - target) < 0.5) towardGoal += vec2( diag,  diag);
-    if (abs(aSW - target) < 0.5) towardGoal += vec2(-diag,  diag);
-    float tLen = length(towardGoal);
-    vec2 travelDir = (tLen > 0.001) ? towardGoal / tLen : vec2(1.0, 0.0);
-
-    // Terminus cell: no neighbor has pathStep+1, so tLen == 0
-    float isTerminus = step(tLen, 0.001);
-
-    // Animated scrolling gradient along direction of travel (non-terminus only)
-    float proj = dot(local - vec2(0.5), travelDir);
-    float phase = fract(proj * 1.5 - uTime * uPathAnimSpeed);
-    float gradient = smoothstep(0.0, 0.4, phase) * (1.0 - smoothstep(0.6, 1.0, phase));
-
-    // Step banding for "marching" look
-    float band = fract(pathStep / 8.0);
-    float animIntensity = mix(gradient, band, 0.3);
-    // Terminus: flat full-strength colour; other cells: animated gradient
-    float pathIntensity = mix(animIntensity, 1.0, isTerminus) * uPathStrength * onPath;
-
-    // Path color: pick based on channel (R=enemy, G=npc, B=player)
-    // Blend toward the dominant channel's color
-    vec3 enemyPath  = vec3(1.0, 0.3, 0.3);
-    vec3 npcPath    = vec3(0.3, 1.0, 0.5);
-    vec3 playerPath = vec3(0.3, 0.6, 1.0);
-    float hasEnemy  = step(0.5, pathData.r);
-    float hasNpc    = step(0.5, pathData.g);
-    float hasPlayer = step(0.5, pathData.b);
-    vec3 pathColor = enemyPath * hasEnemy + npcPath * hasNpc + playerPath * hasPlayer;
-    float totalKinds = hasEnemy + hasNpc + hasPlayer;
-    pathColor = (totalKinds > 0.0) ? pathColor / totalKinds : playerPath;
-
-    // --- Entity glyph (if present) ---
-    float isMonster = tileIs(ch, uMonsterTile);
-    vec2 local2 = local;
-
-    if (isMonster > 0.5) {
-      float breath = sin(uTime * uEnemyBreathOmega);
-      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
-    }
-
-    float tx = mod(ch, cols);
-    float ty = floor(ch / cols);
-    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
-    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
-    vec4 charC = texture2D(uAtlas, atlasUv);
-    float charInkA = smoothstep(0.05, 0.20, charC.a) * hasChar;
-    vec3 charInk = charC.rgb;
-
-    // Use entity sample when present, else base
-    vec4 c = (hasChar > 0.5) ? charC : baseC;
-    float inkA = (hasChar > 0.5) ? charInkA : baseInkA;
-    vec3 ink = (hasChar > 0.5) ? charInk : baseInk;
-
-    // -------------------------
-    // Tint selection
-    // -------------------------
-
-    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
-
-    if (tintId > 0.5 && tintId < 1.5) {
-      float t = 0.5 + 0.5 * sin(uTime * 4.0);
-      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
-    } else if (tintId > 1.5 && tintId < 2.5) {
-      tint = uItemColor;
-    } else if (tintId > 2.5 && tintId < 3.5) {
-      tint = uHazardColor;
-    }
-
-    if (isMonster > 0.5) {
-      tint = uEnemyColor;
-    }
-
-    // -------------------------
-    // Lighting
-    // -------------------------
-
-    float modulate = 1.0;
-    if (tintId > 2.5 && tintId < 3.5)
-      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
-    else if (tintId > 1.5 && tintId < 2.5)
-      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
-
-    float ao = (curWall < 0.5)
-      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
-      : 0.0;
-
-    vec2 dir = normalize(uLightDir + vec2(1e-5));
-    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
-
-    float shade = mix(0.97, 1.08, isEdgeWall);
-    shade *= (1.0 - ao);
-    shade *= (1.0 - shadow);
-    shade *= modulate;
-
-    ink *= tint.rgb * shade;
-
-    // ------------------------------------------------------------
-    // DOOR EFFECT — stronger, calmer, architectural
-    // ------------------------------------------------------------
-
-    float isDoor = tileIs(ch, uDoorTile);
-
-    if (isDoor > 0.5) {
-      vec2 eps = vec2(1.0 / 32.0);
-
-      float aC = inkA;
-      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
-      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
-      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
-      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
-
-      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
-
-      // Slow, weighty pulse (much slower than items)
-      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
-
-      // Vertical bias — doors feel tall and solid
-      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
-
-      float strength = edge * pulse * vertical;
-
-      vec3 hi = vec3(0.92, 0.95, 1.0);
-      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
-    }
-
-    // -------------------------
-    // Item metallic sheen (unchanged)
-    // -------------------------
-
-    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
-      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
-      float d = abs(phase - 0.5);
-      float core = 1.0 - smoothstep(0.01, 0.03, d);
-      float halo = 1.0 - smoothstep(0.04, 0.16, d);
-      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
-      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
-      vec3 hi = vec3(0.96, 0.98, 1.0);
-      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
-    }
-
-    // --- Layer 1: base floor/wall ---
-    vec3 outRgb = mix(bg, ink, inkA);
-
-    // (path overlay is applied after fog-of-war below)
-
-    // ------------------------------------------------------------
-    // SELECTED OUTLINE (R1.5) — inspection affordance
-    // ------------------------------------------------------------
-    float sx = 1.0 - step(0.5, abs(cell.x - uSelectedCell.x));
-    float sy = 1.0 - step(0.5, abs(cell.y - uSelectedCell.y));
-    float isSelectedCell = uSelectedEnabled * sx * sy;
-
-    if (isSelectedCell > 0.0) {
-      // Thicker than hover
-      float t = 0.07;
-      float edge =
-        step(local.x, t) +
-        step(local.y, t) +
-        step(1.0 - local.x, t) +
-        step(1.0 - local.y, t);
-      edge = clamp(edge, 0.0, 1.0);
-
-      // Use item color (theme-derived) so we don't hardcode a new RGB
-      vec3 selCol = uItemColor.rgb;
-      outRgb = mix(outRgb, selCol, edge * uSelectedStrength);
-    }
-
-
-    // ------------------------------------------------------------
-    // HOVER OUTLINE (R1.5) — inspection affordance
-    // ------------------------------------------------------------
-    // cell is in the flipped grid space already (matches click mapping if we flip u/v in pointer handlers)
-    float hx = 1.0 - step(0.5, abs(cell.x - uHoverCell.x));
-    float hy = 1.0 - step(0.5, abs(cell.y - uHoverCell.y));
-    float isHoverCell = uHoverEnabled * hx * hy;
-
-    if (isHoverCell > 0.0) {
-      // Thin outline inside the cell (local is 0..1 within the cell)
-      float t = 0.04; // thickness in local space; tweak later if needed
-      float edge =
-        step(local.x, t) +
-        step(local.y, t) +
-        step(1.0 - local.x, t) +
-        step(1.0 - local.y, t);
-      edge = clamp(edge, 0.0, 1.0);
-
-      // High-contrast hover color; keep subtle (strength is uniform-tunable)
-      vec3 hoverCol = vec3(0.95);
-      outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
-    }
-
-    // ------------------------------------------------------------
-    // M7 — apply dim (explored-but-dark) and visibility boost
-    // ------------------------------------------------------------
-    outRgb *= dim;
-    // Warm ambient glow for currently visible cells
-    outRgb += vis * uVisBgBoost * vec3(0.15, 0.10, 0.06);
-    // Slight foreground lift for visible cells (brightens ink pixels)
-    outRgb = clamp(outRgb + vis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
-
-    // Explored but not currently visible: render glyph in dark grey
-    float notVisible = 1.0 - step(0.5 / 255.0, vis);
-    outRgb = mix(outRgb, mix(bg, vec3(0.05), inkA), notVisible);
-
-    // Path overlay applied after fog-of-war so it shows at full strength
-    // even on unexplored / not-visible cells
-    float pathBlendFinal = pathIntensity;
-    outRgb = mix(outRgb, pathColor, pathBlendFinal * 0.5);
-
-    gl_FragColor = vec4(outRgb, 1.0);
   }
 
-`;
+  return out;
+}
+
+export function maskToTileTextureR8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Match your generator DataTextures
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  return tex;
+}
+
+export function maskToTileTextureRGBA8(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+  );
+
+  tex.name = name;
+  tex.needsUpdate = true;
+
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+
+  return tex;
+}
 </file>
 
 <file path="src/rendering/RENDERING-CONTEXT.md">
@@ -15659,6 +15552,436 @@ Planned R2 scope:
 * **Snap-lerp camera** — smooth + deterministic
 
 ---
+</file>
+
+<file path="src/rendering/tileShader.ts">
+// src/rendering/tileShader.ts
+export const tileVert = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+// src/rendering/tileShader.ts
+export const tileFrag = /* glsl */ `
+  precision highp float;
+
+  uniform float uTime;
+  uniform float uHazardOmega;
+  uniform float uInteractOmega;
+  uniform float uAoStrength;
+  uniform vec2  uLightDir;
+
+  uniform sampler2D uSolid;
+  uniform sampler2D uChar;
+  uniform sampler2D uActorChar;
+  uniform sampler2D uTint;
+  uniform sampler2D uAtlas;
+
+  uniform vec2 uGridSize;
+  uniform vec2 uAtlasGrid;
+  uniform float uWallTile;
+  uniform float uFloorTile;
+  uniform float uDoorTile;
+
+  uniform float uFlipAtlasY;
+  uniform float uFlipGridX;
+  uniform float uFlipGridY;
+
+  uniform vec4 uFloorColor;
+  uniform vec4 uWallColor;
+  uniform vec4 uPlayerColor;
+  uniform vec4 uItemColor;
+  uniform vec4 uHazardColor;
+  uniform vec4 uEnemyColor;
+
+  uniform float uEnemyBreathOmega;
+  uniform float uEnemyBreathAmp;
+  uniform float uMonsterTile;
+
+  // R1.5 affordances (inspection-only)
+  uniform vec2  uHoverCell;
+  uniform float uHoverEnabled;
+  uniform float uHoverStrength;
+
+  // R1.5 selection affordance (inspection-only)
+  uniform vec2  uSelectedCell;
+  uniform float uSelectedEnabled;
+  uniform float uSelectedStrength;
+
+  // M7 visibility + explored
+  uniform sampler2D uVisExplored;
+  uniform float uExploredDim;
+  uniform float uVisFgBoost;
+  uniform float uVisBgBoost;
+
+  // M8 path mask
+  uniform sampler2D uPathMask;
+  uniform float uPathStrength;
+  uniform float uPathAnimSpeed;
+
+  varying vec2 vUv;
+
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
+
+  float tileIs(float tile, float target) {
+    return 1.0 - step(0.5, abs(tile - target));
+  }
+
+  float sampleR8(sampler2D tex, vec2 uv) {
+    return texture2D(tex, uv).r;
+  }
+
+  float isWallAtCell(vec2 cell) {
+    vec2 c = clamp(cell, vec2(0.0), uGridSize - vec2(1.0));
+    vec2 uv = (c + vec2(0.5)) / uGridSize;
+    return step(0.5, sampleR8(uSolid, uv));
+  }
+
+  vec2 breatheWarp(vec2 local, float t, float amp) {
+    vec2 p = local - vec2(0.5);
+    float sY = 1.0 + amp * t;
+    float sX = 1.0 - amp * 0.6 * t;
+    vec2 q = vec2(p.x * sX, p.y * sY) + vec2(0.5);
+    return clamp(q, vec2(0.001), vec2(0.999));
+  }
+
+  float atlasAlphaAtLocal(
+    vec2 localCoord,
+    float tx,
+    float ty,
+    float cols,
+    float rows
+  ) {
+    vec2 uv = (vec2(tx, ty) + clamp(localCoord, vec2(0.001), vec2(0.999)))
+              / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) uv.y = 1.0 - uv.y;
+    return texture2D(uAtlas, uv).a;
+  }
+
+  // ------------------------------------------------------------
+  // Main
+  // ------------------------------------------------------------
+
+  void main() {
+    vec2 uvGrid = vUv;
+    if (uFlipGridX > 0.5) uvGrid.x = 1.0 - uvGrid.x;
+    if (uFlipGridY > 0.5) uvGrid.y = 1.0 - uvGrid.y;
+
+    vec2 gridUv = uvGrid * uGridSize;
+    vec2 cell   = floor(gridUv);
+    vec2 local  = fract(gridUv);
+    vec2 texUv  = (cell + vec2(0.5)) / uGridSize;
+
+    float curWall = step(0.5, sampleR8(uSolid, texUv));
+
+    float wL = isWallAtCell(cell + vec2(-1.0, 0.0));
+    float wR = isWallAtCell(cell + vec2( 1.0, 0.0));
+    float wU = isWallAtCell(cell + vec2( 0.0,-1.0));
+    float wD = isWallAtCell(cell + vec2( 0.0, 1.0));
+
+    float wUL = isWallAtCell(cell + vec2(-1.0,-1.0));
+    float wUR = isWallAtCell(cell + vec2( 1.0,-1.0));
+    float wDL = isWallAtCell(cell + vec2(-1.0, 1.0));
+    float wDR = isWallAtCell(cell + vec2( 1.0, 1.0));
+
+    float allWall = wL*wR*wU*wD*wUL*wUR*wDL*wDR;
+    float isEdgeWall = curWall * (1.0 - allWall);
+
+    float chN = sampleR8(uChar, texUv);
+    float ch  = floor(chN * 255.0 + 0.5);
+
+    // Actor overlay: runtime-stamped monsters override the static char mask
+    float aChN = sampleR8(uActorChar, texUv);
+    float aCh  = floor(aChN * 255.0 + 0.5);
+    if (aCh > 0.5) ch = aCh;
+
+    float hasChar = step(0.5, ch);
+
+    if (curWall > 0.5 && isEdgeWall < 0.5 && hasChar < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    // ------------------------------------------------------------
+    // M7 FOG OF WAR — sample vis/explored texture
+    // ------------------------------------------------------------
+    vec4 visData  = texture2D(uVisExplored, texUv);
+    float explored = step(0.5, visData.g);
+    float vis      = visData.a;           // 0..1 (already normalised by GL)
+
+    vec4 pathData = texture2D(uPathMask, texUv);
+
+    if (explored < 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+
+    float dim = mix(uExploredDim, 1.0, vis);
+
+    float baseTile = mix(uFloorTile, uWallTile, isEdgeWall);
+
+    float tintId = floor(sampleR8(uTint, texUv) * 255.0 + 0.5);
+
+    float cols = uAtlasGrid.x;
+    float rows = uAtlasGrid.y;
+
+    // --- Base tile (floor or wall) ---
+    float btx = mod(baseTile, cols);
+    float bty = floor(baseTile / cols);
+    vec2 baseAtlasUv = (vec2(btx, bty) + local) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) baseAtlasUv.y = 1.0 - baseAtlasUv.y;
+    vec4 baseC = texture2D(uAtlas, baseAtlasUv);
+
+    vec3 bg = (isEdgeWall > 0.5) ? uWallColor.rgb : vec3(0.0);
+    float baseInkA = smoothstep(0.05, 0.20, baseC.a);
+    vec3 baseInk = baseC.rgb;
+
+    // --- M8 PATH GRADIENT — sampled before entity glyph (pathData already sampled above) ---
+    float pathStep = pathData.a * 255.0; // 0 = no path; 1..255 = step index
+
+    // Apply path overlay only on explored, walkable (non-wall) cells that have a path
+    // pathData.a encodes step index / 255; step 1 = 1/255 ≈ 0.004, so threshold must be < 1/255
+    float onPath = step(0.5 / 255.0, pathData.a) * explored * (1.0 - curWall);
+
+    // Infer direction-of-travel from stepped alpha neighbors (8-directional)
+    vec2 oneCell = vec2(1.0) / uGridSize;
+    float aN  = texture2D(uPathMask, texUv + vec2( 0.0,        -oneCell.y)).a * 255.0;
+    float aS  = texture2D(uPathMask, texUv + vec2( 0.0,         oneCell.y)).a * 255.0;
+    float aE  = texture2D(uPathMask, texUv + vec2( oneCell.x,   0.0      )).a * 255.0;
+    float aW  = texture2D(uPathMask, texUv + vec2(-oneCell.x,   0.0      )).a * 255.0;
+    float aNE = texture2D(uPathMask, texUv + vec2( oneCell.x,  -oneCell.y)).a * 255.0;
+    float aNW = texture2D(uPathMask, texUv + vec2(-oneCell.x,  -oneCell.y)).a * 255.0;
+    float aSE = texture2D(uPathMask, texUv + vec2( oneCell.x,   oneCell.y)).a * 255.0;
+    float aSW = texture2D(uPathMask, texUv + vec2(-oneCell.x,   oneCell.y)).a * 255.0;
+
+    // Direction toward goal = neighbor with step = pathStep + 1
+    vec2 towardGoal = vec2(0.0);
+    float target = pathStep + 1.0;
+    float diag = 0.7071; // 1/sqrt(2) — pre-normalised diagonal unit vectors
+    if (abs(aN  - target) < 0.5) towardGoal += vec2( 0.0,  -1.0);
+    if (abs(aS  - target) < 0.5) towardGoal += vec2( 0.0,   1.0);
+    if (abs(aE  - target) < 0.5) towardGoal += vec2( 1.0,   0.0);
+    if (abs(aW  - target) < 0.5) towardGoal += vec2(-1.0,   0.0);
+    if (abs(aNE - target) < 0.5) towardGoal += vec2( diag, -diag);
+    if (abs(aNW - target) < 0.5) towardGoal += vec2(-diag, -diag);
+    if (abs(aSE - target) < 0.5) towardGoal += vec2( diag,  diag);
+    if (abs(aSW - target) < 0.5) towardGoal += vec2(-diag,  diag);
+    float tLen = length(towardGoal);
+    vec2 travelDir = (tLen > 0.001) ? towardGoal / tLen : vec2(1.0, 0.0);
+
+    // Terminus cell: no neighbor has pathStep+1, so tLen == 0
+    float isTerminus = step(tLen, 0.001);
+
+    // Animated scrolling gradient along direction of travel (non-terminus only)
+    float proj = dot(local - vec2(0.5), travelDir);
+    float phase = fract(proj * 1.5 - uTime * uPathAnimSpeed);
+    float gradient = smoothstep(0.0, 0.4, phase) * (1.0 - smoothstep(0.6, 1.0, phase));
+
+    // Step banding for "marching" look
+    float band = fract(pathStep / 8.0);
+    float animIntensity = mix(gradient, band, 0.3);
+    // Terminus: flat full-strength colour; other cells: animated gradient
+    float pathIntensity = mix(animIntensity, 1.0, isTerminus) * uPathStrength * onPath;
+
+    // Path color: pick based on channel (R=enemy, G=npc, B=player)
+    // Blend toward the dominant channel's color
+    vec3 enemyPath  = vec3(1.0, 0.3, 0.3);
+    vec3 npcPath    = vec3(0.3, 1.0, 0.5);
+    vec3 playerPath = vec3(0.3, 0.6, 1.0);
+    float hasEnemy  = step(0.5, pathData.r);
+    float hasNpc    = step(0.5, pathData.g);
+    float hasPlayer = step(0.5, pathData.b);
+    vec3 pathColor = enemyPath * hasEnemy + npcPath * hasNpc + playerPath * hasPlayer;
+    float totalKinds = hasEnemy + hasNpc + hasPlayer;
+    pathColor = (totalKinds > 0.0) ? pathColor / totalKinds : playerPath;
+
+    // --- Entity glyph (if present) ---
+    float isMonster = tileIs(ch, uMonsterTile);
+    vec2 local2 = local;
+
+    if (isMonster > 0.5) {
+      float breath = sin(uTime * uEnemyBreathOmega);
+      local2 = breatheWarp(local, breath, uEnemyBreathAmp);
+    }
+
+    float tx = mod(ch, cols);
+    float ty = floor(ch / cols);
+    vec2 atlasUv = (vec2(tx, ty) + local2) / vec2(cols, rows);
+    if (uFlipAtlasY > 0.5) atlasUv.y = 1.0 - atlasUv.y;
+    vec4 charC = texture2D(uAtlas, atlasUv);
+    float charInkA = smoothstep(0.05, 0.20, charC.a) * hasChar;
+    vec3 charInk = charC.rgb;
+
+    // Use entity sample when present, else base
+    vec4 c = (hasChar > 0.5) ? charC : baseC;
+    float inkA = (hasChar > 0.5) ? charInkA : baseInkA;
+    vec3 ink = (hasChar > 0.5) ? charInk : baseInk;
+
+    // -------------------------
+    // Tint selection
+    // -------------------------
+
+    vec4 tint = mix(uFloorColor, uWallColor, isEdgeWall);
+
+    if (tintId > 0.5 && tintId < 1.5) {
+      float t = 0.5 + 0.5 * sin(uTime * 4.0);
+      tint.rgb = mix(uPlayerColor.rgb, vec3(1.0), 0.15 + 0.20 * t);
+    } else if (tintId > 1.5 && tintId < 2.5) {
+      tint = uItemColor;
+    } else if (tintId > 2.5 && tintId < 3.5) {
+      tint = uHazardColor;
+    }
+
+    if (isMonster > 0.5) {
+      tint = uEnemyColor;
+    }
+
+    // -------------------------
+    // Lighting
+    // -------------------------
+
+    float modulate = 1.0;
+    if (tintId > 2.5 && tintId < 3.5)
+      modulate *= 0.7 + 0.3 * sin(uTime * uHazardOmega);
+    else if (tintId > 1.5 && tintId < 2.5)
+      modulate *= 0.9 + 0.1 * sin(uTime * uInteractOmega);
+
+    float ao = (curWall < 0.5)
+      ? (wL + wR + wU + wD) * 0.25 * uAoStrength
+      : 0.0;
+
+    vec2 dir = normalize(uLightDir + vec2(1e-5));
+    float shadow = (1.0 - curWall) * isWallAtCell(cell + sign(dir)) * 0.25;
+
+    float shade = mix(0.97, 1.08, isEdgeWall);
+    shade *= (1.0 - ao);
+    shade *= (1.0 - shadow);
+    shade *= modulate;
+
+    ink *= tint.rgb * shade;
+
+    // ------------------------------------------------------------
+    // DOOR EFFECT — stronger, calmer, architectural
+    // ------------------------------------------------------------
+
+    float isDoor = tileIs(ch, uDoorTile);
+
+    if (isDoor > 0.5) {
+      vec2 eps = vec2(1.0 / 32.0);
+
+      float aC = inkA;
+      float aL = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(-eps.x, 0.0), tx, ty, cols, rows));
+      float aR = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2( eps.x, 0.0), tx, ty, cols, rows));
+      float aU = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0,-eps.y), tx, ty, cols, rows));
+      float aD = smoothstep(0.05, 0.20, atlasAlphaAtLocal(local2 + vec2(0.0, eps.y), tx, ty, cols, rows));
+
+      float edge = clamp((aC - min(min(aL,aR), min(aU,aD))) * 2.5, 0.0, 1.0);
+
+      // Slow, weighty pulse (much slower than items)
+      float pulse = 0.6 + 0.4 * sin(uTime * 0.9);
+
+      // Vertical bias — doors feel tall and solid
+      float vertical = smoothstep(0.1, 0.5, abs(local.y - 0.5));
+
+      float strength = edge * pulse * vertical;
+
+      vec3 hi = vec3(0.92, 0.95, 1.0);
+      ink = mix(ink, hi, strength * 0.22); // NOTICEABLY stronger, still < items
+    }
+
+    // -------------------------
+    // Item metallic sheen (unchanged)
+    // -------------------------
+
+    if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
+      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
+      float d = abs(phase - 0.5);
+      float core = 1.0 - smoothstep(0.01, 0.03, d);
+      float halo = 1.0 - smoothstep(0.04, 0.16, d);
+      float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
+      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
+      vec3 hi = vec3(0.96, 0.98, 1.0);
+      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
+    }
+
+    // --- Layer 1: base floor/wall ---
+    vec3 outRgb = mix(bg, ink, inkA);
+
+    // (path overlay is applied after fog-of-war below)
+
+    // ------------------------------------------------------------
+    // SELECTED OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    float sx = 1.0 - step(0.5, abs(cell.x - uSelectedCell.x));
+    float sy = 1.0 - step(0.5, abs(cell.y - uSelectedCell.y));
+    float isSelectedCell = uSelectedEnabled * sx * sy;
+
+    if (isSelectedCell > 0.0) {
+      // Thicker than hover
+      float t = 0.07;
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // Use item color (theme-derived) so we don't hardcode a new RGB
+      vec3 selCol = uItemColor.rgb;
+      outRgb = mix(outRgb, selCol, edge * uSelectedStrength);
+    }
+
+
+    // ------------------------------------------------------------
+    // HOVER OUTLINE (R1.5) — inspection affordance
+    // ------------------------------------------------------------
+    // cell is in the flipped grid space already (matches click mapping if we flip u/v in pointer handlers)
+    float hx = 1.0 - step(0.5, abs(cell.x - uHoverCell.x));
+    float hy = 1.0 - step(0.5, abs(cell.y - uHoverCell.y));
+    float isHoverCell = uHoverEnabled * hx * hy;
+
+    if (isHoverCell > 0.0) {
+      // Thin outline inside the cell (local is 0..1 within the cell)
+      float t = 0.04; // thickness in local space; tweak later if needed
+      float edge =
+        step(local.x, t) +
+        step(local.y, t) +
+        step(1.0 - local.x, t) +
+        step(1.0 - local.y, t);
+      edge = clamp(edge, 0.0, 1.0);
+
+      // High-contrast hover color; keep subtle (strength is uniform-tunable)
+      vec3 hoverCol = vec3(0.95);
+      outRgb = mix(outRgb, hoverCol, edge * uHoverStrength);
+    }
+
+    // ------------------------------------------------------------
+    // M7 — apply dim (explored-but-dark) and visibility boost
+    // ------------------------------------------------------------
+    outRgb *= dim;
+    // Warm ambient glow for currently visible cells
+    outRgb += vis * uVisBgBoost * vec3(0.15, 0.10, 0.06);
+    // Slight foreground lift for visible cells (brightens ink pixels)
+    outRgb = clamp(outRgb + vis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
+
+    // Explored but not currently visible: render glyph in dark grey
+    float notVisible = 1.0 - step(0.5 / 255.0, vis);
+    outRgb = mix(outRgb, mix(bg, vec3(0.05), inkA), notVisible);
+
+    // Path overlay applied after fog-of-war so it shows at full strength
+    // even on unexplored / not-visible cells
+    float pathBlendFinal = pathIntensity;
+    outRgb = mix(outRgb, pathColor, pathBlendFinal * 0.5);
+
+    gl_FragColor = vec4(outRgb, 1.0);
+  }
+
+`;
 </file>
 
 <file path="src/wizard/wizardReducer.ts">
@@ -21503,6 +21826,9 @@ type Props = {
   pathMaskTex?: THREE.DataTexture;
   pathStrength?: number;
   pathAnimSpeed?: number;
+
+  // Actor overlay: runtime monster glyphs stamped into R8 DataTexture
+  actorCharTex?: THREE.DataTexture | null;
 };
 
 // -------------------------------
@@ -21734,6 +22060,24 @@ function DungeonRenderScene(props: Props) {
     return t;
   }, []);
 
+  // 1×1 zero R8 fallback for uActorChar when no actor overlay exists
+  const fallbackActorCharTex = useMemo(() => {
+    const d = new Uint8Array([0]);
+    const t = new THREE.DataTexture(
+      d,
+      1,
+      1,
+      THREE.RedFormat,
+      THREE.UnsignedByteType,
+    );
+    t.name = "actor_char_fallback";
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    return t;
+  }, []);
+
   // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
   const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(
     null,
@@ -21756,6 +22100,7 @@ function DungeonRenderScene(props: Props) {
       uniforms: {
         uSolid: { value: bsp.textures.solid },
         uChar: { value: charTex },
+        uActorChar: { value: props.actorCharTex ?? fallbackActorCharTex },
         uTint: { value: tintTex },
         uAtlas: { value: atlas },
         uGridSize: { value: new THREE.Vector2(W, H) },
@@ -21984,6 +22329,11 @@ function DungeonRenderScene(props: Props) {
   useEffect(() => {
     mat.uniforms.uPathMask.value = props.pathMaskTex ?? fallbackPathTex;
   }, [mat, props.pathMaskTex, fallbackPathTex]);
+
+  // Actor overlay: update uActorChar uniform when prop changes
+  useEffect(() => {
+    mat.uniforms.uActorChar.value = props.actorCharTex ?? fallbackActorCharTex;
+  }, [mat, props.actorCharTex, fallbackActorCharTex]);
 
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;

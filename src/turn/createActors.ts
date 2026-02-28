@@ -52,6 +52,9 @@ export function createMonstersFromResolved(
       spawnId: spawn.spawnId,
       danger: spawn.danger,
       roomId: spawn.roomId,
+      alertState: "idle" as const,
+      searchTurnsLeft: 0,
+      lastKnownPlayerPos: null,
     };
   });
 }
