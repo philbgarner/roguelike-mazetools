@@ -29,6 +29,10 @@ export type TileBuildParams = {
   exitX?: number;
   exitY?: number;
   exitTile?: number;
+
+  // When true, featureType=8 (block) cells are skipped so dynamic runtime
+  // positions can be stamped into the actor overlay instead.
+  suppressBlocks?: boolean;
 };
 
 // 0=base, 1=player, 2=item/interactable, 3=hazard
@@ -136,8 +140,8 @@ export function buildCharMask(
       case 7: // plate
         t = params.plateTile ?? 0;
         break;
-      case 8: // block
-        t = params.blockTile ?? 0;
+      case 8: // block — skip if runtime overlay is handling it
+        t = params.suppressBlocks ? 0 : (params.blockTile ?? 0);
         break;
       case 9: // hidden passage
         t = params.hiddenPassageTile ?? 0;

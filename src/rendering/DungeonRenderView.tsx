@@ -150,6 +150,7 @@ type Props = {
   leverTile?: number;
   plateTile?: number;
   blockTile?: number;
+  suppressBlocks?: boolean;
   chestTile?: number;
   monsterTile?: number;
   secretDoorTile?: number;
@@ -381,6 +382,7 @@ function DungeonRenderScene(props: Props) {
       leverTile: props.leverTile,
       plateTile: props.plateTile,
       blockTile: props.blockTile,
+      suppressBlocks: props.suppressBlocks,
       chestTile: props.chestTile,
       monsterTile: props.monsterTile,
       secretDoorTile: props.secretDoorTile,
@@ -411,6 +413,7 @@ function DungeonRenderScene(props: Props) {
     props.leverTile,
     props.plateTile,
     props.blockTile,
+    props.suppressBlocks,
     props.chestTile,
     props.monsterTile,
     props.secretDoorTile,

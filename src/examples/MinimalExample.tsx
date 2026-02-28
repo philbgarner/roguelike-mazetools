@@ -14,6 +14,7 @@ import {
 import {
   clearActorCharMask,
   createActorCharMaskR8,
+  stampBlocksToActorCharMask,
   stampMonstersToActorCharMask,
   type ActorCharMask,
 } from "../rendering/actorCharMask";
@@ -279,7 +280,8 @@ export default function MinimalExample() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnState.actors, dungeon, content, rebuildPathMaskFromPlans]);
 
-  // Stamp monsters into the actor overlay whenever turn state or player position changes
+  // Stamp monsters and blocks into the actor overlay whenever turn state, player
+  // position, or runtime (block positions) change.
   useEffect(() => {
     const am = actorMaskRef.current;
     if (!am) return;
@@ -298,8 +300,15 @@ export default function MinimalExample() {
       avoidCell: { x: playerX, y: playerY },
       blocked: (x, y) => dungeon.masks.solid[y * W + x] === 255,
     });
+    stampBlocksToActorCharMask({
+      data: am.data,
+      W,
+      H,
+      blocks: Object.values(runtime.blocks),
+      blockTile: CP437_TILES.block,
+    });
     am.tex.needsUpdate = true;
-  }, [turnState.actors, playerX, playerY, dungeon]);
+  }, [turnState.actors, playerX, playerY, dungeon, runtime]);
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
@@ -362,6 +371,16 @@ export default function MinimalExample() {
           if (!pushed.ok) return;
           let rt2 = derivePlatesFromBlocks(pushed.next, content);
           rt2 = evaluateCircuits(rt2, content.meta.circuits).next;
+          console.log(
+            "block in",
+            nx,
+            ny,
+            "blockId=",
+            blockId,
+            pushed,
+            "rt2",
+            rt2,
+          );
           runtimeRef.current = rt2;
           setRuntime(rt2);
           setTurnState((prev) => {
@@ -503,6 +522,7 @@ export default function MinimalExample() {
       leverTile={CP437_TILES.lever}
       plateTile={CP437_TILES.plate}
       blockTile={CP437_TILES.block}
+      suppressBlocks
       chestTile={CP437_TILES.chest}
       monsterTile={CP437_TILES.monster}
       secretDoorTile={CP437_TILES.secretDoor}
