@@ -73,6 +73,8 @@ export interface Player {
 const SEED = "test";
 const THEME_ID = "medieval_keep";
 
+const AUTOWALK_DELAY = 63;
+
 /** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
 const PLAYER_VIS_RADIUS = 6;
 
@@ -348,30 +350,39 @@ export default function MinimalExample() {
     if (!turnState.awaitingPlayerInput) return;
     if (autoWalk.kind !== "active") return;
 
-    const rt = runtimeRef.current;
-    const { nextAutoWalk, action, pathForOverlay } = consumeNextAutoWalkStep({
-      autoWalk,
-      turnState,
-      dungeon,
-      content,
-      runtime: rt,
-    });
+    const timer = setTimeout(() => {
+      const rt = runtimeRef.current;
+      const { nextAutoWalk, action, pathForOverlay } = consumeNextAutoWalkStep({
+        autoWalk,
+        turnState,
+        dungeon,
+        content,
+        runtime: rt,
+      });
 
-    // Update overlay to remaining route (or clear if done).
-    playerPreviewPathRef.current = pathForOverlay;
-    rebuildPathMaskFromPlans();
+      // Update overlay to remaining route (or clear if done).
+      playerPreviewPathRef.current = pathForOverlay;
+      rebuildPathMaskFromPlans();
 
-    if (!action) {
-      setAutoWalk(nextAutoWalk); // idle — arrived or blocked
-      return;
-    }
+      if (!action) {
+        setAutoWalk(nextAutoWalk); // idle — arrived or blocked
+        return;
+      }
 
-    setAutoWalk(nextAutoWalk);
-    setTurnState((prev) => {
-      if (!prev.awaitingPlayerInput) return prev;
-      const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-      return commitPlayerAction(prev, deps, action);
-    });
+      setAutoWalk(nextAutoWalk);
+      setTurnState((prev) => {
+        if (!prev.awaitingPlayerInput) return prev;
+        const deps = buildDeps(
+          dungeon,
+          content,
+          runtimeRef.current,
+          prev.actors,
+        );
+        return commitPlayerAction(prev, deps, action);
+      });
+    }, AUTOWALK_DELAY);
+
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     turnState.awaitingPlayerInput,
