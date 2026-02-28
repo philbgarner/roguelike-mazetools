@@ -25,6 +25,7 @@ import {
   derivePlatesFromBlocks,
   tryPushBlock,
   initDungeonRuntimeState,
+  getBlockIdAt,
 } from "../dungeonState";
 import type {
   CircuitEvalDiagnostics,
@@ -692,6 +693,8 @@ export function InspectionShell(props: InspectionShellProps) {
         content,
         { x: player.x, y: player.y },
         { x: targetX, y: targetY },
+        {},
+        { isBlocked: (x, y) => getBlockIdAt(runtime, x, y) !== null },
       );
       if (result) {
         stampPath(pm.data, dungeon.width, result.path, "player");
@@ -700,7 +703,7 @@ export function InspectionShell(props: InspectionShellProps) {
       // Force DungeonRenderView to pick up the refreshed texture
       setPathMaskTex(pm.tex);
     },
-    [dungeon, content, player.x, player.y],
+    [dungeon, content, player.x, player.y, runtime],
   );
 
   // "focus" is the camera target; click-to-focus updates this

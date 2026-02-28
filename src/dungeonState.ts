@@ -115,6 +115,19 @@ export function initDungeonRuntimeState(
   for (const b of content.meta.blocks) {
     blocks[b.id] = { x: b.x, y: b.y, weightClass: b.weightClass ?? 0 };
   }
+  // Fallback: scan masks for blocks (featureType=8) missing from meta
+  {
+    const { featureType, featureId } = content.masks;
+    const W = content.width;
+    for (let i = 0; i < featureType.length; i++) {
+      if (featureType[i] === 8 && featureId[i] !== 0) {
+        const id = featureId[i];
+        if (!blocks[id]) {
+          blocks[id] = { x: i % W, y: (i / W) | 0, weightClass: 0 };
+        }
+      }
+    }
+  }
 
   // Hazards
   for (const h of content.meta.hazards) {
@@ -258,6 +271,17 @@ function hasBlockAt(
     if (b.x === x && b.y === y) return true;
   }
   return false;
+}
+
+export function getBlockIdAt(
+  state: DungeonRuntimeState,
+  x: number,
+  y: number,
+): number | null {
+  for (const [idStr, b] of Object.entries(state.blocks)) {
+    if (b.x === x && b.y === y) return Number(idStr);
+  }
+  return null;
 }
 
 /**

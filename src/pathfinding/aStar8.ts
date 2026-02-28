@@ -11,6 +11,11 @@ export type GridPos = { x: number; y: number };
 
 export type AStarPath = { path: GridPos[]; cost: number } | null;
 
+export type AStar8Options = {
+  /** Extra predicate: return true to treat (x,y) as impassable at runtime. */
+  isBlocked?: (x: number, y: number) => boolean;
+};
+
 // 8-directional offsets: [dx, dy, cost]
 const DIRS: [number, number, number][] = [
   [ 0, -1, 10], // N
@@ -34,6 +39,20 @@ function octile(ax: number, ay: number, bx: number, by: number): number {
   return 10 * (dx + dy) - 6 * Math.min(dx, dy);
 }
 
+/** Combined static + dynamic walkability check. */
+function isCellWalkable(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+  x: number,
+  y: number,
+  resolvers: WalkabilityResolvers,
+  opts: AStar8Options,
+): boolean {
+  if (!isTileWalkable(dungeon, content, x, y, resolvers)) return false;
+  if (opts.isBlocked?.(x, y)) return false;
+  return true;
+}
+
 /**
  * Find the shortest 8-directional path from `start` to `goal`.
  *
@@ -42,6 +61,7 @@ function octile(ax: number, ay: number, bx: number, by: number): number {
  * @param start     Starting grid position
  * @param goal      Target grid position
  * @param resolvers Optional walkability resolvers (door open, secret revealed)
+ * @param opts      Optional extra options (e.g. runtime dynamic blockers)
  * @returns         Path from start to goal (inclusive) and total cost, or null if unreachable.
  */
 export function aStar8(
@@ -50,13 +70,14 @@ export function aStar8(
   start: GridPos,
   goal: GridPos,
   resolvers: WalkabilityResolvers = {},
+  opts: AStar8Options = {},
 ): AStarPath {
   const W = dungeon.width;
   const H = dungeon.height;
 
   // Quick bounds + walkability check on goal
-  if (!isTileWalkable(dungeon, content, goal.x, goal.y, resolvers)) return null;
-  if (!isTileWalkable(dungeon, content, start.x, start.y, resolvers)) return null;
+  if (!isCellWalkable(dungeon, content, goal.x, goal.y, resolvers, opts)) return null;
+  if (!isCellWalkable(dungeon, content, start.x, start.y, resolvers, opts)) return null;
 
   // Flat-array maps for gScore and cameFrom
   const gScore = new Int32Array(W * H).fill(2147483647); // MAX_INT
@@ -99,13 +120,13 @@ export function aStar8(
       const nx = cx + dx;
       const ny = cy + dy;
 
-      if (!isTileWalkable(dungeon, content, nx, ny, resolvers)) continue;
+      if (!isCellWalkable(dungeon, content, nx, ny, resolvers, opts)) continue;
 
       // For diagonals: block if both orthogonal neighbors are walls (corner cutting)
       if (dx !== 0 && dy !== 0) {
         if (
-          !isTileWalkable(dungeon, content, cx + dx, cy, resolvers) ||
-          !isTileWalkable(dungeon, content, cx, cy + dy, resolvers)
+          !isCellWalkable(dungeon, content, cx + dx, cy, resolvers, opts) ||
+          !isCellWalkable(dungeon, content, cx, cy + dy, resolvers, opts)
         ) {
           continue;
         }

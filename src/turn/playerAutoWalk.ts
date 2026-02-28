@@ -13,6 +13,7 @@ import type { TurnSystemState } from "./turnSystem";
 import type { TurnAction } from "./turnTypes";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import type { DungeonRuntimeState } from "../dungeonState";
+import { getBlockIdAt } from "../dungeonState";
 
 // ---------------------------------------------------------------------------
 // State
@@ -38,6 +39,10 @@ function resolvers(runtime: DungeonRuntimeState) {
   };
 }
 
+function blockOpts(runtime: DungeonRuntimeState) {
+  return { isBlocked: (x: number, y: number) => getBlockIdAt(runtime, x, y) !== null };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -54,7 +59,7 @@ export function startAutoWalk(args: {
   runtime: DungeonRuntimeState;
 }): AutoWalkState {
   const { from, target, dungeon, content, runtime } = args;
-  const pathResult = aStar8(dungeon, content, from, target, resolvers(runtime));
+  const pathResult = aStar8(dungeon, content, from, target, resolvers(runtime), blockOpts(runtime));
   if (!pathResult || pathResult.path.length < 2) return { kind: "idle" };
   return { kind: "active", target, path: pathResult.path };
 }
@@ -107,7 +112,7 @@ export function consumeNextAutoWalkStep(args: {
   if (from.x === target.x && from.y === target.y) return idle;
 
   // Recompute path from current position each step.
-  const pathResult = aStar8(dungeon, content, from, target, resolvers(runtime));
+  const pathResult = aStar8(dungeon, content, from, target, resolvers(runtime), blockOpts(runtime));
   if (!pathResult || pathResult.path.length < 2) return idle;
 
   const nextStep = pathResult.path[1];

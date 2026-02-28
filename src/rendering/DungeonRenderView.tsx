@@ -1220,7 +1220,7 @@ export default function DungeonRenderView(props: Props) {
           }}
         />
       </Canvas>
-      {/*
+
       <div
         className="maze-tooltip"
         style={{
@@ -1233,7 +1233,7 @@ export default function DungeonRenderView(props: Props) {
         {tooltip.lines.map((ln, idx) => (
           <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
         ))}
-      </div>*/}
+      </div>
     </div>
   );
 }

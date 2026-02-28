@@ -21,7 +21,10 @@ import {
   initDungeonRuntimeState,
   derivePlatesFromBlocks,
   toggleLever,
+  getBlockIdAt,
+  tryPushBlock,
 } from "../dungeonState";
+import type { TurnAction } from "../turn/turnTypes";
 import { evaluateCircuits } from "../evaluateCircuits";
 
 import { computeStartCell } from "../inspect/computeStartCell";
@@ -54,6 +57,7 @@ import {
   cancelAutoWalk,
   consumeNextAutoWalkStep,
 } from "../turn/playerAutoWalk";
+import { countVisibleMonsters } from "../turn/visibleMonsters";
 import {
   createWorldEffectsState,
   advanceWorldEffects,
@@ -161,7 +165,7 @@ export default function MinimalExample() {
           isDoorOpen: (doorId) => !!runtimeRef.current?.doors?.[doorId]?.isOpen,
           isSecretRevealed: (secretId) =>
             !!runtimeRef.current?.secrets?.[secretId]?.revealed,
-        }),
+        }) && getBlockIdAt(runtimeRef.current, x, y) === null,
       monsterDecide: (state, monsterId) =>
         decideChasePlayer(
           state,
@@ -202,6 +206,12 @@ export default function MinimalExample() {
     import("../pathfinding/aStar8").GridPos[] | null
   >(null);
   const enemyPlannedPathsRef = useRef<PlannedPath[]>([]);
+
+  // --- Visibility buffer (from renderer) ---
+  const visDataRef = useRef<Uint8Array | null>(null);
+
+  // --- Autowalk cancel trigger: visible monster count baseline ---
+  const prevVisibleMonsterCountRef = useRef<number>(0);
 
   // --- Actor char overlay ---
   const actorMaskRef = useRef<ActorCharMask | null>(null);
@@ -303,6 +313,7 @@ export default function MinimalExample() {
           isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
           isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
         },
+        { isBlocked: (x, y) => getBlockIdAt(rt, x, y) !== null },
       );
       playerPreviewPathRef.current = pathResult?.path ?? null;
       rebuildPathMaskFromPlans();
@@ -310,20 +321,74 @@ export default function MinimalExample() {
     [dungeon, content, playerX, playerY, rebuildPathMaskFromPlans],
   );
 
-  // --- Committed move helper ---
-  function tryCommitMove(dx: number, dy: number) {
+  const computeVisibleMonsterCount = useCallback((): number => {
+    return countVisibleMonsters({
+      playerX,
+      playerY,
+      radius: PLAYER_VIS_RADIUS,
+      actors: turnState.actors,
+    });
+  }, [playerX, playerY, turnState.actors]);
+
+  // --- Centralized auto-walk cancellation ---
+  const cancelAutoWalkNow = useCallback(() => {
     setAutoWalk(cancelAutoWalk());
     playerPreviewPathRef.current = null;
+    lastHoverCellRef.current = null;
+    rebuildPathMaskFromPlans();
+  }, [rebuildPathMaskFromPlans]);
+
+  // --- Centralized player action commit (handles block push + rejection) ---
+  function attemptCommitPlayerAction(action: TurnAction): void {
+    const ts = turnStateRef.current;
+    if (!ts.awaitingPlayerInput) return;
+
+    if (action.kind === "move") {
+      const player = ts.actors[ts.playerId];
+      if (player) {
+        const nx = player.x + (action.dx ?? 0);
+        const ny = player.y + (action.dy ?? 0);
+        const blockId = getBlockIdAt(runtimeRef.current, nx, ny);
+        if (blockId !== null) {
+          // Push block in the direction the player is moving; reject move if push is impossible.
+          const pushed = tryPushBlock(
+            runtimeRef.current,
+            dungeon,
+            content,
+            blockId,
+            action.dx ?? 0,
+            action.dy ?? 0,
+          );
+          if (!pushed.ok) return;
+          let rt2 = derivePlatesFromBlocks(pushed.next, content);
+          rt2 = evaluateCircuits(rt2, content.meta.circuits).next;
+          runtimeRef.current = rt2;
+          setRuntime(rt2);
+          setTurnState((prev) => {
+            if (!prev.awaitingPlayerInput) return prev;
+            const deps = buildDeps(dungeon, content, rt2, prev.actors);
+            return commitPlayerAction(prev, deps, action);
+          });
+          return;
+        }
+      }
+    }
+
     setTurnState((prev) => {
       if (!prev.awaitingPlayerInput) return prev;
       const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
-      return commitPlayerAction(prev, deps, { kind: "move", dx, dy });
+      return commitPlayerAction(prev, deps, action);
     });
   }
 
+  // --- Committed move helper ---
+  function tryCommitMove(dx: number, dy: number) {
+    cancelAutoWalkNow();
+    attemptCommitPlayerAction({ kind: "move", dx, dy });
+  }
+
   function tryCommitWait() {
-    setAutoWalk(cancelAutoWalk());
-    playerPreviewPathRef.current = null;
+    cancelAutoWalkNow();
     setTurnState((prev) => {
       if (!prev.awaitingPlayerInput) return prev;
       const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
@@ -338,9 +403,32 @@ export default function MinimalExample() {
     hotkeys("s,down", () => tryCommitMove(0, 1));
     hotkeys("w,up", () => tryCommitMove(0, -1));
     hotkeys(".", () => tryCommitWait());
+    hotkeys("esc", (e) => {
+      e.preventDefault();
+      cancelAutoWalkNow();
+    });
 
     return () => hotkeys.unbind();
-  }, [dungeon, content]);
+  }, [dungeon, content, cancelAutoWalkNow]);
+
+  // --- Autowalk cancel trigger: visible monster count increases ---
+  useEffect(() => {
+    const current = computeVisibleMonsterCount();
+    const prev = prevVisibleMonsterCountRef.current;
+
+    if (autoWalk.kind === "active" && current > prev) {
+      cancelAutoWalkNow();
+    }
+
+    prevVisibleMonsterCountRef.current = current;
+  }, [
+    autoWalk.kind,
+    playerX,
+    playerY,
+    turnState.actors,
+    computeVisibleMonsterCount,
+    cancelAutoWalkNow,
+  ]);
 
   // --- Auto-walk step loop ---
   // Runs once per player turn while a route is active. Commits exactly one step,
@@ -370,16 +458,7 @@ export default function MinimalExample() {
       }
 
       setAutoWalk(nextAutoWalk);
-      setTurnState((prev) => {
-        if (!prev.awaitingPlayerInput) return prev;
-        const deps = buildDeps(
-          dungeon,
-          content,
-          runtimeRef.current,
-          prev.actors,
-        );
-        return commitPlayerAction(prev, deps, action);
-      });
+      attemptCommitPlayerAction(action);
     }, AUTOWALK_DELAY);
 
     return () => clearTimeout(timer);
@@ -408,101 +487,103 @@ export default function MinimalExample() {
   }, [startCell.x, startCell.y]);
 
   return (
-    <>
-      <DungeonRenderView
-        bsp={dungeon}
-        content={content}
-        focusX={playerX}
-        focusY={playerY}
-        onCellFocus={(cell) => console.log("cell focus", cell)}
-        playerX={playerX}
-        playerY={playerY}
-        playerTile={CP437_TILES.player}
-        floorTile={CP437_TILES.floor}
-        wallTile={CP437_TILES.wall}
-        doorTile={CP437_TILES.doorClosed}
-        keyTile={CP437_TILES.key}
-        leverTile={CP437_TILES.lever}
-        plateTile={CP437_TILES.plate}
-        blockTile={CP437_TILES.block}
-        chestTile={CP437_TILES.chest}
-        monsterTile={CP437_TILES.monster}
-        secretDoorTile={CP437_TILES.secretDoor}
-        hiddenPassageTile={CP437_TILES.hiddenPassage}
-        hazardDefaultTile={CP437_TILES.hazard}
-        exitTile={CP437_TILES.exit}
-        atlasUrl={"/textures/codepage437.png"}
-        atlasCols={32}
-        atlasRows={8}
-        hazardTilesByType={{
-          1: 48, // lava
-          2: 49, // poison
-          3: 50, // water
-          4: 51, // spikes
-        }}
-        zoom={32}
-        flipAtlasY={false}
-        flipGridX={false}
-        flipGridY={true}
-        selectedX={playerX}
-        selectedY={playerY}
-        onCellHover={({ x, y }) => {
-          // While auto-walking, keep the route overlay — don't overwrite with hover.
-          if (autoWalk.kind === "active") return;
-          const last = lastHoverCellRef.current;
-          if (last && last.x === x && last.y === y) return;
-          lastHoverCellRef.current = { x, y };
-          recomputePlayerPath(x, y);
-        }}
-        onCellHoverEnd={() => {
-          lastHoverCellRef.current = null;
-          // While auto-walking, preserve the route overlay.
-          if (autoWalk.kind === "active") return;
-          playerPreviewPathRef.current = null;
-          rebuildPathMaskFromPlans();
-        }}
-        onCellClick={({ x, y }) => {
-          const w = dungeon.width;
-          const i = y * w + x;
-          const ft = content.masks.featureType[i] | 0;
-          const fid = content.masks.featureId[i] | 0;
+    <DungeonRenderView
+      bsp={dungeon}
+      content={content}
+      focusX={playerX}
+      focusY={playerY}
+      onCellFocus={(cell) => console.log("cell focus", cell)}
+      playerX={playerX}
+      playerY={playerY}
+      playerTile={CP437_TILES.player}
+      floorTile={CP437_TILES.floor}
+      wallTile={CP437_TILES.wall}
+      doorTile={CP437_TILES.doorClosed}
+      keyTile={CP437_TILES.key}
+      leverTile={CP437_TILES.lever}
+      plateTile={CP437_TILES.plate}
+      blockTile={CP437_TILES.block}
+      chestTile={CP437_TILES.chest}
+      monsterTile={CP437_TILES.monster}
+      secretDoorTile={CP437_TILES.secretDoor}
+      hiddenPassageTile={CP437_TILES.hiddenPassage}
+      hazardDefaultTile={CP437_TILES.hazard}
+      exitTile={CP437_TILES.exit}
+      atlasUrl={"/textures/codepage437.png"}
+      atlasCols={32}
+      atlasRows={8}
+      hazardTilesByType={{
+        1: 48, // lava
+        2: 49, // poison
+        3: 50, // water
+        4: 51, // spikes
+      }}
+      zoom={32}
+      flipAtlasY={false}
+      flipGridX={false}
+      flipGridY={true}
+      selectedX={playerX}
+      selectedY={playerY}
+      onCellHover={({ x, y }) => {
+        // While auto-walking, keep the route overlay — don't overwrite with hover.
+        if (autoWalk.kind === "active") return;
+        const last = lastHoverCellRef.current;
+        if (last && last.x === x && last.y === y) return;
+        lastHoverCellRef.current = { x, y };
+        recomputePlayerPath(x, y);
+      }}
+      onCellHoverEnd={() => {
+        lastHoverCellRef.current = null;
+        // While auto-walking, preserve the route overlay.
+        if (autoWalk.kind === "active") return;
+        playerPreviewPathRef.current = null;
+        rebuildPathMaskFromPlans();
+      }}
+      onCellClick={({ x, y }) => {
+        const w = dungeon.width;
+        const i = y * w + x;
+        const ft = content.masks.featureType[i] | 0;
+        const fid = content.masks.featureId[i] | 0;
 
-          // Lever toggle (FeatureType 6)
-          if (ft === 6 && fid) {
-            setRuntime((prev) => {
-              const next0 = toggleLever(prev, fid);
-              const next1 = derivePlatesFromBlocks(next0, content);
-              return evaluateCircuits(next1, content.meta.circuits).next;
-            });
-            return true;
-          }
-
-          // Click-to-navigate: start auto-walk toward target.
-          // The step-per-turn effect loop will commit one move each time the
-          // player gets control, letting monsters act between steps.
-          const rt = runtimeRef.current;
-          const newAutoWalk = startAutoWalk({
-            from: { x: playerX, y: playerY },
-            target: { x, y },
-            dungeon,
-            content,
-            runtime: rt,
+        // Lever toggle (FeatureType 6)
+        if (ft === 6 && fid) {
+          setRuntime((prev) => {
+            const next0 = toggleLever(prev, fid);
+            const next1 = derivePlatesFromBlocks(next0, content);
+            return evaluateCircuits(next1, content.meta.circuits).next;
           });
-          setAutoWalk(newAutoWalk);
-
-          // Show the planned route immediately in the overlay.
-          if (newAutoWalk.kind === "active") {
-            playerPreviewPathRef.current = newAutoWalk.path;
-          } else {
-            playerPreviewPathRef.current = null;
-          }
-          rebuildPathMaskFromPlans();
-
           return true;
-        }}
-        pathMaskTex={pathMaskTex ?? undefined}
-        actorCharTex={actorCharTex}
-      />
-    </>
+        }
+
+        // Click-to-navigate: start auto-walk toward target.
+        // The step-per-turn effect loop will commit one move each time the
+        // player gets control, letting monsters act between steps.
+        const rt = runtimeRef.current;
+        const newAutoWalk = startAutoWalk({
+          from: { x: playerX, y: playerY },
+          target: { x, y },
+          dungeon,
+          content,
+          runtime: rt,
+        });
+        setAutoWalk(newAutoWalk);
+
+        // Baseline visible monsters at autowalk start (prevents first-tick mismatch).
+        prevVisibleMonsterCountRef.current = computeVisibleMonsterCount();
+
+        // Show the planned route immediately in the overlay.
+        if (newAutoWalk.kind === "active") {
+          playerPreviewPathRef.current = newAutoWalk.path;
+        } else {
+          playerPreviewPathRef.current = null;
+        }
+        rebuildPathMaskFromPlans();
+
+        return true;
+      }}
+      pathMaskTex={pathMaskTex ?? undefined}
+      actorCharTex={actorCharTex}
+      _visDataRef={visDataRef}
+    />
   );
 }

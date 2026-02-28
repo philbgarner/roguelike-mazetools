@@ -18,6 +18,7 @@ import { aStar8 } from "../pathfinding/aStar8";
 import type { GridPos } from "../pathfinding/aStar8";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import type { DungeonRuntimeState } from "../dungeonState";
+import { getBlockIdAt } from "../dungeonState";
 import type { TurnAction, ActorId, MonsterActor, MonsterAlertState } from "./turnTypes";
 import type { TurnSystemState } from "./turnSystem";
 
@@ -119,7 +120,9 @@ function _pathTo(
       !!runtime.secrets?.[secretId]?.revealed,
   };
 
-  const result = aStar8(dungeon, content, { x: sx, y: sy }, { x: gx, y: gy }, resolvers);
+  const result = aStar8(dungeon, content, { x: sx, y: sy }, { x: gx, y: gy }, resolvers, {
+    isBlocked: (x, y) => getBlockIdAt(runtime, x, y) !== null,
+  });
 
   if (!result || result.path.length < 2) return null;
 
