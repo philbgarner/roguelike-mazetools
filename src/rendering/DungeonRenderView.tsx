@@ -151,6 +151,8 @@ type Props = {
   plateTile?: number;
   blockTile?: number;
   suppressBlocks?: boolean;
+  // Runtime block positions for dynamic tint (metallic sheen follows the block)
+  blockPositions?: { x: number; y: number }[];
   chestTile?: number;
   monsterTile?: number;
   secretDoorTile?: number;
@@ -434,9 +436,19 @@ function DungeonRenderScene(props: Props) {
     const mask = buildTintMask(bsp, content, {
       playerX: props.playerX,
       playerY: props.playerY,
+      suppressBlocks: !!props.blockPositions,
     });
+    // Stamp runtime block positions with tintId=2 so sheen follows the block.
+    if (props.blockPositions) {
+      const solid = bsp.masks.solid;
+      for (const b of props.blockPositions) {
+        if (b.x < 0 || b.x >= W || b.y < 0 || b.y >= H) continue;
+        const i = b.y * W + b.x;
+        if (solid[i] !== 255) mask[i] = 2;
+      }
+    }
     return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
-  }, [bsp, content, W, H, props.playerX, props.playerY]);
+  }, [bsp, content, W, H, props.playerX, props.playerY, props.blockPositions]);
 
   // M8: 1×1 transparent fallback for uPathMask when no prop is supplied
   const fallbackPathTex = useMemo(() => {

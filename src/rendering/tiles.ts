@@ -39,7 +39,7 @@ export type TileBuildParams = {
 export function buildTintMask(
   bsp: BspDungeonOutputs,
   content: ContentOutputs,
-  params: Pick<TileBuildParams, "playerX" | "playerY">,
+  params: Pick<TileBuildParams, "playerX" | "playerY" | "suppressBlocks">,
 ): Uint8Array {
   const W = bsp.width;
   const H = bsp.height;
@@ -71,7 +71,7 @@ export function buildTintMask(
       featureType === 5 ||
       featureType === 6 ||
       featureType === 7 ||
-      featureType === 8 ||
+      (featureType === 8 && !params.suppressBlocks) ||
       featureType === 9
     ) {
       out[i] = 2;

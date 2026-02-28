@@ -128,6 +128,12 @@ export default function MinimalExample() {
     runtimeRef.current = runtime;
   }, [runtime]);
 
+  // Memoized block positions for tint overlay (metallic sheen follows moved blocks)
+  const blockPositions = useMemo(
+    () => Object.values(runtime.blocks),
+    [runtime],
+  );
+
   // --- World effects clock (accumulates scheduler time → ticks for fire/water etc.) ---
   // Must be declared before turnState useState so the initializer's tickUntilPlayer
   // can call onTimeAdvanced without hitting the TDZ.
@@ -523,6 +529,7 @@ export default function MinimalExample() {
       plateTile={CP437_TILES.plate}
       blockTile={CP437_TILES.block}
       suppressBlocks
+      blockPositions={blockPositions}
       chestTile={CP437_TILES.chest}
       monsterTile={CP437_TILES.monster}
       secretDoorTile={CP437_TILES.secretDoor}
