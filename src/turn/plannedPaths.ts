@@ -12,7 +12,12 @@ import type { DungeonRuntimeState } from "../dungeonState";
 import type { GridPos } from "../pathfinding/aStar8";
 import { computeChasePathForOverlay } from "./monsterAI";
 
-export type PlannedPath = { actorId: ActorId; path: GridPos[] };
+export type PlannedPath = {
+  actorId: ActorId;
+  path: GridPos[];
+  /** Number of path steps the enemy can cover in one player-turn of time. */
+  stepsToShow: number;
+};
 
 /**
  * Compute the planned path for every living, alerted monster.
@@ -32,6 +37,9 @@ export function computeEnemyPlannedPaths(args: {
   const { state, dungeon, content, runtime, maxSteps = 32 } = args;
   const results: PlannedPath[] = [];
 
+  const player = Object.values(state.actors).find((a) => a.kind === "player");
+  const playerSpeed = player?.speed ?? 1;
+
   for (const actor of Object.values(state.actors)) {
     if (actor.kind !== "monster" || !actor.alive) continue;
 
@@ -45,7 +53,8 @@ export function computeEnemyPlannedPaths(args: {
     );
 
     if (path) {
-      results.push({ actorId: actor.id, path });
+      const stepsToShow = Math.ceil(actor.speed / playerSpeed) + 1;
+      results.push({ actorId: actor.id, path, stepsToShow });
     }
   }
 

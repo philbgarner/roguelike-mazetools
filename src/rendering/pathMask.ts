@@ -24,7 +24,13 @@ export function createPathMaskRGBA(
 ): { data: Uint8Array; tex: THREE.DataTexture } {
   const data = new Uint8Array(W * H * 4); // zeroed
 
-  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+  const tex = new THREE.DataTexture(
+    data,
+    W,
+    H,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+  );
 
   tex.name = name;
 
@@ -68,10 +74,12 @@ export function stampPath(
   W: number,
   path: GridPos[],
   kind: PathMaskKind,
+  maxSteps?: number,
 ): void {
   const chOffset = kind === "enemy" ? 0 : kind === "npc" ? 1 : 2;
+  const stepCount = Math.min(maxSteps ?? path.length, path.length);
 
-  for (let s = 0; s < path.length; s++) {
+  for (let s = 0; s < stepCount; s++) {
     const { x, y } = path[s];
     const base = (y * W + x) * 4;
 

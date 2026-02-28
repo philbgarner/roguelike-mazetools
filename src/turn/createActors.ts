@@ -40,7 +40,8 @@ export function createMonstersFromResolved(
   if (!resolved) return [];
 
   return resolved.monsters.map((spawn) => {
-    const speed = clamp(1, 10, 4 + spawn.danger);
+    const speed = 15;
+    console.log("monster", spawn.entityId, "speed", speed);
     return {
       id: spawn.entityId,
       kind: "monster" as const,

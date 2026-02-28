@@ -183,7 +183,7 @@ export default function MinimalExample() {
           PLAYER_VIS_RADIUS,
         ),
       computeCost: (actorId, action) =>
-        defaultComputeCost(actorId, action, turnStateRef.current.actors),
+        defaultComputeCost(actorId, action, _actors),
       applyAction: defaultApplyAction,
       log: true,
       onTimeAdvanced: ({ prevTime, nextTime }) => {
@@ -264,7 +264,7 @@ export default function MinimalExample() {
     if (!pm) return;
     clearPathMaskRGBA(pm.data);
     for (const ep of enemyPlannedPathsRef.current) {
-      stampPath(pm.data, dungeon.width, ep.path, "enemy");
+      stampPath(pm.data, dungeon.width, ep.path, "enemy", ep.stepsToShow);
     }
     if (playerPreviewPathRef.current) {
       stampPath(pm.data, dungeon.width, playerPreviewPathRef.current, "player");
