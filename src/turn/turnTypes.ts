@@ -18,7 +18,12 @@ export type ActorBase = {
   blocksMovement: boolean;
 };
 
-export type PlayerActor = ActorBase & { kind: "player" };
+export type PlayerActor = ActorBase & {
+  kind: "player";
+  hp: number;
+  maxHp: number;
+  xp: number;
+};
 
 /**
  * Alert state machine for monster AI:

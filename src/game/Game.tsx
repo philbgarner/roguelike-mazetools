@@ -152,6 +152,7 @@ export default function Game() {
   // --- Turn system ---
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
     const player = createPlayerActor(startCell.x, startCell.y);
+    console.log("player", player);
     const monsters = createMonstersFromResolved(result.resolved);
     const ts = createTurnSystemState(player, monsters);
     const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);

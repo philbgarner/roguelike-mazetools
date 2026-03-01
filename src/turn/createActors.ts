@@ -13,9 +13,17 @@ import type { PlayerActor, MonsterActor } from "./turnTypes";
 
 /** Default player speed (acts 10x per BASE_TIME unit with default BASE_TIME=100). */
 const PLAYER_SPEED = 10;
+const PLAYER_BASE_HP = 20;
 
 /** Fallback stats when a spawnId isn't found in any stat table. */
-const FALLBACK_STATS = { speed: 8, hp: 10, attack: 3, defense: 1, xp: 10, glyph: "M" };
+const FALLBACK_STATS = {
+  speed: 8,
+  hp: 10,
+  attack: 3,
+  defense: 1,
+  xp: 10,
+  glyph: "M",
+};
 
 /**
  * Create the player actor at the given start position.
@@ -27,6 +35,8 @@ export function createPlayerActor(startX: number, startY: number): PlayerActor {
     kind: "player",
     x: startX,
     y: startY,
+    hp: PLAYER_BASE_HP,
+    maxHp: PLAYER_BASE_HP,
     speed: PLAYER_SPEED,
     alive: true,
     blocksMovement: true,
