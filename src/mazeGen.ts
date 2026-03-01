@@ -1271,6 +1271,280 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
 }
 
 // -----------------------------
+// Forest content (overworld portals)
+// -----------------------------
+
+export type DungeonTheme = "cave" | "ruins" | "crypt" | "temple" | "lair";
+
+export type DungeonPortal = {
+  id: number;
+  x: number;
+  y: number;
+  /** Clearing id (1-based, matches forest.meta.rooms index + 1) */
+  roomId: number;
+  /** 1 = closest to spawn (easiest) … N = farthest (hardest) */
+  level: number;
+  /** Deterministic seed derived from the forest seed + level */
+  seed: number;
+  theme: DungeonTheme;
+  /** 0-255 normalised difficulty, matches the danger mask value */
+  difficulty: number;
+};
+
+export type ForestContentOptions = {
+  seed?: number | string;
+  /** How many dungeon portals to place (default 10, capped to available clearings) */
+  portalCount?: number;
+  /** Which end of the map the player starts on (default "bottom") */
+  playerSpawnMode?: "bottom" | "top";
+};
+
+export type ForestContentOutputs = {
+  width: number;
+  height: number;
+
+  masks: {
+    /** 1 = player spawn marker, 2 = dungeon portal */
+    featureType: Uint8Array;
+    /** 0 = none, 1..N = portal id */
+    featureId: Uint8Array;
+    /** 0-255 difficulty at each portal cell */
+    danger: Uint8Array;
+  };
+
+  textures: {
+    featureType: THREE.DataTexture;
+    featureId: THREE.DataTexture;
+    danger: THREE.DataTexture;
+  };
+
+  debug: {
+    /** Forest ASCII with @ = player spawn, 1-9/0 = dungeon portals by level */
+    ascii: string;
+    imageData: {
+      featureType: ImageData;
+      featureId: ImageData;
+      danger: ImageData;
+    };
+  };
+
+  meta: {
+    seedUsed: number;
+    playerSpawn: Point;
+    playerSpawnRoomId: number;
+    dungeonPortals: DungeonPortal[];
+    roomGraph: Map<number, Set<number>>;
+    roomDistance: Map<number, number>;
+    rooms: Rect[];
+  };
+};
+
+const DUNGEON_THEMES: DungeonTheme[] = [
+  "cave",   // level 1-2
+  "ruins",  // level 3-4
+  "crypt",  // level 5-6
+  "temple", // level 7-8
+  "lair",   // level 9-10
+];
+
+function themeForLevel(level: number): DungeonTheme {
+  const i = Math.min(DUNGEON_THEMES.length - 1, Math.floor((level - 1) / 2));
+  return DUNGEON_THEMES[i];
+}
+
+/**
+ * Generates overworld content for a forest map produced by `generateForest`.
+ *
+ * Places:
+ *  - A player spawn marker in the clearing closest to the chosen map edge.
+ *  - Up to `portalCount` dungeon entrance portals spread across the remaining
+ *    clearings, ordered by BFS distance from the spawn so that nearer portals
+ *    have lower difficulty (level 1) and farther ones have higher difficulty
+ *    (up to level 10).
+ *
+ * Each portal carries a deterministic `seed`, `theme`, and `level` so the
+ * dungeon-screen generator knows exactly which dungeon to load.
+ */
+export function generateForestContent(
+  forest: BspDungeonOutputs,
+  opts?: ForestContentOptions,
+): ForestContentOutputs {
+  const seed = opts?.seed ?? 0;
+  const portalCount = Math.max(1, opts?.portalCount ?? 10);
+  const spawnMode = opts?.playerSpawnMode ?? "bottom";
+
+  const seedUsed = hashSeedToUint32(seed);
+  const rng = mulberry32(seedUsed);
+
+  const W = forest.width;
+  const H = forest.height;
+  const N = W * H;
+
+  const rooms = forest.meta.rooms;
+
+  // ---- Step 1: build clearing connectivity graph ----
+  const roomGraph = buildRoomGraphFromCorridors(forest);
+
+  // ---- Step 2: pick player spawn — clearing whose center is at the extreme Y ----
+  let spawnRoomId = 1;
+  let bestY = spawnMode === "bottom" ? -Infinity : Infinity;
+
+  for (let i = 0; i < rooms.length; i++) {
+    const rid = i + 1;
+    if (!roomGraph.has(rid)) continue;
+    const c = roomCenter(rooms[i]);
+    const isBetter = spawnMode === "bottom" ? c.y > bestY : c.y < bestY;
+    if (isBetter) {
+      bestY = c.y;
+      spawnRoomId = rid;
+    }
+  }
+
+  // ---- Step 3: BFS distances from spawn clearing ----
+  const { dist: roomDistance } = bfsRoomDistances(roomGraph, spawnRoomId);
+
+  const distValues = Array.from(roomDistance.values());
+  const maxDist = distValues.length > 0 ? Math.max(1, ...distValues) : 1;
+
+  // ---- Step 4: select up to portalCount clearings, spread evenly across bands ----
+  const candidates = Array.from(roomDistance.entries())
+    .filter(([rid]) => rid !== spawnRoomId)
+    .sort(([, da], [, db]) => da - db);
+
+  const portalsToPlace = Math.min(portalCount, candidates.length);
+  const selected: Array<{ roomId: number; dist: number }> = [];
+
+  if (portalsToPlace > 0) {
+    const minDist = candidates[0][1];
+    const bandWidth = Math.max(1, (maxDist - minDist) / portalsToPlace);
+    const used = new Set<number>();
+
+    for (let band = 0; band < portalsToPlace; band++) {
+      const lo = minDist + band * bandWidth;
+      const hi = lo + bandWidth;
+      const isLast = band === portalsToPlace - 1;
+
+      const inBand = candidates.filter(
+        ([rid, d]) => !used.has(rid) && d >= lo && (isLast || d < hi),
+      );
+
+      if (inBand.length === 0) {
+        const unused = candidates.find(([rid]) => !used.has(rid));
+        if (!unused) break;
+        used.add(unused[0]);
+        selected.push({ roomId: unused[0], dist: unused[1] });
+      } else {
+        const pick = inBand[Math.floor(rng() * inBand.length)];
+        used.add(pick[0]);
+        selected.push({ roomId: pick[0], dist: pick[1] });
+      }
+    }
+  }
+
+  // Sort ascending by distance so level 1 is nearest to spawn
+  selected.sort((a, b) => a.dist - b.dist);
+
+  // ---- Step 5: allocate masks ----
+  const featureType = new Uint8Array(N);
+  const featureId = new Uint8Array(N);
+  const danger = new Uint8Array(N);
+
+  // ---- Step 6: place player spawn marker ----
+  const spawnRoom = rooms[spawnRoomId - 1];
+  const spawnPoint =
+    sampleRoomFloorPoint(forest, spawnRoom, rng, 1) ?? roomCenter(spawnRoom);
+  featureType[keyXY(W, spawnPoint.x, spawnPoint.y)] = 1; // player spawn
+
+  // ---- Step 7: place dungeon portals ----
+  const portals: DungeonPortal[] = [];
+  let nextId = 1;
+
+  for (let i = 0; i < selected.length; i++) {
+    const { roomId, dist } = selected[i];
+    const level = i + 1;
+    const room = rooms[roomId - 1];
+    if (!room) continue;
+
+    const p = sampleRoomFloorPoint(forest, room, rng, 1);
+    if (!p) continue;
+
+    const cellIdx = keyXY(W, p.x, p.y);
+    if (featureType[cellIdx] !== 0) continue; // already occupied
+
+    const id = clamp255(nextId++);
+    const difficultyNorm = clamp255(32 + Math.round((dist / maxDist) * 223));
+    // Derive a deterministic dungeon seed from forest seed + level.
+    const portalSeed = ((seedUsed ^ Math.imul(level, 0x9e3779b9)) >>> 0);
+
+    featureType[cellIdx] = 2; // dungeon portal
+    featureId[cellIdx] = id;
+    danger[cellIdx] = difficultyNorm;
+
+    portals.push({
+      id,
+      x: p.x,
+      y: p.y,
+      roomId,
+      level,
+      seed: portalSeed,
+      theme: themeForLevel(level),
+      difficulty: difficultyNorm,
+    });
+  }
+
+  // ---- Step 8: build textures and debug images ----
+  const featureTypeTex = maskToDataTextureR8(
+    featureType, W, H, "forest_featureType",
+  );
+  const featureIdTex = maskToDataTextureR8(featureId, W, H, "forest_featureId");
+  const dangerTex = maskToDataTextureR8(danger, W, H, "forest_danger");
+
+  const featureTypeImg = maskToImageDataGrayscale(featureType, W, H);
+  const featureIdImg = maskToImageDataGrayscale(featureId, W, H);
+  const dangerImg = maskToImageDataGrayscale(danger, W, H);
+
+  // ---- Step 9: ASCII overlay ----
+  const overlay: Array<{ x: number; y: number; ch: string }> = [];
+  overlay.push({ x: spawnPoint.x, y: spawnPoint.y, ch: "@" });
+  for (const portal of portals) {
+    overlay.push({ x: portal.x, y: portal.y, ch: String(portal.level % 10) });
+  }
+  const ascii = overlayAscii(forest.debug.ascii, W, H, overlay);
+
+  return {
+    width: W,
+    height: H,
+
+    masks: { featureType, featureId, danger },
+
+    textures: {
+      featureType: featureTypeTex,
+      featureId: featureIdTex,
+      danger: dangerTex,
+    },
+
+    debug: {
+      ascii,
+      imageData: {
+        featureType: featureTypeImg,
+        featureId: featureIdImg,
+        danger: dangerImg,
+      },
+    },
+
+    meta: {
+      seedUsed,
+      playerSpawn: spawnPoint,
+      playerSpawnRoomId: spawnRoomId,
+      dungeonPortals: portals,
+      roomGraph,
+      roomDistance,
+      rooms,
+    },
+  };
+}
+
+// -----------------------------
 // Content generation (Milestone 2)
 // -----------------------------
 
