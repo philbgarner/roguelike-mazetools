@@ -2,6 +2,7 @@ import { createContext, useContext, useState, type ReactNode } from "react";
 
 export type GameScreen =
   | "main-menu"
+  | "home-base"
   | "overworld"
   | "dungeon"
   | "death"

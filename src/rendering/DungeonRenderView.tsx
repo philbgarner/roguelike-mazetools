@@ -5,7 +5,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { buildCharMask, buildTintMask, maskToTileTextureR8 } from "./tiles";
 import { createVisExploredRGBA, updateVisExploredRGBA } from "./visibility";
-import { tileFrag, tileVert } from "./tileShader";
+import { forestFrag, tileFrag, tileVert } from "./tileShader";
 import type { RenderTheme } from "./renderTheme";
 import { THEME_DEFAULT } from "./renderTheme";
 
@@ -215,6 +215,10 @@ type Props = {
 
   // Actor overlay: runtime monster glyphs stamped into R8 DataTexture
   actorCharTex?: THREE.DataTexture | null;
+
+  // Which fragment shader to use. 'forest' enables the tree-canopy rendering
+  // (used for the home-base map); defaults to 'dungeon'.
+  shaderVariant?: 'dungeon' | 'forest';
 };
 
 // -------------------------------
@@ -501,7 +505,7 @@ function DungeonRenderScene(props: Props) {
   const mat = useMemo(() => {
     return new THREE.ShaderMaterial({
       vertexShader: tileVert,
-      fragmentShader: tileFrag,
+      fragmentShader: props.shaderVariant === 'forest' ? forestFrag : tileFrag,
       uniforms: {
         uSolid: { value: bsp.textures.solid },
         uChar: { value: charTex },
@@ -574,6 +578,7 @@ function DungeonRenderScene(props: Props) {
     itemColor,
     hazardColor,
     props.theme,
+    props.shaderVariant,
   ]);
 
   // -------------------------------

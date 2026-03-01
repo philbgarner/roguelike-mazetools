@@ -144,16 +144,27 @@ function createEmptyContent(W: number, H: number): ContentOutputs {
 
 function buildForest() {
   const bsp = generateForest({ seed: SEED, width: 64, height: 64 });
-  return { bsp, content: createEmptyContent(bsp.width, bsp.height), resolved: null };
+  // Trees are visually present but physically passable — use zeroed solid for pathfinding.
+  const walkDungeon = {
+    ...bsp,
+    masks: { ...bsp.masks, solid: new Uint8Array(bsp.width * bsp.height) },
+  };
+  return {
+    bsp,
+    walkDungeon,
+    content: createEmptyContent(bsp.width, bsp.height),
+    resolved: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Dungeon() {
+export default function Overworld() {
   const result = useMemo(() => buildForest(), []);
   const dungeon = result.bsp;
+  const walkDungeon = result.walkDungeon;
   const content = result.content;
 
   const { goTo } = useGame();
@@ -222,12 +233,11 @@ export default function Dungeon() {
       dungeon: _dungeon,
       content: _content,
       runtime: _runtime,
-      isWalkable: (x, y) =>
-        isTileWalkable(_dungeon, _content, x, y, {
-          isDoorOpen: (doorId) => !!runtimeRef.current?.doors?.[doorId]?.isOpen,
-          isSecretRevealed: (secretId) =>
-            !!runtimeRef.current?.secrets?.[secretId]?.revealed,
-        }) && getBlockIdAt(runtimeRef.current, x, y) === null,
+      isWalkable: (x, y) => {
+        if (x < 0 || y < 0 || x >= _dungeon.width || y >= _dungeon.height)
+          return false;
+        return getBlockIdAt(runtimeRef.current, x, y) === null;
+      },
       monsterDecide: (state, monsterId) =>
         decideChasePlayer(
           state,
@@ -416,20 +426,17 @@ export default function Dungeon() {
     (targetX: number, targetY: number) => {
       const rt = runtimeRef.current;
       const pathResult = aStar8(
-        dungeon,
+        walkDungeon,
         content,
         { x: playerX, y: playerY },
         { x: targetX, y: targetY },
-        {
-          isDoorOpen: (doorId) => !!rt?.doors?.[doorId]?.isOpen,
-          isSecretRevealed: (secretId) => !!rt?.secrets?.[secretId]?.revealed,
-        },
+        {},
         { isBlocked: (x, y) => getBlockIdAt(rt, x, y) !== null },
       );
       playerPreviewPathRef.current = pathResult?.path ?? null;
       rebuildPathMaskFromPlans();
     },
-    [dungeon, content, playerX, playerY, rebuildPathMaskFromPlans],
+    [walkDungeon, content, playerX, playerY, rebuildPathMaskFromPlans],
   );
 
   const computeVisibleMonsterCount = useCallback((): number => {
@@ -564,7 +571,7 @@ export default function Dungeon() {
       const { nextAutoWalk, action, pathForOverlay } = consumeNextAutoWalkStep({
         autoWalk,
         turnState,
-        dungeon,
+        dungeon: walkDungeon,
         content,
         runtime: rt,
       });
@@ -588,7 +595,7 @@ export default function Dungeon() {
     turnState.awaitingPlayerInput,
     turnState.actors,
     autoWalk,
-    dungeon,
+    walkDungeon,
     content,
     rebuildPathMaskFromPlans,
   ]);
@@ -622,7 +629,7 @@ export default function Dungeon() {
         playerY={playerY}
         playerTile={CP437_TILES.player}
         floorTile={CP437_TILES.floor}
-        wallTile={CP437_TILES.wall}
+        wallTile={5}
         doorTile={CP437_TILES.doorClosed}
         keyTile={CP437_TILES.key}
         leverTile={CP437_TILES.lever}
@@ -689,7 +696,7 @@ export default function Dungeon() {
           const newAutoWalk = startAutoWalk({
             from: { x: playerX, y: playerY },
             target: { x, y },
-            dungeon,
+            dungeon: walkDungeon,
             content,
             runtime: rt,
           });
@@ -711,6 +718,7 @@ export default function Dungeon() {
         pathMaskTex={pathMaskTex ?? undefined}
         actorCharTex={actorCharTex}
         _visDataRef={visDataRef}
+        shaderVariant="forest"
       />
     </>
   );

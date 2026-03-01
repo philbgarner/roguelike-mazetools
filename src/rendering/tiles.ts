@@ -87,7 +87,7 @@ export function buildTintMask(
     const py = params.playerY | 0;
     if (px >= 0 && px < W && py >= 0 && py < H) {
       const pi = py * W + px;
-      if (solid[pi] !== 255) out[pi] = 1;
+      out[pi] = 1; // player can stand on wall cells (e.g. trees)
     }
   }
 
@@ -187,10 +187,7 @@ export function buildCharMask(
     const py = params.playerY | 0;
     if (px >= 0 && px < W && py >= 0 && py < H) {
       const pi = py * W + px;
-      // only place player on non-wall cells
-      if (solid[pi] !== 255) {
-        out[pi] = params.playerTile & 0xff;
-      }
+      out[pi] = params.playerTile & 0xff; // player can stand on wall cells (e.g. trees)
     }
   }
 
