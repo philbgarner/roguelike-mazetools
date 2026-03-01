@@ -216,9 +216,7 @@ type Props = {
   // Actor overlay: runtime monster glyphs stamped into R8 DataTexture
   actorCharTex?: THREE.DataTexture | null;
 
-  // Which fragment shader to use. 'forest' enables the tree-canopy rendering
-  // (used for the home-base map); defaults to 'dungeon'.
-  shaderVariant?: 'dungeon' | 'forest';
+  shaderVariant?: "dungeon" | "forest";
 };
 
 // -------------------------------
@@ -505,7 +503,7 @@ function DungeonRenderScene(props: Props) {
   const mat = useMemo(() => {
     return new THREE.ShaderMaterial({
       vertexShader: tileVert,
-      fragmentShader: props.shaderVariant === 'forest' ? forestFrag : tileFrag,
+      fragmentShader: props.shaderVariant === "forest" ? forestFrag : tileFrag,
       uniforms: {
         uSolid: { value: bsp.textures.solid },
         uChar: { value: charTex },

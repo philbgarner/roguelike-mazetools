@@ -7,7 +7,7 @@ import { useGame, type GameScreen } from "./GameProvider";
 const FONT_URL = "/fonts/dosfont.json";
 
 const MENU_ITEMS: { label: string; target: GameScreen }[] = [
-  { label: "Start Game", target: "home-base" },
+  { label: "Start Game", target: "overworld" },
 ];
 
 function MenuItem({
