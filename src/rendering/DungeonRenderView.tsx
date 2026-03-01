@@ -1,5 +1,5 @@
 // src/rendering/DungeonRenderView.tsx
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
@@ -1169,7 +1169,7 @@ export default function DungeonRenderView(props: Props) {
         }}
         gl={{ antialias: false, alpha: false }}
       >
-        <OrthoFrustum pxPerCell={pxPerCell} />
+        {/*<OrthoFrustum pxPerCell={pxPerCell} />*/}
         <DungeonRenderScene
           {...props}
           _visDataRef={visDataRef}

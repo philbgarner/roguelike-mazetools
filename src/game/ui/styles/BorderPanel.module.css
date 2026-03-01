@@ -1,0 +1,23 @@
+.borderPanelContainer {
+    position: absolute;
+    display: flex;
+    border-width: 14px 9px; /* top/bottom 14px, left/right 9px */
+    border-style: solid; /* Necessary for border-image to function */
+    border-image-source: url("/textures/double-border.png");
+    border-image-slice: 14 9 14 9 fill; /* top right bottom left */
+    border-image-repeat: round; /* Tile middle segments without scaling */
+    border-image-width: 14px 9px; /* top/bottom 14px, left/right 9px */
+
+    z-index: 999;
+}
+
+.borderPanelContainer > div {
+    margin-left: 9px;
+    margin-right: 9px;
+    margin-bottom: 14px;
+    margin-top: 14px;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+}
