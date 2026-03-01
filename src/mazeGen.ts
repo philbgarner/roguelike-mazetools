@@ -2226,3 +2226,180 @@ export function generateDungeonContent(
     meta,
   };
 }
+
+// -----------------------------
+// Dungeon serialization
+// -----------------------------
+
+function uint8ToBase64(arr: Uint8Array): string {
+  // Chunk to avoid call-stack overflow on large maps
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    binary += String.fromCharCode(...arr.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+/**
+ * Serializes a fully-generated dungeon (geometry + content) to a JSON string.
+ * Uint8Array masks are base64-encoded; THREE.DataTextures and ImageData are
+ * omitted and will be rebuilt from the masks when loading.
+ * Non-JSON-native types (Map, Set) are converted to plain arrays.
+ */
+export function saveDungeon(
+  dungeon: BspDungeonOutputs,
+  content: ContentOutputs,
+): string {
+  const payload = {
+    dungeon: {
+      width: dungeon.width,
+      height: dungeon.height,
+      masks: {
+        solid: uint8ToBase64(dungeon.masks.solid),
+        regionId: uint8ToBase64(dungeon.masks.regionId),
+        distanceToWall: uint8ToBase64(dungeon.masks.distanceToWall),
+      },
+      debugAscii: dungeon.debug.ascii,
+      meta: dungeon.meta,
+    },
+    content: {
+      width: content.width,
+      height: content.height,
+      masks: {
+        featureType: uint8ToBase64(content.masks.featureType),
+        featureId: uint8ToBase64(content.masks.featureId),
+        featureParam: uint8ToBase64(content.masks.featureParam),
+        danger: uint8ToBase64(content.masks.danger),
+        lootTier: uint8ToBase64(content.masks.lootTier),
+        hazardType: uint8ToBase64(content.masks.hazardType),
+      },
+      debugAscii: content.debug.ascii,
+      meta: {
+        ...content.meta,
+        // Map<number, Set<number>> → [number, number[]][]
+        roomGraph: Array.from(content.meta.roomGraph.entries()).map(
+          ([k, v]) => [k, Array.from(v)],
+        ),
+        // Map<number, number> → [number, number][]
+        roomDistance: Array.from(content.meta.roomDistance.entries()),
+      },
+    },
+  };
+
+  return JSON.stringify(payload);
+}
+
+/**
+ * Deserializes a dungeon saved with `saveDungeon`.
+ * Masks are decoded from base64; THREE.DataTextures and ImageData are rebuilt
+ * from the masks so the returned objects are fully usable by the renderer.
+ */
+export function loadDungeon(json: string): {
+  dungeon: BspDungeonOutputs;
+  content: ContentOutputs;
+} {
+  const payload = JSON.parse(json);
+
+  // --- BspDungeonOutputs ---
+  const { width: dW, height: dH, masks: dM, debugAscii: dAscii, meta: dMeta } =
+    payload.dungeon;
+
+  const solid = base64ToUint8(dM.solid);
+  const regionId = base64ToUint8(dM.regionId);
+  const distanceToWall = base64ToUint8(dM.distanceToWall);
+
+  const dungeon: BspDungeonOutputs = {
+    width: dW,
+    height: dH,
+    masks: { solid, regionId, distanceToWall },
+    textures: {
+      solid: solidMaskToDataTexture(solid, dW, dH),
+      regionId: maskToDataTextureR8(regionId, dW, dH, "regionId"),
+      distanceToWall: maskToDataTextureR8(
+        distanceToWall,
+        dW,
+        dH,
+        "distanceToWall",
+      ),
+    },
+    debug: {
+      ascii: dAscii,
+      imageData: {
+        solid: solidMaskToImageData(solid, dW, dH),
+        regionId: maskToImageDataGrayscale(regionId, dW, dH),
+        distanceToWall: maskToImageDataGrayscale(distanceToWall, dW, dH),
+      },
+    },
+    meta: dMeta,
+  };
+
+  // --- ContentOutputs ---
+  const {
+    width: cW,
+    height: cH,
+    masks: cM,
+    debugAscii: cAscii,
+    meta: cMetaRaw,
+  } = payload.content;
+
+  const featureType = base64ToUint8(cM.featureType);
+  const featureId = base64ToUint8(cM.featureId);
+  const featureParam = base64ToUint8(cM.featureParam);
+  const danger = base64ToUint8(cM.danger);
+  const lootTier = base64ToUint8(cM.lootTier);
+  const hazardType = base64ToUint8(cM.hazardType);
+
+  // Reconstruct Map<number, Set<number>> from [number, number[]][]
+  const roomGraph = new Map<number, Set<number>>(
+    (cMetaRaw.roomGraph as [number, number[]][]).map(([k, v]) => [
+      k,
+      new Set(v),
+    ]),
+  );
+  // Reconstruct Map<number, number> from [number, number][]
+  const roomDistance = new Map<number, number>(
+    cMetaRaw.roomDistance as [number, number][],
+  );
+
+  const content: ContentOutputs = {
+    width: cW,
+    height: cH,
+    masks: { featureType, featureId, featureParam, danger, lootTier, hazardType },
+    textures: {
+      featureType: maskToDataTextureR8(featureType, cW, cH, "featureType"),
+      featureId: maskToDataTextureR8(featureId, cW, cH, "featureId"),
+      featureParam: maskToDataTextureR8(featureParam, cW, cH, "featureParam"),
+      danger: maskToDataTextureR8(danger, cW, cH, "danger"),
+      lootTier: maskToDataTextureR8(lootTier, cW, cH, "lootTier"),
+      hazardType: maskToDataTextureR8(hazardType, cW, cH, "hazardType"),
+    },
+    debug: {
+      ascii: cAscii,
+      imageData: {
+        featureType: maskToImageDataGrayscale(featureType, cW, cH),
+        featureId: maskToImageDataGrayscale(featureId, cW, cH),
+        featureParam: maskToImageDataGrayscale(featureParam, cW, cH),
+        danger: maskToImageDataGrayscale(danger, cW, cH),
+        lootTier: maskToImageDataGrayscale(lootTier, cW, cH),
+        hazardType: maskToImageDataGrayscale(hazardType, cW, cH),
+      },
+    },
+    meta: {
+      ...cMetaRaw,
+      roomGraph,
+      roomDistance,
+    },
+  };
+
+  return { dungeon, content };
+}
