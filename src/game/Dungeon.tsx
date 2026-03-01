@@ -104,7 +104,7 @@ function buildDungeon() {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Game() {
+export default function Dungeon() {
   const result = useMemo(() => buildDungeon(), []);
   const dungeon = result.bsp;
   const content = result.content;

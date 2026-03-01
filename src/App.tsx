@@ -1,12 +1,12 @@
 import { GameProvider, useGame } from "./game/GameProvider";
-import Game from "./game/Game";
+import Dungeon from "./game/Dungeon";
 import MainMenu from "./game/MainMenu";
 import Success from "./game/Success";
 
 function AppInner() {
   const { screen } = useGame();
 
-  if (screen === "dungeon") return <Game />;
+  if (screen === "dungeon") return <Dungeon />;
   if (screen === "main-menu") return <MainMenu />;
   if (screen === "success") return <Success />;
 

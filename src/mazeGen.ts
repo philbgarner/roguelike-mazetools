@@ -942,6 +942,335 @@ export function generateBspDungeonTexture(options: BspDungeonOptions) {
 }
 
 // -----------------------------
+// Forest / outdoor generator
+// -----------------------------
+
+export type ForestOptions = {
+  width: number;
+  height: number;
+  seed?: number | string;
+
+  /** Fraction of cells initialized as trees before CA smoothing (default 0.55) */
+  initialFillRatio?: number;
+  /** Number of cellular-automata smoothing passes (default 5) */
+  smoothingPasses?: number;
+  /**
+   * A floor cell becomes a tree when it has ≥ this many tree neighbours (default 5).
+   * Lower values → denser forest.
+   */
+  birthLimit?: number;
+  /**
+   * A tree cell survives when it has ≥ this many tree neighbours (default 4).
+   * Lower values → more isolated trees erode away.
+   */
+  survivalLimit?: number;
+  /** Minimum floor-cell count for a connected open area to be kept as a clearing (default 25) */
+  minClearingSize?: number;
+  /** Width in cells of the trails that connect clearings (default 1) */
+  trailWidth?: number;
+  /** Keep the outermost cell border as trees (default true) */
+  keepOuterWalls?: boolean;
+};
+
+/**
+ * Per-cell ASCII for forest maps:
+ *   solid=255  → char 5 (♣) — tree canopy
+ *   solid=0, distanceToWall ≤ 2  → ',' — undergrowth / shrubs near tree edge
+ *   solid=0, distanceToWall > 2  → '.' — open grass / clearing floor
+ */
+function forestMaskToAscii(
+  solid: Uint8Array,
+  distanceToWall: Uint8Array,
+  W: number,
+  H: number,
+): string {
+  const TREE = "\x05"; // ASCII char 5
+  let out = "";
+  for (let y = 0; y < H; y++) {
+    let row = "";
+    for (let x = 0; x < W; x++) {
+      const i = idx(x, y, W);
+      if (solid[i] === 255) {
+        row += TREE;
+      } else {
+        row += distanceToWall[i] <= 2 ? "," : ".";
+      }
+    }
+    out += row + (y === H - 1 ? "" : "\n");
+  }
+  return out;
+}
+
+/**
+ * Colored ImageData for forest maps using green/brown palette:
+ *   trees       → dark forest-green with slight position-based hue variation
+ *   undergrowth → muted olive-green (distanceToWall ≤ 2)
+ *   open ground → warm light-green to bright meadow (deeper → brighter)
+ */
+function forestMaskToImageData(
+  solid: Uint8Array,
+  distanceToWall: Uint8Array,
+  W: number,
+  H: number,
+): ImageData {
+  const rgba = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    const o = i * 4;
+    if (solid[i] === 255) {
+      // Trees: dark forest-green/brown. Use a cheap positional hash for variety.
+      const h = ((i * 2654435761) >>> 0) & 0xff; // Knuth multiplicative hash
+      const vary = h % 28; // 0..27
+      rgba[o + 0] = 28 + vary; // R 28-55  (earthy-green)
+      rgba[o + 1] = 58 + vary; // G 58-85  (dark green)
+      rgba[o + 2] = 10 + (vary >> 2); // B 10-16 (very low, slight blue-green)
+    } else {
+      // Open ground: darker near trees, lighter in clearings
+      const d = Math.min(distanceToWall[i], 20);
+      const t = d / 20; // 0 (edge) … 1 (deep clearing)
+      rgba[o + 0] = Math.round(65 + t * 35); // R 65-100  (warm grass)
+      rgba[o + 1] = Math.round(105 + t * 50); // G 105-155 (green)
+      rgba[o + 2] = Math.round(28 + t * 22); // B 28-50   (hint of blue)
+    }
+    rgba[o + 3] = 255;
+  }
+  return new ImageData(rgba, W, H);
+}
+
+/**
+ * Generates an outdoor forest map using cellular-automata smoothing to produce
+ * organic clearings connected by winding trails.  Returns a `BspDungeonOutputs`
+ * so it can be used anywhere a dungeon is expected:
+ *   solid       0 = open ground, 255 = tree canopy
+ *   regionId    0 = trail/edge, 1..255 = clearing id
+ *   distanceToWall  distance to nearest tree (0 at tree boundary)
+ */
+export function generateForest(options: ForestOptions): BspDungeonOutputs {
+  const opts = {
+    width: options.width,
+    height: options.height,
+    seed: options.seed ?? 0x12345678,
+    initialFillRatio: options.initialFillRatio ?? 0.55,
+    smoothingPasses: options.smoothingPasses ?? 5,
+    birthLimit: options.birthLimit ?? 5,
+    survivalLimit: options.survivalLimit ?? 4,
+    minClearingSize: options.minClearingSize ?? 25,
+    trailWidth: options.trailWidth ?? 1,
+    keepOuterWalls: options.keepOuterWalls ?? true,
+  };
+
+  if (opts.width <= 2 || opts.height <= 2) {
+    throw new Error("generateForest: width/height must be > 2");
+  }
+
+  const seedUsed = hashSeedToUint32(opts.seed);
+  const rng = makeRng(seedUsed);
+  const W = opts.width;
+  const H = opts.height;
+
+  // ---- Step 1: random initialisation ----
+  const solid = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const border =
+        opts.keepOuterWalls &&
+        (x === 0 || y === 0 || x === W - 1 || y === H - 1);
+      solid[idx(x, y, W)] =
+        border || rng.chance(opts.initialFillRatio) ? 255 : 0;
+    }
+  }
+
+  // ---- Step 2: CA smoothing ----
+  const buf = new Uint8Array(W * H);
+  const DIRS_8: Array<[number, number]> = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1,  0],          [1,  0],
+    [-1,  1], [0,  1], [1,  1],
+  ];
+
+  for (let pass = 0; pass < opts.smoothingPasses; pass++) {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const border =
+          opts.keepOuterWalls &&
+          (x === 0 || y === 0 || x === W - 1 || y === H - 1);
+        if (border) {
+          buf[idx(x, y, W)] = 255;
+          continue;
+        }
+        let trees = 0;
+        for (const [dx, dy] of DIRS_8) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) {
+            trees++; // out-of-bounds counts as tree
+          } else if (solid[idx(nx, ny, W)] === 255) {
+            trees++;
+          }
+        }
+        const wasTree = solid[idx(x, y, W)] === 255;
+        buf[idx(x, y, W)] =
+          wasTree
+            ? trees >= opts.survivalLimit ? 255 : 0
+            : trees >= opts.birthLimit ? 255 : 0;
+      }
+    }
+    solid.set(buf);
+  }
+
+  // ---- Step 3: flood-fill to label clearings ----
+  const regionId = new Uint8Array(W * H);
+  let nextRegion = 1;
+
+  const clearingCenters: Array<{ x: number; y: number }> = [];
+  const rooms: Rect[] = [];
+
+  for (let sy = 0; sy < H && nextRegion <= 255; sy++) {
+    for (let sx = 0; sx < W && nextRegion <= 255; sx++) {
+      if (solid[idx(sx, sy, W)] !== 0) continue;
+      if (regionId[idx(sx, sy, W)] !== 0) continue;
+
+      const region = nextRegion++;
+      const queue: Array<{ x: number; y: number }> = [{ x: sx, y: sy }];
+      regionId[idx(sx, sy, W)] = region;
+
+      let minX = sx, maxX = sx, minY = sy, maxY = sy;
+      let sumX = 0, sumY = 0, count = 0;
+
+      for (let qi = 0; qi < queue.length; qi++) {
+        const { x, y } = queue[qi];
+        sumX += x;
+        sumY += y;
+        count++;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as Array<[number,number]>) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          if (solid[idx(nx, ny, W)] !== 0) continue;
+          if (regionId[idx(nx, ny, W)] !== 0) continue;
+          regionId[idx(nx, ny, W)] = region;
+          queue.push({ x: nx, y: ny });
+        }
+      }
+
+      // Discard clearings that are too small — fill them back with trees
+      if (count < opts.minClearingSize) {
+        for (const p of queue) {
+          solid[idx(p.x, p.y, W)] = 255;
+          regionId[idx(p.x, p.y, W)] = 0;
+        }
+        nextRegion--;
+      } else {
+        clearingCenters.push({
+          x: Math.round(sumX / count),
+          y: Math.round(sumY / count),
+        });
+        rooms.push({
+          x: minX,
+          y: minY,
+          w: maxX - minX + 1,
+          h: maxY - minY + 1,
+        });
+      }
+    }
+  }
+
+  // ---- Step 4: connect clearings with winding trails (nearest-neighbour MST) ----
+  const corridors: Array<{ a: Point; b: Point; bends?: Point[] }> = [];
+
+  if (clearingCenters.length > 1) {
+    const connected = new Set<number>([0]);
+    const unconnected = new Set<number>(
+      Array.from({ length: clearingCenters.length }, (_, i) => i).filter(
+        (i) => i !== 0,
+      ),
+    );
+
+    while (unconnected.size > 0) {
+      let bestDist = Infinity, bestFrom = -1, bestTo = -1;
+      for (const ci of connected) {
+        const c = clearingCenters[ci];
+        for (const ui of unconnected) {
+          const u = clearingCenters[ui];
+          const d = Math.abs(c.x - u.x) + Math.abs(c.y - u.y);
+          if (d < bestDist) {
+            bestDist = d;
+            bestFrom = ci;
+            bestTo = ui;
+          }
+        }
+      }
+      if (bestFrom === -1) break;
+
+      const a = clearingCenters[bestFrom];
+      const b = clearingCenters[bestTo];
+
+      // L-shaped bend — randomise which leg comes first
+      const bend: Point = rng.chance(0.5)
+        ? { x: a.x, y: b.y }
+        : { x: b.x, y: a.y };
+
+      carveCorridor(
+        solid, W, H,
+        { x: a.x, y: a.y }, bend,
+        opts.trailWidth, opts.keepOuterWalls,
+      );
+      carveCorridor(
+        solid, W, H,
+        bend, { x: b.x, y: b.y },
+        opts.trailWidth, opts.keepOuterWalls,
+      );
+      corridors.push({
+        a: { x: a.x, y: a.y },
+        b: { x: b.x, y: b.y },
+        bends: [bend],
+      });
+
+      connected.add(bestTo);
+      unconnected.delete(bestTo);
+    }
+  }
+
+  // ---- Step 5: distance field, debug outputs, textures ----
+  const distanceToWall = computeDistanceToWall(solid, W, H);
+
+  const ascii = forestMaskToAscii(solid, distanceToWall, W, H);
+  const solidImageData = forestMaskToImageData(solid, distanceToWall, W, H);
+  const regionImageData = maskToImageDataGrayscale(regionId, W, H);
+  const distanceImageData = maskToImageDataGrayscale(distanceToWall, W, H);
+
+  const solidTex = solidMaskToDataTexture(solid, W, H);
+  const regionTex = maskToDataTextureR8(regionId, W, H, "forest_region_id");
+  const distTex = maskToDataTextureR8(
+    distanceToWall, W, H, "forest_distance_to_wall",
+  );
+
+  return {
+    width: W,
+    height: H,
+    masks: { solid, regionId, distanceToWall },
+    textures: { solid: solidTex, regionId: regionTex, distanceToWall: distTex },
+    debug: {
+      ascii,
+      imageData: {
+        solid: solidImageData,
+        regionId: regionImageData,
+        distanceToWall: distanceImageData,
+      },
+    },
+    meta: {
+      seedUsed,
+      rooms,
+      corridors,
+      bspDepth: opts.smoothingPasses, // repurposed: number of CA passes
+    },
+  };
+}
+
+// -----------------------------
 // Content generation (Milestone 2)
 // -----------------------------
 

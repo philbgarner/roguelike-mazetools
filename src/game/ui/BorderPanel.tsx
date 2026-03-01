@@ -37,6 +37,7 @@ export default function BorderPanel({
         bottom,
       }}
     >
+      {title ? <div>{title}</div> : null}
       <div>{children}</div>
     </div>
   );
