@@ -998,24 +998,6 @@ export default function DungeonRenderView(props: Props) {
   // M7: shared ref populated by DungeonRenderScene so tooltip can read vis data.
   const visDataRef = useRef<Uint8Array | null>(null);
 
-  const [tooltip, setTooltip] = useState<{
-    x: number;
-    y: number;
-    visible: boolean;
-    pending: boolean;
-    lines: string[];
-    clientX: number | null;
-    clientY: number | null;
-  }>({
-    visible: false,
-    pending: false,
-    x: 0,
-    y: 0,
-    lines: [],
-    clientX: null,
-    clientY: null,
-  });
-
   // ---- Debounce / delay ----
   const TOOLTIP_DELAY_MS = 120;
   const hoverTimerRef = useRef<number | null>(null);
@@ -1031,125 +1013,6 @@ export default function DungeonRenderView(props: Props) {
   useEffect(() => {
     return () => clearHoverTimer();
   }, []);
-
-  // ---- Tooltip positioning (your adapted version) ----
-  function getTooltipStyle(): React.CSSProperties {
-    const wrap = canvasWrapRef.current;
-    if (!wrap) return { left: 0, top: 0 };
-
-    const rect = wrap.getBoundingClientRect();
-    const wrapW = wrap.clientWidth;
-    const wrapH = wrap.clientHeight;
-
-    const pad = 24;
-    const estTipW = 320;
-    const estTipH = 140;
-
-    const anchorX = tooltip.clientX != null ? tooltip.clientX - rect.left : pad;
-    const anchorY = tooltip.clientY != null ? tooltip.clientY - rect.top : pad;
-
-    let left = anchorX;
-    let top = anchorY + pad;
-
-    left = Math.max(pad, Math.min(left, wrapW - estTipW - pad));
-    if (top + estTipH > wrapH - pad) {
-      top = Math.max(pad, anchorY - estTipH - pad);
-    }
-    return { left, top, zIndex: 999 };
-  }
-
-  // ---- Your buildTooltipLines, adapted to THIS component (no runtime/diagnostics) ----
-  function buildTooltipLines(x: number, y: number) {
-    const dungeon = props.bsp;
-    const content = props.content;
-
-    const w = dungeon.width;
-    const i = y * w + x;
-
-    const solid = dungeon.masks.solid[i] ? 1 : 0;
-    const regionId = dungeon.masks.regionId[i] | 0;
-    const dist = dungeon.masks.distanceToWall[i] | 0;
-
-    const ft = content.masks.featureType[i] | 0;
-    const fid = content.masks.featureId[i] | 0;
-    const fp = content.masks.featureParam[i] | 0;
-
-    const danger = content.masks.danger[i] | 0;
-    const loot = content.masks.lootTier[i] | 0;
-    const hz = content.masks.hazardType[i] | 0; // meaningful when ft==10 per repomix
-
-    // M7 vis/explored
-    const vd = visDataRef.current;
-    const visA = vd ? vd[i * 4 + 3] : -1;
-    const exploredG = vd ? vd[i * 4 + 1] : -1;
-
-    const lines: string[] = [];
-
-    // --- raw (keep) ---
-    lines.push(`(${x},${y})  region=${regionId}  dist=${dist}  solid=${solid}`);
-    if (visA >= 0) lines.push(`visA=${visA}  explored=${exploredG}`);
-    if (ft !== 0) lines.push(`featureType=${ft} featureId=${fid} param=${fp}`);
-    if (hz !== 0) lines.push(`hazardType=${hz}`);
-    if (danger !== 0) lines.push(`danger=${danger}`);
-    if (loot !== 0) lines.push(`lootTier=${loot}`);
-
-    // --- readable section ---
-    if (ft !== 0) {
-      lines.push(""); // spacer line
-      lines.push(`• ${featureTypeName(ft)}${fid ? ` #${fid}` : ""}`);
-
-      // --- circuit membership (no diagnostics in render view) ---
-      const circuits = props.content.meta?.circuits ?? [];
-      const memberships: string[] = [];
-
-      const triggerKind =
-        ft === 6 ? "LEVER" : ft === 5 ? "KEY" : ft === 7 ? "PLATE" : null;
-
-      const targetKind =
-        ft === 4 ? "DOOR" : ft === 10 ? "HAZARD" : ft === 9 ? "HIDDEN" : null;
-
-      for (let ci = 0; ci < circuits.length; ci++) {
-        const c: any = circuits[ci];
-        const cid = (c?.id ?? ci) | 0;
-
-        if (triggerKind && Array.isArray(c?.triggers)) {
-          for (const t of c.triggers) {
-            if (
-              t?.kind === triggerKind &&
-              ((t?.refId ?? -1) | 0) === (fid | 0)
-            ) {
-              memberships.push(`• circuit[${ci}] id=${cid}: trigger ${t.kind}`);
-              break;
-            }
-          }
-        }
-
-        if (targetKind && Array.isArray(c?.targets)) {
-          for (const t of c.targets) {
-            if (
-              t?.kind === targetKind &&
-              ((t?.refId ?? -1) | 0) === (fid | 0)
-            ) {
-              const eff = t?.effect ? ` ${t.effect}` : "";
-              memberships.push(
-                `• circuit[${ci}] id=${cid}: target ${t.kind}${eff}`,
-              );
-              break;
-            }
-          }
-        }
-      }
-
-      //lines.push(memberships.length ? ...memberships : `• circuits: none`);
-      if (memberships.length > 0) {
-        lines.push(...memberships);
-      } else {
-        lines.push("• circuits: none");
-      }
-    }
-
-    return { lines, ft, fid };
-  }
 
   return (
     <div
@@ -1178,18 +1041,6 @@ export default function DungeonRenderView(props: Props) {
           _visDataRef={visDataRef}
           onCellHover={({ x, y, clientX, clientY }) => {
             const key = `${x},${y}`;
-
-            // If we're still hovering the same cell, just keep the anchor fresh.
-            // DO NOT clear/re-arm the timer (or you'll starve the debounce forever).
-            if (lastHoverKeyRef.current === key) {
-              setTooltip((t) => ({
-                ...t,
-                clientX,
-                clientY,
-              }));
-              return;
-            }
-
             // New hovered cell
             lastHoverKeyRef.current = key;
 
@@ -1200,90 +1051,14 @@ export default function DungeonRenderView(props: Props) {
               clientY: clientY,
             });
 
-            // Arm tooltip (but do not show yet)
-            setTooltip((t) => ({
-              ...t,
-              x,
-              y,
-              clientX,
-              clientY,
-              pending: true,
-              visible: false,
-            }));
-
             clearHoverTimer();
-
-            hoverTimerRef.current = window.setTimeout(() => {
-              // still on same cell?
-              if (lastHoverKeyRef.current !== key) return;
-
-              const { lines } = buildTooltipLines(x, y);
-
-              setTooltip((t) => ({
-                ...t,
-                x,
-                y,
-                clientX,
-                clientY,
-                lines,
-                pending: false,
-                visible: true,
-              }));
-            }, TOOLTIP_DELAY_MS);
           }}
           onCellHoverEnd={() => {
             lastHoverKeyRef.current = null;
             clearHoverTimer();
-            setTooltip((t) => ({
-              ...t,
-              visible: false,
-              pending: false,
-              clientX: null,
-              clientY: null,
-            }));
           }}
         />
       </Canvas>
-
-      <div
-        className="maze-tooltip"
-        style={{
-          position: "absolute",
-          ...getTooltipStyle(),
-          pointerEvents: "none",
-          opacity: tooltip.visible ? 1.0 : 0.0,
-        }}
-      >
-        {tooltip.lines.map((ln, idx) => (
-          <div key={idx}>{ln === "" ? "\u00A0" : ln}</div>
-        ))}
-      </div>
     </div>
   );
-}
-
-// Keeps ortho frustum stable and sized in “pixel world units”
-function OrthoFrustum({ pxPerCell }: { pxPerCell: number }) {
-  const { camera, size } = useThree();
-
-  useEffect(() => {
-    const cam = camera as THREE.OrthographicCamera;
-
-    // We want 1 world unit == 1 pixel, so frustum matches canvas pixel size.
-    const halfW = size.width / 2;
-    const halfH = size.height / 2;
-
-    cam.left = -halfW;
-    cam.right = halfW;
-    cam.top = halfH;
-    cam.bottom = -halfH;
-
-    cam.near = 0.1;
-    cam.far = 1000;
-
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-  }, [camera, size.width, size.height, pxPerCell]);
-
-  return null;
 }

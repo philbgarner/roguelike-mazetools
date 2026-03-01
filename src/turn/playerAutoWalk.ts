@@ -11,7 +11,7 @@ import type { GridPos } from "../pathfinding/aStar8";
 import { aStar8 } from "../pathfinding/aStar8";
 import type { TurnSystemState } from "./turnSystem";
 import type { TurnAction } from "./turnTypes";
-import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
+import type { BspDungeonOutputs, ContentOutputs, ForestContentOutputs } from "../mazeGen";
 import type { DungeonRuntimeState } from "../dungeonState";
 import { getBlockIdAt } from "../dungeonState";
 
@@ -35,12 +35,15 @@ export type AutoWalkState =
 function resolvers(runtime: DungeonRuntimeState) {
   return {
     isDoorOpen: (doorId: number) => !!runtime?.doors?.[doorId]?.isOpen,
-    isSecretRevealed: (secretId: number) => !!runtime?.secrets?.[secretId]?.revealed,
+    isSecretRevealed: (secretId: number) =>
+      !!runtime?.secrets?.[secretId]?.revealed,
   };
 }
 
 function blockOpts(runtime: DungeonRuntimeState) {
-  return { isBlocked: (x: number, y: number) => getBlockIdAt(runtime, x, y) !== null };
+  return {
+    isBlocked: (x: number, y: number) => getBlockIdAt(runtime, x, y) !== null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +62,14 @@ export function startAutoWalk(args: {
   runtime: DungeonRuntimeState;
 }): AutoWalkState {
   const { from, target, dungeon, content, runtime } = args;
-  const pathResult = aStar8(dungeon, content, from, target, resolvers(runtime), blockOpts(runtime));
+  const pathResult = aStar8(
+    dungeon,
+    content,
+    from,
+    target,
+    resolvers(runtime),
+    blockOpts(runtime),
+  );
   if (!pathResult || pathResult.path.length < 2) return { kind: "idle" };
   return { kind: "active", target, path: pathResult.path };
 }
@@ -67,6 +77,105 @@ export function startAutoWalk(args: {
 /** Cancel any active auto-walk and return the idle state. */
 export function cancelAutoWalk(): AutoWalkState {
   return { kind: "idle" };
+}
+
+// ---------------------------------------------------------------------------
+// Forest overworld variants
+// ---------------------------------------------------------------------------
+
+/**
+ * Extra A* cost added when stepping onto a tree cell.
+ * High enough that the pathfinder strongly prefers open tiles, but finite so
+ * the player can still route through trees when no clear path exists.
+ */
+export const FOREST_TREE_PENALTY = 100;
+
+function forestCellCost(bsp: BspDungeonOutputs) {
+  const W = bsp.width;
+  return (x: number, y: number) =>
+    bsp.masks.solid[y * W + x] === 255 ? FOREST_TREE_PENALTY : 0;
+}
+
+/**
+ * Forest overworld variant of startAutoWalk.
+ *
+ * All cells are traversable (walkDungeon has zeroed solid mask), but tree
+ * cells incur a high cost penalty so the path prefers open ground.
+ */
+export function startAutoWalkForest(args: {
+  from: GridPos;
+  target: GridPos;
+  /** walkDungeon — solid mask zeroed so all cells are passable. */
+  walkDungeon: BspDungeonOutputs;
+  /** Original BSP — solid=255 marks tree tiles for the cost penalty. */
+  bsp: BspDungeonOutputs;
+  content: ForestContentOutputs;
+}): AutoWalkState {
+  const { from, target, walkDungeon, bsp, content } = args;
+  const pathResult = aStar8(
+    walkDungeon,
+    content as unknown as ContentOutputs,
+    from,
+    target,
+    {},
+    { cellCost: forestCellCost(bsp) },
+  );
+  if (!pathResult || pathResult.path.length < 2) return { kind: "idle" };
+  return { kind: "active", target, path: pathResult.path };
+}
+
+/**
+ * Forest overworld variant of consumeNextAutoWalkStep.
+ * Recomputes path each step with the tree cost penalty.
+ */
+export function consumeNextAutoWalkStepForest(args: {
+  autoWalk: AutoWalkState;
+  turnState: TurnSystemState;
+  walkDungeon: BspDungeonOutputs;
+  bsp: BspDungeonOutputs;
+  content: ForestContentOutputs;
+}): {
+  nextAutoWalk: AutoWalkState;
+  action: TurnAction | null;
+  pathForOverlay: GridPos[] | null;
+} {
+  const { autoWalk, turnState, walkDungeon, bsp, content } = args;
+
+  const idle = {
+    nextAutoWalk: { kind: "idle" } as AutoWalkState,
+    action: null,
+    pathForOverlay: null,
+  };
+
+  if (autoWalk.kind !== "active") return idle;
+
+  const playerActor = turnState.actors[turnState.playerId];
+  if (!playerActor) return idle;
+
+  const from: GridPos = { x: playerActor.x, y: playerActor.y };
+  const { target } = autoWalk;
+
+  if (from.x === target.x && from.y === target.y) return idle;
+
+  const pathResult = aStar8(
+    walkDungeon,
+    content as unknown as ContentOutputs,
+    from,
+    target,
+    {},
+    { cellCost: forestCellCost(bsp) },
+  );
+  if (!pathResult || pathResult.path.length < 2) return idle;
+
+  const nextStep = pathResult.path[1];
+  const dx = nextStep.x - from.x;
+  const dy = nextStep.y - from.y;
+
+  return {
+    nextAutoWalk: { kind: "active", target, path: pathResult.path },
+    action: { kind: "move", dx, dy },
+    pathForOverlay: pathResult.path,
+  };
 }
 
 export function isAutoWalkActive(
@@ -98,7 +207,11 @@ export function consumeNextAutoWalkStep(args: {
 } {
   const { autoWalk, turnState, dungeon, content, runtime } = args;
 
-  const idle = { nextAutoWalk: { kind: "idle" } as AutoWalkState, action: null, pathForOverlay: null };
+  const idle = {
+    nextAutoWalk: { kind: "idle" } as AutoWalkState,
+    action: null,
+    pathForOverlay: null,
+  };
 
   if (autoWalk.kind !== "active") return idle;
 
@@ -112,7 +225,14 @@ export function consumeNextAutoWalkStep(args: {
   if (from.x === target.x && from.y === target.y) return idle;
 
   // Recompute path from current position each step.
-  const pathResult = aStar8(dungeon, content, from, target, resolvers(runtime), blockOpts(runtime));
+  const pathResult = aStar8(
+    dungeon,
+    content,
+    from,
+    target,
+    resolvers(runtime),
+    blockOpts(runtime),
+  );
   if (!pathResult || pathResult.path.length < 2) return idle;
 
   const nextStep = pathResult.path[1];

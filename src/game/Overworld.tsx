@@ -43,9 +43,10 @@ import {
 } from "../turn/turnSystem";
 import {
   type AutoWalkState,
-  startAutoWalk,
   cancelAutoWalk,
-  consumeNextAutoWalkStep,
+  startAutoWalkForest,
+  consumeNextAutoWalkStepForest,
+  FOREST_TREE_PENALTY,
 } from "../turn/playerAutoWalk";
 import {
   createWorldEffectsState,
@@ -138,11 +139,8 @@ export default function Overworld() {
       dungeon: _dungeon,
       content: contentLegacy,
       runtime: EMPTY_RUNTIME,
-      isWalkable: (x, y) => {
-        if (x < 0 || y < 0 || x >= _dungeon.width || y >= _dungeon.height)
-          return false;
-        return _dungeon.masks.solid[y * _dungeon.width + x] !== 255;
-      },
+      isWalkable: (x, y) =>
+        x >= 0 && y >= 0 && x < _dungeon.width && y < _dungeon.height,
       monsterDecide: () => {
         throw new Error("No monsters in forest overworld");
       },
@@ -238,17 +236,20 @@ export default function Overworld() {
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
+      const W = dungeon.width;
+      const solid = dungeon.masks.solid;
       const pathResult = aStar8(
         walkDungeon,
         contentLegacy,
         { x: playerX, y: playerY },
         { x: targetX, y: targetY },
         {},
+        { cellCost: (x, y) => solid[y * W + x] === 255 ? FOREST_TREE_PENALTY : 0 },
       );
       playerPreviewPathRef.current = pathResult?.path ?? null;
       rebuildPathMaskFromPlans();
     },
-    [walkDungeon, contentLegacy, playerX, playerY, rebuildPathMaskFromPlans],
+    [dungeon, walkDungeon, contentLegacy, playerX, playerY, rebuildPathMaskFromPlans],
   );
 
   // --- Centralized auto-walk cancellation ---
@@ -305,12 +306,12 @@ export default function Overworld() {
     if (autoWalk.kind !== "active") return;
 
     const timer = setTimeout(() => {
-      const { nextAutoWalk, action, pathForOverlay } = consumeNextAutoWalkStep({
+      const { nextAutoWalk, action, pathForOverlay } = consumeNextAutoWalkStepForest({
         autoWalk,
         turnState,
-        dungeon: walkDungeon,
-        content: contentLegacy,
-        runtime: EMPTY_RUNTIME,
+        walkDungeon,
+        bsp: dungeon,
+        content,
       });
 
       playerPreviewPathRef.current = pathForOverlay;
@@ -332,7 +333,8 @@ export default function Overworld() {
     turnState.actors,
     autoWalk,
     walkDungeon,
-    contentLegacy,
+    dungeon,
+    content,
     rebuildPathMaskFromPlans,
   ]);
 
@@ -423,12 +425,12 @@ export default function Overworld() {
           }
 
           // Click-to-navigate: start auto-walk toward target.
-          const newAutoWalk = startAutoWalk({
+          const newAutoWalk = startAutoWalkForest({
             from: { x: playerX, y: playerY },
             target: { x, y },
-            dungeon: walkDungeon,
-            content: contentLegacy,
-            runtime: EMPTY_RUNTIME,
+            walkDungeon,
+            bsp: dungeon,
+            content,
           });
           setAutoWalk(newAutoWalk);
 

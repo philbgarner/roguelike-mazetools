@@ -14,6 +14,12 @@ export type AStarPath = { path: GridPos[]; cost: number } | null;
 export type AStar8Options = {
   /** Extra predicate: return true to treat (x,y) as impassable at runtime. */
   isBlocked?: (x: number, y: number) => boolean;
+  /**
+   * Extra movement cost added when entering cell (x, y).
+   * Return 0 (or omit) for normal cost. Use positive values to discourage
+   * but not forbid specific cells (e.g. tree tiles in a forest overworld).
+   */
+  cellCost?: (x: number, y: number) => number;
 };
 
 // 8-directional offsets: [dx, dy, cost]
@@ -133,7 +139,7 @@ export function aStar8(
       }
 
       const ni = ny * W + nx;
-      const tentativeG = curG + moveCost;
+      const tentativeG = curG + moveCost + (opts.cellCost?.(nx, ny) ?? 0);
 
       if (tentativeG < gScore[ni]) {
         gScore[ni] = tentativeG;

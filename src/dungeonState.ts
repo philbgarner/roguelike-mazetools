@@ -278,6 +278,7 @@ export function getBlockIdAt(
   x: number,
   y: number,
 ): number | null {
+  if (!state || !state.blocks) return null;
   for (const [idStr, b] of Object.entries(state.blocks)) {
     if (b.x === x && b.y === y) return Number(idStr);
   }
