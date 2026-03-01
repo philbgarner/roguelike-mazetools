@@ -6,6 +6,7 @@ import DungeonRenderView from "../rendering/DungeonRenderView";
 
 import { isTileWalkable } from "../walkability";
 import { aStar8 } from "../pathfinding/aStar8";
+import { useGame } from "./GameProvider";
 import {
   clearPathMaskRGBA,
   createPathMaskRGBA,
@@ -101,7 +102,7 @@ function buildDungeon() {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function MinimalExample() {
+export default function Game() {
   const result = useMemo(() => buildDungeon(), []);
   const dungeon = result.bsp;
   const content = result.content;
@@ -109,6 +110,8 @@ export default function MinimalExample() {
     () => dungeonThemeToRenderTheme(getTheme(THEME_ID)),
     [],
   );
+
+  const { goTo } = useGame();
 
   const startCell = useMemo(
     () => computeStartCell(dungeon, content),
@@ -239,7 +242,7 @@ export default function MinimalExample() {
 
   useEffect(() => {
     if (exitCell && playerX === exitCell.x && playerY === exitCell.y) {
-      alert("You reached the exit!");
+      goTo("success");
     }
   }, [playerX, playerY, exitCell]);
 

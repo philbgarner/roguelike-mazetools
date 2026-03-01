@@ -60,6 +60,12 @@ input {
     font-family: inherit;
 }
 
+#app {
+    width: 100vw;
+    height: 100vh;
+    position: absolute;
+}
+
 /* ---------- App Layout Modes ---------- */
 
 .maze-app {
@@ -469,16 +475,17 @@ details[open] > .maze-summary {
 }
 
 .maze-canvas-wrap {
-    position: relative;
-    display: inline-block; /* shrink-wrap to canvas */
-    width: 100%;
-    height: 100%;
+    position: absolute;
+    width: 100vw;
+    height: 100vh;
     overflow: hidden;
 }
 
 /* Canvas panel: IMPORTANT: padding must match your JS (-12px) math */
 .maze-canvas-panel {
-    position: relative;
+    position: absolute;
+    width: 100vw;
+    height: 100vh;
     padding: 12px; /* MUST remain 12px unless you change getCellFromMouseEvent */
     overflow: auto;
     background: rgba(0, 0, 0, 0.18);
