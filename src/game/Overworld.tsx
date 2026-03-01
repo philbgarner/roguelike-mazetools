@@ -56,6 +56,7 @@ import {
 import "./styles.css";
 
 import BorderPanel from "./ui/BorderPanel";
+import Tooltip, { TooltipProps } from "./ui/Tooltip";
 
 export interface Player {
   x: number;
@@ -113,6 +114,13 @@ export default function Overworld() {
 
   // --- World effects clock ---
   const worldEffectsRef = useRef(createWorldEffectsState());
+
+  const [tooltip, setTooltip] = useState<TooltipProps>({
+    x: 0,
+    y: 0,
+    visible: false,
+    children: <></>,
+  });
 
   // --- Turn system ---
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
@@ -244,12 +252,22 @@ export default function Overworld() {
         { x: playerX, y: playerY },
         { x: targetX, y: targetY },
         {},
-        { cellCost: (x, y) => solid[y * W + x] === 255 ? FOREST_TREE_PENALTY : 0 },
+        {
+          cellCost: (x, y) =>
+            solid[y * W + x] === 255 ? FOREST_TREE_PENALTY : 0,
+        },
       );
       playerPreviewPathRef.current = pathResult?.path ?? null;
       rebuildPathMaskFromPlans();
     },
-    [dungeon, walkDungeon, contentLegacy, playerX, playerY, rebuildPathMaskFromPlans],
+    [
+      dungeon,
+      walkDungeon,
+      contentLegacy,
+      playerX,
+      playerY,
+      rebuildPathMaskFromPlans,
+    ],
   );
 
   // --- Centralized auto-walk cancellation ---
@@ -306,13 +324,14 @@ export default function Overworld() {
     if (autoWalk.kind !== "active") return;
 
     const timer = setTimeout(() => {
-      const { nextAutoWalk, action, pathForOverlay } = consumeNextAutoWalkStepForest({
-        autoWalk,
-        turnState,
-        walkDungeon,
-        bsp: dungeon,
-        content,
-      });
+      const { nextAutoWalk, action, pathForOverlay } =
+        consumeNextAutoWalkStepForest({
+          autoWalk,
+          turnState,
+          walkDungeon,
+          bsp: dungeon,
+          content,
+        });
 
       playerPreviewPathRef.current = pathForOverlay;
       rebuildPathMaskFromPlans();
@@ -353,9 +372,16 @@ export default function Overworld() {
 
   return (
     <>
-      <BorderPanel width="20rem" height="5rem" background="#000" bottom="0px">
-        Test
+      <BorderPanel
+        width="20rem"
+        height="5rem"
+        background="#090909"
+        bottom="0px"
+        title="Overworld"
+      >
+        Player ({playerX}, {playerY})
       </BorderPanel>
+      <Tooltip {...tooltip} />
       <DungeonRenderView
         bsp={dungeon}
         content={contentLegacy}
@@ -395,17 +421,40 @@ export default function Overworld() {
         flipGridY={true}
         selectedX={playerX}
         selectedY={playerY}
-        onCellHover={({ x, y }) => {
+        onCellHover={({ x, y, clientX, clientY }) => {
           if (autoWalk.kind === "active") return;
           const last = lastHoverCellRef.current;
           if (last && last.x === x && last.y === y) return;
           lastHoverCellRef.current = { x, y };
+
+          const contentAtCell = content.meta.dungeonPortals.find(
+            (f) => f.x === x && f.y === y,
+          );
+
+          if (contentAtCell) {
+            setTooltip({
+              x: clientX,
+              y: clientY,
+              visible: true,
+              children: (
+                <>
+                  ({x}, {y}){" "}
+                  {contentAtCell
+                    ? `${contentAtCell.theme} (lvl ${contentAtCell.level})`
+                    : null}
+                </>
+              ),
+            });
+          } else {
+            setTooltip({ ...tooltip, visible: false });
+          }
           recomputePlayerPath(x, y);
         }}
         onCellHoverEnd={() => {
           lastHoverCellRef.current = null;
           if (autoWalk.kind === "active") return;
           playerPreviewPathRef.current = null;
+          setTooltip({ x: 0, y: 0, visible: false, children: <></> });
           rebuildPathMaskFromPlans();
         }}
         onCellClick={({ x, y }) => {
@@ -414,15 +463,17 @@ export default function Overworld() {
           const ft = content.masks.featureType[i] | 0;
           const fid = content.masks.featureId[i] | 0;
 
+          setTooltip({ ...tooltip, visible: false });
+
           // Dungeon portal entry (FeatureType 2)
-          if (ft === 2 && fid) {
-            const portal = content.meta.dungeonPortals.find((p) => p.id === fid);
-            if (portal) {
-              console.log("enter portal", portal);
-              // TODO: goTo("dungeon", { portal })
-            }
-            return true;
-          }
+          // if (ft === 2 && fid) {
+          //   const portal = content.meta.dungeonPortals.find((p) => p.id === fid);
+          //   if (portal) {
+          //     console.log("enter portal", portal);
+          //     // TODO: goTo("dungeon", { portal })
+          //   }
+          //   return true;
+          // }
 
           // Click-to-navigate: start auto-walk toward target.
           const newAutoWalk = startAutoWalkForest({

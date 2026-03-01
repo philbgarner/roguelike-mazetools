@@ -4,8 +4,9 @@ import styles from "./styles/BorderPanel.module.css";
 export interface BorderPanelProps {
   children: React.ReactNode;
   width: string;
-  height: string;
   background: string;
+  height?: string;
+  hidden?: boolean;
   title?: string;
   top?: string;
   bottom?: string;
@@ -23,22 +24,31 @@ export default function BorderPanel({
   right,
   top,
   bottom,
+  hidden,
 }: BorderPanelProps) {
   return (
-    <div
-      className={styles.borderPanelContainer}
-      style={{
-        width,
-        height,
-        backgroundColor: background,
-        left,
-        right,
-        top,
-        bottom,
-      }}
-    >
-      {title ? <div>{title}</div> : null}
-      <div>{children}</div>
-    </div>
+    <>
+      <div
+        className={styles.borderPanelContainer}
+        style={{
+          width,
+          height,
+          left,
+          right,
+          top,
+          bottom,
+          opacity: hidden ? 0 : 1,
+        }}
+      >
+        {title ? (
+          <div className={styles.title} style={{ backgroundColor: background }}>
+            {title}
+          </div>
+        ) : null}
+        <div className={styles.content} style={{ backgroundColor: background }}>
+          {children}
+        </div>
+      </div>
+    </>
   );
 }
