@@ -37,6 +37,8 @@ export function createPlayerActor(startX: number, startY: number): PlayerActor {
     y: startY,
     hp: PLAYER_BASE_HP,
     maxHp: PLAYER_BASE_HP,
+    xp: 0,
+    level: 1,
     speed: PLAYER_SPEED,
     alive: true,
     blocksMovement: true,

@@ -23,6 +23,7 @@ export type PlayerActor = ActorBase & {
   hp: number;
   maxHp: number;
   xp: number;
+  level: number;
 };
 
 /**
