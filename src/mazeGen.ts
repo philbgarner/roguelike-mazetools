@@ -16,6 +16,7 @@
 // - distanceToWall: Manhattan distance to nearest wall (0 at walls), capped to 255
 
 import * as THREE from "three";
+import { buildSeedBank, type BatchRunInput } from "./batchStats";
 import {
   applyLeverRevealsHiddenPocketPattern,
   applyPlateOpensDoorPattern,
@@ -1082,9 +1083,14 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
   // ---- Step 2: CA smoothing ----
   const buf = new Uint8Array(W * H);
   const DIRS_8: Array<[number, number]> = [
-    [-1, -1], [0, -1], [1, -1],
-    [-1,  0],          [1,  0],
-    [-1,  1], [0,  1], [1,  1],
+    [-1, -1],
+    [0, -1],
+    [1, -1],
+    [-1, 0],
+    [1, 0],
+    [-1, 1],
+    [0, 1],
+    [1, 1],
   ];
 
   for (let pass = 0; pass < opts.smoothingPasses; pass++) {
@@ -1108,10 +1114,13 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
           }
         }
         const wasTree = solid[idx(x, y, W)] === 255;
-        buf[idx(x, y, W)] =
-          wasTree
-            ? trees >= opts.survivalLimit ? 255 : 0
-            : trees >= opts.birthLimit ? 255 : 0;
+        buf[idx(x, y, W)] = wasTree
+          ? trees >= opts.survivalLimit
+            ? 255
+            : 0
+          : trees >= opts.birthLimit
+            ? 255
+            : 0;
       }
     }
     solid.set(buf);
@@ -1133,8 +1142,13 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
       const queue: Array<{ x: number; y: number }> = [{ x: sx, y: sy }];
       regionId[idx(sx, sy, W)] = region;
 
-      let minX = sx, maxX = sx, minY = sy, maxY = sy;
-      let sumX = 0, sumY = 0, count = 0;
+      let minX = sx,
+        maxX = sx,
+        minY = sy,
+        maxY = sy;
+      let sumX = 0,
+        sumY = 0,
+        count = 0;
 
       for (let qi = 0; qi < queue.length; qi++) {
         const { x, y } = queue[qi];
@@ -1146,8 +1160,14 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
 
-        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as Array<[number,number]>) {
-          const nx = x + dx, ny = y + dy;
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ] as Array<[number, number]>) {
+          const nx = x + dx,
+            ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
           if (solid[idx(nx, ny, W)] !== 0) continue;
           if (regionId[idx(nx, ny, W)] !== 0) continue;
@@ -1190,7 +1210,9 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
     );
 
     while (unconnected.size > 0) {
-      let bestDist = Infinity, bestFrom = -1, bestTo = -1;
+      let bestDist = Infinity,
+        bestFrom = -1,
+        bestTo = -1;
       for (const ci of connected) {
         const c = clearingCenters[ci];
         for (const ui of unconnected) {
@@ -1214,14 +1236,22 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
         : { x: b.x, y: a.y };
 
       carveCorridor(
-        solid, W, H,
-        { x: a.x, y: a.y }, bend,
-        opts.trailWidth, opts.keepOuterWalls,
+        solid,
+        W,
+        H,
+        { x: a.x, y: a.y },
+        bend,
+        opts.trailWidth,
+        opts.keepOuterWalls,
       );
       carveCorridor(
-        solid, W, H,
-        bend, { x: b.x, y: b.y },
-        opts.trailWidth, opts.keepOuterWalls,
+        solid,
+        W,
+        H,
+        bend,
+        { x: b.x, y: b.y },
+        opts.trailWidth,
+        opts.keepOuterWalls,
       );
       corridors.push({
         a: { x: a.x, y: a.y },
@@ -1245,7 +1275,10 @@ export function generateForest(options: ForestOptions): BspDungeonOutputs {
   const solidTex = solidMaskToDataTexture(solid, W, H);
   const regionTex = maskToDataTextureR8(regionId, W, H, "forest_region_id");
   const distTex = maskToDataTextureR8(
-    distanceToWall, W, H, "forest_distance_to_wall",
+    distanceToWall,
+    W,
+    H,
+    "forest_distance_to_wall",
   );
 
   return {
@@ -1297,6 +1330,27 @@ export type ForestContentOptions = {
   portalCount?: number;
   /** Which end of the map the player starts on (default "bottom") */
   playerSpawnMode?: "bottom" | "top";
+  /**
+   * Options for the seed-bank batch that vets dungeon seeds before assigning
+   * them to portals. Seeds that fail pattern/validation checks are discarded;
+   * only "good" seeds reach portals so every dungeon the player can enter is
+   * guaranteed to be viable.
+   */
+  dungeonBatchOptions?: {
+    /** Width of candidate dungeons (default 64) */
+    width?: number;
+    /** Height of candidate dungeons (default 64) */
+    height?: number;
+    /** Extra BSP options forwarded to generateBspDungeon (seed/width/height excluded) */
+    bspOptions?: Partial<Omit<BspDungeonOptions, "seed" | "width" | "height">>;
+    /** Extra content options forwarded to generateDungeonContent (seed excluded) */
+    contentOptions?: Partial<Omit<ContentOptions, "seed">>;
+    /**
+     * Candidate multiplier: we generate portalCount × batchMultiplier seeds and
+     * keep only the good ones (default 4, min 2).
+     */
+    batchMultiplier?: number;
+  };
 };
 
 export type ForestContentOutputs = {
@@ -1340,11 +1394,11 @@ export type ForestContentOutputs = {
 };
 
 const DUNGEON_THEMES: DungeonTheme[] = [
-  "cave",   // level 1-2
-  "ruins",  // level 3-4
-  "crypt",  // level 5-6
+  "cave", // level 1-2
+  "ruins", // level 3-4
+  "crypt", // level 5-6
   "temple", // level 7-8
-  "lair",   // level 9-10
+  "lair", // level 9-10
 ];
 
 function themeForLevel(level: number): DungeonTheme {
@@ -1376,6 +1430,45 @@ export function generateForestContent(
   const seedUsed = hashSeedToUint32(seed);
   const rng = mulberry32(seedUsed);
 
+  // ---- Pre-generate a batch of validated dungeon seeds ----
+  // We use a separate RNG (different twist of seedUsed) so the main rng
+  // sequence used for room/point sampling below is completely unaffected.
+  const batchCfg = opts?.dungeonBatchOptions;
+  const dungeonW = batchCfg?.width ?? 64;
+  const dungeonH = batchCfg?.height ?? 64;
+  const batchMultiplier = Math.max(2, batchCfg?.batchMultiplier ?? 4);
+  const candidateCount = Math.max(portalCount * batchMultiplier, 16);
+
+  const seedBatchRng = mulberry32((seedUsed ^ 0xf3a4b5c6) >>> 0);
+  const batchRuns: BatchRunInput[] = [];
+  for (let ci = 0; ci < candidateCount; ci++) {
+    const candidateSeed = (seedBatchRng() * 0x100000000) >>> 0;
+    const candidateDungeon = generateBspDungeon({
+      width: dungeonW,
+      height: dungeonH,
+      seed: candidateSeed,
+      ...batchCfg?.bspOptions,
+    });
+    const candidateContent = generateDungeonContent(candidateDungeon, {
+      ...batchCfg?.contentOptions,
+      seed: candidateSeed,
+    });
+    batchRuns.push({
+      seed: String(candidateSeed),
+      seedUsed: candidateDungeon.meta.seedUsed,
+      rooms: candidateDungeon.meta.rooms.length,
+      corridors: candidateDungeon.meta.corridors.length,
+      patternDiagnostics: candidateContent.meta.patternDiagnostics ?? [],
+      circuitMetrics: null,
+    });
+  }
+
+  const seedBank = buildSeedBank(batchRuns);
+  // goodSeeds is ordered by generation sequence — portal i gets goodSeeds[i].
+  const goodSeeds = seedBank.seeds
+    .filter((s) => s.tags.includes("good"))
+    .map((s) => s.seedUsed);
+  console.log("good seeds", goodSeeds);
   const W = forest.width;
   const H = forest.height;
   const N = W * H;
@@ -1473,8 +1566,10 @@ export function generateForestContent(
 
     const id = clamp255(nextId++);
     const difficultyNorm = clamp255(32 + Math.round((dist / maxDist) * 223));
-    // Derive a deterministic dungeon seed from forest seed + level.
-    const portalSeed = ((seedUsed ^ Math.imul(level, 0x9e3779b9)) >>> 0);
+    // Assign from the vetted seed bank; fall back to XOR derivation only if
+    // the bank ran dry (should not happen with default batchMultiplier ≥ 4).
+    const portalSeed =
+      goodSeeds[i] ?? (seedUsed ^ Math.imul(level, 0x9e3779b9)) >>> 0;
 
     featureType[cellIdx] = 2; // dungeon portal
     featureId[cellIdx] = id;
@@ -1494,7 +1589,10 @@ export function generateForestContent(
 
   // ---- Step 8: build textures and debug images ----
   const featureTypeTex = maskToDataTextureR8(
-    featureType, W, H, "forest_featureType",
+    featureType,
+    W,
+    H,
+    "forest_featureType",
   );
   const featureIdTex = maskToDataTextureR8(featureId, W, H, "forest_featureId");
   const dangerTex = maskToDataTextureR8(danger, W, H, "forest_danger");
@@ -2914,8 +3012,13 @@ export function loadDungeon(json: string): {
   const payload = JSON.parse(json);
 
   // --- BspDungeonOutputs ---
-  const { width: dW, height: dH, masks: dM, debugAscii: dAscii, meta: dMeta } =
-    payload.dungeon;
+  const {
+    width: dW,
+    height: dH,
+    masks: dM,
+    debugAscii: dAscii,
+    meta: dMeta,
+  } = payload.dungeon;
 
   const solid = base64ToUint8(dM.solid);
   const regionId = base64ToUint8(dM.regionId);
@@ -2977,7 +3080,14 @@ export function loadDungeon(json: string): {
   const content: ContentOutputs = {
     width: cW,
     height: cH,
-    masks: { featureType, featureId, featureParam, danger, lootTier, hazardType },
+    masks: {
+      featureType,
+      featureId,
+      featureParam,
+      danger,
+      lootTier,
+      hazardType,
+    },
     textures: {
       featureType: maskToDataTextureR8(featureType, cW, cH, "featureType"),
       featureId: maskToDataTextureR8(featureId, cW, cH, "featureId"),

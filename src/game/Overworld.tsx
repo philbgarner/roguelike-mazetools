@@ -103,7 +103,8 @@ export interface OverworldProps {
 // ---------------------------------------------------------------------------
 
 export default function Overworld({ seed }: OverworldProps) {
-  const result = useMemo(() => buildForest(seed), []);
+  console.log("overworld seed", seed);
+  const result = useMemo(() => buildForest(seed), [seed]);
   const dungeon = result.bsp;
   const walkDungeon = result.walkDungeon;
   const content: ForestContentOutputs = result.content;
@@ -399,7 +400,7 @@ export default function Overworld({ seed }: OverworldProps) {
         </div>
         {contentAtPlayerCell ? (
           <div>
-            {contentAtPlayerCell.theme} (lvl {contentAtPlayerCell.level})
+            {contentAtPlayerCell.seed} (lvl {contentAtPlayerCell.level})
           </div>
         ) : null}
       </BorderPanel>
