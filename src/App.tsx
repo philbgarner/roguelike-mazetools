@@ -5,10 +5,10 @@ import MainMenu from "./game/MainMenu";
 import Success from "./game/Success";
 
 function AppInner() {
-  const { screen } = useGame();
+  const { screen, seed } = useGame();
 
-  if (screen === "dungeon") return <Dungeon />;
-  if (screen === "overworld") return <Overworld />;
+  if (screen === "dungeon") return <Dungeon seed={seed} />;
+  if (screen === "overworld") return <Overworld seed={seed} />;
   if (screen === "main-menu") return <MainMenu />;
   if (screen === "success") return <Success />;
 

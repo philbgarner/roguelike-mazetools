@@ -80,7 +80,7 @@ export interface Player {
 // Dungeon generation (via API so we get resolved monster spawns)
 // ---------------------------------------------------------------------------
 
-const SEED = "test";
+//const SEED = "test";
 //const THEME_ID = "medieval_keep";
 const THEME_ID = "babylon_ziggurat";
 
@@ -89,9 +89,9 @@ const AUTOWALK_DELAY = 63;
 /** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
 const PLAYER_VIS_RADIUS = 6;
 
-function buildDungeon() {
+function buildDungeon(seed: string | number) {
   return generateDungeon({
-    seed: SEED,
+    seed,
     level: 1,
     themeId: THEME_ID,
     width: 64,
@@ -104,8 +104,12 @@ function buildDungeon() {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Dungeon() {
-  const result = useMemo(() => buildDungeon(), []);
+export interface DungeonProps {
+  seed: string | number;
+}
+
+export default function Dungeon({ seed }: DungeonProps) {
+  const result = useMemo(() => buildDungeon(seed), []);
   const dungeon = result.bsp;
   const content = result.content;
   const renderTheme = useMemo(
@@ -113,7 +117,7 @@ export default function Dungeon() {
     [],
   );
 
-  const { goTo } = useGame();
+  const { goTo, overworldBsp, setSeed } = useGame();
 
   const startCell = useMemo(
     () => computeStartCell(dungeon, content),
@@ -243,8 +247,14 @@ export default function Dungeon() {
   }, [dungeon, content]);
 
   useEffect(() => {
-    if (exitCell && playerX === exitCell.x && playerY === exitCell.y) {
-      goTo("success");
+    if (
+      overworldBsp &&
+      exitCell &&
+      playerX === exitCell.x &&
+      playerY === exitCell.y
+    ) {
+      setSeed(overworldBsp?.meta.seedUsed);
+      goTo("overworld");
     }
   }, [playerX, playerY, exitCell]);
 

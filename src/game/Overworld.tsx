@@ -70,8 +70,6 @@ export interface Player {
 // Dungeon generation
 // ---------------------------------------------------------------------------
 
-const SEED = "test";
-
 const AUTOWALK_DELAY = 63;
 
 /** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
@@ -80,15 +78,15 @@ const PLAYER_VIS_RADIUS = 6;
 /** Forest overworld has no doors, blocks, or levers — pass empty runtime. */
 const EMPTY_RUNTIME = {} as any;
 
-function buildForest() {
-  const bsp = generateForest({ seed: SEED, width: 64, height: 64 });
+function buildForest(seed: string | number) {
+  const bsp = generateForest({ seed, width: 64, height: 64 });
   // Trees are visually present but physically passable — use zeroed solid for pathfinding.
   const walkDungeon = {
     ...bsp,
     masks: { ...bsp.masks, solid: new Uint8Array(bsp.width * bsp.height) },
   };
 
-  const content = generateForestContent(bsp, { seed: SEED, portalCount: 10 });
+  const content = generateForestContent(bsp, { seed, portalCount: 10 });
   // content.meta.dungeonPortals[i].seed  → pass to generateDungeonContent
   // content.meta.dungeonPortals[i].theme → dungeon flavour
   // content.meta.dungeonPortals[i].level → difficulty 1-10
@@ -96,12 +94,16 @@ function buildForest() {
   return { bsp, walkDungeon, content };
 }
 
+export interface OverworldProps {
+  seed: string | number;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Overworld() {
-  const result = useMemo(() => buildForest(), []);
+export default function Overworld({ seed }: OverworldProps) {
+  const result = useMemo(() => buildForest(seed), []);
   const dungeon = result.bsp;
   const walkDungeon = result.walkDungeon;
   const content: ForestContentOutputs = result.content;
@@ -110,7 +112,7 @@ export default function Overworld() {
   // ForestContentOutputs provides.
   const contentLegacy = content as unknown as ContentOutputs;
 
-  const { goTo } = useGame();
+  const { goTo, setSeed, setOverworld } = useGame();
 
   // Player spawn comes directly from forest content — no need for computeStartCell.
   const startCell = content.meta.playerSpawn;
@@ -247,7 +249,9 @@ export default function Overworld() {
     if (!am) return;
     clearActorCharMask(am.data);
     am.tex.needsUpdate = true;
-  }, [dungeon]);
+
+    setOverworld(dungeon, content);
+  }, [dungeon, content]);
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
@@ -419,6 +423,7 @@ export default function Overworld() {
                   `Are you sure you want to enter ${contentAtPlayerCell.theme}?`,
                 )
               ) {
+                setSeed(contentAtPlayerCell.seed);
                 goTo("dungeon");
               }
             }}
