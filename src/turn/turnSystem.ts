@@ -22,6 +22,7 @@ import type {
 } from "./turnTypes";
 import type { DecideResult } from "./monsterAI";
 import type { TurnLogEntry } from "./turnDebug";
+import type { TurnEvent } from "./turnEvents";
 
 // ---------------------------------------------------------------------------
 // State
@@ -78,6 +79,16 @@ export type TurnSystemDeps = {
     activeActorId: ActorId;
     state: TurnSystemState;
   }) => void;
+  /**
+   * Emit a game event (damage, death, xp gain, etc.) to the React layer.
+   *
+   * This is called synchronously from within applyAction or AI callbacks —
+   * i.e. inside a React setState updater — so callers must NOT call setState
+   * directly. Instead, buffer events into a ref and flush them in a useEffect.
+   *
+   * The useTurnEvents hook in src/game/ handles this pattern automatically.
+   */
+  onEvent?: (event: TurnEvent) => void;
 };
 
 // ---------------------------------------------------------------------------

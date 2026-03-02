@@ -217,6 +217,12 @@ type Props = {
   actorCharTex?: THREE.DataTexture | null;
 
   shaderVariant?: "dungeon" | "forest";
+
+  /**
+   * Extra React Three Fiber elements rendered inside the Canvas after the
+   * main scene (e.g. floating damage numbers via @react-three/drei <Html>).
+   */
+  children?: React.ReactNode;
 };
 
 // -------------------------------
@@ -1058,6 +1064,7 @@ export default function DungeonRenderView(props: Props) {
             clearHoverTimer();
           }}
         />
+        {props.children}
       </Canvas>
     </div>
   );

@@ -66,6 +66,9 @@ import {
   createWorldEffectsState,
   advanceWorldEffects,
 } from "../world/worldEffects";
+import type { TurnEvent } from "../turn/turnEvents";
+import { useTurnEvents } from "./useTurnEvents";
+import { useFloatingMessage } from "./useFloatingMessage";
 
 import "./styles.css";
 
@@ -150,6 +153,11 @@ export default function Dungeon({ seed }: DungeonProps) {
     [runtime],
   );
 
+  // --- Turn event queue ---
+  // Declared before turnState useState so it is available in the lazy initializer.
+  // Turn system pushes events here synchronously; useTurnEvents drains them in an effect.
+  const pendingEventsRef = useRef<TurnEvent[]>([]);
+
   // --- World effects clock (accumulates scheduler time → ticks for fire/water etc.) ---
   // Must be declared before turnState useState so the initializer's tickUntilPlayer
   // can call onTimeAdvanced without hitting the TDZ.
@@ -172,6 +180,46 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   // --- Auto-walk (click-to-navigate route follower) ---
   const [autoWalk, setAutoWalk] = useState<AutoWalkState>({ kind: "idle" });
+
+  // --- Turn events → React bridge ---
+  const { subscribe } = useTurnEvents(pendingEventsRef, turnState);
+
+  const { push: pushFloatingMessage, floatingMessages } = useFloatingMessage({
+    mapWidth: dungeon.width,
+    mapHeight: dungeon.height,
+  });
+
+  useEffect(
+    () =>
+      subscribe("damage", (evt) => {
+        pushFloatingMessage(`-${evt.amount}`, evt.x, evt.y, { color: "#ff4444" });
+      }),
+    [subscribe, pushFloatingMessage],
+  );
+
+  useEffect(
+    () =>
+      subscribe("heal", (evt) => {
+        pushFloatingMessage(`+${evt.amount}`, evt.x, evt.y, { color: "#44ff88" });
+      }),
+    [subscribe, pushFloatingMessage],
+  );
+
+  useEffect(
+    () =>
+      subscribe("miss", (evt) => {
+        pushFloatingMessage("miss", evt.x, evt.y, { color: "#aaaaaa" });
+      }),
+    [subscribe, pushFloatingMessage],
+  );
+
+  useEffect(
+    () =>
+      subscribe("xpGain", (evt) => {
+        pushFloatingMessage(`+${evt.amount} xp`, evt.x, evt.y, { color: "#ffdd55" });
+      }),
+    [subscribe, pushFloatingMessage],
+  );
 
   function buildDeps(
     _dungeon: typeof dungeon,
@@ -208,6 +256,7 @@ export default function Dungeon({ seed }: DungeonProps) {
         const r = advanceWorldEffects(worldEffectsRef.current, dt);
         worldEffectsRef.current = r.next;
       },
+      onEvent: (evt) => pendingEventsRef.current.push(evt),
     };
   }
 
@@ -685,7 +734,9 @@ export default function Dungeon({ seed }: DungeonProps) {
         pathMaskTex={pathMaskTex ?? undefined}
         actorCharTex={actorCharTex}
         _visDataRef={visDataRef}
-      />
+      >
+        {floatingMessages}
+      </DungeonRenderView>
     </>
   );
 }
