@@ -491,6 +491,12 @@ export default function Dungeon({ seed }: DungeonProps) {
     hotkeys("s,down", () => tryCommitMove(0, 1));
     hotkeys("w,up", () => tryCommitMove(0, -1));
     hotkeys(".", () => tryCommitWait());
+    hotkeys("q", () => {
+      if (overworldBsp) {
+        setSeed(overworldBsp?.meta.seedUsed);
+        goTo("overworld");
+      }
+    });
     hotkeys("esc", (e) => {
       e.preventDefault();
       cancelAutoWalkNow();

@@ -6,7 +6,7 @@ import * as THREE from "three";
 import DungeonRenderView from "../rendering/DungeonRenderView";
 
 import { aStar8 } from "../pathfinding/aStar8";
-import { useGame } from "./GameProvider";
+import { GameScreen, useGame } from "./GameProvider";
 import {
   clearPathMaskRGBA,
   createPathMaskRGBA,
@@ -95,16 +95,21 @@ function buildForest(seed: string | number) {
 }
 
 export interface OverworldProps {
-  seed: string | number;
+  screen: GameScreen;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Overworld({ seed }: OverworldProps) {
-  console.log("overworld seed", seed);
-  const result = useMemo(() => buildForest(seed), [seed]);
+export default function Overworld({ screen }: OverworldProps) {
+  const { goTo, setSeed, overworldBsp, setOverworld } = useGame();
+  const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
+  console.log("building screen", screen);
+  const result = useMemo(() => {
+    console.log("building forest for seed", seed);
+    return buildForest(seed);
+  }, [seed]);
   const dungeon = result.bsp;
   const walkDungeon = result.walkDungeon;
   const content: ForestContentOutputs = result.content;
@@ -112,8 +117,6 @@ export default function Overworld({ seed }: OverworldProps) {
   // ContentOutputs — those APIs only access featureType & featureId masks, which
   // ForestContentOutputs provides.
   const contentLegacy = content as unknown as ContentOutputs;
-
-  const { goTo, setSeed, setOverworld } = useGame();
 
   // Player spawn comes directly from forest content — no need for computeStartCell.
   const startCell = content.meta.playerSpawn;
@@ -386,6 +389,10 @@ export default function Overworld({ seed }: OverworldProps) {
     (f) => f.x === playerX && f.y === playerY,
   );
 
+  if (screen !== "overworld") {
+    return <></>;
+  }
+
   return (
     <>
       <BorderPanel
@@ -452,123 +459,125 @@ export default function Overworld({ seed }: OverworldProps) {
         </div>
       </ModalPanel>
 
-      <DungeonRenderView
-        bsp={dungeon}
-        content={contentLegacy}
-        focusX={playerX}
-        focusY={playerY}
-        onCellFocus={(cell) => console.log("cell focus", cell)}
-        playerX={playerX}
-        playerY={playerY}
-        playerTile={CP437_TILES.player}
-        floorTile={CP437_TILES.floor}
-        wallTile={5}
-        doorTile={CP437_TILES.doorClosed}
-        keyTile={CP437_TILES.key}
-        leverTile={CP437_TILES.lever}
-        plateTile={CP437_TILES.plate}
-        blockTile={CP437_TILES.block}
-        suppressBlocks
-        blockPositions={[]}
-        chestTile={CP437_TILES.chest}
-        monsterTile={CP437_TILES.monster}
-        secretDoorTile={CP437_TILES.secretDoor}
-        hiddenPassageTile={CP437_TILES.hiddenPassage}
-        hazardDefaultTile={CP437_TILES.hazard}
-        exitTile={CP437_TILES.exit}
-        atlasUrl={"/textures/codepage437.png"}
-        atlasCols={32}
-        atlasRows={8}
-        hazardTilesByType={{
-          1: 48, // lava
-          2: 49, // poison
-          3: 50, // water
-          4: 51, // spikes
-        }}
-        zoom={32}
-        flipAtlasY={false}
-        flipGridX={false}
-        flipGridY={true}
-        selectedX={playerX}
-        selectedY={playerY}
-        onCellHover={({ x, y, clientX, clientY }) => {
-          if (autoWalk.kind === "active") return;
-          const last = lastHoverCellRef.current;
-          if (last && last.x === x && last.y === y) return;
-          lastHoverCellRef.current = { x, y };
+      {screen === "overworld" ? (
+        <DungeonRenderView
+          bsp={dungeon}
+          content={contentLegacy}
+          focusX={playerX}
+          focusY={playerY}
+          onCellFocus={(cell) => console.log("cell focus", cell)}
+          playerX={playerX}
+          playerY={playerY}
+          playerTile={CP437_TILES.player}
+          floorTile={CP437_TILES.floor}
+          wallTile={5}
+          doorTile={CP437_TILES.doorClosed}
+          keyTile={CP437_TILES.key}
+          leverTile={CP437_TILES.lever}
+          plateTile={CP437_TILES.plate}
+          blockTile={CP437_TILES.block}
+          suppressBlocks
+          blockPositions={[]}
+          chestTile={CP437_TILES.chest}
+          monsterTile={CP437_TILES.monster}
+          secretDoorTile={CP437_TILES.secretDoor}
+          hiddenPassageTile={CP437_TILES.hiddenPassage}
+          hazardDefaultTile={CP437_TILES.hazard}
+          exitTile={CP437_TILES.exit}
+          atlasUrl={"/textures/codepage437.png"}
+          atlasCols={32}
+          atlasRows={8}
+          hazardTilesByType={{
+            1: 48, // lava
+            2: 49, // poison
+            3: 50, // water
+            4: 51, // spikes
+          }}
+          zoom={32}
+          flipAtlasY={false}
+          flipGridX={false}
+          flipGridY={true}
+          selectedX={playerX}
+          selectedY={playerY}
+          onCellHover={({ x, y, clientX, clientY }) => {
+            if (autoWalk.kind === "active") return;
+            const last = lastHoverCellRef.current;
+            if (last && last.x === x && last.y === y) return;
+            lastHoverCellRef.current = { x, y };
 
-          const contentAtCell = content.meta.dungeonPortals.find(
-            (f) => f.x === x && f.y === y,
-          );
+            const contentAtCell = content.meta.dungeonPortals.find(
+              (f) => f.x === x && f.y === y,
+            );
 
-          if (contentAtCell) {
-            setTooltip({
-              x: clientX,
-              y: clientY,
-              visible: true,
-              children: (
-                <>
-                  ({x}, {y}){" "}
-                  {contentAtCell
-                    ? `${contentAtCell.theme} (lvl ${contentAtCell.level})`
-                    : null}
-                </>
-              ),
-            });
-          } else {
-            setTooltip({ ...tooltip, visible: false });
-          }
-          recomputePlayerPath(x, y);
-        }}
-        onCellHoverEnd={() => {
-          lastHoverCellRef.current = null;
-          if (autoWalk.kind === "active") return;
-          playerPreviewPathRef.current = null;
-          setTooltip({ x: 0, y: 0, visible: false, children: <></> });
-          rebuildPathMaskFromPlans();
-        }}
-        onCellClick={({ x, y }) => {
-          const w = dungeon.width;
-          const i = y * w + x;
-          const ft = content.masks.featureType[i] | 0;
-          const fid = content.masks.featureId[i] | 0;
-
-          setTooltip({ ...tooltip, visible: false });
-
-          // Dungeon portal entry (FeatureType 2)
-          // if (ft === 2 && fid) {
-          //   const portal = content.meta.dungeonPortals.find((p) => p.id === fid);
-          //   if (portal) {
-          //     console.log("enter portal", portal);
-          //     // TODO: goTo("dungeon", { portal })
-          //   }
-          //   return true;
-          // }
-
-          // Click-to-navigate: start auto-walk toward target.
-          const newAutoWalk = startAutoWalkForest({
-            from: { x: playerX, y: playerY },
-            target: { x, y },
-            walkDungeon,
-            bsp: dungeon,
-            content,
-          });
-          setAutoWalk(newAutoWalk);
-
-          if (newAutoWalk.kind === "active") {
-            playerPreviewPathRef.current = newAutoWalk.path;
-          } else {
+            if (contentAtCell) {
+              setTooltip({
+                x: clientX,
+                y: clientY,
+                visible: true,
+                children: (
+                  <>
+                    ({x}, {y}){" "}
+                    {contentAtCell
+                      ? `${contentAtCell.theme} (lvl ${contentAtCell.level})`
+                      : null}
+                  </>
+                ),
+              });
+            } else {
+              setTooltip({ ...tooltip, visible: false });
+            }
+            recomputePlayerPath(x, y);
+          }}
+          onCellHoverEnd={() => {
+            lastHoverCellRef.current = null;
+            if (autoWalk.kind === "active") return;
             playerPreviewPathRef.current = null;
-          }
-          rebuildPathMaskFromPlans();
+            setTooltip({ x: 0, y: 0, visible: false, children: <></> });
+            rebuildPathMaskFromPlans();
+          }}
+          onCellClick={({ x, y }) => {
+            const w = dungeon.width;
+            const i = y * w + x;
+            const ft = content.masks.featureType[i] | 0;
+            const fid = content.masks.featureId[i] | 0;
 
-          return true;
-        }}
-        pathMaskTex={pathMaskTex ?? undefined}
-        actorCharTex={actorCharTex}
-        _visDataRef={visDataRef}
-        shaderVariant="forest"
-      />
+            setTooltip({ ...tooltip, visible: false });
+
+            // Dungeon portal entry (FeatureType 2)
+            // if (ft === 2 && fid) {
+            //   const portal = content.meta.dungeonPortals.find((p) => p.id === fid);
+            //   if (portal) {
+            //     console.log("enter portal", portal);
+            //     // TODO: goTo("dungeon", { portal })
+            //   }
+            //   return true;
+            // }
+
+            // Click-to-navigate: start auto-walk toward target.
+            const newAutoWalk = startAutoWalkForest({
+              from: { x: playerX, y: playerY },
+              target: { x, y },
+              walkDungeon,
+              bsp: dungeon,
+              content,
+            });
+            setAutoWalk(newAutoWalk);
+
+            if (newAutoWalk.kind === "active") {
+              playerPreviewPathRef.current = newAutoWalk.path;
+            } else {
+              playerPreviewPathRef.current = null;
+            }
+            rebuildPathMaskFromPlans();
+
+            return true;
+          }}
+          pathMaskTex={pathMaskTex ?? undefined}
+          actorCharTex={actorCharTex}
+          _visDataRef={visDataRef}
+          shaderVariant="forest"
+        />
+      ) : null}
     </>
   );
 }

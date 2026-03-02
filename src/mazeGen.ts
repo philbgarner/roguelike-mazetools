@@ -2279,8 +2279,6 @@ export function generateDungeonContent(
     excludePatterns: opts?.excludePatterns ?? [],
   };
 
-  console.log("generating dungeon content", options);
-
   const seedUsed = hashSeedToUint32(options.seed);
   const rng = mulberry32(seedUsed);
 
