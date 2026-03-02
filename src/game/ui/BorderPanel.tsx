@@ -1,10 +1,13 @@
 import React from "react";
 import styles from "./styles/BorderPanel.module.css";
 
+export type FlexMode = "Column" | "Row";
+
 export interface BorderPanelProps {
   children: React.ReactNode;
   width: string;
   background: string;
+  flexMode?: FlexMode;
   height?: string;
   hidden?: boolean;
   title?: string;
@@ -25,6 +28,7 @@ export default function BorderPanel({
   top,
   bottom,
   hidden,
+  flexMode,
 }: BorderPanelProps) {
   return (
     <>
@@ -45,7 +49,17 @@ export default function BorderPanel({
             {title}
           </div>
         ) : null}
-        <div className={styles.content} style={{ backgroundColor: background }}>
+        <div
+          className={styles.content}
+          style={{
+            backgroundColor: background,
+            flexDirection: flexMode
+              ? flexMode === "Column"
+                ? "column"
+                : "row"
+              : undefined,
+          }}
+        >
           {children}
         </div>
       </div>

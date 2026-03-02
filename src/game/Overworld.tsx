@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Button from "./ui/Button";
 import hotkeys from "hotkeys-js";
 import * as THREE from "three";
 
@@ -57,6 +58,8 @@ import "./styles.css";
 
 import BorderPanel from "./ui/BorderPanel";
 import Tooltip, { TooltipProps } from "./ui/Tooltip";
+import ModalPanel from "./ui/ModalPanel";
+import { useConfirmYesNo } from "./ui/useConfirmYesNo";
 
 export interface Player {
   x: number;
@@ -114,6 +117,10 @@ export default function Overworld() {
 
   // --- World effects clock ---
   const worldEffectsRef = useRef(createWorldEffectsState());
+
+  const [showCampModal, setShowCampModal] = useState(false);
+
+  const { confirmPrompt, dialog } = useConfirmYesNo();
 
   const [tooltip, setTooltip] = useState<TooltipProps>({
     x: 0,
@@ -370,18 +377,75 @@ export default function Overworld() {
     setTurnState(tickUntilPlayer(ts, deps));
   }, [startCell.x, startCell.y]);
 
+  const contentAtPlayerCell = content.meta.dungeonPortals.find(
+    (f) => f.x === playerX && f.y === playerY,
+  );
+
   return (
     <>
       <BorderPanel
+        title="Overworld"
         width="20rem"
         height="5rem"
         background="#090909"
         bottom="0px"
-        title="Overworld"
       >
-        Player ({playerX}, {playerY})
+        <div>
+          Player ({playerX}, {playerY})
+        </div>
+        {contentAtPlayerCell ? (
+          <div>
+            {contentAtPlayerCell.theme} (lvl {contentAtPlayerCell.level})
+          </div>
+        ) : null}
       </BorderPanel>
+      <BorderPanel
+        title="Actions"
+        width="22rem"
+        height="5rem"
+        background="#090909"
+        bottom="0px"
+        left="21rem"
+      >
+        <Button maxWidth="8rem" onClick={() => setShowCampModal(true)}>
+          Camp
+        </Button>
+        {contentAtPlayerCell ? (
+          <Button
+            maxWidth="12rem"
+            onClick={async () => {
+              if (
+                await confirmPrompt(
+                  `Are you sure you want to enter ${contentAtPlayerCell.theme}?`,
+                )
+              ) {
+                goTo("dungeon");
+              }
+            }}
+          >
+            Enter {contentAtPlayerCell.theme}
+          </Button>
+        ) : null}
+      </BorderPanel>
+
       <Tooltip {...tooltip} />
+
+      {dialog}
+
+      <ModalPanel
+        title="Camp"
+        visible={showCampModal}
+        closeButton
+        onClose={() => setShowCampModal(false)}
+      >
+        <div>
+          <h2>Camping</h2>
+        </div>
+        <div>
+          Camping at Location ({playerX}, {playerY})
+        </div>
+      </ModalPanel>
+
       <DungeonRenderView
         bsp={dungeon}
         content={contentLegacy}
