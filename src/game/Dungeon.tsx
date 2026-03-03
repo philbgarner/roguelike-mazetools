@@ -605,7 +605,19 @@ export default function Dungeon({ seed }: DungeonProps) {
         return;
       }
 
-      setAutoWalk(nextAutoWalk);
+      // If the next step would attack a monster, commit only that one action
+      // then stop auto-walk so the player decides what to do next.
+      let effectiveNextAutoWalk = nextAutoWalk;
+      if (action.kind === "move" && action.dx !== undefined && action.dy !== undefined) {
+        const tx = playerX + action.dx;
+        const ty = playerY + action.dy;
+        const hasMonster = Object.values(turnState.actors).some(
+          (a) => a.id !== turnState.playerId && a.alive && a.x === tx && a.y === ty,
+        );
+        if (hasMonster) effectiveNextAutoWalk = { kind: "idle" };
+      }
+
+      setAutoWalk(effectiveNextAutoWalk);
       attemptCommitPlayerAction(action);
     }, AUTOWALK_DELAY);
 
