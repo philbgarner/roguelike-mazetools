@@ -595,7 +595,7 @@ export function applyIntroGatePattern(args: {
     circuitsById.set(doorId, {
       id: doorId,
       logic: { type: "OR" },
-      behavior: { mode: "TOGGLE" },
+      behavior: { mode: "MOMENTARY" },
       triggers: [{ kind: "LEVER", refId: doorId }],
       targets: [{ kind: "DOOR", refId: doorId, effect: "TOGGLE" }],
       outputs: [{ kind: "SIGNAL", id: doorId, name: "INTRO_GATE_ACTIVE" }],
@@ -1289,7 +1289,7 @@ export function applyGateThenOptionalRewardPattern(args: {
             circuitsById.set(gateId, {
               id: gateId,
               logic: { type: "OR" },
-              behavior: { mode: "TOGGLE" },
+              behavior: { mode: "MOMENTARY" },
               triggers: [{ kind: "LEVER", refId: gateId }],
               targets: [{ kind: "DOOR", refId: gateId, effect: "TOGGLE" }],
             });
@@ -2782,7 +2782,7 @@ export function applyLeverOpensDoorPattern(args: {
     circuitsById.set(doorId, {
       id: doorId,
       logic: { type: "OR" },
-      behavior: { mode: "TOGGLE" },
+      behavior: { mode: "MOMENTARY" },
       triggers: [{ kind: "LEVER", refId: doorId }],
       targets: [{ kind: "DOOR", refId: doorId, effect: "TOGGLE" }],
     });

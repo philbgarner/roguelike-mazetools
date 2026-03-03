@@ -2528,8 +2528,8 @@ export function generateDungeonContent(
       c.triggers.push({ kind: "KEY", refId: d.id });
       c.targets.push({ kind: "DOOR", refId: d.id, effect: "OPEN" });
     } else if (d.kind === 2) {
-      // Lever doors: lever -> toggle door
-      c.behavior = { mode: "TOGGLE" };
+      // Lever doors: lever state directly controls door (MOMENTARY so active mirrors lever)
+      c.behavior = { mode: "MOMENTARY" };
       c.triggers.push({ kind: "LEVER", refId: d.id });
       c.targets.push({ kind: "DOOR", refId: d.id, effect: "TOGGLE" });
     }
