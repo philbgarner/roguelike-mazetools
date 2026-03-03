@@ -10,7 +10,8 @@ export const CP437_TILES = {
   doorClosed: 43, // '+'
   doorOpen: 47, // '/'
   key: 107, // 'k'
-  lever: 33, // '!'
+  lever: 33, // '!' — toggled ON
+  leverOff: 173, // '¡' — toggled OFF (inverted exclamation)
   plate: 94, // '^'
   block: 79, // 'O'
   chest: 36, // '$'

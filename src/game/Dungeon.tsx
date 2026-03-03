@@ -680,8 +680,12 @@ export default function Dungeon({ seed }: DungeonProps) {
         floorTile={CP437_TILES.floor}
         wallTile={CP437_TILES.wall}
         doorTile={CP437_TILES.doorClosed}
+        doorOpenTile={CP437_TILES.doorOpen}
+        doorStates={runtime.doors}
         keyTile={CP437_TILES.key}
         leverTile={CP437_TILES.lever}
+        leverOffTile={CP437_TILES.leverOff}
+        leverStates={runtime.levers}
         plateTile={CP437_TILES.plate}
         blockTile={CP437_TILES.block}
         suppressBlocks

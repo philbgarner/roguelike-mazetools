@@ -280,6 +280,9 @@ export const tileFrag = /* glsl */ `
       tint = uItemColor;
     } else if (tintId > 2.5 && tintId < 3.5) {
       tint = uHazardColor;
+    } else if (tintId > 3.5 && tintId < 4.5) {
+      // Open/unlocked door — render grey, no animation
+      tint = vec4(0.55, 0.55, 0.55, 1.0);
     }
 
     if (isMonster > 0.5) {
@@ -700,6 +703,9 @@ export const forestFrag = /* glsl */ `
       tint = uItemColor;
     } else if (tintId > 2.5 && tintId < 3.5) {
       tint = uHazardColor;
+    } else if (tintId > 3.5 && tintId < 4.5) {
+      // Open/unlocked door — render grey, no animation
+      tint = vec4(0.55, 0.55, 0.55, 1.0);
     }
 
     if (isMonster > 0.5) {

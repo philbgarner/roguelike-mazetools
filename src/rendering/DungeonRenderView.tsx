@@ -146,8 +146,10 @@ type Props = {
   flipAtlasY?: boolean;
 
   doorTile?: number;
+  doorOpenTile?: number;
   keyTile?: number;
   leverTile?: number;
+  leverOffTile?: number;
   plateTile?: number;
   blockTile?: number;
   suppressBlocks?: boolean;
@@ -212,6 +214,10 @@ type Props = {
   pathMaskTex?: THREE.DataTexture;
   pathStrength?: number;
   pathAnimSpeed?: number;
+
+  // Runtime state for levers and doors (drives glyph + tint changes)
+  leverStates?: Record<number, { toggled: boolean }>;
+  doorStates?: Record<number, { isOpen: boolean }>;
 
   // Actor overlay: runtime monster glyphs stamped into R8 DataTexture
   actorCharTex?: THREE.DataTexture | null;
@@ -410,6 +416,32 @@ function DungeonRenderScene(props: Props) {
       playerTile: props.playerTile,
     });
 
+    // Patch lever glyphs: OFF (untoggled) → leverOffTile, ON (toggled) → leverTile
+    if (props.leverStates !== undefined && props.leverOffTile !== undefined) {
+      const ft = content.masks.featureType;
+      const fid = content.masks.featureId;
+      for (let i = 0; i < mask.length; i++) {
+        if (ft[i] === 6) {
+          const st = props.leverStates[fid[i]];
+          if (st !== undefined) {
+            mask[i] = (st.toggled ? (props.leverTile ?? 33) : props.leverOffTile) & 0xff;
+          }
+        }
+      }
+    }
+
+    // Patch door glyph: open doors → doorOpenTile
+    if (props.doorStates !== undefined && props.doorOpenTile !== undefined) {
+      const ft = content.masks.featureType;
+      const fid = content.masks.featureId;
+      for (let i = 0; i < mask.length; i++) {
+        if (ft[i] === 4) {
+          const st = props.doorStates[fid[i]];
+          if (st?.isOpen) mask[i] = props.doorOpenTile & 0xff;
+        }
+      }
+    }
+
     return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
   }, [
     bsp,
@@ -419,8 +451,10 @@ function DungeonRenderScene(props: Props) {
     wallTile,
     floorTile,
     props.doorTile,
+    props.doorOpenTile,
     props.keyTile,
     props.leverTile,
+    props.leverOffTile,
     props.plateTile,
     props.blockTile,
     props.suppressBlocks,
@@ -435,6 +469,8 @@ function DungeonRenderScene(props: Props) {
     props.playerX,
     props.playerY,
     props.playerTile,
+    props.leverStates,
+    props.doorStates,
   ]);
 
   // tint channel texture (R8)
@@ -455,8 +491,20 @@ function DungeonRenderScene(props: Props) {
         if (solid[i] !== 255) mask[i] = 2;
       }
     }
+    // Patch open doors to tintId=4 (grey — no item sheen, no pulse animation)
+    if (props.doorStates !== undefined) {
+      const ft = content.masks.featureType;
+      const fid = content.masks.featureId;
+      for (let i = 0; i < mask.length; i++) {
+        if (ft[i] === 4) {
+          const st = props.doorStates[fid[i]];
+          if (st?.isOpen) mask[i] = 4;
+        }
+      }
+    }
+
     return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
-  }, [bsp, content, W, H, props.playerX, props.playerY, props.blockPositions]);
+  }, [bsp, content, W, H, props.playerX, props.playerY, props.blockPositions, props.doorStates]);
 
   // M8: 1×1 transparent fallback for uPathMask when no prop is supplied
   const fallbackPathTex = useMemo(() => {
