@@ -192,7 +192,9 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("damage", (evt) => {
-        pushFloatingMessage(`-${evt.amount}`, evt.x, evt.y, { color: "#ff4444" });
+        pushFloatingMessage(`-${evt.amount}`, evt.x, evt.y, {
+          color: "#ff4444",
+        });
       }),
     [subscribe, pushFloatingMessage],
   );
@@ -200,7 +202,9 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("heal", (evt) => {
-        pushFloatingMessage(`+${evt.amount}`, evt.x, evt.y, { color: "#44ff88" });
+        pushFloatingMessage(`+${evt.amount}`, evt.x, evt.y, {
+          color: "#44ff88",
+        });
       }),
     [subscribe, pushFloatingMessage],
   );
@@ -216,7 +220,9 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("xpGain", (evt) => {
-        pushFloatingMessage(`+${evt.amount} xp`, evt.x, evt.y, { color: "#ffdd55" });
+        pushFloatingMessage(`+${evt.amount} xp`, evt.x, evt.y, {
+          color: "#ffdd55",
+        });
       }),
     [subscribe, pushFloatingMessage],
   );
@@ -624,6 +630,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     rebuildPathMaskFromPlans();
     const newPlayer = createPlayerActor(startCell.x, startCell.y);
     const monsters = createMonstersFromResolved(result.resolved);
+    console.log("result", result, "monsters", monsters);
     const ts = createTurnSystemState(newPlayer, monsters);
     const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
     setTurnState(tickUntilPlayer(ts, deps));
