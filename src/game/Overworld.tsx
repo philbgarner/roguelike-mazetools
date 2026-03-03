@@ -473,6 +473,7 @@ export default function Overworld({ screen }: OverworldProps) {
           plateTile={CP437_TILES.plate}
           blockTile={CP437_TILES.block}
           suppressBlocks
+          startFullyExplored
           blockPositions={[]}
           chestTile={CP437_TILES.chest}
           monsterTile={CP437_TILES.monster}

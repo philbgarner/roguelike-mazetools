@@ -224,6 +224,9 @@ type Props = {
 
   shaderVariant?: "dungeon" | "forest";
 
+  /** When true, all cells are pre-marked as explored on creation. */
+  startFullyExplored?: boolean;
+
   /**
    * Extra React Three Fiber elements rendered inside the Canvas after the
    * main scene (e.g. floating damage numbers via @react-three/drei <Html>).
@@ -546,6 +549,10 @@ function DungeonRenderScene(props: Props) {
   const visTex = useMemo(() => {
     if (visRef.current) visRef.current.tex.dispose();
     const vr = createVisExploredRGBA(W, H, "vis_explored_rgba");
+    if (props.startFullyExplored) {
+      for (let i = 0; i < W * H; i++) vr.data[i * 4 + 1] = 255; // G = explored
+      vr.tex.needsUpdate = true;
+    }
     visRef.current = vr;
     // Expose the data buffer to the wrapper via the shared ref
     if (props._visDataRef) props._visDataRef.current = vr.data;
