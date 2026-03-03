@@ -8,6 +8,11 @@ export type VisibilityParams = {
   innerRadius: number;
   /** When true, any visible cell is also marked as explored (G=255). */
   exploredOnVisible: boolean;
+  /**
+   * Return true if the cell at (x, y) blocks line-of-sight (walls, closed
+   * doors, etc.).  When omitted every cell is transparent (pure radius check).
+   */
+  isOpaque?: (x: number, y: number) => boolean;
 };
 
 /**
@@ -65,33 +70,79 @@ export function updateVisExploredRGBA(
   playerY: number,
   params: VisibilityParams,
 ): void {
-  const { radius, innerRadius, exploredOnVisible } = params;
+  const { radius, innerRadius, exploredOnVisible, isOpaque } = params;
 
   // 1. Wipe only the A channel (leave explored G as-is).
   for (let n = 0; n < W * H; n++) {
     data[n * 4 + 3] = 0;
   }
 
-  // 2. Recompute visibility within bounding box.
-  const x0 = Math.max(0, Math.floor(playerX - radius));
-  const x1 = Math.min(W - 1, Math.ceil(playerX + radius));
-  const y0 = Math.max(0, Math.floor(playerY - radius));
-  const y1 = Math.min(H - 1, Math.ceil(playerY + radius));
+  // 2. Raycasting FOV: for each cell in the bounding box cast a ray from the
+  //    player and walk it with the supercover DDA algorithm.  The first opaque
+  //    intermediate cell on the ray blocks everything beyond it; the opaque
+  //    cell itself remains visible (you see the wall face).
+  const px = Math.floor(playerX);
+  const py = Math.floor(playerY);
+  const x0 = Math.max(0, px - Math.ceil(radius));
+  const x1 = Math.min(W - 1, px + Math.ceil(radius));
+  const y0 = Math.max(0, py - Math.ceil(radius));
+  const y1 = Math.min(H - 1, py + Math.ceil(radius));
 
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const d = Math.hypot(x - playerX, y - playerY);
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      const d = Math.hypot(tx - px, ty - py);
+      if (d > radius) continue;
+
+      // --- Line-of-sight check via supercover DDA ---
+      let visible = true;
+
+      if (isOpaque) {
+        const dx = tx - px;
+        const dy = ty - py;
+        const nx = Math.abs(dx);
+        const ny = Math.abs(dy);
+        const sx = dx > 0 ? 1 : -1;
+        const sy = dy > 0 ? 1 : -1;
+        let cx = px;
+        let cy = py;
+        let ix = 0;
+        let iy = 0;
+
+        while (ix < nx || iy < ny) {
+          // Advance to the next cell along the ray.
+          if (ny === 0 || (nx > 0 && (0.5 + ix) / nx < (0.5 + iy) / ny)) {
+            cx += sx;
+            ix++;
+          } else {
+            cy += sy;
+            iy++;
+          }
+
+          if (cx < 0 || cx >= W || cy < 0 || cy >= H) {
+            visible = false;
+            break;
+          }
+
+          if (cx === tx && cy === ty) break; // reached target — visible
+
+          // Intermediate cell: if opaque, target is blocked.
+          if (isOpaque(cx, cy)) {
+            visible = false;
+            break;
+          }
+        }
+      }
+
+      if (!visible) continue;
 
       let a: number;
       if (d <= innerRadius) {
         a = 255;
-      } else if (d <= radius) {
-        a = Math.floor(255 * (1 - (d - innerRadius) / (radius - innerRadius)));
       } else {
-        continue;
+        a = Math.floor(255 * (1 - (d - innerRadius) / (radius - innerRadius)));
       }
 
-      const base = (y * W + x) * 4;
+      const base = (ty * W + tx) * 4;
       data[base + 3] = a;
 
       if (exploredOnVisible && a > 0) {
