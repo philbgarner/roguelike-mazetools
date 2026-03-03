@@ -771,6 +771,7 @@ function DungeonRenderScene(props: Props) {
     if (!vr) return;
     const solid = props.bsp.masks?.solid;
     const featureType = props.content.masks?.featureType;
+    const featureId = props.content.masks?.featureId;
     updateVisExploredRGBA(
       vr.data,
       W,
@@ -785,8 +786,11 @@ function DungeonRenderScene(props: Props) {
           const i = y * W + x;
           // Walls block vision.
           if (solid?.[i]) return true;
-          // Closed/locked doors (featureType 4) block vision.
-          if (featureType?.[i] === 4) return true;
+          // Doors (featureType 4) block vision only when closed.
+          if (featureType?.[i] === 4) {
+            const doorId = featureId?.[i];
+            if (!doorId || !props.doorStates?.[doorId]?.isOpen) return true;
+          }
           return false;
         },
       },
@@ -795,7 +799,7 @@ function DungeonRenderScene(props: Props) {
     mat.uniforms.uVisExplored.value = vr.tex;
     // Keep wrapper tooltip data in sync
     if (props._visDataRef) props._visDataRef.current = vr.data;
-  }, [mat, W, H, props.playerX, props.playerY, props._visDataRef, props.bsp, props.content]);
+  }, [mat, W, H, props.playerX, props.playerY, props._visDataRef, props.bsp, props.content, props.doorStates]);
 
   // M8: update path mask uniform when prop changes
   useEffect(() => {
