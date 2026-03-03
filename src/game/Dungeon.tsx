@@ -7,6 +7,7 @@ import DungeonRenderView from "../rendering/DungeonRenderView";
 import { isTileWalkable } from "../walkability";
 import { aStar8 } from "../pathfinding/aStar8";
 import { useGame } from "./GameProvider";
+import { playerFromActor } from "./player";
 import {
   clearPathMaskRGBA,
   createPathMaskRGBA,
@@ -107,7 +108,8 @@ export interface DungeonProps {
 }
 
 export default function Dungeon({ seed }: DungeonProps) {
-  const { goTo, overworldBsp, setSeed, level, setLevel, player } = useGame();
+  const { goTo, overworldBsp, setSeed, level, setLevel, player, setPlayer } =
+    useGame();
   const result = useMemo(() => buildDungeon(seed, level), []);
   const dungeon = result.bsp;
   const content = result.content;
@@ -302,6 +304,7 @@ export default function Dungeon({ seed }: DungeonProps) {
       playerX === exitCell.x &&
       playerY === exitCell.y
     ) {
+      if (playerActor?.kind === "player") setPlayer(playerFromActor(playerActor));
       setSeed(overworldBsp?.meta.seedUsed);
       goTo("overworld");
     }
@@ -542,6 +545,9 @@ export default function Dungeon({ seed }: DungeonProps) {
     hotkeys(".", () => tryCommitWait());
     hotkeys("q", () => {
       if (overworldBsp) {
+        const ts = turnStateRef.current;
+        const currentActor = ts.actors[ts.playerId];
+        if (currentActor?.kind === "player") setPlayer(playerFromActor(currentActor));
         setSeed(overworldBsp?.meta.seedUsed);
         goTo("overworld");
       }
