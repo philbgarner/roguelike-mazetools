@@ -92,10 +92,10 @@ const AUTOWALK_DELAY = 63;
 /** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
 const PLAYER_VIS_RADIUS = 6;
 
-function buildDungeon(seed: string | number) {
+function buildDungeon(seed: string | number, level: number) {
   return generateDungeon({
     seed,
-    level: 1,
+    level,
     themeId: THEME_ID,
     width: 64,
     height: 64,
@@ -112,15 +112,14 @@ export interface DungeonProps {
 }
 
 export default function Dungeon({ seed }: DungeonProps) {
-  const result = useMemo(() => buildDungeon(seed), []);
+  const { goTo, overworldBsp, setSeed, level, setLevel } = useGame();
+  const result = useMemo(() => buildDungeon(seed, level), []);
   const dungeon = result.bsp;
   const content = result.content;
   const renderTheme = useMemo(
     () => dungeonThemeToRenderTheme(getTheme(THEME_ID)),
     [],
   );
-
-  const { goTo, overworldBsp, setSeed } = useGame();
 
   const startCell = useMemo(
     () => computeStartCell(dungeon, content),
@@ -630,7 +629,16 @@ export default function Dungeon({ seed }: DungeonProps) {
     rebuildPathMaskFromPlans();
     const newPlayer = createPlayerActor(startCell.x, startCell.y);
     const monsters = createMonstersFromResolved(result.resolved);
-    console.log("result", result, "monsters", monsters);
+    console.log(
+      "seed",
+      seed,
+      "level",
+      level,
+      "result",
+      result,
+      "monsters",
+      monsters,
+    );
     const ts = createTurnSystemState(newPlayer, monsters);
     const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
     setTurnState(tickUntilPlayer(ts, deps));

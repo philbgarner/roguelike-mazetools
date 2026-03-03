@@ -2243,14 +2243,14 @@ export function generateDungeonContent(
 
     entranceMode: opts?.entranceMode ?? "bottom",
 
-    minClearanceToWall: opts?.minClearanceToWall ?? 1 * (opts?.level ?? 1),
+    minClearanceToWall: opts?.minClearanceToWall ?? 1,
     monstersPerRoomMin:
-      (opts?.monstersPerRoomMin ?? (opts?.level ?? 1) === 1)
-        ? 0
-        : 1 * (opts?.level ?? 2),
-    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 2 * (opts?.level ?? 1),
-    monsterRoomChance: opts?.monsterRoomChance ?? 0.35 * (opts?.level ?? 1),
-
+      opts?.monstersPerRoomMin ?? Math.floor(((opts?.level ?? 1) - 1) / 4),
+    monstersPerRoomMax:
+      opts?.monstersPerRoomMax ?? Math.ceil((opts?.level ?? 1) / 2) + 1,
+    monsterRoomChance:
+      opts?.monsterRoomChance ??
+      Math.min(0.9, 0.2 + (opts?.level ?? 1) * 0.07),
     chestsTargetCount:
       opts?.chestsTargetCount ??
       Math.max(1, Math.floor(dungeon.meta.rooms.length / 4)),
@@ -2284,6 +2284,16 @@ export function generateDungeonContent(
     // Milestone 6, Phase 4 — Exclusion rules
     excludePatterns: opts?.excludePatterns ?? [],
   };
+  console.log(
+    "opts.level",
+    opts?.level,
+    "monstersPerRoomMin",
+    options.monstersPerRoomMin,
+    "monstersPerRoomMax",
+    options.monstersPerRoomMax,
+    "monstersPerRoomChance",
+    options.monsterRoomChance,
+  );
 
   const seedUsed = hashSeedToUint32(options.seed);
   const rng = mulberry32(seedUsed);

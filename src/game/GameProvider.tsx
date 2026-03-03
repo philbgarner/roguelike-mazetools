@@ -11,6 +11,8 @@ export type GameScreen =
 interface GameState {
   screen: GameScreen;
   seed: string | number;
+  level: number;
+  setLevel: (newLevel: number) => void;
   overworldBsp: BspDungeonOutputs | null;
   overworldContent: ForestContentOutputs | null;
   setOverworld: (bsp: BspDungeonOutputs, content: ForestContentOutputs) => void;
@@ -23,6 +25,7 @@ const GameContext = createContext<GameState | null>(null);
 export function GameProvider({ children }: { children: ReactNode }) {
   const [screen, setScreen] = useState<GameScreen>("main-menu");
   const [seed, setSeed] = useState<string | number>("test");
+  const [level, setLevel] = useState<number>(1);
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
     null,
   );
@@ -34,6 +37,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       value={{
         screen,
         seed,
+        level,
+        setLevel: (newLevel: number) => setLevel(newLevel),
         setSeed: (newSeed: string | number) => setSeed(newSeed),
         overworldBsp,
         overworldContent,

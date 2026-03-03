@@ -103,7 +103,7 @@ export interface OverworldProps {
 // ---------------------------------------------------------------------------
 
 export default function Overworld({ screen }: OverworldProps) {
-  const { goTo, setSeed, overworldBsp, setOverworld } = useGame();
+  const { goTo, setSeed, setLevel, overworldBsp, setOverworld } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   console.log("building screen", screen);
   const result = useMemo(() => {
@@ -407,7 +407,7 @@ export default function Overworld({ screen }: OverworldProps) {
         </div>
         {contentAtPlayerCell ? (
           <div>
-            {contentAtPlayerCell.seed} (lvl {contentAtPlayerCell.level})
+            {contentAtPlayerCell.seed} (lvl {contentAtPlayerCell.level}){" "}
           </div>
         ) : null}
       </BorderPanel>
@@ -432,6 +432,7 @@ export default function Overworld({ screen }: OverworldProps) {
                 )
               ) {
                 setSeed(contentAtPlayerCell.seed);
+                setLevel(contentAtPlayerCell.level);
                 goTo("dungeon");
               }
             }}
