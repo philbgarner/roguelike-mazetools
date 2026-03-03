@@ -189,9 +189,10 @@ export const tileFrag = /* glsl */ `
     // --- M8 PATH GRADIENT — sampled before entity glyph (pathData already sampled above) ---
     float pathStep = pathData.a * 255.0; // 0 = no path; 1..255 = step index
 
-    // Apply path overlay only on explored, walkable (non-wall) cells that have a path
+    // Apply path overlay on all explored, walkable (non-wall) cells that have a path.
+    // Unexplored cells already returned early above, so no need to gate on explored.
     // pathData.a encodes step index / 255; step 1 = 1/255 ≈ 0.004, so threshold must be < 1/255
-    float onPath = step(0.5 / 255.0, pathData.a) * explored * (1.0 - curWall);
+    float onPath = step(0.5 / 255.0, pathData.a) * (1.0 - curWall);
 
     // Infer direction-of-travel from stepped alpha neighbors (8-directional)
     vec2 oneCell = vec2(1.0) / uGridSize;
@@ -620,7 +621,7 @@ export const forestFrag = /* glsl */ `
     // --- M8 PATH GRADIENT ---
     float pathStep = pathData.a * 255.0;
     // No wall gate: path data on tree cells can show through their glyph.
-    float onPath = step(0.5 / 255.0, pathData.a) * explored;
+    float onPath = step(0.5 / 255.0, pathData.a);
 
     vec2 oneCell = vec2(1.0) / uGridSize;
     float aN  = texture2D(uPathMask, texUv + vec2( 0.0,        -oneCell.y)).a * 255.0;
@@ -862,6 +863,10 @@ export const forestFrag = /* glsl */ `
 
     float notVisible = 1.0 - step(0.5 / 255.0, vis);
     outRgb = mix(outRgb, mix(bg, vec3(0.05), inkA), notVisible * (1.0 - isPlayerHere));
+
+    // Path overlay applied after fog-of-war so it shows on explored-but-dark
+    // cells too (pathBg handles visible cells; this covers the rest).
+    outRgb = mix(outRgb, pathColor, pathIntensity * 0.5 * notVisible);
 
     gl_FragColor = vec4(outRgb, 1.0);
   }
