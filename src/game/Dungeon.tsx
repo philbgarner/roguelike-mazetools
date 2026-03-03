@@ -46,10 +46,10 @@ import {
   tickUntilPlayer,
   commitPlayerAction,
   defaultComputeCost,
-  defaultApplyAction,
   type TurnSystemState,
   type TurnSystemDeps,
 } from "../turn/turnSystem";
+import { combatApplyAction } from "../turn/combatApplyAction";
 import { decideChasePlayer } from "../turn/monsterAI";
 import {
   computeEnemyPlannedPaths,
@@ -248,7 +248,7 @@ export default function Dungeon({ seed }: DungeonProps) {
         ),
       computeCost: (actorId, action) =>
         defaultComputeCost(actorId, action, _actors),
-      applyAction: defaultApplyAction,
+      applyAction: combatApplyAction,
       log: true,
       onTimeAdvanced: ({ prevTime, nextTime }) => {
         const dt = nextTime - prevTime;
