@@ -26,8 +26,8 @@ export interface UseFloatingMessageParams {
   pxPerCell?: number;
 }
 
-const DEFAULT_SPEED = 40;
-const DEFAULT_TTL = 1200;
+const DEFAULT_SPEED = 60;
+const DEFAULT_TTL = 2200;
 let _nextId = 0;
 
 function ensureKeyframe() {
@@ -67,9 +67,16 @@ export function useFloatingMessage({
   }, []);
 
   const push = useCallback(
-    (text: string, gridX: number, gridY: number, opts?: FloatingMessageOptions) => {
+    (
+      text: string,
+      gridX: number,
+      gridY: number,
+      opts?: FloatingMessageOptions,
+    ) => {
       const numeric = Number(text.trim());
-      const isNeg = !isNaN(numeric) ? numeric < 0 : text.trimStart().startsWith("-");
+      const isNeg = !isNaN(numeric)
+        ? numeric < 0
+        : text.trimStart().startsWith("-");
       const color = opts?.color ?? (isNeg ? "#ff4444" : "#ffffff");
       const speed = opts?.speed ?? DEFAULT_SPEED;
       const timeToLive = opts?.timeToLive ?? DEFAULT_TTL;
@@ -79,7 +86,10 @@ export function useFloatingMessage({
       const worldY = (mapHeight / 2 - (gridY + 0.5)) * pxPerCell;
 
       const id = _nextId++;
-      setMessages((prev) => [...prev, { id, text, worldX, worldY, color, speed, timeToLive }]);
+      setMessages((prev) => [
+        ...prev,
+        { id, text, worldX, worldY, color, speed, timeToLive },
+      ]);
       setTimeout(
         () => setMessages((prev) => prev.filter((m) => m.id !== id)),
         timeToLive + 100,
@@ -108,7 +118,8 @@ export function useFloatingMessage({
                   fontFamily: "monospace",
                   fontWeight: "bold",
                   fontSize: "14px",
-                  textShadow: "1px 1px 2px rgba(0,0,0,0.9), -1px -1px 2px rgba(0,0,0,0.9)",
+                  textShadow:
+                    "1px 1px 2px rgba(0,0,0,0.9), -1px -1px 2px rgba(0,0,0,0.9)",
                   whiteSpace: "nowrap",
                   userSelect: "none",
                   lineHeight: 1,

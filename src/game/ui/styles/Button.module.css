@@ -12,11 +12,11 @@
 }
 
 .buttonContainer::before {
-    content: "<";
+    content: "[";
 }
 
 .buttonContainer::after {
-    content: ">";
+    content: "]";
 }
 
 .buttonContent {

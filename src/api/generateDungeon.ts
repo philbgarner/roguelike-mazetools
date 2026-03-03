@@ -31,6 +31,7 @@ export function generateDungeon(
 ): GenerateDungeonResult {
   const {
     seed,
+    level,
     width = DEFAULT_WIDTH,
     height = DEFAULT_HEIGHT,
     bsp: bspOverrides,
@@ -73,6 +74,7 @@ export function generateDungeon(
 
   const contentOpts = {
     seed,
+    level,
 
     includeLeverHiddenPocket: isAtomic ? false : p.includeLeverHiddenPocket,
     leverHiddenPocketSize: p.leverHiddenPocketSize,
@@ -126,7 +128,7 @@ export function generateDungeon(
 
   // ---- Theme resolution ---------------------------------------------------
 
-  const { themeId, level } = request;
+  const { themeId } = request;
   const seedNum = bsp.meta?.seedUsed ?? 0;
   let themePayload: GenerateDungeonResult["theme"] = null;
   let resolved: GenerateDungeonResult["resolved"] = null;

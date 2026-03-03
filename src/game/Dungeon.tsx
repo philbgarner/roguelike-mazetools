@@ -639,7 +639,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   return (
     <>
       <BorderPanel width="20rem" height="5rem" background="#000" bottom="0px">
-        Test
+        HP: {playerActor.hp}/{playerActor.maxHp}
       </BorderPanel>
       <DungeonRenderView
         bsp={dungeon}

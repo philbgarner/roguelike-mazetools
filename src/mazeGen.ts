@@ -1742,6 +1742,8 @@ export type CircuitDef = {
 export type ContentOptions = {
   seed?: number | string;
 
+  level?: number;
+
   // How to pick the entrance room.
   entranceMode?: "bottom" | "top" | "random";
 
@@ -2237,13 +2239,17 @@ export function generateDungeonContent(
 ): ContentOutputs {
   const options: Required<ContentOptions> = {
     seed: opts?.seed ?? 0,
+    level: opts?.level ?? 1,
 
     entranceMode: opts?.entranceMode ?? "bottom",
 
-    minClearanceToWall: opts?.minClearanceToWall ?? 1,
-    monstersPerRoomMin: opts?.monstersPerRoomMin ?? 0,
-    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 2,
-    monsterRoomChance: opts?.monsterRoomChance ?? 0.35,
+    minClearanceToWall: opts?.minClearanceToWall ?? 1 * (opts?.level ?? 1),
+    monstersPerRoomMin:
+      (opts?.monstersPerRoomMin ?? (opts?.level ?? 1) === 1)
+        ? 0
+        : 1 * (opts?.level ?? 2),
+    monstersPerRoomMax: opts?.monstersPerRoomMax ?? 2 * (opts?.level ?? 1),
+    monsterRoomChance: opts?.monsterRoomChance ?? 0.35 * (opts?.level ?? 1),
 
     chestsTargetCount:
       opts?.chestsTargetCount ??
@@ -2374,6 +2380,7 @@ export function generateDungeonContent(
   // -----------------------------
   for (let i = 0; i < rooms.length; i++) {
     const roomId = i + 1;
+
     if (roomId === entranceRoomId) continue;
 
     // unreachable rooms: skip
