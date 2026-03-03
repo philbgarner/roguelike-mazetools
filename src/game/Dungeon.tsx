@@ -74,11 +74,6 @@ import "./styles.css";
 
 import BorderPanel from "./ui/BorderPanel";
 
-export interface Player {
-  x: number;
-  y: number;
-}
-
 // ---------------------------------------------------------------------------
 // Dungeon generation (via API so we get resolved monster spawns)
 // ---------------------------------------------------------------------------
@@ -112,7 +107,7 @@ export interface DungeonProps {
 }
 
 export default function Dungeon({ seed }: DungeonProps) {
-  const { goTo, overworldBsp, setSeed, level, setLevel } = useGame();
+  const { goTo, overworldBsp, setSeed, level, setLevel, player } = useGame();
   const result = useMemo(() => buildDungeon(seed, level), []);
   const dungeon = result.bsp;
   const content = result.content;
@@ -164,9 +159,9 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   // --- Turn system ---
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
-    const player = createPlayerActor(startCell.x, startCell.y);
+    const playerActor = createPlayerActor(startCell.x, startCell.y, player);
     const monsters = createMonstersFromResolved(result.resolved);
-    const ts = createTurnSystemState(player, monsters);
+    const ts = createTurnSystemState(playerActor, monsters);
     const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
     return tickUntilPlayer(ts, deps);
   });
@@ -608,11 +603,16 @@ export default function Dungeon({ seed }: DungeonProps) {
       // If the next step would attack a monster, commit only that one action
       // then stop auto-walk so the player decides what to do next.
       let effectiveNextAutoWalk = nextAutoWalk;
-      if (action.kind === "move" && action.dx !== undefined && action.dy !== undefined) {
+      if (
+        action.kind === "move" &&
+        action.dx !== undefined &&
+        action.dy !== undefined
+      ) {
         const tx = playerX + action.dx;
         const ty = playerY + action.dy;
         const hasMonster = Object.values(turnState.actors).some(
-          (a) => a.id !== turnState.playerId && a.alive && a.x === tx && a.y === ty,
+          (a) =>
+            a.id !== turnState.playerId && a.alive && a.x === tx && a.y === ty,
         );
         if (hasMonster) effectiveNextAutoWalk = { kind: "idle" };
       }
@@ -639,7 +639,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     enemyPlannedPathsRef.current = [];
     setAutoWalk(cancelAutoWalk());
     rebuildPathMaskFromPlans();
-    const newPlayer = createPlayerActor(startCell.x, startCell.y);
+    const newPlayer = createPlayerActor(startCell.x, startCell.y, player);
     const monsters = createMonstersFromResolved(result.resolved);
     console.log(
       "seed",

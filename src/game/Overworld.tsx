@@ -61,11 +61,6 @@ import Tooltip, { TooltipProps } from "./ui/Tooltip";
 import ModalPanel from "./ui/ModalPanel";
 import { useConfirmYesNo } from "./ui/useConfirmYesNo";
 
-export interface Player {
-  x: number;
-  y: number;
-}
-
 // ---------------------------------------------------------------------------
 // Dungeon generation
 // ---------------------------------------------------------------------------

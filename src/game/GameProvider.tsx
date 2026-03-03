@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { BspDungeonOutputs, ForestContentOutputs } from "../mazeGen";
+import { Player, DEFAULT_PLAYER } from "./player";
 
 export type GameScreen =
   | "main-menu"
@@ -10,6 +11,8 @@ export type GameScreen =
 
 interface GameState {
   screen: GameScreen;
+  player: Player;
+  setPlayer: (player: Player) => void;
   seed: string | number;
   level: number;
   setLevel: (newLevel: number) => void;
@@ -24,6 +27,7 @@ const GameContext = createContext<GameState | null>(null);
 
 export function GameProvider({ children }: { children: ReactNode }) {
   const [screen, setScreen] = useState<GameScreen>("main-menu");
+  const [player, setPlayer] = useState<Player>(DEFAULT_PLAYER);
   const [seed, setSeed] = useState<string | number>("test");
   const [level, setLevel] = useState<number>(1);
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
@@ -36,6 +40,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
     <GameContext.Provider
       value={{
         screen,
+        player,
+        setPlayer,
         seed,
         level,
         setLevel: (newLevel: number) => setLevel(newLevel),

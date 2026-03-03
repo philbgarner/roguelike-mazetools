@@ -10,6 +10,7 @@ import {
   NPC_STATS,
 } from "../examples/data/spawnTableData";
 import type { PlayerActor, MonsterActor } from "./turnTypes";
+import type { Player } from "../game/player";
 
 /** Default player speed (acts 10x per BASE_TIME unit with default BASE_TIME=100). */
 const PLAYER_SPEED = 10;
@@ -29,20 +30,25 @@ const FALLBACK_STATS = {
 
 /**
  * Create the player actor at the given start position.
- * Uses the id "player" for single-floor scenarios.
+ * When `seed` is provided, its stats override the hardcoded defaults —
+ * use this to carry persistent player state across dungeon floors.
  */
-export function createPlayerActor(startX: number, startY: number): PlayerActor {
+export function createPlayerActor(
+  startX: number,
+  startY: number,
+  seed?: Player,
+): PlayerActor {
   return {
     id: "player",
     kind: "player",
     x: startX,
     y: startY,
-    hp: PLAYER_BASE_HP,
-    maxHp: PLAYER_BASE_HP,
-    xp: 0,
-    level: 1,
-    attack: PLAYER_BASE_ATTACK,
-    defense: PLAYER_BASE_DEFENSE,
+    hp: seed?.hp ?? PLAYER_BASE_HP,
+    maxHp: seed?.maxHp ?? PLAYER_BASE_HP,
+    xp: seed?.xp ?? 0,
+    level: seed?.level ?? 1,
+    attack: seed?.attack ?? PLAYER_BASE_ATTACK,
+    defense: seed?.defense ?? PLAYER_BASE_DEFENSE,
     speed: PLAYER_SPEED,
     alive: true,
     blocksMovement: true,
