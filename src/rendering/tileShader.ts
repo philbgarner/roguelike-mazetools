@@ -693,9 +693,13 @@ export const forestFrag = /* glsl */ `
 
     // -------------------------
     // Tint selection
-    // FOREST: use curWall so all tree cells get uWallColor base tint.
+    // FOREST: override base tints with biome-specific colours.
+    //   Trees  — greenish blue-grey, like moonlit canopy.
+    //   Floor  — desaturated cool earthy tone, like damp stone.
     // -------------------------
-    vec4 tint = mix(uFloorColor, uWallColor, curWall);
+    vec4 forestWallTint  = vec4(0.45, 0.65, 0.58, 1.0);
+    vec4 forestFloorTint = vec4(0.50, 0.51, 0.54, 1.0);
+    vec4 tint = mix(forestFloorTint, forestWallTint, curWall);
 
     if (tintId > 0.5 && tintId < 1.5) {
       float t = 0.5 + 0.5 * sin(uTime * 4.0);
@@ -782,9 +786,9 @@ export const forestFrag = /* glsl */ `
     float treeFade = smoothstep(0.4, 1.0, local.y) * curWall;
 
     // Compute the tree layer independently so it shows through the faded entity.
-    // Tree always uses uWallColor tint at wall-brightness shade.
+    // Tree uses the forest wall tint (not uWallColor) so the biome colour is consistent.
     float treeShadeF = 1.08 * (1.0 - ao) * (1.0 - shadow) * modulate;
-    vec3 treeInkF = baseInk * uWallColor.rgb * treeShadeF * (1.0 - treeFade);
+    vec3 treeInkF = baseInk * forestWallTint.rgb * treeShadeF * (1.0 - treeFade);
     vec3 treeLayerF = mix(pathBg, treeInkF, baseInkA);
 
     // Entity nestled in trees: top half visible (head above canopy),
