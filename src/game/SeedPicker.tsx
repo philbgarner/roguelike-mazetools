@@ -11,7 +11,6 @@ import {
 } from "../mazeGen";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
 import { useGame } from "./GameProvider";
-import { generateWorldName, generatePortalName } from "./data/worldNameData";
 import styles from "./styles/SeedPicker.module.css";
 import BorderPanel from "./ui/BorderPanel";
 import Button from "./ui/Button";
@@ -92,11 +91,6 @@ export default function SeedPicker() {
   );
   const contentLegacy = content as unknown as ContentOutputs;
 
-  const worldName = useMemo(
-    () => generateWorldName(bsp.meta.seedUsed),
-    [bsp.meta.seedUsed],
-  );
-
   // Clear selection when the world regenerates
   useEffect(() => {
     setSelectedPortal(null);
@@ -162,8 +156,8 @@ export default function SeedPicker() {
               hash 0x
               {bsp.meta.seedUsed.toString(16).padStart(8, "0").toUpperCase()}
             </div>
-            <div className={styles.worldName}>{worldName.name}</div>
-            <div className={styles.worldDescription}>{worldName.description}</div>
+            <div className={styles.worldName}>{content.meta.worldName.name}</div>
+            <div className={styles.worldDescription}>{content.meta.worldName.description}</div>
           </div>
 
           {/* Start button */}
@@ -208,7 +202,7 @@ export default function SeedPicker() {
                   <tr>
                     <td className={styles.detailKey}>Name</td>
                     <td className={styles.detailNameValue}>
-                      {generatePortalName(selectedPortal.seed)}
+                      {selectedPortal.name}
                     </td>
                   </tr>
                   <tr>
@@ -298,7 +292,7 @@ export default function SeedPicker() {
                   {p.theme}
                 </span>
                 <span className={styles.portalListName}>
-                  {generatePortalName(p.seed)}
+                  {p.name}
                 </span>
                 <span className={styles.portalListLevel}>lvl {p.level}</span>
               </div>

@@ -29,6 +29,9 @@
     --mono:
         IBMVGA, "Cascadia Code", "Fira Code", "Source Code Pro", "Courier New",
         monospace;
+    --mono-not-dos:
+        "Cascadia Code", "Fira Code", "Source Code Pro", "Courier New",
+        monospace;
 }
 
 * {

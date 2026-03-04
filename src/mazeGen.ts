@@ -18,6 +18,11 @@
 import * as THREE from "three";
 import { buildSeedBank, type BatchRunInput } from "./batchStats";
 import {
+  generateWorldName,
+  generatePortalName,
+  type WorldName,
+} from "./game/data/worldNameData";
+import {
   applyLeverRevealsHiddenPocketPattern,
   applyPlateOpensDoorPattern,
   runPatternsBestEffort,
@@ -1319,6 +1324,8 @@ export type DungeonPortal = {
   level: number;
   /** Deterministic seed derived from the forest seed + level */
   seed: number;
+  /** Deterministic fantasy name for this portal */
+  name: string;
   theme: DungeonTheme;
   /** 0-255 normalised difficulty, matches the danger mask value */
   difficulty: number;
@@ -1384,6 +1391,7 @@ export type ForestContentOutputs = {
 
   meta: {
     seedUsed: number;
+    worldName: WorldName;
     playerSpawn: Point;
     playerSpawnRoomId: number;
     dungeonPortals: DungeonPortal[];
@@ -1582,6 +1590,7 @@ export function generateForestContent(
       roomId,
       level,
       seed: portalSeed,
+      name: generatePortalName(portalSeed),
       theme: themeForLevel(level),
       difficulty: difficultyNorm,
     });
@@ -1632,6 +1641,7 @@ export function generateForestContent(
 
     meta: {
       seedUsed,
+      worldName: generateWorldName(seedUsed),
       playerSpawn: spawnPoint,
       playerSpawnRoomId: spawnRoomId,
       dungeonPortals: portals,

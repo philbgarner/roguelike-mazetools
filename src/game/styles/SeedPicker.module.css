@@ -150,8 +150,14 @@
 }
 
 @keyframes hintPulse {
-    0%, 100% { color: #444; }
-    50% { color: #aaffaa; text-shadow: 0 0 6px #aaffaa66; }
+    0%,
+    100% {
+        color: #444;
+    }
+    50% {
+        color: #aaffaa;
+        text-shadow: 0 0 6px #aaffaa66;
+    }
 }
 
 .hintPulse {
@@ -197,7 +203,8 @@
 }
 
 .worldDescription {
-    color: #5a5248;
+    font-family: var(--mono-not-dos);
+    color: #9a9278;
     font-size: 0.72rem;
     line-height: 1.55;
     margin-top: 0.35rem;
