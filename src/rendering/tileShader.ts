@@ -533,6 +533,27 @@ export const forestFrag = /* glsl */ `
   }
 
   // ------------------------------------------------------------
+  // Mist helpers
+  // ------------------------------------------------------------
+
+  float hash21(vec2 p) {
+    p = fract(p * vec2(127.1, 311.7));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+
+  float valueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+
+  // ------------------------------------------------------------
   // Main
   // ------------------------------------------------------------
 
@@ -881,6 +902,39 @@ export const forestFrag = /* glsl */ `
 
     // Global brightness boost.
     outRgb = clamp(outRgb * 1.4, 0.0, 1.0);
+
+    // ------------------------------------------------------------
+    // MIST — translucent animated wisps clumping around solid tiles
+    // ------------------------------------------------------------
+    // World-space position gives continuous noise across tile boundaries.
+    vec2 mistPos = cell + local;
+
+    // Three noise layers drifting westward. Adding +X to the sample coord
+    // shifts the pattern in -X (west) on screen. Speed chosen so the large
+    // wisp layer moves ~1.5 grid-cells/sec (0.42 / 0.28 ≈ 1.5).
+    float mistWest = uTime * 0.42;
+    vec2 driftA = vec2(mistWest,        uTime *  0.06);
+    vec2 driftB = vec2(mistWest * 0.80, uTime * -0.08);
+    float m1 = valueNoise(mistPos * 0.28 + driftA);
+    float m2 = valueNoise(mistPos * 0.55 + driftB);
+    float m3 = valueNoise(mistPos * 1.10 + vec2(mistWest * 0.65, uTime * 0.04));
+    float mistRaw = m1 * 0.55 + m2 * 0.30 + m3 * 0.15;
+    // Threshold to create distinct wisp clumps rather than a uniform veil.
+    mistRaw = smoothstep(0.38, 0.78, mistRaw);
+
+    // Wall affinity: mist is densest on solid cells and fades with distance.
+    float wallProxCard   = (wL + wR + wU + wD) * 0.25;
+    float wallProxCorner = (wUL + wUR + wDL + wDR) * 0.25;
+    float wallAffinity   = clamp(curWall + wallProxCard * 0.7 + wallProxCorner * 0.25, 0.0, 1.0);
+
+    // Combine: mist only appears where the noise AND wall proximity agree.
+    float mistDensity = mistRaw * wallAffinity;
+
+    // Cool blue-green tint matching the moonlit forest palette.
+    vec3  mistCol   = vec3(0.50, 0.68, 0.60);
+    // Max ~30% opacity so the underlying tile always reads through.
+    float mistAlpha = mistDensity * 0.30 * explored;
+    outRgb = mix(outRgb, mix(outRgb, mistCol, 0.55), mistAlpha);
 
     gl_FragColor = vec4(outRgb, 1.0);
   }
