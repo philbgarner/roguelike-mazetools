@@ -14,10 +14,12 @@
 
 .buttonContainer::before {
     content: "[";
+    align-self: center;
 }
 
 .buttonContainer::after {
     content: "]";
+    align-self: center;
 }
 
 .buttonContent {
@@ -35,6 +37,7 @@
     background-color: transparent;
     color: inherit;
     border: 0;
+    width: 100%;
 }
 .buttonContent > input:active {
     border: 0;

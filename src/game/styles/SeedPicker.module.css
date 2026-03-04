@@ -149,6 +149,15 @@
     line-height: 1.7;
 }
 
+@keyframes hintPulse {
+    0%, 100% { color: #444; }
+    50% { color: #aaffaa; text-shadow: 0 0 6px #aaffaa66; }
+}
+
+.hintPulse {
+    animation: hintPulse 1.4s ease-in-out infinite;
+}
+
 .portalsLabel {
     color: #6a6;
     font-size: 0.72rem;
@@ -175,6 +184,31 @@
 
 .portalListCoord {
     color: #444;
+}
+
+.worldName {
+    color: #c87a4a;
+    font-size: 0.95rem;
+    letter-spacing: 0.04em;
+    margin-top: 0.15rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.portalListName {
+    flex: 1;
+    color: #7a8a7a;
+    font-size: 0.72rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-right: 0.4rem;
+}
+
+.detailNameValue {
+    color: #c87a4a;
+    font-size: 0.82rem;
 }
 
 .mapPanel {

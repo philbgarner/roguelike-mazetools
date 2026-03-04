@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { Center, Text3D, useFont } from "@react-three/drei";
 
 import DungeonRenderView from "../rendering/DungeonRenderView";
@@ -11,13 +11,14 @@ import {
 } from "../mazeGen";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
 import { useGame } from "./GameProvider";
+import { generateWorldName, generatePortalName } from "./data/worldNameData";
 import styles from "./styles/SeedPicker.module.css";
 import BorderPanel from "./ui/BorderPanel";
 import Button from "./ui/Button";
 import Input from "./ui/Input";
 
 const FONT_URL = "/fonts/dosfont.json";
-const MAP_ZOOM_DEFAULT = 10;
+const MAP_ZOOM_DEFAULT = 20;
 const MAP_ZOOM_MIN = 4;
 const MAP_ZOOM_MAX = 32;
 
@@ -62,12 +63,37 @@ function themeColor(theme: string): string {
   }
 }
 
+function FocusLerper({
+  targetRef,
+  animRef,
+  onUpdate,
+}: {
+  targetRef: React.MutableRefObject<{ x: number; y: number }>;
+  animRef: React.MutableRefObject<{ x: number; y: number }>;
+  onUpdate: (x: number, y: number) => void;
+}) {
+  useFrame(() => {
+    const LERP = 0.1;
+    const anim = animRef.current;
+    const target = targetRef.current;
+    const dx = target.x - anim.x;
+    const dy = target.y - anim.y;
+    if (Math.abs(dx) < 0.005 && Math.abs(dy) < 0.005) return;
+    anim.x += dx * LERP;
+    anim.y += dy * LERP;
+    onUpdate(anim.x, anim.y);
+  });
+  return null;
+}
+
 export default function SeedPicker() {
   const { goTo, setOverworld } = useGame();
 
   const [localSeed, setLocalSeed] = useState<string | number>("test");
   const [focusX, setFocusX] = useState(32);
   const [focusY, setFocusY] = useState(32);
+  const targetFocusRef = useRef({ x: 32, y: 32 });
+  const animFocusRef = useRef({ x: 32, y: 32 });
   const [selectedPortal, setSelectedPortal] = useState<DungeonPortal | null>(
     null,
   );
@@ -76,6 +102,9 @@ export default function SeedPicker() {
     y: number;
   } | null>(null);
   const [mapZoom, setMapZoom] = useState(MAP_ZOOM_DEFAULT);
+  const [hasLeftClicked, setHasLeftClicked] = useState(false);
+  const [hasRightClicked, setHasRightClicked] = useState(false);
+  const [hasScrolled, setHasScrolled] = useState(false);
   const lastHoverCellRef = useRef<{ x: number; y: number } | null>(null);
 
   const { bsp, content } = useMemo(
@@ -84,10 +113,19 @@ export default function SeedPicker() {
   );
   const contentLegacy = content as unknown as ContentOutputs;
 
+  const worldName = useMemo(
+    () => generateWorldName(bsp.meta.seedUsed),
+    [bsp.meta.seedUsed],
+  );
+
   // Clear selection when the world regenerates
   useEffect(() => {
     setSelectedPortal(null);
   }, [bsp]);
+
+  function animateFocusTo(x: number, y: number) {
+    targetFocusRef.current = { x, y };
+  }
 
   function rollSeed() {
     setLocalSeed((Math.random() * 0xffffffff) >>> 0);
@@ -100,15 +138,16 @@ export default function SeedPicker() {
 
   function handleContextMenu(e: React.MouseEvent) {
     e.preventDefault();
+    setHasRightClicked(true);
     const cell = lastHoverCellRef.current;
     if (cell) {
-      setFocusX(cell.x);
-      setFocusY(cell.y);
+      animateFocusTo(cell.x, cell.y);
     }
   }
 
   function handleWheel(e: React.WheelEvent) {
     e.preventDefault();
+    setHasScrolled(true);
     setMapZoom((z) =>
       Math.max(MAP_ZOOM_MIN, Math.min(MAP_ZOOM_MAX, z - Math.sign(e.deltaY))),
     );
@@ -133,18 +172,24 @@ export default function SeedPicker() {
             <div className={styles.seedRow}>
               <Input
                 value={String(localSeed)}
+                maxWidth="13rem"
                 onChange={(value) => setLocalSeed(value)}
               />
-              <Button onClick={rollSeed}>⟳ Roll</Button>
+              <Button minWidth="8rem" onClick={rollSeed}>
+                Roll
+              </Button>
             </div>
             <div className={styles.hashText}>
               hash 0x
               {bsp.meta.seedUsed.toString(16).padStart(8, "0").toUpperCase()}
             </div>
+            <div className={styles.worldName}>{worldName.name}</div>
           </div>
 
           {/* Start button */}
-          <Button onClick={handleStart}>Begin</Button>
+          <Button background="rgba(0, 170, 170)" onClick={handleStart}>
+            <span style={{ fontWeight: "bold" }}>Begin</span>
+          </Button>
 
           <hr className={styles.separator} />
 
@@ -180,6 +225,12 @@ export default function SeedPicker() {
               <div className={styles.detailHeading}>PORTAL DETAILS</div>
               <table className={styles.detailTable}>
                 <tbody>
+                  <tr>
+                    <td className={styles.detailKey}>Name</td>
+                    <td className={styles.detailNameValue}>
+                      {generatePortalName(selectedPortal.seed)}
+                    </td>
+                  </tr>
                   <tr>
                     <td className={styles.detailKey}>Theme</td>
                     <td style={{ color: themeColor(selectedPortal.theme) }}>
@@ -219,9 +270,19 @@ export default function SeedPicker() {
             </div>
           ) : (
             <div className={styles.hintText}>
-              Left-click a portal on the map to see its details.
+              <span className={!hasLeftClicked ? styles.hintPulse : undefined}>
+                Left-click
+              </span>{" "}
+              a location on the map to see its details.
               <br />
-              Right-click to recentre the view.
+              <span className={!hasRightClicked ? styles.hintPulse : undefined}>
+                Right-click
+              </span>{" "}
+              to recentre the view.{" "}
+              <span className={!hasScrolled ? styles.hintPulse : undefined}>
+                Mouse wheel
+              </span>{" "}
+              scrolls.
             </div>
           )}
 
@@ -230,15 +291,15 @@ export default function SeedPicker() {
           {/* Portal list */}
           <div>
             <div className={styles.portalsLabel}>
-              PORTALS ({content.meta.dungeonPortals.length})
+              Locations ({content.meta.dungeonPortals.length})
             </div>
             {content.meta.dungeonPortals.map((p) => (
               <div
                 key={p.id}
                 onClick={() => {
                   setSelectedPortal(p);
-                  setFocusX(p.x);
-                  setFocusY(p.y);
+                  animateFocusTo(p.x, p.y);
+                  setHoveredCell({ x: p.x, y: p.y });
                 }}
                 className={styles.portalListItem}
                 style={{
@@ -256,10 +317,10 @@ export default function SeedPicker() {
                 >
                   {p.theme}
                 </span>
-                <span className={styles.portalListLevel}>lvl {p.level}</span>
-                <span className={styles.portalListCoord}>
-                  ({p.x},{p.y})
+                <span className={styles.portalListName}>
+                  {generatePortalName(p.seed)}
                 </span>
+                <span className={styles.portalListLevel}>lvl {p.level}</span>
               </div>
             ))}
           </div>
@@ -313,13 +374,23 @@ export default function SeedPicker() {
             setHoveredCell(null);
           }}
           onCellClick={({ x, y }) => {
+            setHasLeftClicked(true);
             const portal = content.meta.dungeonPortals.find(
               (p) => p.x === x && p.y === y,
             );
             setSelectedPortal(portal ?? null);
             return true;
           }}
-        />
+        >
+          <FocusLerper
+            targetRef={targetFocusRef}
+            animRef={animFocusRef}
+            onUpdate={(x, y) => {
+              setFocusX(x);
+              setFocusY(y);
+            }}
+          />
+        </DungeonRenderView>
       </div>
     </div>
   );

@@ -1,5 +1,10 @@
 /* src/styles.css */
 
+@font-face {
+    font-family: IBMVGA;
+    src: url("/fonts/Ac437_IBM_BIOS.ttf") format("truetype");
+}
+
 :root {
     overflow: hidden;
     --bg: #0b0f17;
@@ -22,7 +27,7 @@
     --radius2: 18px;
 
     --mono:
-        "Cascadia Code", "Fira Code", "Source Code Pro", "Courier New",
+        IBMVGA, "Cascadia Code", "Fira Code", "Source Code Pro", "Courier New",
         monospace;
 }
 
@@ -50,6 +55,8 @@ body {
         var(--bg);
     color: var(--text);
     font-family: var(--mono);
+    font-size: 12pt;
+    line-height: 14px;
 }
 
 button,

@@ -8,6 +8,7 @@ export interface ButtonProps {
   onClick?: () => void;
 
   maxWidth?: string;
+  minWidth?: string;
   width?: string;
   background?: string;
 }
@@ -18,6 +19,7 @@ export default function Button({
   children,
   background,
   maxWidth,
+  minWidth,
   width,
   onClick,
 }: ButtonProps) {
@@ -32,6 +34,7 @@ export default function Button({
       className={`${styles.buttonContainer} ${state === "Pressed" ? styles.pressed : ""}`}
       style={{
         maxWidth,
+        minWidth,
         width,
         background: state === "Normal" ? background : undefined,
       }}
