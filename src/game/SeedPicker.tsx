@@ -11,6 +11,7 @@ import {
 } from "../mazeGen";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
 import { useGame } from "./GameProvider";
+import styles from "./styles/SeedPicker.module.css";
 
 const FONT_URL = "/fonts/dosfont.json";
 const MAP_ZOOM_DEFAULT = 10;
@@ -111,131 +112,49 @@ export default function SeedPicker() {
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        width: "100vw",
-        height: "100vh",
-        background: "#080808",
-        overflow: "hidden",
-      }}
-    >
+    <div className={styles.wrapper}>
       {/* ── Left panel 40% ── */}
-      <div
-        style={{
-          width: "40%",
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          borderRight: "1px solid #222",
-          color: "#bbb",
-          fontFamily: "monospace",
-        }}
-      >
+      <div className={styles.leftPanel}>
         {/* 3D title */}
-        <div style={{ height: "160px", flexShrink: 0 }}>
+        <div className={styles.titleArea}>
           <Canvas
             camera={{ position: [0, 0, 5], fov: 50 }}
-            style={{ width: "100%", height: "100%", background: "transparent" }}
+            className={styles.titleCanvas}
           >
             <PickerTitle />
           </Canvas>
         </div>
 
         {/* Controls */}
-        <div
-          style={{
-            flex: 1,
-            padding: "1.2rem",
-            display: "flex",
-            flexDirection: "column",
-            gap: "0.9rem",
-            overflowY: "auto",
-          }}
-        >
+        <div className={styles.controls}>
           {/* Seed input */}
           <div>
-            <div
-              style={{
-                color: "#6a6",
-                fontSize: "0.72rem",
-                marginBottom: "0.35rem",
-                letterSpacing: "0.08em",
-              }}
-            >
-              OVERWORLD SEED
-            </div>
-            <div style={{ display: "flex", gap: "0.4rem" }}>
+            <div className={styles.overworldLabel}>OVERWORLD SEED</div>
+            <div className={styles.seedRow}>
               <input
                 value={String(localSeed)}
                 onChange={(e) => setLocalSeed(e.target.value)}
-                style={{
-                  flex: 1,
-                  background: "#0e0e0e",
-                  border: "1px solid #333",
-                  color: "#eee",
-                  padding: "0.4rem 0.6rem",
-                  fontFamily: "monospace",
-                  fontSize: "0.88rem",
-                  outline: "none",
-                }}
+                className={styles.seedInput}
               />
-              <button
-                onClick={rollSeed}
-                style={{
-                  background: "#101828",
-                  border: "1px solid #334",
-                  color: "#88aaff",
-                  padding: "0.4rem 0.8rem",
-                  fontFamily: "monospace",
-                  fontSize: "0.85rem",
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={rollSeed} className={styles.rollButton}>
                 ⟳ Roll
               </button>
             </div>
-            <div
-              style={{
-                color: "#444",
-                fontSize: "0.7rem",
-                marginTop: "0.25rem",
-              }}
-            >
+            <div className={styles.hashText}>
               hash 0x
               {bsp.meta.seedUsed.toString(16).padStart(8, "0").toUpperCase()}
             </div>
           </div>
 
           {/* Start button */}
-          <button
-            onClick={handleStart}
-            style={{
-              background: "#0e1e0e",
-              border: "1px solid #3a6a3a",
-              color: "#aaff88",
-              padding: "0.6rem 1rem",
-              fontFamily: "monospace",
-              fontSize: "0.95rem",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
+          <button onClick={handleStart} className={styles.startButton}>
             ▶ Start with this seed
           </button>
 
-          <hr
-            style={{
-              border: "none",
-              borderTop: "1px solid #1a1a1a",
-              margin: 0,
-            }}
-          />
+          <hr className={styles.separator} />
 
           {/* Hovered cell status */}
-          <div
-            style={{ fontSize: "0.75rem", color: "#555", minHeight: "1.1em" }}
-          >
+          <div className={styles.hoveredStatus}>
             {hoveredCell
               ? (() => {
                   const hp = content.meta.dungeonPortals.find(
@@ -243,15 +162,13 @@ export default function SeedPicker() {
                   );
                   return (
                     <>
-                      <span style={{ color: "#888" }}>
+                      <span className={styles.hoveredCoord}>
                         ({hoveredCell.x}, {hoveredCell.y})
                       </span>
                       {hp && (
                         <span
-                          style={{
-                            color: themeColor(hp.theme),
-                            marginLeft: "0.5rem",
-                          }}
+                          className={styles.hoveredPortalName}
+                          style={{ color: themeColor(hp.theme) }}
                         >
                           {hp.theme} lvl {hp.level}
                         </span>
@@ -264,90 +181,35 @@ export default function SeedPicker() {
 
           {/* Portal detail or hint */}
           {selectedPortal ? (
-            <div
-              style={{
-                background: "#0e0e0e",
-                border: "1px solid #2a2a2a",
-                padding: "0.8rem",
-              }}
-            >
-              <div
-                style={{
-                  color: "#ffaa44",
-                  marginBottom: "0.55rem",
-                  fontSize: "0.72rem",
-                  letterSpacing: "0.08em",
-                }}
-              >
-                PORTAL DETAILS
-              </div>
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: "0.82rem",
-                }}
-              >
+            <div className={styles.portalDetail}>
+              <div className={styles.detailHeading}>PORTAL DETAILS</div>
+              <table className={styles.detailTable}>
                 <tbody>
                   <tr>
-                    <td
-                      style={{
-                        color: "#666",
-                        paddingRight: "0.75rem",
-                        paddingBottom: "0.2rem",
-                      }}
-                    >
-                      Theme
-                    </td>
+                    <td className={styles.detailKey}>Theme</td>
                     <td style={{ color: themeColor(selectedPortal.theme) }}>
                       {selectedPortal.theme}
                     </td>
                   </tr>
                   <tr>
-                    <td
-                      style={{
-                        color: "#666",
-                        paddingRight: "0.75rem",
-                        paddingBottom: "0.2rem",
-                      }}
-                    >
-                      Level
-                    </td>
-                    <td style={{ color: "#ddd" }}>{selectedPortal.level}</td>
+                    <td className={styles.detailKey}>Level</td>
+                    <td className={styles.detailValue}>{selectedPortal.level}</td>
                   </tr>
                   <tr>
-                    <td
-                      style={{
-                        color: "#666",
-                        paddingRight: "0.75rem",
-                        paddingBottom: "0.2rem",
-                      }}
-                    >
-                      Difficulty
-                    </td>
-                    <td style={{ color: "#ddd" }}>
+                    <td className={styles.detailKey}>Difficulty</td>
+                    <td className={styles.detailValue}>
                       {selectedPortal.difficulty}
                     </td>
                   </tr>
                   <tr>
-                    <td
-                      style={{
-                        color: "#666",
-                        paddingRight: "0.75rem",
-                        paddingBottom: "0.2rem",
-                      }}
-                    >
-                      Location
-                    </td>
-                    <td style={{ color: "#ddd" }}>
+                    <td className={styles.detailKey}>Location</td>
+                    <td className={styles.detailValue}>
                       ({selectedPortal.x}, {selectedPortal.y})
                     </td>
                   </tr>
                   <tr>
-                    <td style={{ color: "#666", paddingRight: "0.75rem" }}>
-                      Seed
-                    </td>
-                    <td style={{ color: "#555", fontSize: "0.75rem" }}>
+                    <td className={styles.detailKey}>Seed</td>
+                    <td className={styles.detailSeedValue}>
                       0x
                       {selectedPortal.seed
                         .toString(16)
@@ -359,33 +221,18 @@ export default function SeedPicker() {
               </table>
             </div>
           ) : (
-            <div
-              style={{ color: "#444", fontSize: "0.78rem", lineHeight: 1.7 }}
-            >
+            <div className={styles.hintText}>
               Left-click a portal on the map to see its details.
               <br />
               Right-click to recentre the view.
             </div>
           )}
 
-          <hr
-            style={{
-              border: "none",
-              borderTop: "1px solid #1a1a1a",
-              margin: 0,
-            }}
-          />
+          <hr className={styles.separator} />
 
           {/* Portal list */}
           <div>
-            <div
-              style={{
-                color: "#6a6",
-                fontSize: "0.72rem",
-                marginBottom: "0.4rem",
-                letterSpacing: "0.08em",
-              }}
-            >
+            <div className={styles.portalsLabel}>
               PORTALS ({content.meta.dungeonPortals.length})
             </div>
             {content.meta.dungeonPortals.map((p) => (
@@ -396,28 +243,24 @@ export default function SeedPicker() {
                   setFocusX(p.x);
                   setFocusY(p.y);
                 }}
+                className={styles.portalListItem}
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  padding: "0.28rem 0.5rem",
-                  marginBottom: "2px",
-                  cursor: "pointer",
                   background:
                     selectedPortal?.id === p.id ? "#111e11" : "transparent",
                   border:
                     selectedPortal?.id === p.id
                       ? "1px solid #2a4a2a"
                       : "1px solid transparent",
-                  fontSize: "0.78rem",
                 }}
               >
                 <span
-                  style={{ color: themeColor(p.theme), minWidth: "4.5rem" }}
+                  className={styles.portalListTheme}
+                  style={{ color: themeColor(p.theme) }}
                 >
                   {p.theme}
                 </span>
-                <span style={{ color: "#888" }}>lvl {p.level}</span>
-                <span style={{ color: "#444" }}>
+                <span className={styles.portalListLevel}>lvl {p.level}</span>
+                <span className={styles.portalListCoord}>
                   ({p.x},{p.y})
                 </span>
               </div>
@@ -428,7 +271,7 @@ export default function SeedPicker() {
 
       {/* ── Right panel 60%: bird's-eye map ── */}
       <div
-        style={{ width: "60%", height: "100%", position: "relative" }}
+        className={styles.mapPanel}
         onContextMenu={handleContextMenu}
         onWheel={handleWheel}
       >
