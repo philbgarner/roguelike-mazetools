@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
 import { Center, Text3D, useFont } from "@react-three/drei";
 
 import DungeonRenderView from "../rendering/DungeonRenderView";
@@ -16,6 +16,7 @@ import styles from "./styles/SeedPicker.module.css";
 import BorderPanel from "./ui/BorderPanel";
 import Button from "./ui/Button";
 import Input from "./ui/Input";
+import { FocusLerper } from "./FocusLerper";
 
 const FONT_URL = "/fonts/dosfont.json";
 const MAP_ZOOM_DEFAULT = 20;
@@ -63,28 +64,6 @@ function themeColor(theme: string): string {
   }
 }
 
-function FocusLerper({
-  targetRef,
-  animRef,
-  onUpdate,
-}: {
-  targetRef: React.MutableRefObject<{ x: number; y: number }>;
-  animRef: React.MutableRefObject<{ x: number; y: number }>;
-  onUpdate: (x: number, y: number) => void;
-}) {
-  useFrame(() => {
-    const LERP = 0.1;
-    const anim = animRef.current;
-    const target = targetRef.current;
-    const dx = target.x - anim.x;
-    const dy = target.y - anim.y;
-    if (Math.abs(dx) < 0.005 && Math.abs(dy) < 0.005) return;
-    anim.x += dx * LERP;
-    anim.y += dy * LERP;
-    onUpdate(anim.x, anim.y);
-  });
-  return null;
-}
 
 export default function SeedPicker() {
   const { goTo, setOverworld } = useGame();
@@ -374,7 +353,8 @@ export default function SeedPicker() {
             lastHoverCellRef.current = null;
             setHoveredCell(null);
           }}
-          onCellClick={({ x, y }) => {
+          onCellClick={({ x, y, button }) => {
+            if (button !== 0) return false;
             setHasLeftClicked(true);
             const portal = content.meta.dungeonPortals.find(
               (p) => p.x === x && p.y === y,

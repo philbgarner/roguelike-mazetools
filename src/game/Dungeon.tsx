@@ -72,6 +72,7 @@ import { useTurnEvents } from "./useTurnEvents";
 import { useFloatingMessage } from "./useFloatingMessage";
 
 import "./styles.css";
+import { FocusLerper } from "./FocusLerper";
 
 import BorderPanel from "./ui/BorderPanel";
 
@@ -87,6 +88,10 @@ const AUTOWALK_DELAY = 63;
 
 /** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
 const PLAYER_VIS_RADIUS = 6;
+
+const MAP_ZOOM_DEFAULT = 32;
+const MAP_ZOOM_MIN = 4;
+const MAP_ZOOM_MAX = 32;
 
 function buildDungeon(seed: string | number, level: number) {
   return generateDungeon({
@@ -173,6 +178,29 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(() => {
     turnStateRef.current = turnState;
   }, [turnState]);
+
+  const [mapZoom, setMapZoom] = useState(MAP_ZOOM_DEFAULT);
+
+  // --- Camera focus (lerped; target updated by player moves or right-click) ---
+  const targetFocusRef = useRef({ x: startCell.x, y: startCell.y });
+  const animFocusRef = useRef({ x: startCell.x, y: startCell.y });
+  const [focusX, setFocusX] = useState(startCell.x);
+  const [focusY, setFocusY] = useState(startCell.y);
+
+  function handleContextMenu(e: React.MouseEvent) {
+    e.preventDefault();
+    const cell = lastHoverCellRef.current;
+    if (cell) {
+      targetFocusRef.current = { x: cell.x, y: cell.y };
+    }
+  }
+
+  function handleWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    setMapZoom((z) =>
+      Math.max(MAP_ZOOM_MIN, Math.min(MAP_ZOOM_MAX, z - Math.sign(e.deltaY))),
+    );
+  }
 
   // --- Auto-walk (click-to-navigate route follower) ---
   const [autoWalk, setAutoWalk] = useState<AutoWalkState>({ kind: "idle" });
@@ -266,6 +294,11 @@ export default function Dungeon({ seed }: DungeonProps) {
   const playerActor = turnState.actors[turnState.playerId];
   const playerX = playerActor?.x ?? startCell.x;
   const playerY = playerActor?.y ?? startCell.y;
+
+  // When the player moves, snap the focus target back to them.
+  useEffect(() => {
+    targetFocusRef.current = { x: playerX, y: playerY };
+  }, [playerX, playerY]);
 
   // --- Exit cell (centre of farthest room, same logic as DungeonRenderView) ---
   const exitCell = useMemo(() => {
@@ -667,12 +700,17 @@ export default function Dungeon({ seed }: DungeonProps) {
       <BorderPanel width="20rem" height="5rem" background="#000" bottom="0px">
         HP: {playerActor.hp}/{playerActor.maxHp}
       </BorderPanel>
+      <div
+        onContextMenu={handleContextMenu}
+        onWheel={handleWheel}
+        style={{ position: "absolute", inset: 0 }}
+      >
       <DungeonRenderView
         bsp={dungeon}
         content={content}
         theme={renderTheme}
-        focusX={playerX}
-        focusY={playerY}
+        focusX={focusX}
+        focusY={focusY}
         onCellFocus={(cell) => console.log("cell focus", cell)}
         playerX={playerX}
         playerY={playerY}
@@ -705,7 +743,7 @@ export default function Dungeon({ seed }: DungeonProps) {
           3: 50, // water
           4: 51, // spikes
         }}
-        zoom={32}
+        zoom={mapZoom}
         flipAtlasY={false}
         flipGridX={false}
         flipGridY={true}
@@ -726,7 +764,8 @@ export default function Dungeon({ seed }: DungeonProps) {
           playerPreviewPathRef.current = null;
           rebuildPathMaskFromPlans();
         }}
-        onCellClick={({ x, y }) => {
+        onCellClick={({ x, y, button }) => {
+          if (button !== 0) return false;
           const w = dungeon.width;
           const i = y * w + x;
           const ft = content.masks.featureType[i] | 0;
@@ -773,7 +812,16 @@ export default function Dungeon({ seed }: DungeonProps) {
         _visDataRef={visDataRef}
       >
         {floatingMessages}
+        <FocusLerper
+          targetRef={targetFocusRef}
+          animRef={animFocusRef}
+          onUpdate={(x, y) => {
+            setFocusX(x);
+            setFocusY(y);
+          }}
+        />
       </DungeonRenderView>
+      </div>
     </>
   );
 }

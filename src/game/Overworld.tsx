@@ -55,6 +55,7 @@ import {
 } from "../world/worldEffects";
 
 import "./styles.css";
+import { FocusLerper } from "./FocusLerper";
 
 import BorderPanel from "./ui/BorderPanel";
 import Tooltip, { TooltipProps } from "./ui/Tooltip";
@@ -69,6 +70,10 @@ const AUTOWALK_DELAY = 63;
 
 /** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
 const PLAYER_VIS_RADIUS = 6;
+
+const MAP_ZOOM_DEFAULT = 32;
+const MAP_ZOOM_MIN = 4;
+const MAP_ZOOM_MAX = 32;
 
 /** Forest overworld has no doors, blocks, or levers — pass empty runtime. */
 const EMPTY_RUNTIME = {} as any;
@@ -144,6 +149,29 @@ export default function Overworld({ screen }: OverworldProps) {
     turnStateRef.current = turnState;
   }, [turnState]);
 
+  const [mapZoom, setMapZoom] = useState(MAP_ZOOM_DEFAULT);
+
+  // --- Camera focus (lerped; target updated by player moves or right-click) ---
+  const targetFocusRef = useRef({ x: startCell.x, y: startCell.y });
+  const animFocusRef = useRef({ x: startCell.x, y: startCell.y });
+  const [focusX, setFocusX] = useState(startCell.x);
+  const [focusY, setFocusY] = useState(startCell.y);
+
+  function handleContextMenu(e: React.MouseEvent) {
+    e.preventDefault();
+    const cell = lastHoverCellRef.current;
+    if (cell) {
+      targetFocusRef.current = { x: cell.x, y: cell.y };
+    }
+  }
+
+  function handleWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    setMapZoom((z) =>
+      Math.max(MAP_ZOOM_MIN, Math.min(MAP_ZOOM_MAX, z - Math.sign(e.deltaY))),
+    );
+  }
+
   // --- Auto-walk (click-to-navigate route follower) ---
   const [autoWalk, setAutoWalk] = useState<AutoWalkState>({ kind: "idle" });
 
@@ -177,6 +205,11 @@ export default function Overworld({ screen }: OverworldProps) {
   const playerActor = turnState.actors[turnState.playerId];
   const playerX = playerActor?.x ?? startCell.x;
   const playerY = playerActor?.y ?? startCell.y;
+
+  // When the player moves, snap the focus target back to them.
+  useEffect(() => {
+    targetFocusRef.current = { x: playerX, y: playerY };
+  }, [playerX, playerY]);
 
   // --- Path mask ---
   const pathMaskRef = useRef<{
@@ -456,11 +489,16 @@ export default function Overworld({ screen }: OverworldProps) {
       </ModalPanel>
 
       {screen === "overworld" ? (
+        <div
+          onContextMenu={handleContextMenu}
+          onWheel={handleWheel}
+          style={{ position: "absolute", inset: 0 }}
+        >
         <DungeonRenderView
           bsp={dungeon}
           content={contentLegacy}
-          focusX={playerX}
-          focusY={playerY}
+          focusX={focusX}
+          focusY={focusY}
           onCellFocus={(cell) => console.log("cell focus", cell)}
           playerX={playerX}
           playerY={playerY}
@@ -490,7 +528,7 @@ export default function Overworld({ screen }: OverworldProps) {
             3: 50, // water
             4: 51, // spikes
           }}
-          zoom={32}
+          zoom={mapZoom}
           flipAtlasY={false}
           flipGridX={false}
           flipGridY={true}
@@ -532,7 +570,8 @@ export default function Overworld({ screen }: OverworldProps) {
             setTooltip({ x: 0, y: 0, visible: false, children: <></> });
             rebuildPathMaskFromPlans();
           }}
-          onCellClick={({ x, y }) => {
+          onCellClick={({ x, y, button }) => {
+            if (button !== 0) return false;
             const w = dungeon.width;
             const i = y * w + x;
             const ft = content.masks.featureType[i] | 0;
@@ -573,7 +612,17 @@ export default function Overworld({ screen }: OverworldProps) {
           actorCharTex={actorCharTex}
           _visDataRef={visDataRef}
           shaderVariant="forest"
-        />
+        >
+          <FocusLerper
+            targetRef={targetFocusRef}
+            animRef={animFocusRef}
+            onUpdate={(x, y) => {
+              setFocusX(x);
+              setFocusY(y);
+            }}
+          />
+        </DungeonRenderView>
+        </div>
       ) : null}
     </>
   );

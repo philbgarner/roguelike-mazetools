@@ -204,7 +204,7 @@ type Props = {
   onCellHoverEnd?: () => void;
 
   // Return true if you handled the click (interaction), false to fall back to camera focus.
-  onCellClick?: (cell: { x: number; y: number }) => boolean;
+  onCellClick?: (cell: { x: number; y: number; button: number }) => boolean;
 
   handleHoverCell?: (x: number, y: number) => void;
 
@@ -1069,7 +1069,7 @@ function DungeonRenderScene(props: Props) {
         if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
 
         // 1) Let inspection logic handle interactables first.
-        const handled = props.onCellClick?.({ x: cx, y: cy }) ?? false;
+        const handled = props.onCellClick?.({ x: cx, y: cy, button: e.button }) ?? false;
         if (handled) return;
 
         // 2) Otherwise, camera-only focus.
