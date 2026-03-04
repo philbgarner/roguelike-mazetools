@@ -10,7 +10,7 @@
 // Wire in by setting `applyAction: combatApplyAction` in your TurnSystemDeps.
 
 import type { TurnSystemState, TurnSystemDeps } from "./turnSystem";
-import type { ActorId, MonsterActor } from "./turnTypes";
+import type { ActorId, MonsterActor, PlayerActor } from "./turnTypes";
 import type { TurnAction } from "./turnTypes";
 
 /**
@@ -74,8 +74,8 @@ function resolveCombat(
   targetId: ActorId,
   deps: TurnSystemDeps,
 ): TurnSystemState {
-  const attacker = state.actors[attackerId];
-  const target = state.actors[targetId];
+  const attacker = state.actors[attackerId] as PlayerActor | MonsterActor;
+  const target = state.actors[targetId] as PlayerActor | MonsterActor;
   if (!attacker || !target) return state;
 
   const attack = attacker.attack;

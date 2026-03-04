@@ -5,7 +5,7 @@
 
 export type ActorId = string;
 
-export type ActorKind = "player" | "monster";
+export type ActorKind = "player" | "monster" | "npc";
 
 export type ActorBase = {
   id: ActorId;
@@ -60,6 +60,17 @@ export type MonsterActor = ActorBase & {
    * null when alertState === "idle".
    */
   lastKnownPlayerPos: { x: number; y: number } | null;
+};
+
+export type NpcActor = ActorBase & {
+  kind: "npc";
+  /** Single ASCII/Unicode glyph for rendering. */
+  glyph: string;
+  npcType: "merchant_wagon";
+  /** Index into the portals array for the current travel destination. */
+  targetPortalIndex: number;
+  /** Index into the portals array for the portal the NPC came from. */
+  sourcePortalIndex: number;
 };
 
 export type TurnActionKind = "wait" | "move" | "attack" | "interact";

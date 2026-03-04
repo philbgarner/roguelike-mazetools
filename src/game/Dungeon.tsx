@@ -27,7 +27,7 @@ import {
   getBlockIdAt,
   tryPushBlock,
 } from "../dungeonState";
-import type { TurnAction, MonsterActor } from "../turn/turnTypes";
+import type { TurnAction, MonsterActor, PlayerActor } from "../turn/turnTypes";
 import { evaluateCircuits } from "../evaluateCircuits";
 
 import { computeStartCell } from "../inspect/computeStartCell";
@@ -291,7 +291,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   }
 
   // --- Convenience: player position from turn state ---
-  const playerActor = turnState.actors[turnState.playerId];
+  const playerActor = turnState.actors[turnState.playerId] as PlayerActor;
   const playerX = playerActor?.x ?? startCell.x;
   const playerY = playerActor?.y ?? startCell.y;
 

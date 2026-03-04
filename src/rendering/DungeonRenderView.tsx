@@ -223,6 +223,9 @@ type Props = {
   // Actor overlay: runtime monster glyphs stamped into R8 DataTexture
   actorCharTex?: THREE.DataTexture | null;
 
+  // NPC overlay: separate R8 DataTexture for NPC glyphs (rendered in blue)
+  npcCharTex?: THREE.DataTexture | null;
+
   shaderVariant?: "dungeon" | "forest";
 
   /** When true, all cells are pre-marked as explored on creation. */
@@ -554,6 +557,24 @@ function DungeonRenderScene(props: Props) {
     return t;
   }, []);
 
+  // 1×1 zero R8 fallback for uNpcChar when no NPC overlay exists
+  const fallbackNpcCharTex = useMemo(() => {
+    const d = new Uint8Array([0]);
+    const t = new THREE.DataTexture(
+      d,
+      1,
+      1,
+      THREE.RedFormat,
+      THREE.UnsignedByteType,
+    );
+    t.name = "npc_char_fallback";
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    return t;
+  }, []);
+
   // M7: visibility + explored RGBA8 texture (stable ref; re-created only when W/H change)
   const visRef = useRef<{ data: Uint8Array; tex: THREE.DataTexture } | null>(
     null,
@@ -581,6 +602,7 @@ function DungeonRenderScene(props: Props) {
         uSolid: { value: bsp.textures.solid },
         uChar: { value: charTex },
         uActorChar: { value: props.actorCharTex ?? fallbackActorCharTex },
+        uNpcChar: { value: props.npcCharTex ?? fallbackNpcCharTex },
         uTint: { value: tintTex },
         uAtlas: { value: atlas },
         uGridSize: { value: new THREE.Vector2(W, H) },
@@ -604,6 +626,7 @@ function DungeonRenderScene(props: Props) {
         uAoStrength: { value: 0.35 },
         uLightDir: { value: new THREE.Vector2(-1, -1) },
         uEnemyColor: { value: new THREE.Vector4(1.0, 0.35, 0.35, 1.0) },
+        uNpcColor: { value: new THREE.Vector4(0.4, 0.7, 1.0, 1.0) },
         uEnemyBreathOmega: { value: 5.0 }, // try 2.0–4.0
         uEnemyBreathAmp: { value: 0.06 }, // try 0.02–0.06
         uMonsterTile: { value: props.monsterTile ?? 0 },
@@ -839,6 +862,11 @@ function DungeonRenderScene(props: Props) {
   useEffect(() => {
     mat.uniforms.uActorChar.value = props.actorCharTex ?? fallbackActorCharTex;
   }, [mat, props.actorCharTex, fallbackActorCharTex]);
+
+  // NPC overlay: update uNpcChar uniform when prop changes
+  useEffect(() => {
+    mat.uniforms.uNpcChar.value = props.npcCharTex ?? fallbackNpcCharTex;
+  }, [mat, props.npcCharTex, fallbackNpcCharTex]);
 
   useFrame((_state, delta) => {
     const cam = camera as THREE.OrthographicCamera;

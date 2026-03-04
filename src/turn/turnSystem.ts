@@ -17,10 +17,12 @@ import type {
   ActorId,
   PlayerActor,
   MonsterActor,
+  NpcActor,
   TurnAction,
   ActionCost,
 } from "./turnTypes";
 import type { DecideResult } from "./monsterAI";
+import type { NpcDecideResult } from "./npcAI";
 import type { TurnLogEntry } from "./turnDebug";
 import type { TurnEvent } from "./turnEvents";
 
@@ -29,7 +31,7 @@ import type { TurnEvent } from "./turnEvents";
 // ---------------------------------------------------------------------------
 
 export type TurnSystemState = {
-  actors: Record<ActorId, PlayerActor | MonsterActor>;
+  actors: Record<ActorId, PlayerActor | MonsterActor | NpcActor>;
   playerId: ActorId;
   scheduler: TurnScheduler;
   awaitingPlayerInput: boolean;
@@ -80,6 +82,15 @@ export type TurnSystemDeps = {
     state: TurnSystemState;
   }) => void;
   /**
+   * AI callback for NPC actors (e.g. merchant wagons).
+   * Called instead of monsterDecide when the active actor has kind "npc".
+   * If omitted, NPCs simply wait each turn.
+   */
+  npcDecide?: (
+    state: TurnSystemState,
+    npcId: ActorId,
+  ) => NpcDecideResult;
+  /**
    * Emit a game event (damage, death, xp gain, etc.) to the React layer.
    *
    * This is called synchronously from within applyAction or AI callbacks —
@@ -103,8 +114,9 @@ export type TurnSystemDeps = {
 export function createTurnSystemState(
   player: PlayerActor,
   monsters: MonsterActor[],
+  npcs: NpcActor[] = [],
 ): TurnSystemState {
-  const actors: Record<ActorId, PlayerActor | MonsterActor> = {};
+  const actors: Record<ActorId, PlayerActor | MonsterActor | NpcActor> = {};
   const scheduler = new TurnScheduler();
 
   actors[player.id] = player;
@@ -115,6 +127,12 @@ export function createTurnSystemState(
     actors[m.id] = m;
     const monsterDelay = actionDelay(m.speed, { kind: "move" });
     scheduler.add(m.id, monsterDelay);
+  }
+
+  for (const npc of npcs) {
+    actors[npc.id] = npc;
+    const npcDelay = actionDelay(npc.speed, { kind: "move" });
+    scheduler.add(npc.id, npcDelay);
   }
 
   return {
@@ -195,10 +213,33 @@ export function tickUntilPlayer(
       return current;
     }
 
+    const actor = current.actors[actorId];
+
+    // NPC's turn — use npcDecide if available, otherwise wait.
+    if (actor.kind === "npc") {
+      const { action, npcPatch } = deps.npcDecide
+        ? deps.npcDecide(current, actorId)
+        : { action: { kind: "wait" as const }, npcPatch: {} };
+      const cost = deps.computeCost(actorId, action);
+
+      if (Object.keys(npcPatch).length > 0) {
+        current = {
+          ...current,
+          actors: {
+            ...current.actors,
+            [actorId]: { ...actor, ...npcPatch },
+          },
+        };
+      }
+
+      current = deps.applyAction(current, actorId, action, deps);
+      current.scheduler.reschedule(actorId, cost.time);
+      continue;
+    }
+
     // Monster's turn — run AI, apply alert-state patch, apply action, reschedule.
     const { action, monsterPatch } = deps.monsterDecide(current, actorId);
     const cost = deps.computeCost(actorId, action);
-    const actor = current.actors[actorId];
 
     // Apply alert-state changes (alertState, searchTurnsLeft, lastKnownPlayerPos).
     if (Object.keys(monsterPatch).length > 0) {
@@ -279,7 +320,7 @@ export function commitPlayerAction(
 export function defaultComputeCost(
   actorId: ActorId,
   action: TurnAction,
-  actors: Record<ActorId, PlayerActor | MonsterActor>,
+  actors: Record<ActorId, PlayerActor | MonsterActor | NpcActor>,
 ): ActionCost {
   const actor = actors[actorId];
   const speed = actor?.speed ?? 1;

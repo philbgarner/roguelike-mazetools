@@ -47,6 +47,25 @@ export function stampBlocksToActorCharMask(args: {
   }
 }
 
+/**
+ * Stamp NPC actors into the NPC char R8 texture.
+ * Encoding: tile ID stored directly (1-255); 0 = no NPC.
+ */
+export function stampNpcsToNpcCharMask(args: {
+  data: Uint8Array;
+  W: number;
+  H: number;
+  npcs: ActorStamp[];
+  npcTile: number;
+}): void {
+  const { data, W, H, npcs, npcTile } = args;
+  for (const npc of npcs) {
+    const { x, y } = npc;
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+    data[y * W + x] = (npc.tile ?? npcTile) & 0xff;
+  }
+}
+
 export function stampMonstersToActorCharMask(args: {
   data: Uint8Array;
   W: number;

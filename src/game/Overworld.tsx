@@ -15,9 +15,10 @@ import {
 import {
   clearActorCharMask,
   createActorCharMaskR8,
+  stampNpcsToNpcCharMask,
   type ActorCharMask,
 } from "../rendering/actorCharMask";
-import type { TurnAction } from "../turn/turnTypes";
+import type { TurnAction, NpcActor } from "../turn/turnTypes";
 
 import {
   generateForest,
@@ -32,6 +33,7 @@ import { CP437_TILES } from "../rendering/codepage437Tiles";
 import {
   createPlayerActor,
   createMonstersFromResolved,
+  createMerchantWagons,
 } from "../turn/createActors";
 import {
   createTurnSystemState,
@@ -49,6 +51,7 @@ import {
   consumeNextAutoWalkStepForest,
   FOREST_TREE_PENALTY,
 } from "../turn/playerAutoWalk";
+import { decideMerchantWagon } from "../turn/npcAI";
 import {
   createWorldEffectsState,
   advanceWorldEffects,
@@ -139,7 +142,8 @@ export default function Overworld({ screen }: OverworldProps) {
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
     const player = createPlayerActor(startCell.x, startCell.y);
     const monsters = createMonstersFromResolved(null);
-    const ts = createTurnSystemState(player, monsters);
+    const wagons = createMerchantWagons(content.meta.dungeonPortals, 3);
+    const ts = createTurnSystemState(player, monsters, wagons);
     const deps = buildDeps(dungeon, ts.actors);
     return tickUntilPlayer(ts, deps);
   });
@@ -188,6 +192,8 @@ export default function Overworld({ screen }: OverworldProps) {
       monsterDecide: () => {
         throw new Error("No monsters in forest overworld");
       },
+      npcDecide: (state, npcId) =>
+        decideMerchantWagon(state, npcId, _dungeon, contentLegacy, content.meta.dungeonPortals),
       computeCost: (actorId, action) =>
         defaultComputeCost(actorId, action, _actors),
       applyAction: defaultApplyAction,
@@ -233,6 +239,10 @@ export default function Overworld({ screen }: OverworldProps) {
     null,
   );
 
+  // --- NPC char overlay (separate blue-tinted texture) ---
+  const npcMaskRef = useRef<ActorCharMask | null>(null);
+  const [npcCharTex, setNpcCharTex] = useState<THREE.DataTexture | null>(null);
+
   useEffect(() => {
     if (pathMaskRef.current) pathMaskRef.current.tex.dispose();
     const pm = createPathMaskRGBA(
@@ -264,6 +274,22 @@ export default function Overworld({ screen }: OverworldProps) {
     };
   }, [dungeon.width, dungeon.height]);
 
+  // Create NPC overlay texture once per dungeon dimensions.
+  useEffect(() => {
+    if (npcMaskRef.current) npcMaskRef.current.tex.dispose();
+    const nm = createActorCharMaskR8(
+      dungeon.width,
+      dungeon.height,
+      "npc_char_r8",
+    );
+    npcMaskRef.current = nm;
+    setNpcCharTex(nm.tex);
+    return () => {
+      nm.tex.dispose();
+      npcMaskRef.current = null;
+    };
+  }, [dungeon.width, dungeon.height]);
+
   const rebuildPathMaskFromPlans = useCallback(() => {
     const pm = pathMaskRef.current;
     if (!pm) return;
@@ -284,6 +310,32 @@ export default function Overworld({ screen }: OverworldProps) {
 
     setOverworld(dungeon, content);
   }, [dungeon, content]);
+
+  // CP437 tile ID for '@' (ASCII 64).
+  const NPC_GLYPH_TILE = 64;
+
+  // Stamp NPC positions into the NPC char mask each turn.
+  useEffect(() => {
+    const nm = npcMaskRef.current;
+    if (!nm) return;
+    clearActorCharMask(nm.data);
+
+    const W = dungeon.width;
+    const H = dungeon.height;
+    const npcs = Object.values(turnState.actors).filter(
+      (a): a is NpcActor => a.kind === "npc" && a.alive,
+    );
+    stampNpcsToNpcCharMask({
+      data: nm.data,
+      W,
+      H,
+      npcs: npcs.map((npc) => ({ id: npc.id, x: npc.x, y: npc.y })),
+      npcTile: NPC_GLYPH_TILE,
+    });
+
+    nm.tex.needsUpdate = true;
+    setNpcCharTex(nm.tex);
+  }, [dungeon.width, dungeon.height, turnState.actors]);
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
@@ -408,7 +460,8 @@ export default function Overworld({ screen }: OverworldProps) {
     rebuildPathMaskFromPlans();
     const newPlayer = createPlayerActor(startCell.x, startCell.y);
     const monsters = createMonstersFromResolved(null);
-    const ts = createTurnSystemState(newPlayer, monsters);
+    const wagons = createMerchantWagons(content.meta.dungeonPortals, 3);
+    const ts = createTurnSystemState(newPlayer, monsters, wagons);
     const deps = buildDeps(dungeon, ts.actors);
     setTurnState(tickUntilPlayer(ts, deps));
   }, [startCell.x, startCell.y]);
@@ -610,6 +663,7 @@ export default function Overworld({ screen }: OverworldProps) {
             }}
             pathMaskTex={pathMaskTex ?? undefined}
             actorCharTex={actorCharTex}
+            npcCharTex={npcCharTex}
             _visDataRef={visDataRef}
             shaderVariant="forest"
           >

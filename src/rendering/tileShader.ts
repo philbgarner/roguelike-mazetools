@@ -20,6 +20,7 @@ export const tileFrag = /* glsl */ `
   uniform sampler2D uSolid;
   uniform sampler2D uChar;
   uniform sampler2D uActorChar;
+  uniform sampler2D uNpcChar;
   uniform sampler2D uTint;
   uniform sampler2D uAtlas;
 
@@ -39,6 +40,7 @@ export const tileFrag = /* glsl */ `
   uniform vec4 uItemColor;
   uniform vec4 uHazardColor;
   uniform vec4 uEnemyColor;
+  uniform vec4 uNpcColor;
 
   uniform float uEnemyBreathOmega;
   uniform float uEnemyBreathAmp;
@@ -144,6 +146,12 @@ export const tileFrag = /* glsl */ `
     float rawAch = floor(aChN * 255.0 + 0.5);
     float aChGlyph = mod(rawAch, 128.0);
     if (rawAch > 0.5) ch = aChGlyph;
+
+    // NPC overlay: separate texture, stores tile ID directly (0 = no NPC).
+    float npcChN  = sampleR8(uNpcChar, texUv);
+    float rawNch  = floor(npcChN * 255.0 + 0.5);
+    float isNpc   = step(0.5, rawNch);
+    if (rawNch > 0.5) ch = rawNch;
 
     float hasChar = step(0.5, ch);
 
@@ -288,6 +296,9 @@ export const tileFrag = /* glsl */ `
 
     if (isMonster > 0.5) {
       tint = uEnemyColor;
+    }
+    if (isNpc > 0.5) {
+      tint = uNpcColor;
     }
 
     // -------------------------
@@ -450,6 +461,7 @@ export const forestFrag = /* glsl */ `
   uniform sampler2D uSolid;
   uniform sampler2D uChar;
   uniform sampler2D uActorChar;
+  uniform sampler2D uNpcChar;
   uniform sampler2D uTint;
   uniform sampler2D uAtlas;
 
@@ -469,6 +481,7 @@ export const forestFrag = /* glsl */ `
   uniform vec4 uItemColor;
   uniform vec4 uHazardColor;
   uniform vec4 uEnemyColor;
+  uniform vec4 uNpcColor;
 
   uniform float uEnemyBreathOmega;
   uniform float uEnemyBreathAmp;
@@ -589,6 +602,12 @@ export const forestFrag = /* glsl */ `
     float rawAch = floor(aChN * 255.0 + 0.5);
     float aChGlyph = mod(rawAch, 128.0);
     if (rawAch > 0.5) ch = aChGlyph;
+
+    // NPC overlay: separate texture, stores tile ID directly (0 = no NPC).
+    float npcChN  = sampleR8(uNpcChar, texUv);
+    float rawNch  = floor(npcChN * 255.0 + 0.5);
+    float isNpc   = step(0.5, rawNch);
+    if (rawNch > 0.5) ch = rawNch;
 
     float hasChar = step(0.5, ch);
 
@@ -736,6 +755,9 @@ export const forestFrag = /* glsl */ `
 
     if (isMonster > 0.5) {
       tint = uEnemyColor;
+    }
+    if (isNpc > 0.5) {
+      tint = uNpcColor;
     }
 
     // -------------------------

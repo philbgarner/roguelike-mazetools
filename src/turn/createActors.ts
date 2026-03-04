@@ -9,7 +9,8 @@ import {
   BOSS_STATS,
   NPC_STATS,
 } from "../examples/data/spawnTableData";
-import type { PlayerActor, MonsterActor } from "./turnTypes";
+import type { PlayerActor, MonsterActor, NpcActor } from "./turnTypes";
+import type { DungeonPortal } from "../mazeGen";
 import type { Player } from "../game/player";
 
 /** Default player speed (acts 10x per BASE_TIME unit with default BASE_TIME=100). */
@@ -53,6 +54,40 @@ export function createPlayerActor(
     alive: true,
     blocksMovement: true,
   };
+}
+
+/** Speed for merchant wagon NPCs (slightly slower than the player's 10). */
+const MERCHANT_SPEED = 8;
+
+/**
+ * Create merchant wagon NPC actors that patrol between dungeon portals.
+ * Spawns `count` wagons, each starting at a different portal.
+ */
+export function createMerchantWagons(
+  portals: DungeonPortal[],
+  count: number,
+): NpcActor[] {
+  if (portals.length < 2) return [];
+  const wagons: NpcActor[] = [];
+  for (let i = 0; i < count; i++) {
+    const sourceIdx = i % portals.length;
+    const targetIdx = (sourceIdx + 1) % portals.length;
+    const portal = portals[sourceIdx];
+    wagons.push({
+      id: `merchant_wagon_${i}`,
+      kind: "npc",
+      x: portal.x,
+      y: portal.y,
+      speed: MERCHANT_SPEED,
+      alive: true,
+      blocksMovement: false,
+      glyph: "@",
+      npcType: "merchant_wagon",
+      targetPortalIndex: targetIdx,
+      sourcePortalIndex: sourceIdx,
+    });
+  }
+  return wagons;
 }
 
 /**
