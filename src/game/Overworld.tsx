@@ -78,6 +78,8 @@ const MAP_ZOOM_DEFAULT = 32;
 const MAP_ZOOM_MIN = 4;
 const MAP_ZOOM_MAX = 32;
 
+const TOOLTIP_DELAY = 600;
+
 /** Forest overworld has no doors, blocks, or levers — pass empty runtime. */
 const EMPTY_RUNTIME = {} as any;
 
@@ -127,7 +129,7 @@ export default function Overworld({ screen }: OverworldProps) {
   // --- World effects clock ---
   const worldEffectsRef = useRef(createWorldEffectsState());
 
-  const [showCampModal, setShowCampModal] = useState(false);
+  const [showMerchantModal, setShowMerchantModal] = useState(false);
 
   const { confirmPrompt, dialog } = useConfirmYesNo();
 
@@ -137,6 +139,7 @@ export default function Overworld({ screen }: OverworldProps) {
     visible: false,
     children: <></>,
   });
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- Turn system ---
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
@@ -193,7 +196,13 @@ export default function Overworld({ screen }: OverworldProps) {
         throw new Error("No monsters in forest overworld");
       },
       npcDecide: (state, npcId) =>
-        decideMerchantWagon(state, npcId, _dungeon, contentLegacy, content.meta.dungeonPortals),
+        decideMerchantWagon(
+          state,
+          npcId,
+          _dungeon,
+          contentLegacy,
+          content.meta.dungeonPortals,
+        ),
       computeCost: (actorId, action) =>
         defaultComputeCost(actorId, action, _actors),
       applyAction: defaultApplyAction,
@@ -470,6 +479,10 @@ export default function Overworld({ screen }: OverworldProps) {
     (f) => f.x === playerX && f.y === playerY,
   );
 
+  const npcAtPlayerCell = Object.values(turnState.actors).find(
+    (a) => a.kind === "npc" && a.x === playerX && a.y === playerY,
+  );
+
   if (screen !== "overworld") {
     return <></>;
   }
@@ -477,15 +490,21 @@ export default function Overworld({ screen }: OverworldProps) {
   const cellAtFeet = (() => {
     const idx = playerY * dungeon.width + playerX;
     const terrain = dungeon.masks.solid[idx] === 255 ? "Trees" : "Pathway";
-    return contentAtPlayerCell
-      ? `${terrain} (${contentAtPlayerCell.theme})`
-      : terrain;
+    if (contentAtPlayerCell) return `${terrain} (${contentAtPlayerCell.theme})`;
+    if (npcAtPlayerCell) return `${terrain} (Merchant Wagon)`;
+    return terrain;
   })();
 
   return (
     <>
       <BorderPanel
-        title={contentAtPlayerCell ? contentAtPlayerCell.name : cellAtFeet}
+        title={
+          contentAtPlayerCell
+            ? contentAtPlayerCell.name
+            : npcAtPlayerCell
+              ? "Merchant Wagon"
+              : cellAtFeet
+        }
         width="20rem"
         height="5rem"
         background="#090909"
@@ -502,6 +521,7 @@ export default function Overworld({ screen }: OverworldProps) {
         background="#090909"
         bottom="0px"
         left="21rem"
+        zIndex={99}
       >
         {contentAtPlayerCell ? (
           <Button
@@ -521,6 +541,16 @@ export default function Overworld({ screen }: OverworldProps) {
             Enter {contentAtPlayerCell.theme}
           </Button>
         ) : null}
+        {npcAtPlayerCell ? (
+          <Button
+            maxWidth="12rem"
+            onClick={async () => {
+              setShowMerchantModal(true);
+            }}
+          >
+            Trade
+          </Button>
+        ) : null}
       </BorderPanel>
 
       <Tooltip {...tooltip} />
@@ -529,9 +559,9 @@ export default function Overworld({ screen }: OverworldProps) {
 
       <ModalPanel
         title="Camp"
-        visible={showCampModal}
+        visible={showMerchantModal}
         closeButton
-        onClose={() => setShowCampModal(false)}
+        onClose={() => setShowMerchantModal(false)}
       >
         <div>
           <h2>Camping</h2>
@@ -593,31 +623,64 @@ export default function Overworld({ screen }: OverworldProps) {
               if (last && last.x === x && last.y === y) return;
               lastHoverCellRef.current = { x, y };
 
-              const contentAtCell = content.meta.dungeonPortals.find(
-                (f) => f.x === x && f.y === y,
-              );
-
-              if (contentAtCell) {
+              // Hide any visible tooltip and reset the delay timer on cell change.
+              setTooltip((prev) => ({ ...prev, visible: false }));
+              if (hoverTimerRef.current !== null) {
+                clearTimeout(hoverTimerRef.current);
+              }
+              hoverTimerRef.current = setTimeout(() => {
+                hoverTimerRef.current = null;
+                const idx = y * dungeon.width + x;
+                const terrain =
+                  dungeon.masks.solid[idx] === 255 ? "Trees" : "Pathway";
+                const portal = content.meta.dungeonPortals.find(
+                  (f) => f.x === x && f.y === y,
+                );
+                const npcsAtCell = Object.values(
+                  turnStateRef.current.actors,
+                ).filter(
+                  (a): a is NpcActor =>
+                    a.kind === "npc" && a.alive && a.x === x && a.y === y,
+                );
+                const npcLabel = (npc: NpcActor) =>
+                  npc.npcType === "merchant_wagon"
+                    ? "Merchant Wagon"
+                    : npc.npcType;
                 setTooltip({
                   x: clientX,
                   y: clientY,
                   visible: true,
+                  title: `(${x}, ${y})`,
                   children: (
-                    <>
-                      ({x}, {y}){" "}
-                      {contentAtCell
-                        ? `${contentAtCell.theme} (lvl ${contentAtCell.level})`
-                        : null}
-                    </>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.15rem",
+                      }}
+                    >
+                      <span>{terrain}</span>
+                      {portal ? (
+                        <span>
+                          {portal.name} — {portal.theme} (lvl {portal.level})
+                        </span>
+                      ) : null}
+                      {npcsAtCell.map((npc) => (
+                        <span key={npc.id}>{npcLabel(npc)}</span>
+                      ))}
+                    </div>
                   ),
                 });
-              } else {
-                setTooltip({ ...tooltip, visible: false });
-              }
+              }, TOOLTIP_DELAY);
+
               recomputePlayerPath(x, y);
             }}
             onCellHoverEnd={() => {
               lastHoverCellRef.current = null;
+              if (hoverTimerRef.current !== null) {
+                clearTimeout(hoverTimerRef.current);
+                hoverTimerRef.current = null;
+              }
               if (autoWalk.kind === "active") return;
               playerPreviewPathRef.current = null;
               setTooltip({ x: 0, y: 0, visible: false, children: <></> });
@@ -630,6 +693,10 @@ export default function Overworld({ screen }: OverworldProps) {
               const ft = content.masks.featureType[i] | 0;
               const fid = content.masks.featureId[i] | 0;
 
+              if (hoverTimerRef.current !== null) {
+                clearTimeout(hoverTimerRef.current);
+                hoverTimerRef.current = null;
+              }
               setTooltip({ ...tooltip, visible: false });
 
               // Dungeon portal entry (FeatureType 2)

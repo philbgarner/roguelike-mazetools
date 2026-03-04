@@ -15,6 +15,7 @@ export interface BorderPanelProps {
   bottom?: string;
   left?: string;
   right?: string;
+  zIndex?: number;
 }
 
 export default function BorderPanel({
@@ -29,6 +30,7 @@ export default function BorderPanel({
   bottom,
   hidden,
   flexMode,
+  zIndex,
 }: BorderPanelProps) {
   return (
     <>
@@ -41,6 +43,7 @@ export default function BorderPanel({
           right,
           top,
           bottom,
+          zIndex,
           opacity: hidden ? 0 : 1,
         }}
       >
