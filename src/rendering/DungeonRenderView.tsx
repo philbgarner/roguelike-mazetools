@@ -199,6 +199,7 @@ type Props = {
     y: number;
     clientX: number;
     clientY: number;
+    e?: MouseMoveEvent;
   }) => void;
   onCellHoverEnd?: () => void;
 
@@ -427,7 +428,9 @@ function DungeonRenderScene(props: Props) {
         if (ft[i] === 6) {
           const st = props.leverStates[fid[i]];
           if (st !== undefined) {
-            mask[i] = (st.toggled ? (props.leverTile ?? 33) : props.leverOffTile) & 0xff;
+            mask[i] =
+              (st.toggled ? (props.leverTile ?? 33) : props.leverOffTile) &
+              0xff;
           }
         }
       }
@@ -507,7 +510,16 @@ function DungeonRenderScene(props: Props) {
     }
 
     return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
-  }, [bsp, content, W, H, props.playerX, props.playerY, props.blockPositions, props.doorStates]);
+  }, [
+    bsp,
+    content,
+    W,
+    H,
+    props.playerX,
+    props.playerY,
+    props.blockPositions,
+    props.doorStates,
+  ]);
 
   // M8: 1×1 transparent fallback for uPathMask when no prop is supplied
   const fallbackPathTex = useMemo(() => {
@@ -806,7 +818,17 @@ function DungeonRenderScene(props: Props) {
     mat.uniforms.uVisExplored.value = vr.tex;
     // Keep wrapper tooltip data in sync
     if (props._visDataRef) props._visDataRef.current = vr.data;
-  }, [mat, W, H, props.playerX, props.playerY, props._visDataRef, props.bsp, props.content, props.doorStates]);
+  }, [
+    mat,
+    W,
+    H,
+    props.playerX,
+    props.playerY,
+    props._visDataRef,
+    props.bsp,
+    props.content,
+    props.doorStates,
+  ]);
 
   // M8: update path mask uniform when prop changes
   useEffect(() => {

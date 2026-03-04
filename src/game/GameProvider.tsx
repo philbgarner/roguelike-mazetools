@@ -7,6 +7,7 @@ export type GameScreen =
   | "overworld"
   | "dungeon"
   | "death"
+  | "seed-picker"
   | "success";
 
 interface GameState {

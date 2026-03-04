@@ -7,7 +7,7 @@ import { useGame, type GameScreen } from "./GameProvider";
 const FONT_URL = "/fonts/dosfont.json";
 
 const MENU_ITEMS: { label: string; target: GameScreen }[] = [
-  { label: "Start Game", target: "overworld" },
+  { label: "Start Game", target: "seed-picker" },
 ];
 
 function MenuItem({
