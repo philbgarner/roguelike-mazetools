@@ -4,6 +4,7 @@
     margin: 0;
     cursor: pointer;
     display: flex;
+    color: #f1f1f1;
 }
 
 .buttonContainer:hover {
@@ -28,4 +29,13 @@
 
 .pressed {
     color: #f1d1d1 !important;
+}
+
+.buttonContent > input {
+    background-color: transparent;
+    color: inherit;
+    border: 0;
+}
+.buttonContent > input:active {
+    border: 0;
 }

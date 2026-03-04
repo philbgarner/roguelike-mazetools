@@ -14,6 +14,7 @@ import { useGame } from "./GameProvider";
 import styles from "./styles/SeedPicker.module.css";
 import BorderPanel from "./ui/BorderPanel";
 import Button from "./ui/Button";
+import Input from "./ui/Input";
 
 const FONT_URL = "/fonts/dosfont.json";
 const MAP_ZOOM_DEFAULT = 10;
@@ -130,10 +131,9 @@ export default function SeedPicker() {
           <div>
             <div className={styles.overworldLabel}>OVERWORLD SEED</div>
             <div className={styles.seedRow}>
-              <input
+              <Input
                 value={String(localSeed)}
-                onChange={(e) => setLocalSeed(e.target.value)}
-                className={styles.seedInput}
+                onChange={(value) => setLocalSeed(value)}
               />
               <Button onClick={rollSeed}>⟳ Roll</Button>
             </div>
@@ -144,9 +144,7 @@ export default function SeedPicker() {
           </div>
 
           {/* Start button */}
-          <button onClick={handleStart} className={styles.startButton}>
-            ▶ Start with this seed
-          </button>
+          <Button onClick={handleStart}>Begin</Button>
 
           <hr className={styles.separator} />
 
