@@ -8,7 +8,7 @@
 
 .leftPanel {
     position: absolute;
-    width: 35vw;
+    width: 25vw;
     height: calc(100vh - 2rem);
     top: 2rem;
     left: 0;

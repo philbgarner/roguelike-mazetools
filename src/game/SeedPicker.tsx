@@ -12,6 +12,7 @@ import {
 import { CP437_TILES } from "../rendering/codepage437Tiles";
 import { useGame } from "./GameProvider";
 import styles from "./styles/SeedPicker.module.css";
+import BorderPanel from "./ui/BorderPanel";
 
 const FONT_URL = "/fonts/dosfont.json";
 const MAP_ZOOM_DEFAULT = 10;
@@ -114,17 +115,14 @@ export default function SeedPicker() {
   return (
     <div className={styles.wrapper}>
       {/* ── Left panel 40% ── */}
-      <div className={styles.leftPanel}>
-        {/* 3D title */}
-        <div className={styles.titleArea}>
-          <Canvas
-            camera={{ position: [0, 0, 5], fov: 50 }}
-            className={styles.titleCanvas}
-          >
-            <PickerTitle />
-          </Canvas>
-        </div>
-
+      <BorderPanel
+        background="rgba(0.3, 0.3, 0.3, 0.8)"
+        width="25vw"
+        height="calc(100vh - 4rem)"
+        left="1rem"
+        top="2rem"
+        flexMode="Column"
+      >
         {/* Controls */}
         <div className={styles.controls}>
           {/* Seed input */}
@@ -193,7 +191,9 @@ export default function SeedPicker() {
                   </tr>
                   <tr>
                     <td className={styles.detailKey}>Level</td>
-                    <td className={styles.detailValue}>{selectedPortal.level}</td>
+                    <td className={styles.detailValue}>
+                      {selectedPortal.level}
+                    </td>
                   </tr>
                   <tr>
                     <td className={styles.detailKey}>Difficulty</td>
@@ -267,7 +267,7 @@ export default function SeedPicker() {
             ))}
           </div>
         </div>
-      </div>
+      </BorderPanel>
 
       {/* ── Right panel 60%: bird's-eye map ── */}
       <div
