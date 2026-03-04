@@ -184,6 +184,7 @@ export default function SeedPicker() {
               {bsp.meta.seedUsed.toString(16).padStart(8, "0").toUpperCase()}
             </div>
             <div className={styles.worldName}>{worldName.name}</div>
+            <div className={styles.worldDescription}>{worldName.description}</div>
           </div>
 
           {/* Start button */}

@@ -196,6 +196,13 @@
     text-overflow: ellipsis;
 }
 
+.worldDescription {
+    color: #5a5248;
+    font-size: 0.72rem;
+    line-height: 1.55;
+    margin-top: 0.35rem;
+}
+
 .portalListName {
     flex: 1;
     color: #7a8a7a;
