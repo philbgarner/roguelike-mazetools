@@ -759,17 +759,18 @@ export const forestFrag = /* glsl */ `
     }
 
     // -------------------------
-    // Item metallic sheen (unchanged)
+    // Item metallic sheen — computed here, applied after fog-of-war so it
+    // shows regardless of whether the cell is currently visible.
     // -------------------------
+    float itemSheen = 0.0;
+    vec3 sheenHi = vec3(0.96, 0.98, 1.0);
     if (tintId > 1.5 && tintId < 2.5 && isMonster < 0.5 && isDoor < 0.5) {
-      float phase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
-      float d = abs(phase - 0.5);
+      float sheenPhase = fract(local.x * 0.9 + local.y * 0.6 + uTime * 0.6);
+      float d = abs(sheenPhase - 0.5);
       float core = 1.0 - smoothstep(0.01, 0.03, d);
       float halo = 1.0 - smoothstep(0.04, 0.16, d);
       float sparkle = step(0.92, fract(local.x * 13.0 + local.y * 17.0 + uTime * 1.2));
-      float sheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
-      vec3 hi = vec3(0.96, 0.98, 1.0);
-      ink = clamp(mix(ink, hi, sheen) + hi * (sheen * 0.45), 0.0, 1.0);
+      itemSheen = core * 0.75 + halo * 0.22 + sparkle * core * 0.35;
     }
 
     // -------------------------
@@ -862,11 +863,20 @@ export const forestFrag = /* glsl */ `
     outRgb = clamp(outRgb + effectiveVis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
 
     float notVisible = 1.0 - step(0.5 / 255.0, vis);
-    outRgb = mix(outRgb, mix(bg, vec3(0.05), inkA), notVisible * (1.0 - isPlayerHere));
+    // Brighter base for explored-but-dark cells: empty areas ~0.06, ink pixels ~0.18.
+    outRgb = mix(outRgb, mix(vec3(0.06), vec3(0.18), inkA), notVisible * (1.0 - isPlayerHere));
 
     // Path overlay applied after fog-of-war so it shows on explored-but-dark
     // cells too (pathBg handles visible cells; this covers the rest).
     outRgb = mix(outRgb, pathColor, pathIntensity * 0.5 * notVisible);
+
+    // Metallic sheen applied after fog-of-war so it shows on unexplored cells.
+    // Sheen colour is dimmed to 25% when the cell isn't currently lit.
+    vec3 effectiveSheenHi = mix(sheenHi * 0.25, sheenHi, 1.0 - notVisible);
+    outRgb = clamp(mix(outRgb, effectiveSheenHi, itemSheen) + effectiveSheenHi * (itemSheen * 0.45), 0.0, 1.0);
+
+    // Global brightness boost.
+    outRgb = clamp(outRgb * 1.4, 0.0, 1.0);
 
     gl_FragColor = vec4(outRgb, 1.0);
   }
