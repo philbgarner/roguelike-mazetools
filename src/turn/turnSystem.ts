@@ -349,11 +349,14 @@ export function defaultApplyAction(
 
   if (!deps.isWalkable(nx, ny)) return state;
 
-  // Check occupancy by other blocking actors.
-  for (const other of Object.values(state.actors)) {
-    if (other.id === actorId) continue;
-    if (other.alive && other.blocksMovement && other.x === nx && other.y === ny) {
-      return state;
+  // NPCs pass through all actors (players, monsters, other NPCs).
+  // For non-NPC movers, check occupancy by blocking actors.
+  if (actor.kind !== "npc") {
+    for (const other of Object.values(state.actors)) {
+      if (other.id === actorId) continue;
+      if (other.alive && other.blocksMovement && other.x === nx && other.y === ny) {
+        return state;
+      }
     }
   }
 
