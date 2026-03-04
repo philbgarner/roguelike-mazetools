@@ -13,6 +13,7 @@ import { CP437_TILES } from "../rendering/codepage437Tiles";
 import { useGame } from "./GameProvider";
 import styles from "./styles/SeedPicker.module.css";
 import BorderPanel from "./ui/BorderPanel";
+import Button from "./ui/Button";
 
 const FONT_URL = "/fonts/dosfont.json";
 const MAP_ZOOM_DEFAULT = 10;
@@ -134,9 +135,7 @@ export default function SeedPicker() {
                 onChange={(e) => setLocalSeed(e.target.value)}
                 className={styles.seedInput}
               />
-              <button onClick={rollSeed} className={styles.rollButton}>
-                ⟳ Roll
-              </button>
+              <Button onClick={rollSeed}>⟳ Roll</Button>
             </div>
             <div className={styles.hashText}>
               hash 0x
