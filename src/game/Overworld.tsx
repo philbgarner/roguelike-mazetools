@@ -264,7 +264,8 @@ export default function Overworld({ screen }: OverworldProps) {
       const actor = turnState.actors[id];
       if (!actor || actor.kind !== "npc" || !actor.alive) continue;
       if (seenNpcIdsRef.current.has(id)) continue;
-      if (Math.hypot(actor.x - playerX, actor.y - playerY) > PLAYER_VIS_RADIUS) continue;
+      if (Math.hypot(actor.x - playerX, actor.y - playerY) > PLAYER_VIS_RADIUS)
+        continue;
       seenNpcIdsRef.current.add(id);
       addLogMessage("A merchant wagon is nearby.");
     }
@@ -739,6 +740,103 @@ export default function Overworld({ screen }: OverworldProps) {
             </div>
           )}
         </ModalPanel>
+      )}
+      {showInventoryModal && (
+        <BorderPanel
+          right="10vw"
+          top="30vh"
+          width="15vw"
+          height="30vh"
+          background="rgb(25, 25, 25)"
+          zIndex={999999}
+        >
+          {(() => {
+            const inv = player.inventory;
+            const equippedItems = inv.items.filter(
+              (it) => inv.equipped[it.slot] === it.instanceId,
+            );
+            const bonusAtk = equippedItems.reduce(
+              (s, it) => s + it.bonusAttack,
+              0,
+            );
+            const bonusDef = equippedItems.reduce(
+              (s, it) => s + it.bonusDefense,
+              0,
+            );
+            const bonusHp = equippedItems.reduce(
+              (s, it) => s + it.bonusMaxHp,
+              0,
+            );
+            const baseAtk = player.attack - bonusAtk;
+            const baseDef = player.defense - bonusDef;
+            const baseHp = player.maxHp - bonusHp;
+            const row = (label: string, base: number, bonus: number) => (
+              <div
+                key={label}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "0.5rem",
+                  padding: "0.15rem 0",
+                  borderBottom: "1px solid #333",
+                }}
+              >
+                <span style={{ color: "#aaa" }}>{label}</span>
+                <span>
+                  <span style={{ color: "#eee" }}>{base}</span>
+                  {bonus !== 0 && (
+                    <span
+                      style={{
+                        color: bonus > 0 ? "#6f6" : "#f66",
+                        marginLeft: "0.25rem",
+                      }}
+                    >
+                      ({bonus > 0 ? "+" : ""}
+                      {bonus})
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+            return (
+              <div style={{ fontSize: "0.85rem", padding: "0.25rem" }}>
+                <div
+                  style={{
+                    color: "#f0d060",
+                    fontWeight: "bold",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  Stats
+                </div>
+                {row("HP", baseHp, bonusHp)}
+                {row("ATK", baseAtk, bonusAtk)}
+                {row("DEF", baseDef, bonusDef)}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "0.15rem 0",
+                    borderBottom: "1px solid #333",
+                  }}
+                >
+                  <span style={{ color: "#aaa" }}>Level</span>
+                  <span style={{ color: "#eee" }}>{player.level}</span>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "0.15rem 0",
+                  }}
+                >
+                  <span style={{ color: "#aaa" }}>XP</span>
+                  <span style={{ color: "#eee" }}>{player.xp}</span>
+                </div>
+              </div>
+            );
+          })()}
+        </BorderPanel>
       )}
 
       {showMerchantModal &&
