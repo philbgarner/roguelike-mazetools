@@ -3,7 +3,8 @@ import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import { Center, Text3D, useFont } from "@react-three/drei";
 import { useGame, type GameScreen } from "./GameProvider";
-
+import BorderPanel from "./ui/BorderPanel";
+import styles from "./styles/MainMenu.module.css";
 const FONT_URL = "/fonts/dosfont.json";
 
 const MENU_ITEMS: { label: string; target: GameScreen }[] = [
@@ -109,12 +110,24 @@ function MenuScene() {
 }
 
 export default function MainMenu() {
+  const { goTo } = useGame();
+  const width = "40vw";
+  const halfWidth = "20vw";
   return (
-    <Canvas
-      style={{ width: "100vw", height: "100vh", background: "#111" }}
-      camera={{ position: [0, 0, 8], fov: 50 }}
+    <BorderPanel
+      left={`calc(50vw - ${halfWidth})`}
+      bottom={`10vh`}
+      width={width}
+      height={"30vh"}
+      background={"#090909c0"}
     >
-      <MenuScene />
-    </Canvas>
+      <div className={styles.content}>
+        {MENU_ITEMS.map((item, i) => (
+          <span className={styles.menuItem} onClick={() => goTo(item.target)}>
+            <span className={styles.menuItemText}>{item.label}</span>
+          </span>
+        ))}
+      </div>
+    </BorderPanel>
   );
 }

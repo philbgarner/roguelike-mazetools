@@ -76,6 +76,8 @@ import { FocusLerper } from "./FocusLerper";
 
 import BorderPanel from "./ui/BorderPanel";
 import Tooltip, { TooltipProps } from "./ui/Tooltip";
+import MessageLog from "./ui/MessageLog";
+import { useMessageLog } from "./ui/useMessageLog";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation (via API so we get resolved monster spawns)
@@ -229,14 +231,25 @@ export default function Dungeon({ seed }: DungeonProps) {
     mapHeight: dungeon.height,
   });
 
+  const {
+    messages: logMessages,
+    addMessage: addLogMessage,
+    removeMessage: removeLogMessage,
+  } = useMessageLog();
+
   useEffect(
     () =>
       subscribe("damage", (evt) => {
         pushFloatingMessage(`-${evt.amount}`, evt.x, evt.y, {
           color: "#ff4444",
         });
+        if (evt.actorId === "player") {
+          addLogMessage(`You take ${evt.amount} damage!`);
+        } else {
+          addLogMessage(`You deal ${evt.amount} damage.`);
+        }
       }),
-    [subscribe, pushFloatingMessage],
+    [subscribe, pushFloatingMessage, addLogMessage],
   );
 
   useEffect(
@@ -245,16 +258,22 @@ export default function Dungeon({ seed }: DungeonProps) {
         pushFloatingMessage(`+${evt.amount}`, evt.x, evt.y, {
           color: "#44ff88",
         });
+        addLogMessage(`You heal ${evt.amount} HP.`);
       }),
-    [subscribe, pushFloatingMessage],
+    [subscribe, pushFloatingMessage, addLogMessage],
   );
 
   useEffect(
     () =>
       subscribe("miss", (evt) => {
         pushFloatingMessage("miss", evt.x, evt.y, { color: "#aaaaaa" });
+        if (evt.actorId === "player") {
+          addLogMessage("The attack misses you.");
+        } else {
+          addLogMessage("Your attack misses!");
+        }
       }),
-    [subscribe, pushFloatingMessage],
+    [subscribe, pushFloatingMessage, addLogMessage],
   );
 
   useEffect(
@@ -263,8 +282,19 @@ export default function Dungeon({ seed }: DungeonProps) {
         pushFloatingMessage(`+${evt.amount} xp`, evt.x, evt.y, {
           color: "#ffdd55",
         });
+        addLogMessage(`You gain ${evt.amount} XP.`);
       }),
-    [subscribe, pushFloatingMessage],
+    [subscribe, pushFloatingMessage, addLogMessage],
+  );
+
+  useEffect(
+    () =>
+      subscribe("death", (evt) => {
+        if (evt.actorId !== "player") {
+          addLogMessage("Enemy slain!");
+        }
+      }),
+    [subscribe, addLogMessage],
   );
 
   function buildDeps(
@@ -379,6 +409,10 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   // --- Autowalk cancel trigger: visible monster count baseline ---
   const prevVisibleMonsterCountRef = useRef<number>(0);
+
+  // --- First-discovery tracking for message log ---
+  const seenActorIdsRef = useRef<Set<string>>(new Set());
+  const seenChestIndicesRef = useRef<Set<number>>(new Set());
 
   // --- Actor char overlay ---
   const actorMaskRef = useRef<ActorCharMask | null>(null);
@@ -630,6 +664,39 @@ export default function Dungeon({ seed }: DungeonProps) {
     cancelAutoWalkNow,
   ]);
 
+  // --- First-discovery log messages ---
+  useEffect(() => {
+    const W = dungeon.width;
+    const featureType = content.masks?.featureType;
+
+    // Actors: monsters and NPCs entering visible range for the first time.
+    for (const id in turnState.actors) {
+      const actor = turnState.actors[id];
+      if (!actor || actor.kind === "player" || !actor.alive) continue;
+      if (seenActorIdsRef.current.has(id)) continue;
+      if (Math.hypot(actor.x - playerX, actor.y - playerY) > PLAYER_VIS_RADIUS) continue;
+      seenActorIdsRef.current.add(id);
+      if (actor.kind === "monster") {
+        addLogMessage(`You spot a ${actor.name}!`);
+      } else if (actor.kind === "npc") {
+        addLogMessage("A merchant wagon is nearby.");
+      }
+    }
+
+    // Chests: cells with featureType 2 entering visible range for the first time.
+    if (featureType) {
+      for (let i = 0; i < W * dungeon.height; i++) {
+        if (featureType[i] !== 2) continue;
+        if (seenChestIndicesRef.current.has(i)) continue;
+        const cx = i % W;
+        const cy = Math.floor(i / W);
+        if (Math.hypot(cx - playerX, cy - playerY) > PLAYER_VIS_RADIUS) continue;
+        seenChestIndicesRef.current.add(i);
+        addLogMessage("You see a chest!");
+      }
+    }
+  }, [turnState.actors, playerX, playerY, dungeon, content, addLogMessage]);
+
   // --- Auto-walk step loop ---
   // Runs once per player turn while a route is active. Commits exactly one step,
   // then commitPlayerAction → tickUntilPlayer advances monsters until the player
@@ -716,6 +783,8 @@ export default function Dungeon({ seed }: DungeonProps) {
   return (
     <>
       <Tooltip {...tooltip} />
+
+      <MessageLog messages={logMessages} onMessageExpired={removeLogMessage} />
 
       <BorderPanel width="20rem" height="5rem" background="#000" bottom="0px">
         HP: {playerActor.hp}/{playerActor.maxHp}

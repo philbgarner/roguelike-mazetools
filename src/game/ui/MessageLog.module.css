@@ -1,0 +1,28 @@
+.container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.25rem 0.5rem;
+  pointer-events: none;
+  z-index: 998;
+}
+
+.message {
+  color: #d8d0c0;
+  font-family: "Courier New", monospace;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  text-shadow: 1px 1px 3px #000, 0 0 6px #000;
+  animation: messageFade 5s forwards;
+  will-change: opacity;
+}
+
+@keyframes messageFade {
+  0%   { opacity: 1; }
+  60%  { opacity: 1; }
+  100% { opacity: 0; }
+}

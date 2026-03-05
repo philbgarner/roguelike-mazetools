@@ -313,7 +313,7 @@ export default function SeedPicker() {
           focusX={focusX}
           focusY={focusY}
           zoom={mapZoom}
-          startFullyExplored
+          startFullyExplored="yes"
           shaderVariant="forest"
           atlasUrl="/textures/codepage437.png"
           atlasCols={32}

@@ -62,6 +62,8 @@ import { FocusLerper } from "./FocusLerper";
 
 import BorderPanel from "./ui/BorderPanel";
 import Tooltip, { TooltipProps } from "./ui/Tooltip";
+import MessageLog from "./ui/MessageLog";
+import { useMessageLog } from "./ui/useMessageLog";
 import ModalPanel from "./ui/ModalPanel";
 import { useConfirmYesNo } from "./ui/useConfirmYesNo";
 import {
@@ -164,6 +166,12 @@ export default function Overworld({ screen }: OverworldProps) {
   });
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const {
+    messages: logMessages,
+    addMessage: addLogMessage,
+    removeMessage: removeLogMessage,
+  } = useMessageLog();
+
   // --- Turn system ---
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
     const player = createPlayerActor(startCell.x, startCell.y);
@@ -248,6 +256,19 @@ export default function Overworld({ screen }: OverworldProps) {
   useEffect(() => {
     targetFocusRef.current = { x: playerX, y: playerY };
   }, [playerX, playerY]);
+
+  // --- First-discovery log messages ---
+  const seenNpcIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const id in turnState.actors) {
+      const actor = turnState.actors[id];
+      if (!actor || actor.kind !== "npc" || !actor.alive) continue;
+      if (seenNpcIdsRef.current.has(id)) continue;
+      if (Math.hypot(actor.x - playerX, actor.y - playerY) > PLAYER_VIS_RADIUS) continue;
+      seenNpcIdsRef.current.add(id);
+      addLogMessage("A merchant wagon is nearby.");
+    }
+  }, [turnState.actors, playerX, playerY, addLogMessage]);
 
   // --- Path mask ---
   const pathMaskRef = useRef<{
@@ -520,6 +541,8 @@ export default function Overworld({ screen }: OverworldProps) {
 
   return (
     <>
+      <MessageLog messages={logMessages} onMessageExpired={removeLogMessage} />
+
       <BorderPanel
         title={
           contentAtPlayerCell
@@ -555,6 +578,7 @@ export default function Overworld({ screen }: OverworldProps) {
                   `Are you sure you want to enter ${contentAtPlayerCell.theme}?`,
                 )
               ) {
+                addLogMessage(`Entering ${contentAtPlayerCell.theme}...`);
                 setSeed(contentAtPlayerCell.seed);
                 setLevel(contentAtPlayerCell.level);
                 setTheme(contentAtPlayerCell.theme);
@@ -814,6 +838,7 @@ export default function Overworld({ screen }: OverworldProps) {
                           );
                           // Auto-equip if the slot is currently empty
                           const slotFree = !withItem.equipped[template.slot];
+                          addLogMessage(`Purchased ${template.name}.`);
                           if (slotFree) {
                             const { newInventory, delta } = equipItem(
                               withItem,
@@ -873,7 +898,7 @@ export default function Overworld({ screen }: OverworldProps) {
             plateTile={CP437_TILES.plate}
             blockTile={CP437_TILES.block}
             suppressBlocks
-            startFullyExplored
+            startFullyExplored="pathways-only"
             blockPositions={[]}
             chestTile={CP437_TILES.chest}
             monsterTile={CP437_TILES.monster}

@@ -199,7 +199,7 @@ type Props = {
     y: number;
     clientX: number;
     clientY: number;
-    e?: MouseMoveEvent;
+    e?: MouseEvent;
   }) => void;
   onCellHoverEnd?: () => void;
 
@@ -229,7 +229,7 @@ type Props = {
   shaderVariant?: "dungeon" | "forest";
 
   /** When true, all cells are pre-marked as explored on creation. */
-  startFullyExplored?: boolean;
+  startFullyExplored?: "no" | "yes" | "pathways-only";
 
   /**
    * Extra React Three Fiber elements rendered inside the Canvas after the
@@ -582,8 +582,34 @@ function DungeonRenderScene(props: Props) {
   const visTex = useMemo(() => {
     if (visRef.current) visRef.current.tex.dispose();
     const vr = createVisExploredRGBA(W, H, "vis_explored_rgba");
-    if (props.startFullyExplored) {
+    if (props.startFullyExplored === "yes") {
       for (let i = 0; i < W * H; i++) vr.data[i * 4 + 1] = 255; // G = explored
+      vr.tex.needsUpdate = true;
+    } else if (props.startFullyExplored === "pathways-only") {
+      const solid = bsp.masks.solid;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          if (solid[i] !== 255) {
+            // Pathway cell: always explored.
+            vr.data[i * 4 + 1] = 255;
+          } else {
+            // Tree cell: explored only if it borders a pathway in 8 directions.
+            let borderesPathway = false;
+            for (let dy = -1; dy <= 1 && !borderesPathway; dy++) {
+              for (let dx = -1; dx <= 1 && !borderesPathway; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && ny >= 0 && nx < W && ny < H) {
+                  if (solid[ny * W + nx] !== 255) borderesPathway = true;
+                }
+              }
+            }
+            if (borderesPathway) vr.data[i * 4 + 1] = 255;
+          }
+        }
+      }
       vr.tex.needsUpdate = true;
     }
     visRef.current = vr;
@@ -1097,7 +1123,8 @@ function DungeonRenderScene(props: Props) {
         if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
 
         // 1) Let inspection logic handle interactables first.
-        const handled = props.onCellClick?.({ x: cx, y: cy, button: e.button }) ?? false;
+        const handled =
+          props.onCellClick?.({ x: cx, y: cy, button: e.button }) ?? false;
         if (handled) return;
 
         // 2) Otherwise, camera-only focus.
