@@ -69,6 +69,14 @@ import {
   npcIdToSeed,
   type ShopItem,
 } from "./merchantShop";
+import {
+  addItem,
+  createInventoryItem,
+  equipItem,
+  unequipSlot,
+  type InventoryItem,
+} from "./inventory";
+import { getItemTemplate } from "./data/itemData";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation
@@ -113,7 +121,16 @@ export interface OverworldProps {
 // ---------------------------------------------------------------------------
 
 export default function Overworld({ screen }: OverworldProps) {
-  const { goTo, setSeed, setLevel, setTheme, overworldBsp, setOverworld, player, setPlayer } = useGame();
+  const {
+    goTo,
+    setSeed,
+    setLevel,
+    setTheme,
+    overworldBsp,
+    setOverworld,
+    player,
+    setPlayer,
+  } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   console.log("building screen", screen);
   const result = useMemo(() => {
@@ -135,6 +152,7 @@ export default function Overworld({ screen }: OverworldProps) {
   const worldEffectsRef = useRef(createWorldEffectsState());
 
   const [showMerchantModal, setShowMerchantModal] = useState(false);
+  const [showInventoryModal, setShowInventoryModal] = useState(false);
 
   const { confirmPrompt, dialog } = useConfirmYesNo();
 
@@ -558,34 +576,46 @@ export default function Overworld({ screen }: OverworldProps) {
           </Button>
         ) : null}
       </BorderPanel>
+      <BorderPanel
+        title="Player"
+        width="22rem"
+        height="5rem"
+        background="#090909"
+        bottom="0px"
+        right="0"
+        zIndex={99}
+      >
+        <Button>Equip.</Button>
+        <Button onClick={() => setShowInventoryModal(true)}>Inv.</Button>
+      </BorderPanel>
 
       <Tooltip {...tooltip} />
 
       {dialog}
 
-      {showMerchantModal && npcAtPlayerCell && (() => {
-        const shopItems = generateShopInventory(
-          player.level,
-          npcIdToSeed(npcAtPlayerCell.id),
-        );
-        return (
-          <ModalPanel
-            title="Merchant Wagon"
-            visible={showMerchantModal}
-            closeButton
-            onClose={() => setShowMerchantModal(false)}
-            maxHeight="60vh"
-          >
-            <div style={{ marginBottom: "0.5rem", color: "#f0d060" }}>
-              Gold: {player.gold}
-            </div>
+      {showInventoryModal && (
+        <ModalPanel
+          title="Inventory"
+          visible={showInventoryModal}
+          closeButton
+          onClose={() => setShowInventoryModal(false)}
+          maxHeight="60vh"
+        >
+          {player.inventory.items.length === 0 ? (
+            <div style={{ color: "#888" }}>No items in inventory.</div>
+          ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-              {shopItems.map((item: ShopItem) => {
-                const canAfford = player.gold >= item.price;
+              {player.inventory.items.map((item: InventoryItem) => {
+                const template = getItemTemplate(item.templateId);
+                const isEquipped =
+                  player.inventory.equipped[item.slot] === item.instanceId;
                 const statParts: string[] = [];
-                if (item.bonusAttack > 0) statParts.push(`+${item.bonusAttack} ATK`);
-                if (item.bonusDefense > 0) statParts.push(`+${item.bonusDefense} DEF`);
-                if (item.bonusMaxHp > 0) statParts.push(`+${item.bonusMaxHp} HP`);
+                if (item.bonusAttack > 0)
+                  statParts.push(`+${item.bonusAttack} ATK`);
+                if (item.bonusDefense > 0)
+                  statParts.push(`+${item.bonusDefense} DEF`);
+                if (item.bonusMaxHp > 0)
+                  statParts.push(`+${item.bonusMaxHp} HP`);
                 return (
                   <div
                     key={item.instanceId}
@@ -594,46 +624,222 @@ export default function Overworld({ screen }: OverworldProps) {
                       alignItems: "center",
                       gap: "0.6rem",
                       padding: "0.25rem 0.4rem",
-                      border: `1px solid ${canAfford ? "#444" : "#2a2a2a"}`,
-                      background: "#111",
-                      opacity: canAfford ? 1 : 0.5,
+                      border: `1px solid ${isEquipped ? "#446" : "#333"}`,
+                      background: isEquipped ? "#12121e" : "#111",
                     }}
                   >
-                    <span style={{ fontFamily: "monospace", color: "#ccc", minWidth: "1.2rem" }}>
-                      {item.glyph}
-                    </span>
-                    <span style={{ flex: 1, color: "#ddd" }}>
-                      {item.name}
-                      <span style={{ color: "#888", marginLeft: "0.5rem", fontSize: "0.85em" }}>
-                        {statParts.join(", ")}
-                      </span>
-                    </span>
-                    <span style={{ color: "#f0d060", minWidth: "3rem", textAlign: "right" }}>
-                      {item.price}g
-                    </span>
-                    <Button
-                      maxWidth="5rem"
-                      onClick={() => {
-                        if (!canAfford) return;
-                        setPlayer({
-                          ...player,
-                          gold: player.gold - item.price,
-                          attack: player.attack + item.bonusAttack,
-                          defense: player.defense + item.bonusDefense,
-                          maxHp: player.maxHp + item.bonusMaxHp,
-                          hp: Math.min(player.hp + item.bonusMaxHp, player.maxHp + item.bonusMaxHp),
-                        });
+                    <span
+                      style={{
+                        fontFamily: "monospace",
+                        color: "#ccc",
+                        minWidth: "1.2rem",
                       }}
                     >
-                      Buy
-                    </Button>
+                      {template?.glyph ?? "?"}
+                    </span>
+                    <span style={{ flex: 1, color: "#ddd" }}>
+                      {template?.name ?? item.templateId}
+                      {statParts.length > 0 && (
+                        <span
+                          style={{
+                            color: "#888",
+                            marginLeft: "0.5rem",
+                            fontSize: "0.85em",
+                          }}
+                        >
+                          {statParts.join(", ")}
+                        </span>
+                      )}
+                    </span>
+                    {isEquipped && (
+                      <span style={{ color: "#88a", fontSize: "0.8em" }}>
+                        [{item.slot}]
+                      </span>
+                    )}
+                    {isEquipped ? (
+                      <Button
+                        maxWidth="6rem"
+                        onClick={() => {
+                          const { newInventory, delta } = unequipSlot(
+                            player.inventory,
+                            item.slot,
+                          );
+                          setPlayer({
+                            ...player,
+                            inventory: newInventory,
+                            attack: player.attack + delta.attack,
+                            defense: player.defense + delta.defense,
+                            maxHp: Math.max(1, player.maxHp + delta.maxHp),
+                            hp: Math.min(
+                              player.hp,
+                              Math.max(1, player.maxHp + delta.maxHp),
+                            ),
+                          });
+                        }}
+                      >
+                        Unequip
+                      </Button>
+                    ) : (
+                      <Button
+                        maxWidth="5rem"
+                        onClick={() => {
+                          const { newInventory, delta } = equipItem(
+                            player.inventory,
+                            item.instanceId,
+                          );
+                          setPlayer({
+                            ...player,
+                            inventory: newInventory,
+                            attack: player.attack + delta.attack,
+                            defense: player.defense + delta.defense,
+                            maxHp: player.maxHp + delta.maxHp,
+                            hp: Math.min(
+                              player.hp + Math.max(0, delta.maxHp),
+                              player.maxHp + delta.maxHp,
+                            ),
+                          });
+                        }}
+                      >
+                        Equip
+                      </Button>
+                    )}
                   </div>
                 );
               })}
             </div>
-          </ModalPanel>
-        );
-      })()}
+          )}
+        </ModalPanel>
+      )}
+
+      {showMerchantModal &&
+        npcAtPlayerCell &&
+        (() => {
+          const shopItems = generateShopInventory(
+            player.level,
+            npcIdToSeed(npcAtPlayerCell.id),
+          );
+          return (
+            <ModalPanel
+              title="Merchant Wagon"
+              visible={showMerchantModal}
+              closeButton
+              onClose={() => setShowMerchantModal(false)}
+              maxHeight="60vh"
+            >
+              <div style={{ marginBottom: "0.5rem", color: "#f0d060" }}>
+                Gold: {player.gold}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.4rem",
+                }}
+              >
+                {shopItems.map((item: ShopItem) => {
+                  const canAfford = player.gold >= item.price;
+                  const statParts: string[] = [];
+                  if (item.bonusAttack > 0)
+                    statParts.push(`+${item.bonusAttack} ATK`);
+                  if (item.bonusDefense > 0)
+                    statParts.push(`+${item.bonusDefense} DEF`);
+                  if (item.bonusMaxHp > 0)
+                    statParts.push(`+${item.bonusMaxHp} HP`);
+                  return (
+                    <div
+                      key={item.instanceId}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.6rem",
+                        padding: "0.25rem 0.4rem",
+                        border: `1px solid ${canAfford ? "#444" : "#2a2a2a"}`,
+                        background: "#111",
+                        opacity: canAfford ? 1 : 0.5,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: "monospace",
+                          color: "#ccc",
+                          minWidth: "1.2rem",
+                        }}
+                      >
+                        {item.glyph}
+                      </span>
+                      <span style={{ flex: 1, color: "#ddd" }}>
+                        {item.name}
+                        <span
+                          style={{
+                            color: "#888",
+                            marginLeft: "0.5rem",
+                            fontSize: "0.85em",
+                          }}
+                        >
+                          {statParts.join(", ")}
+                        </span>
+                      </span>
+                      <span
+                        style={{
+                          color: "#f0d060",
+                          minWidth: "3rem",
+                          textAlign: "right",
+                        }}
+                      >
+                        {item.price}g
+                      </span>
+                      <Button
+                        maxWidth="5rem"
+                        onClick={() => {
+                          if (!canAfford) return;
+                          const template = getItemTemplate(item.templateId);
+                          if (!template) return;
+                          const inventoryItem = createInventoryItem(
+                            item.instanceId,
+                            template,
+                            item.bonusAttack,
+                            item.bonusDefense,
+                            item.bonusMaxHp,
+                            item.price,
+                          );
+                          const withItem = addItem(player.inventory, inventoryItem);
+                          // Auto-equip if the slot is currently empty
+                          const slotFree = !withItem.equipped[template.slot];
+                          if (slotFree) {
+                            const { newInventory, delta } = equipItem(
+                              withItem,
+                              item.instanceId,
+                            );
+                            setPlayer({
+                              ...player,
+                              gold: player.gold - item.price,
+                              inventory: newInventory,
+                              attack: player.attack + delta.attack,
+                              defense: player.defense + delta.defense,
+                              maxHp: player.maxHp + delta.maxHp,
+                              hp: Math.min(
+                                player.hp + Math.max(0, delta.maxHp),
+                                player.maxHp + delta.maxHp,
+                              ),
+                            });
+                          } else {
+                            setPlayer({
+                              ...player,
+                              gold: player.gold - item.price,
+                              inventory: withItem,
+                            });
+                          }
+                        }}
+                      >
+                        Buy
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </ModalPanel>
+          );
+        })()}
 
       {screen === "overworld" ? (
         <div

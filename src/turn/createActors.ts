@@ -12,6 +12,8 @@ import {
 import type { PlayerActor, MonsterActor, NpcActor } from "./turnTypes";
 import type { DungeonPortal } from "../mazeGen";
 import type { Player } from "../game/player";
+import { createInventory, createInventoryItem, type Inventory } from "../game/inventory";
+import { getItemTemplate } from "../game/data/itemData";
 
 /** Default player speed (acts 10x per BASE_TIME unit with default BASE_TIME=100). */
 const PLAYER_SPEED = 10;
@@ -50,6 +52,8 @@ export function createPlayerActor(
     level: seed?.level ?? 1,
     attack: seed?.attack ?? PLAYER_BASE_ATTACK,
     defense: seed?.defense ?? PLAYER_BASE_DEFENSE,
+    gold: seed?.gold ?? 100,
+    inventory: seed?.inventory ?? createInventory(),
     speed: PLAYER_SPEED,
     alive: true,
     blocksMovement: true,
@@ -109,6 +113,29 @@ export function createMonstersFromResolved(
     const eq = spawn.equipment;
     const baseHp = spawn.scaledHp > 0 ? spawn.scaledHp : statBlock.hp;
     const hp     = baseHp + (eq?.bonusMaxHp ?? 0);
+
+    // Build inventory — bonuses are already baked into attack/defense/hp above,
+    // so we place the item directly into equipped without re-applying deltas.
+    let inventory: Inventory = createInventory();
+    if (eq) {
+      const template = getItemTemplate(eq.itemId);
+      if (template) {
+        const instanceId = `${spawn.entityId}_eq`;
+        const item = createInventoryItem(
+          instanceId,
+          template,
+          eq.bonusAttack,
+          eq.bonusDefense,
+          eq.bonusMaxHp,
+          eq.value,
+        );
+        inventory = {
+          items: [item],
+          equipped: { [template.slot]: instanceId },
+        };
+      }
+    }
+
     return {
       id: spawn.entityId,
       kind: "monster" as const,
@@ -122,6 +149,7 @@ export function createMonstersFromResolved(
       attack: statBlock.attack + (eq?.bonusAttack ?? 0),
       defense: statBlock.defense + (eq?.bonusDefense ?? 0),
       xp: statBlock.xp,
+      inventory,
       alive: true,
       blocksMovement: true,
       spawnId: spawn.spawnId,

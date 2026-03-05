@@ -3,6 +3,8 @@
 // Shared types for the priority-queue turn system.
 // Generator-independent; works with both API result and direct generator output.
 
+import { Inventory } from "../game/inventory";
+
 export type ActorId = string;
 
 export type ActorKind = "player" | "monster" | "npc";
@@ -26,6 +28,8 @@ export type PlayerActor = ActorBase & {
   level: number;
   attack: number;
   defense: number;
+  gold: number;
+  inventory: Inventory;
 };
 
 /**
@@ -50,6 +54,8 @@ export type MonsterActor = ActorBase & {
   attack: number;
   defense: number;
   xp: number;
+  /** Items the monster is carrying / has equipped. */
+  inventory: Inventory;
   /** Current awareness state. */
   alertState: MonsterAlertState;
   /**

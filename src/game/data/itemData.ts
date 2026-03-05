@@ -9,29 +9,44 @@
 
 export type ItemType = "weapon" | "armor" | "trinket";
 
+/**
+ * The equipment slot an item occupies when worn.
+ * Each actor has at most one item per slot equipped at a time.
+ */
+export type EquipSlot =
+  | "weapon"   // swords, axes, daggers, spears
+  | "offhand"  // shields
+  | "body"     // chain mail
+  | "head"     // helms
+  | "ring"
+  | "amulet"
+  | "charm";
+
 export type ItemTemplate = {
   id: string;
   name: string;
   glyph: string;
   type: ItemType;
+  /** The equipment slot this item occupies when worn. */
+  slot: EquipSlot;
 };
 
 export const ITEM_TEMPLATES: ItemTemplate[] = [
   // Weapons — grant bonusAttack
-  { id: "sword",   name: "Sword",       glyph: "/",  type: "weapon"  },
-  { id: "axe",     name: "Axe",         glyph: "\\", type: "weapon"  },
-  { id: "dagger",  name: "Dagger",      glyph: "-",  type: "weapon"  },
-  { id: "spear",   name: "Spear",       glyph: "|",  type: "weapon"  },
+  { id: "sword",  name: "Sword",      glyph: "/",  type: "weapon",  slot: "weapon"  },
+  { id: "axe",    name: "Axe",        glyph: "\\", type: "weapon",  slot: "weapon"  },
+  { id: "dagger", name: "Dagger",     glyph: "-",  type: "weapon",  slot: "weapon"  },
+  { id: "spear",  name: "Spear",      glyph: "|",  type: "weapon",  slot: "weapon"  },
 
   // Armor — grant bonusDefense + bonusMaxHp
-  { id: "shield",  name: "Shield",      glyph: ")",  type: "armor"   },
-  { id: "mail",    name: "Chain Mail",  glyph: "[",  type: "armor"   },
-  { id: "helm",    name: "Helm",        glyph: "^",  type: "armor"   },
+  { id: "shield", name: "Shield",     glyph: ")",  type: "armor",   slot: "offhand" },
+  { id: "mail",   name: "Chain Mail", glyph: "[",  type: "armor",   slot: "body"    },
+  { id: "helm",   name: "Helm",       glyph: "^",  type: "armor",   slot: "head"    },
 
   // Trinkets — grant small bonuses to all stats
-  { id: "ring",    name: "Ring",        glyph: "=",  type: "trinket" },
-  { id: "amulet",  name: "Amulet",      glyph: "\"", type: "trinket" },
-  { id: "charm",   name: "Charm",       glyph: "*",  type: "trinket" },
+  { id: "ring",   name: "Ring",       glyph: "=",  type: "trinket", slot: "ring"    },
+  { id: "amulet", name: "Amulet",     glyph: "\"", type: "trinket", slot: "amulet"  },
+  { id: "charm",  name: "Charm",      glyph: "*",  type: "trinket", slot: "charm"   },
 ];
 
 /** Look up a template by id. Returns undefined if not found. */

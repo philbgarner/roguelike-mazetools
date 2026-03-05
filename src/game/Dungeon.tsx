@@ -881,11 +881,35 @@ export default function Dungeon({ seed }: DungeonProps) {
                     {doorInfo}
                     {leverInfo}
                     {plateInfo}
-                    {monstersAtCell.map((m) => (
-                      <span key={m.id}>
-                        {m.name} (HP {m.hp}/{m.maxHp})
-                      </span>
-                    ))}
+                    {monstersAtCell.map((m) => {
+                      const monsterPower =
+                        m.attack * 2 + m.defense + m.maxHp / 5;
+                      const playerPower =
+                        playerActor.attack * 2 +
+                        playerActor.defense +
+                        playerActor.maxHp / 5;
+                      const ratio = monsterPower / Math.max(1, playerPower);
+                      const difficulty =
+                        ratio < 0.6
+                          ? "easy"
+                          : ratio > 1.4
+                            ? "tough"
+                            : "even";
+                      const diffColor =
+                        difficulty === "easy"
+                          ? "#6be06b"
+                          : difficulty === "tough"
+                            ? "#e06b6b"
+                            : "#e0c96b";
+                      return (
+                        <span key={m.id}>
+                          {m.name} (HP {m.hp}/{m.maxHp}){" "}
+                          <span style={{ color: diffColor }}>
+                            [{difficulty}]
+                          </span>
+                        </span>
+                      );
+                    })}
                   </div>
                 ),
               });

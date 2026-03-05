@@ -14,6 +14,7 @@ export interface TooltipProps {
   x: number;
   y: number;
   title?: string;
+  zIndex?: number;
 }
 
 export default function Tooltip({
@@ -22,6 +23,7 @@ export default function Tooltip({
   x,
   y,
   title,
+  zIndex,
 }: TooltipProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipHeight = containerRef.current?.offsetHeight ?? 120;
@@ -43,6 +45,7 @@ export default function Tooltip({
         title={title}
         left={`${x - 18}px`}
         top={`${topPos}px`}
+        zIndex={zIndex}
       >
         {children}
       </BorderPanel>
