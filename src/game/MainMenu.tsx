@@ -8,6 +8,7 @@ const FONT_URL = "/fonts/dosfont.json";
 
 const MENU_ITEMS: { label: string; target: GameScreen }[] = [
   { label: "Start Game", target: "seed-picker" },
+  { label: "Settings", target: "seed-picker" },
 ];
 
 function MenuItem({
@@ -70,12 +71,20 @@ function Title() {
   const font = useFont(FONT_URL);
 
   return (
-    <Center position={[0, 1.5, 0]}>
-      <Text3D font={font.data} size={1} height={0.2} curveSegments={6}>
-        7DRL 2026
-        <meshStandardMaterial color="#aaffaa" />
-      </Text3D>
-    </Center>
+    <>
+      <Center position={[0, 1.5, 0]}>
+        <Text3D font={font.data} size={1} height={0.2} curveSegments={6}>
+          Wilderness Rogue
+          <meshStandardMaterial color="#aaffaa" />
+        </Text3D>
+      </Center>
+      <Center position={[0, 0.75, 0]}>
+        <Text3D font={font.data} size={0.3} height={0.2} curveSegments={6}>
+          A 7DRL 2026 game.
+          <meshStandardMaterial color="#aaffaa" />
+        </Text3D>
+      </Center>
+    </>
   );
 }
 
@@ -91,7 +100,7 @@ function MenuScene() {
         <MenuItem
           key={item.label}
           label={item.label}
-          y={-i * 0.9}
+          y={-i * 0.8}
           onClick={() => goTo(item.target)}
         />
       ))}

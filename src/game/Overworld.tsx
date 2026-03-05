@@ -539,7 +539,7 @@ export default function Overworld({ screen }: OverworldProps) {
       </BorderPanel>
       <BorderPanel
         title="Actions"
-        width="22rem"
+        width="32rem"
         height="5rem"
         background="#090909"
         bottom="0px"
@@ -548,7 +548,7 @@ export default function Overworld({ screen }: OverworldProps) {
       >
         {contentAtPlayerCell ? (
           <Button
-            maxWidth="12rem"
+            maxWidth="auto"
             onClick={async () => {
               if (
                 await confirmPrompt(
@@ -604,7 +604,13 @@ export default function Overworld({ screen }: OverworldProps) {
           {player.inventory.items.length === 0 ? (
             <div style={{ color: "#888" }}>No items in inventory.</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.4rem",
+              }}
+            >
               {player.inventory.items.map((item: InventoryItem) => {
                 const template = getItemTemplate(item.templateId);
                 const isEquipped =
@@ -802,7 +808,10 @@ export default function Overworld({ screen }: OverworldProps) {
                             item.bonusMaxHp,
                             item.price,
                           );
-                          const withItem = addItem(player.inventory, inventoryItem);
+                          const withItem = addItem(
+                            player.inventory,
+                            inventoryItem,
+                          );
                           // Auto-equip if the slot is currently empty
                           const slotFree = !withItem.equipped[template.slot];
                           if (slotFree) {
@@ -979,6 +988,14 @@ export default function Overworld({ screen }: OverworldProps) {
               //   return true;
               // }
 
+              // If an NPC is at the clicked cell, follow them instead of walking to a fixed tile.
+              const clickedNpc = Object.values(
+                turnStateRef.current.actors,
+              ).find(
+                (a): a is NpcActor =>
+                  a.kind === "npc" && a.alive && a.x === x && a.y === y,
+              );
+
               // Click-to-navigate: start auto-walk toward target.
               const newAutoWalk = startAutoWalkForest({
                 from: { x: playerX, y: playerY },
@@ -986,6 +1003,7 @@ export default function Overworld({ screen }: OverworldProps) {
                 walkDungeon,
                 bsp: dungeon,
                 content,
+                followActorId: clickedNpc?.id,
               });
               setAutoWalk(newAutoWalk);
 

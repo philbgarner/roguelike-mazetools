@@ -26,6 +26,8 @@ export type AutoWalkState =
       target: GridPos;
       /** Last computed path from player to target (start-inclusive). Used by overlay. */
       path: GridPos[];
+      /** If set, retarget this actor's current position on each step. */
+      followActorId?: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -110,8 +112,10 @@ export function startAutoWalkForest(args: {
   /** Original BSP — solid=255 marks tree tiles for the cost penalty. */
   bsp: BspDungeonOutputs;
   content: ForestContentOutputs;
+  /** If set, retarget this actor's position on each step instead of the fixed target. */
+  followActorId?: string;
 }): AutoWalkState {
-  const { from, target, walkDungeon, bsp, content } = args;
+  const { from, target, walkDungeon, bsp, content, followActorId } = args;
   const pathResult = aStar8(
     walkDungeon,
     content as unknown as ContentOutputs,
@@ -121,12 +125,13 @@ export function startAutoWalkForest(args: {
     { cellCost: forestCellCost(bsp) },
   );
   if (!pathResult || pathResult.path.length < 2) return { kind: "idle" };
-  return { kind: "active", target, path: pathResult.path };
+  return { kind: "active", target, path: pathResult.path, followActorId };
 }
 
 /**
  * Forest overworld variant of consumeNextAutoWalkStep.
  * Recomputes path each step with the tree cost penalty.
+ * If `autoWalk.followActorId` is set, retargets the followed actor's current position.
  */
 export function consumeNextAutoWalkStepForest(args: {
   autoWalk: AutoWalkState;
@@ -153,7 +158,15 @@ export function consumeNextAutoWalkStepForest(args: {
   if (!playerActor) return idle;
 
   const from: GridPos = { x: playerActor.x, y: playerActor.y };
-  const { target } = autoWalk;
+
+  // If following an NPC, update target to their current position each step.
+  const { followActorId } = autoWalk;
+  let target = autoWalk.target;
+  if (followActorId) {
+    const followed = turnState.actors[followActorId];
+    if (!followed || !followed.alive) return idle;
+    target = { x: followed.x, y: followed.y };
+  }
 
   if (from.x === target.x && from.y === target.y) return idle;
 
@@ -172,7 +185,7 @@ export function consumeNextAutoWalkStepForest(args: {
   const dy = nextStep.y - from.y;
 
   return {
-    nextAutoWalk: { kind: "active", target, path: pathResult.path },
+    nextAutoWalk: { kind: "active", target, path: pathResult.path, followActorId },
     action: { kind: "move", dx, dy },
     pathForOverlay: pathResult.path,
   };
