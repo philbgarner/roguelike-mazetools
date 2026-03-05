@@ -7,7 +7,7 @@
 import { computeRoomTags } from "./roomTags";
 import type { RoomTag } from "./roomTags";
 import { selectRoomThemeForRoom, selectAllRoomThemes } from "./selectRoomThemes";
-import { THEME_MEDIEVAL_KEEP } from "./defaultThemes";
+import { THEME_CAVE } from "./defaultThemes";
 
 // ---------------------------------------------------------------------------
 // Minimal mock data (avoids THREE dependency)
@@ -185,8 +185,8 @@ console.log("\n=== Room Theme Selection Tests ===\n");
 {
   console.log("Test 4: Determinism — same inputs yield same result");
   const tags = new Set<RoomTag>(["entrance", "has_monsters", "main_path"]);
-  const r1 = selectRoomThemeForRoom(42, THEME_MEDIEVAL_KEEP, 1, tags);
-  const r2 = selectRoomThemeForRoom(42, THEME_MEDIEVAL_KEEP, 1, tags);
+  const r1 = selectRoomThemeForRoom(42, THEME_CAVE, 1, tags);
+  const r2 = selectRoomThemeForRoom(42, THEME_CAVE, 1, tags);
   assert(r1.id === r2.id, `deterministic: both picks = "${r1.id}"`);
 }
 
@@ -196,7 +196,7 @@ console.log("\n=== Room Theme Selection Tests ===\n");
   const tags = new Set<RoomTag>([]); // no affinity → pure hash pick
   const results = new Set<string>();
   for (let seed = 0; seed < 100; seed++) {
-    results.add(selectRoomThemeForRoom(seed, THEME_MEDIEVAL_KEEP, 1, tags).id);
+    results.add(selectRoomThemeForRoom(seed, THEME_CAVE, 1, tags).id);
   }
   assert(results.size > 1, `multiple themes selected across seeds (got ${results.size} distinct)`);
 }
@@ -209,7 +209,7 @@ console.log("\n=== Room Theme Selection Tests ===\n");
   let throneCount = 0;
   const trials = 200;
   for (let seed = 0; seed < trials; seed++) {
-    const pick = selectRoomThemeForRoom(seed, THEME_MEDIEVAL_KEEP, 99, bossTags);
+    const pick = selectRoomThemeForRoom(seed, THEME_CAVE, 99, bossTags);
     if (pick.id === "throne_room") throneCount++;
   }
   // With 4 room themes, random would give ~25%. With affinity, throne_room
@@ -225,7 +225,7 @@ console.log("\n=== Room Theme Selection Tests ===\n");
   for (let i = 1; i <= 10; i++) {
     tagMap.set(i, new Set(["main_path"]));
   }
-  const result = selectAllRoomThemes(42, THEME_MEDIEVAL_KEEP, tagMap);
+  const result = selectAllRoomThemes(42, THEME_CAVE, tagMap);
   assert(result.size === 10, `all 10 rooms assigned (got ${result.size})`);
   for (const [rid, theme] of result) {
     assert(!!theme.id, `room ${rid} has a theme id`);

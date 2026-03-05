@@ -17,8 +17,10 @@ export type {
 export { registerThemes, getTheme, getAllThemeIds } from "./themeRegistry";
 
 export {
-  THEME_MEDIEVAL_KEEP,
-  THEME_BABYLON_ZIGGURAT,
-  THEME_SURGICAL_SUITE,
+  THEME_CAVE,
+  THEME_RUINS,
+  THEME_CRYPT,
+  THEME_TEMPLE,
+  THEME_LAIR,
   DEFAULT_THEMES,
 } from "./defaultThemes";

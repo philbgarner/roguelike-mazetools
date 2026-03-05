@@ -17,6 +17,9 @@ interface GameState {
   seed: string | number;
   level: number;
   setLevel: (newLevel: number) => void;
+  /** Portal theme id (e.g. "cave", "ruins", "crypt", "temple", "lair"). */
+  theme: string;
+  setTheme: (theme: string) => void;
   overworldBsp: BspDungeonOutputs | null;
   overworldContent: ForestContentOutputs | null;
   setOverworld: (bsp: BspDungeonOutputs, content: ForestContentOutputs) => void;
@@ -31,6 +34,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [player, setPlayer] = useState<Player>(DEFAULT_PLAYER);
   const [seed, setSeed] = useState<string | number>("test");
   const [level, setLevel] = useState<number>(1);
+  const [theme, setTheme] = useState<string>("cave");
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
     null,
   );
@@ -46,6 +50,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         seed,
         level,
         setLevel: (newLevel: number) => setLevel(newLevel),
+        theme,
+        setTheme: (newTheme: string) => setTheme(newTheme),
         setSeed: (newSeed: string | number) => setSeed(newSeed),
         overworldBsp,
         overworldContent,

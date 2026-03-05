@@ -106,7 +106,9 @@ export function createMonstersFromResolved(
       BOSS_STATS[spawn.spawnId] ??
       NPC_STATS[spawn.spawnId] ??
       FALLBACK_STATS;
-    console.log("monster stat block", statBlock);
+    const eq = spawn.equipment;
+    const baseHp = spawn.scaledHp > 0 ? spawn.scaledHp : statBlock.hp;
+    const hp     = baseHp + (eq?.bonusMaxHp ?? 0);
     return {
       id: spawn.entityId,
       kind: "monster" as const,
@@ -114,10 +116,10 @@ export function createMonstersFromResolved(
       y: spawn.y,
       glyph: "glyph" in statBlock ? statBlock.glyph : "M",
       speed: statBlock.speed,
-      hp: statBlock.hp,
-      maxHp: statBlock.hp,
-      attack: statBlock.attack,
-      defense: statBlock.defense,
+      hp,
+      maxHp: hp,
+      attack: statBlock.attack + (eq?.bonusAttack ?? 0),
+      defense: statBlock.defense + (eq?.bonusDefense ?? 0),
       xp: statBlock.xp,
       alive: true,
       blocksMovement: true,

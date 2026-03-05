@@ -1,8 +1,10 @@
 /**
- * Default stat blocks for all spawnable entities across the three starter themes.
+ * Stat blocks for all spawnable entities across the five dungeon themes.
  *
- * Creature speed reference (player = 10)
+ * Themes: cave (lvl 1-2) | ruins (lvl 3-4) | crypt (lvl 5-6) |
+ *         temple (lvl 7-8) | lair (lvl 9-10)
  *
+ * Creature speed reference (player = 10).
  * HP / attack / defense are abstract units for the combat resolver.
  * xp is awarded to the player on kill; 0 for friendly NPCs.
  */
@@ -49,118 +51,194 @@ export type LootStatBlock = {
 // ---------------------------------------------------------------------------
 
 export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
-  // ── Medieval Keep ────────────────────────────────────────────────────────
-  skeleton_warrior: {
-    glyph: "s",
-    name: "Skeleton Warrior",
-    speed: 10,
-    hp: 14,
-    attack: 4,
-    defense: 2,
-    xp: 15,
-  },
-  armored_guard: {
-    glyph: "G",
-    name: "Armored Guard",
-    speed: 10,
-    hp: 22,
-    attack: 5,
-    defense: 5,
-    xp: 22,
-  },
-  giant_rat: {
-    glyph: "r",
-    name: "Giant Rat",
-    speed: 10,
+  // ── Cave (levels 1-2) ────────────────────────────────────────────────────
+  cave_bat: {
+    glyph: "b",
+    name: "Cave Bat",
+    speed: 14,
     hp: 5,
     attack: 2,
     defense: 0,
     xp: 8,
   },
-  ghost_knight: {
-    glyph: "k",
-    name: "Ghost Knight",
+  giant_spider: {
+    glyph: "s",
+    name: "Giant Spider",
     speed: 10,
     hp: 10,
-    attack: 7,
+    attack: 3,
     defense: 1,
-    xp: 35,
+    xp: 14,
+  },
+  blind_crawler: {
+    glyph: "c",
+    name: "Blind Crawler",
+    speed: 7,
+    hp: 16,
+    attack: 4,
+    defense: 2,
+    xp: 18,
+  },
+  rock_sprite: {
+    glyph: "r",
+    name: "Rock Sprite",
+    speed: 10,
+    hp: 8,
+    attack: 3,
+    defense: 1,
+    xp: 12,
   },
 
-  // ── Babylon Ziggurat ─────────────────────────────────────────────────────
-  clay_golem: {
-    glyph: "g",
-    name: "Clay Golem",
-    speed: 10,
-    hp: 30,
-    attack: 8,
-    defense: 7,
-    xp: 30,
+  // ── Ruins (levels 3-4) ───────────────────────────────────────────────────
+  feral_dog: {
+    glyph: "d",
+    name: "Feral Dog",
+    speed: 13,
+    hp: 8,
+    attack: 4,
+    defense: 0,
+    xp: 16,
   },
-  sand_wraith: {
-    glyph: "W",
-    name: "Sand Wraith",
+  stone_sentinel: {
+    glyph: "S",
+    name: "Stone Sentinel",
+    speed: 8,
+    hp: 22,
+    attack: 5,
+    defense: 5,
+    xp: 28,
+  },
+  vine_stalker: {
+    glyph: "v",
+    name: "Vine Stalker",
+    speed: 10,
+    hp: 14,
+    attack: 5,
+    defense: 1,
+    xp: 22,
+  },
+  tomb_rat: {
+    glyph: "R",
+    name: "Tomb Rat",
+    speed: 12,
+    hp: 6,
+    attack: 3,
+    defense: 0,
+    xp: 10,
+  },
+
+  // ── Crypt (levels 5-6) ───────────────────────────────────────────────────
+  skeleton: {
+    glyph: "s",
+    name: "Skeleton",
+    speed: 10,
+    hp: 14,
+    attack: 4,
+    defense: 2,
+    xp: 22,
+  },
+  zombie: {
+    glyph: "z",
+    name: "Zombie",
+    speed: 7,
+    hp: 20,
+    attack: 5,
+    defense: 2,
+    xp: 24,
+  },
+  wight: {
+    glyph: "w",
+    name: "Wight",
+    speed: 10,
+    hp: 12,
+    attack: 7,
+    defense: 1,
+    xp: 32,
+  },
+  shadow: {
+    glyph: "h",
+    name: "Shadow",
     speed: 12,
     hp: 8,
     attack: 6,
     defense: 0,
-    xp: 25,
-  },
-  temple_guardian: {
-    glyph: "T",
-    name: "Temple Guardian",
-    speed: 10,
-    hp: 24,
-    attack: 6,
-    defense: 4,
     xp: 28,
   },
-  scorpion_swarm: {
-    glyph: "S",
-    name: "Scorpion Swarm",
-    speed: 14,
-    hp: 10,
-    attack: 3,
-    defense: 0,
-    xp: 20,
-  },
 
-  // ── Surgical Suite ───────────────────────────────────────────────────────
-  animated_cadaver: {
-    glyph: "z",
-    name: "Animated Cadaver",
+  // ── Temple (levels 7-8) ──────────────────────────────────────────────────
+  temple_zealot: {
+    glyph: "Z",
+    name: "Temple Zealot",
+    speed: 10,
+    hp: 18,
+    attack: 6,
+    defense: 3,
+    xp: 35,
+  },
+  stone_idol: {
+    glyph: "I",
+    name: "Stone Idol",
+    speed: 8,
+    hp: 28,
+    attack: 7,
+    defense: 6,
+    xp: 40,
+  },
+  flame_cleric: {
+    glyph: "f",
+    name: "Flame Cleric",
     speed: 10,
     hp: 16,
-    attack: 4,
-    defense: 1,
-    xp: 18,
-  },
-  rogue_orderly: {
-    glyph: "o",
-    name: "Rogue Orderly",
-    speed: 10,
-    hp: 14,
-    attack: 5,
+    attack: 8,
     defense: 2,
-    xp: 22,
+    xp: 38,
   },
-  surgical_drone: {
-    glyph: "d",
-    name: "Surgical Drone",
+  divine_construct: {
+    glyph: "D",
+    name: "Divine Construct",
+    speed: 10,
+    hp: 24,
+    attack: 7,
+    defense: 5,
+    xp: 42,
+  },
+
+  // ── Lair (levels 9-10) ───────────────────────────────────────────────────
+  pit_fiend: {
+    glyph: "F",
+    name: "Pit Fiend",
     speed: 10,
     hp: 22,
-    attack: 6,
-    defense: 5,
-    xp: 30,
+    attack: 8,
+    defense: 3,
+    xp: 50,
   },
-  escaped_subject: {
-    glyph: "e",
-    name: "Escaped Subject",
-    speed: 14,
-    hp: 8,
-    attack: 3,
-    defense: 0,
-    xp: 15,
+  chaos_brute: {
+    glyph: "B",
+    name: "Chaos Brute",
+    speed: 8,
+    hp: 32,
+    attack: 9,
+    defense: 5,
+    xp: 55,
+  },
+  warlord_grunt: {
+    glyph: "g",
+    name: "Warlord Grunt",
+    speed: 12,
+    hp: 18,
+    attack: 9,
+    defense: 2,
+    xp: 48,
+  },
+  abomination: {
+    glyph: "A",
+    name: "Abomination",
+    speed: 8,
+    hp: 36,
+    attack: 10,
+    defense: 6,
+    xp: 60,
   },
 };
 
@@ -169,64 +247,104 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
 // ---------------------------------------------------------------------------
 
 export const BOSS_STATS: Record<string, CreatureStatBlock> = {
-  // ── Medieval Keep ────────────────────────────────────────────────────────
-  black_knight: {
-    glyph: "K",
-    name: "Black Knight",
-    speed: 10,
-    hp: 60,
-    attack: 10,
-    defense: 8,
-    xp: 200,
+  // ── Cave ─────────────────────────────────────────────────────────────────
+  cave_troll: {
+    glyph: "T",
+    name: "Cave Troll",
+    speed: 8,
+    hp: 55,
+    attack: 9,
+    defense: 6,
+    xp: 160,
   },
-  lich_king: {
-    glyph: "L",
-    name: "Lich King",
-    speed: 10,
-    hp: 80,
-    attack: 13,
-    defense: 5,
-    xp: 500,
+  nest_mother: {
+    glyph: "M",
+    name: "Nest Mother",
+    speed: 8,
+    hp: 45,
+    attack: 7,
+    defense: 3,
+    xp: 140,
   },
 
-  // ── Babylon Ziggurat ─────────────────────────────────────────────────────
-  bull_of_heaven: {
-    glyph: "B",
-    name: "Bull of Heaven",
-    speed: 10,
-    hp: 80,
-    attack: 14,
+  // ── Ruins ─────────────────────────────────────────────────────────────────
+  ruined_golem: {
+    glyph: "G",
+    name: "Ruined Golem",
+    speed: 7,
+    hp: 70,
+    attack: 11,
     defense: 8,
-    xp: 350,
+    xp: 250,
   },
-  lamassu: {
-    glyph: "M",
-    name: "Lamassu",
+  ruin_guardian: {
+    glyph: "U",
+    name: "Ruin Guardian",
+    speed: 8,
+    hp: 60,
+    attack: 9,
+    defense: 7,
+    xp: 210,
+  },
+
+  // ── Crypt ─────────────────────────────────────────────────────────────────
+  crypt_keeper: {
+    glyph: "K",
+    name: "Crypt Keeper",
     speed: 10,
     hp: 75,
     attack: 12,
-    defense: 10,
+    defense: 5,
+    xp: 320,
+  },
+  death_knight: {
+    glyph: "N",
+    name: "Death Knight",
+    speed: 10,
+    hp: 90,
+    attack: 14,
+    defense: 9,
     xp: 400,
   },
 
-  // ── Surgical Suite ───────────────────────────────────────────────────────
-  chief_surgeon: {
-    glyph: "C",
-    name: "Chief Surgeon",
+  // ── Temple ────────────────────────────────────────────────────────────────
+  high_oracle: {
+    glyph: "O",
+    name: "High Oracle",
     speed: 10,
-    hp: 70,
-    attack: 10,
-    defense: 6,
-    xp: 300,
-  },
-  the_experiment: {
-    glyph: "X",
-    name: "The Experiment",
-    speed: 12,
     hp: 100,
-    attack: 15,
-    defense: 4,
+    attack: 14,
+    defense: 7,
     xp: 500,
+  },
+  the_chosen: {
+    glyph: "C",
+    name: "The Chosen",
+    speed: 12,
+    hp: 85,
+    attack: 16,
+    defense: 6,
+    xp: 480,
+  },
+
+  // ── Lair ──────────────────────────────────────────────────────────────────
+  warlord_chief: {
+    glyph: "W",
+    name: "Warlord Chief",
+    speed: 10,
+    hp: 120,
+    attack: 18,
+    defense: 10,
+    xp: 700,
+  },
+  the_devourer: {
+    glyph: "X",
+    name: "The Devourer",
+    speed: 8,
+    hp: 150,
+    attack: 20,
+    defense: 8,
+    xp: 900,
   },
 };
 
@@ -235,63 +353,103 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
 // ---------------------------------------------------------------------------
 
 export const NPC_STATS: Record<string, CreatureStatBlock> = {
-  // ── Medieval Keep ────────────────────────────────────────────────────────
-  wandering_merchant: {
+  // ── Cave ─────────────────────────────────────────────────────────────────
+  lost_prospector: {
     glyph: "@",
-    name: "Wandering Merchant",
+    name: "Lost Prospector",
     speed: 7,
-    hp: 12,
+    hp: 10,
     attack: 2,
+    defense: 0,
+    xp: 0,
+  },
+  cave_hermit: {
+    glyph: "@",
+    name: "Cave Hermit",
+    speed: 5,
+    hp: 8,
+    attack: 1,
     defense: 1,
     xp: 0,
   },
-  imprisoned_knight: {
-    glyph: "@",
-    name: "Imprisoned Knight",
-    speed: 8,
-    hp: 22,
-    attack: 7,
-    defense: 4,
-    xp: 0,
-  },
 
-  // ── Babylon Ziggurat ─────────────────────────────────────────────────────
-  temple_scribe: {
+  // ── Ruins ─────────────────────────────────────────────────────────────────
+  wandering_antiquarian: {
     glyph: "@",
-    name: "Temple Scribe",
+    name: "Wandering Antiquarian",
     speed: 7,
-    hp: 8,
+    hp: 10,
     attack: 1,
     defense: 0,
     xp: 0,
   },
-  blind_oracle: {
+  desperate_scavenger: {
+    glyph: "@",
+    name: "Desperate Scavenger",
+    speed: 9,
+    hp: 12,
+    attack: 3,
+    defense: 1,
+    xp: 0,
+  },
+
+  // ── Crypt ─────────────────────────────────────────────────────────────────
+  spirit_guide: {
     glyph: "?",
-    name: "Blind Oracle",
+    name: "Spirit Guide",
     speed: 5,
     hp: 6,
     attack: 0,
     defense: 0,
     xp: 0,
   },
-
-  // ── Surgical Suite ───────────────────────────────────────────────────────
-  surviving_patient: {
+  cursed_noble: {
     glyph: "@",
-    name: "Surviving Patient",
-    speed: 5,
+    name: "Cursed Noble",
+    speed: 6,
+    hp: 14,
+    attack: 2,
+    defense: 1,
+    xp: 0,
+  },
+
+  // ── Temple ────────────────────────────────────────────────────────────────
+  penitent_monk: {
+    glyph: "@",
+    name: "Penitent Monk",
+    speed: 7,
     hp: 10,
     attack: 1,
     defense: 0,
     xp: 0,
   },
-  renegade_doctor: {
+  exiled_devotee: {
     glyph: "@",
-    name: "Renegade Doctor",
+    name: "Exiled Devotee",
     speed: 8,
-    hp: 15,
-    attack: 4,
+    hp: 14,
+    attack: 3,
     defense: 1,
+    xp: 0,
+  },
+
+  // ── Lair ──────────────────────────────────────────────────────────────────
+  enslaved_prisoner: {
+    glyph: "@",
+    name: "Enslaved Prisoner",
+    speed: 6,
+    hp: 10,
+    attack: 1,
+    defense: 0,
+    xp: 0,
+  },
+  broken_warrior: {
+    glyph: "@",
+    name: "Broken Warrior",
+    speed: 8,
+    hp: 18,
+    attack: 5,
+    defense: 2,
     xp: 0,
   },
 };
@@ -301,20 +459,30 @@ export const NPC_STATS: Record<string, CreatureStatBlock> = {
 // ---------------------------------------------------------------------------
 
 export const LOOT_STATS: Record<string, LootStatBlock> = {
-  // ── Medieval Keep ────────────────────────────────────────────────────────
-  iron_chest: { glyph: "=", name: "Iron Chest", value: 20 },
-  gold_coffer: { glyph: "$", name: "Gold Coffer", value: 50 },
-  royal_cache: { glyph: "¤", name: "Royal Cache", value: 100 },
+  // ── Cave ─────────────────────────────────────────────────────────────────
+  ore_pouch: { glyph: "o", name: "Ore Pouch", value: 12 },
+  crystal_shard: { glyph: "*", name: "Crystal Shard", value: 30 },
+  cave_pearl: { glyph: ".", name: "Cave Pearl", value: 55 },
 
-  // ── Babylon Ziggurat ─────────────────────────────────────────────────────
-  clay_urn: { glyph: "u", name: "Clay Urn", value: 15 },
-  jeweled_idol: { glyph: "*", name: "Jeweled Idol", value: 65 },
-  golden_tablet: { glyph: "_", name: "Golden Tablet", value: 80 },
+  // ── Ruins ─────────────────────────────────────────────────────────────────
+  clay_tablet: { glyph: "_", name: "Clay Tablet", value: 15 },
+  corroded_coin: { glyph: "$", name: "Corroded Coin", value: 25 },
+  carved_idol: { glyph: "&", name: "Carved Idol", value: 60 },
 
-  // ── Surgical Suite ───────────────────────────────────────────────────────
-  medical_kit: { glyph: "+", name: "Medical Kit", value: 30 },
-  specimen_jar: { glyph: "j", name: "Specimen Jar", value: 25 },
-  experimental_serum: { glyph: "!", name: "Experimental Serum", value: 80 },
+  // ── Crypt ─────────────────────────────────────────────────────────────────
+  burial_token: { glyph: "t", name: "Burial Token", value: 20 },
+  grave_goods: { glyph: "g", name: "Grave Goods", value: 35 },
+  funerary_mask: { glyph: "m", name: "Funerary Mask", value: 80 },
+
+  // ── Temple ────────────────────────────────────────────────────────────────
+  ritual_vessel: { glyph: "u", name: "Ritual Vessel", value: 25 },
+  sacred_text: { glyph: "?", name: "Sacred Text", value: 50 },
+  blessed_icon: { glyph: "i", name: "Blessed Icon", value: 110 },
+
+  // ── Lair ──────────────────────────────────────────────────────────────────
+  war_trophy: { glyph: "!", name: "War Trophy", value: 40 },
+  infernal_gem: { glyph: "^", name: "Infernal Gem", value: 80 },
+  champion_standard: { glyph: "\\", name: "Champion Standard", value: 150 },
 };
 
 // ---------------------------------------------------------------------------
@@ -322,62 +490,102 @@ export const LOOT_STATS: Record<string, LootStatBlock> = {
 // ---------------------------------------------------------------------------
 
 export const PROP_STATS: Record<string, PropStatBlock> = {
-  // ── Medieval Keep ────────────────────────────────────────────────────────
-  weapon_rack: {
-    glyph: "|",
-    name: "Weapon Rack",
+  // ── Cave ─────────────────────────────────────────────────────────────────
+  stalactite: {
+    glyph: "v",
+    name: "Stalactite",
     solid: true,
     interactable: false,
   },
-  torch_sconce: {
+  bioluminescent_fungus: {
+    glyph: "f",
+    name: "Bioluminescent Fungus",
+    solid: false,
+    interactable: false,
+  },
+  crude_torch: {
     glyph: "t",
-    name: "Torch Sconce",
-    solid: false,
-    interactable: false,
-  },
-  tattered_banner: {
-    glyph: "\\",
-    name: "Tattered Banner",
+    name: "Crude Torch",
     solid: false,
     interactable: false,
   },
 
-  // ── Babylon Ziggurat ─────────────────────────────────────────────────────
-  stone_pillar: {
+  // ── Ruins ─────────────────────────────────────────────────────────────────
+  crumbled_column: {
     glyph: "O",
-    name: "Stone Pillar",
+    name: "Crumbled Column",
     solid: true,
     interactable: false,
   },
-  cuneiform_tablet: {
+  ancient_frieze: {
     glyph: "-",
-    name: "Cuneiform Tablet",
+    name: "Ancient Frieze",
     solid: false,
     interactable: true,
   },
-  offering_bowl: {
-    glyph: "o",
-    name: "Offering Bowl",
+  worn_mosaic: {
+    glyph: "#",
+    name: "Worn Mosaic",
     solid: false,
     interactable: true,
   },
 
-  // ── Surgical Suite ───────────────────────────────────────────────────────
-  operating_table: {
+  // ── Crypt ─────────────────────────────────────────────────────────────────
+  sarcophagus: {
     glyph: "[",
-    name: "Operating Table",
+    name: "Sarcophagus",
     solid: true,
-    interactable: false,
+    interactable: true,
   },
-  iv_stand: {
-    glyph: "I",
-    name: "IV Stand",
+  candle_rack: {
+    glyph: "|",
+    name: "Candle Rack",
     solid: false,
     interactable: false,
   },
-  biohazard_container: {
+  headstone: {
+    glyph: "T",
+    name: "Headstone",
+    solid: false,
+    interactable: true,
+  },
+
+  // ── Temple ────────────────────────────────────────────────────────────────
+  ritual_altar: {
+    glyph: "_",
+    name: "Ritual Altar",
+    solid: true,
+    interactable: true,
+  },
+  brazier: {
+    glyph: "Y",
+    name: "Brazier",
+    solid: false,
+    interactable: false,
+  },
+  prayer_column: {
+    glyph: "I",
+    name: "Prayer Column",
+    solid: true,
+    interactable: false,
+  },
+
+  // ── Lair ──────────────────────────────────────────────────────────────────
+  bone_pile: {
+    glyph: "%",
+    name: "Bone Pile",
+    solid: false,
+    interactable: false,
+  },
+  kill_trophy: {
+    glyph: "K",
+    name: "Kill Trophy",
+    solid: false,
+    interactable: false,
+  },
+  brutal_throne: {
     glyph: "H",
-    name: "Biohazard Container",
+    name: "Brutal Throne",
     solid: true,
     interactable: false,
   },

@@ -26,6 +26,20 @@ export type ResolvedEntityId = string;
 // Per-entity resolved spawn types
 // ---------------------------------------------------------------------------
 
+/**
+ * Equipment generated for a monster using leftover XP budget.
+ * Stat bonuses are computed at generation time based on dungeon level.
+ */
+export type ResolvedEquipment = {
+  /** Item template id (e.g. "sword", "shield", "ring") */
+  itemId: string;
+  bonusAttack: number;
+  bonusDefense: number;
+  bonusMaxHp: number;
+  /** Gold value if dropped as loot */
+  value: number;
+};
+
 export type ResolvedMonsterSpawn = {
   entityId: ResolvedEntityId;
   /** Source placement from content.meta.monsters */
@@ -36,6 +50,10 @@ export type ResolvedMonsterSpawn = {
   danger: number;
   /** Theme-resolved monster identifier (from spawnTables.monsters) */
   spawnId: string;
+  /** HP after level-based scaling (may exceed base stat block hp). */
+  scaledHp: number;
+  /** Equipment granted from leftover room XP budget, or null. */
+  equipment: ResolvedEquipment | null;
 };
 
 export type ResolvedLootSpawn = {

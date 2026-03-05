@@ -80,10 +80,6 @@ import BorderPanel from "./ui/BorderPanel";
 // Dungeon generation (via API so we get resolved monster spawns)
 // ---------------------------------------------------------------------------
 
-//const SEED = "test";
-//const THEME_ID = "medieval_keep";
-const THEME_ID = "babylon_ziggurat";
-
 const AUTOWALK_DELAY = 63;
 
 /** Must match the `radius` value passed to DungeonRenderView (visibility.ts). */
@@ -93,11 +89,11 @@ const MAP_ZOOM_DEFAULT = 32;
 const MAP_ZOOM_MIN = 4;
 const MAP_ZOOM_MAX = 32;
 
-function buildDungeon(seed: string | number, level: number) {
+function buildDungeon(seed: string | number, level: number, themeId: string) {
   return generateDungeon({
     seed,
     level,
-    themeId: THEME_ID,
+    themeId,
     width: 64,
     height: 64,
     pattern: { includeIntroGate: true },
@@ -113,14 +109,14 @@ export interface DungeonProps {
 }
 
 export default function Dungeon({ seed }: DungeonProps) {
-  const { goTo, overworldBsp, setSeed, level, setLevel, player, setPlayer } =
+  const { goTo, overworldBsp, setSeed, level, setLevel, theme, player, setPlayer } =
     useGame();
-  const result = useMemo(() => buildDungeon(seed, level), []);
+  const result = useMemo(() => buildDungeon(seed, level, theme), []);
   const dungeon = result.bsp;
   const content = result.content;
   const renderTheme = useMemo(
-    () => dungeonThemeToRenderTheme(getTheme(THEME_ID)),
-    [],
+    () => dungeonThemeToRenderTheme(getTheme(theme)),
+    [theme],
   );
 
   const startCell = useMemo(

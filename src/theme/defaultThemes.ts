@@ -1,141 +1,272 @@
 /**
- * Default dungeon themes — starter set for Session 3.
+ * Default dungeon themes — one per portal type.
  *
- * Spawn tables are empty stubs until Session 5 resolver pipeline.
- * Room themes are minimal stubs until Session 4 room tagging.
+ * Theme IDs must exactly match the DungeonTheme union in mazeGen.ts:
+ *   "cave" | "ruins" | "crypt" | "temple" | "lair"
+ *
+ * Difficulty progression: cave (lvl 1-2) → ruins (3-4) → crypt (5-6)
+ *                         → temple (7-8) → lair (9-10)
  */
 
 import type { DungeonTheme } from "./themeTypes";
 
 // ---------------------------------------------------------------------------
-// Spawn tables per theme
+// Spawn tables
 // ---------------------------------------------------------------------------
 
-const MEDIEVAL_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+const CAVE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "skeleton_warrior", weight: 4 },
-    { value: "armored_guard", weight: 3 },
-    { value: "giant_rat", weight: 2 },
-    { value: "ghost_knight", weight: 1 },
+    { value: "cave_bat",      weight: 4 },
+    { value: "giant_spider",  weight: 3 },
+    { value: "rock_sprite",   weight: 3 },
+    { value: "blind_crawler", weight: 2 },
   ],
   loot: [
-    { value: "iron_chest", weight: 4 },
-    { value: "gold_coffer", weight: 2 },
-    { value: "royal_cache", weight: 1 },
+    { value: "ore_pouch",     weight: 4 },
+    { value: "crystal_shard", weight: 2 },
+    { value: "cave_pearl",    weight: 1 },
   ],
   props: [
-    { value: "weapon_rack", weight: 3 },
-    { value: "torch_sconce", weight: 3 },
-    { value: "tattered_banner", weight: 2 },
+    { value: "stalactite",              weight: 3 },
+    { value: "bioluminescent_fungus",   weight: 3 },
+    { value: "crude_torch",             weight: 2 },
   ],
   npcs: [
-    { value: "wandering_merchant", weight: 3 },
-    { value: "imprisoned_knight", weight: 2 },
+    { value: "lost_prospector", weight: 3 },
+    { value: "cave_hermit",     weight: 2 },
   ],
   bosses: [
-    { value: "black_knight", weight: 3 },
-    { value: "lich_king", weight: 1 },
+    { value: "cave_troll",  weight: 3 },
+    { value: "nest_mother", weight: 2 },
   ],
 };
 
-const BABYLON_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+const RUINS_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "clay_golem", weight: 3 },
-    { value: "sand_wraith", weight: 3 },
-    { value: "temple_guardian", weight: 2 },
-    { value: "scorpion_swarm", weight: 2 },
+    { value: "feral_dog",      weight: 4 },
+    { value: "tomb_rat",       weight: 3 },
+    { value: "vine_stalker",   weight: 3 },
+    { value: "stone_sentinel", weight: 2 },
   ],
   loot: [
-    { value: "clay_urn", weight: 4 },
-    { value: "jeweled_idol", weight: 2 },
-    { value: "golden_tablet", weight: 1 },
+    { value: "clay_tablet",   weight: 4 },
+    { value: "corroded_coin", weight: 3 },
+    { value: "carved_idol",   weight: 1 },
   ],
   props: [
-    { value: "stone_pillar", weight: 3 },
-    { value: "cuneiform_tablet", weight: 2 },
-    { value: "offering_bowl", weight: 3 },
+    { value: "crumbled_column", weight: 3 },
+    { value: "ancient_frieze",  weight: 2 },
+    { value: "worn_mosaic",     weight: 2 },
   ],
   npcs: [
-    { value: "temple_scribe", weight: 3 },
-    { value: "blind_oracle", weight: 1 },
+    { value: "wandering_antiquarian", weight: 3 },
+    { value: "desperate_scavenger",   weight: 2 },
   ],
   bosses: [
-    { value: "bull_of_heaven", weight: 2 },
-    { value: "lamassu", weight: 2 },
+    { value: "ruined_golem",   weight: 2 },
+    { value: "ruin_guardian",  weight: 2 },
   ],
 };
 
-const SURGICAL_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+const CRYPT_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "animated_cadaver", weight: 3 },
-    { value: "rogue_orderly", weight: 3 },
-    { value: "surgical_drone", weight: 2 },
-    { value: "escaped_subject", weight: 2 },
+    { value: "zombie",   weight: 4 },
+    { value: "skeleton", weight: 3 },
+    { value: "shadow",   weight: 2 },
+    { value: "wight",    weight: 2 },
   ],
   loot: [
-    { value: "medical_kit", weight: 4 },
-    { value: "specimen_jar", weight: 2 },
-    { value: "experimental_serum", weight: 1 },
+    { value: "burial_token",  weight: 4 },
+    { value: "grave_goods",   weight: 2 },
+    { value: "funerary_mask", weight: 1 },
   ],
   props: [
-    { value: "operating_table", weight: 3 },
-    { value: "iv_stand", weight: 3 },
-    { value: "biohazard_container", weight: 2 },
+    { value: "sarcophagus", weight: 2 },
+    { value: "candle_rack",  weight: 3 },
+    { value: "headstone",    weight: 3 },
   ],
   npcs: [
-    { value: "surviving_patient", weight: 3 },
-    { value: "renegade_doctor", weight: 1 },
+    { value: "spirit_guide",  weight: 3 },
+    { value: "cursed_noble",  weight: 2 },
   ],
   bosses: [
-    { value: "chief_surgeon", weight: 2 },
-    { value: "the_experiment", weight: 2 },
+    { value: "crypt_keeper", weight: 2 },
+    { value: "death_knight", weight: 2 },
+  ],
+};
+
+const TEMPLE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+  monsters: [
+    { value: "temple_zealot",   weight: 4 },
+    { value: "flame_cleric",    weight: 3 },
+    { value: "divine_construct",weight: 2 },
+    { value: "stone_idol",      weight: 2 },
+  ],
+  loot: [
+    { value: "ritual_vessel", weight: 4 },
+    { value: "sacred_text",   weight: 2 },
+    { value: "blessed_icon",  weight: 1 },
+  ],
+  props: [
+    { value: "ritual_altar",  weight: 2 },
+    { value: "brazier",       weight: 3 },
+    { value: "prayer_column", weight: 3 },
+  ],
+  npcs: [
+    { value: "penitent_monk",  weight: 3 },
+    { value: "exiled_devotee", weight: 2 },
+  ],
+  bosses: [
+    { value: "high_oracle", weight: 2 },
+    { value: "the_chosen",  weight: 2 },
+  ],
+};
+
+const LAIR_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
+  monsters: [
+    { value: "warlord_grunt", weight: 4 },
+    { value: "pit_fiend",     weight: 3 },
+    { value: "chaos_brute",   weight: 2 },
+    { value: "abomination",   weight: 2 },
+  ],
+  loot: [
+    { value: "war_trophy",        weight: 4 },
+    { value: "infernal_gem",      weight: 2 },
+    { value: "champion_standard", weight: 1 },
+  ],
+  props: [
+    { value: "bone_pile",    weight: 3 },
+    { value: "kill_trophy",  weight: 3 },
+    { value: "brutal_throne",weight: 1 },
+  ],
+  npcs: [
+    { value: "enslaved_prisoner", weight: 3 },
+    { value: "broken_warrior",    weight: 2 },
+  ],
+  bosses: [
+    { value: "warlord_chief", weight: 2 },
+    { value: "the_devourer",  weight: 1 },
   ],
 };
 
 // ---------------------------------------------------------------------------
-// Medieval Keep — classic swords-and-shields fantasy
+// Cave — dark underground cavern, levels 1-2
 // ---------------------------------------------------------------------------
 
-export const THEME_MEDIEVAL_KEEP: DungeonTheme = {
-  id: "medieval_keep",
-  label: "Medieval Keep",
+export const THEME_CAVE: DungeonTheme = {
+  id: "cave",
+  label: "Cave",
 
   render: {
     colors: {
-      floor: "#8B7D6B",
-      wallEdge: "#4A4A4A",
+      floor: "#4A3728",
+      wallEdge: "#2A1F18",
       player: "#3A7DFF",
-      interactable: "#E5C07B",
-      hazard: "#E06C75",
-      enemy: "#FF5C5C",
+      interactable: "#C8A050",
+      hazard: "#DD3333",
+      enemy: "#CC4444",
     },
     strength: {
-      floor: 1.0,
+      floor: 0.8,
       wallEdge: 1.0,
       player: 1.0,
       interactable: 1.0,
-      hazard: 1.0,
+      hazard: 1.1,
       enemy: 1.0,
     },
   },
 
   roomThemes: [
-    { id: "armory", label: "Armory" },
-    { id: "library", label: "Library" },
-    { id: "throne_room", label: "Throne Room" },
-    { id: "dungeon_cell", label: "Dungeon Cell" },
+    { id: "mushroom_grove",  label: "Mushroom Grove"  },
+    { id: "flooded_passage", label: "Flooded Passage" },
+    { id: "crystal_pocket",  label: "Crystal Pocket"  },
+    { id: "spider_den",      label: "Spider Den"      },
   ],
 
-  spawnTables: MEDIEVAL_SPAWN_TABLES,
+  spawnTables: CAVE_SPAWN_TABLES,
 };
 
 // ---------------------------------------------------------------------------
-// Babylon Ziggurat — ancient Mesopotamian temple
+// Ruins — overgrown ancient debris, levels 3-4
 // ---------------------------------------------------------------------------
 
-export const THEME_BABYLON_ZIGGURAT: DungeonTheme = {
-  id: "babylon_ziggurat",
-  label: "Babylon Ziggurat",
+export const THEME_RUINS: DungeonTheme = {
+  id: "ruins",
+  label: "Ruins",
+
+  render: {
+    colors: {
+      floor: "#5A6B4A",
+      wallEdge: "#3A4A2A",
+      player: "#3A7DFF",
+      interactable: "#C8B870",
+      hazard: "#DD4422",
+      enemy: "#AA5533",
+    },
+    strength: {
+      floor: 0.9,
+      wallEdge: 1.0,
+      player: 1.0,
+      interactable: 1.0,
+      hazard: 1.1,
+      enemy: 1.0,
+    },
+  },
+
+  roomThemes: [
+    { id: "collapsed_hall",  label: "Collapsed Hall"  },
+    { id: "overgrown_court", label: "Overgrown Court" },
+    { id: "flooded_vault",   label: "Flooded Vault"   },
+    { id: "tomb_antechamber",label: "Tomb Antechamber"},
+  ],
+
+  spawnTables: RUINS_SPAWN_TABLES,
+};
+
+// ---------------------------------------------------------------------------
+// Crypt — undead-haunted burial complex, levels 5-6
+// ---------------------------------------------------------------------------
+
+export const THEME_CRYPT: DungeonTheme = {
+  id: "crypt",
+  label: "Crypt",
+
+  render: {
+    colors: {
+      floor: "#7A6B8B",
+      wallEdge: "#3A2A4A",
+      player: "#3A7DFF",
+      interactable: "#C0A0E0",
+      hazard: "#CC2288",
+      enemy: "#9955BB",
+    },
+    strength: {
+      floor: 0.85,
+      wallEdge: 1.0,
+      player: 1.0,
+      interactable: 1.0,
+      hazard: 1.2,
+      enemy: 1.1,
+    },
+  },
+
+  roomThemes: [
+    { id: "burial_chamber",   label: "Burial Chamber"   },
+    { id: "ossuary",          label: "Ossuary"          },
+    { id: "mausoleum",        label: "Mausoleum"        },
+    { id: "ceremonial_vault", label: "Ceremonial Vault" },
+  ],
+
+  spawnTables: CRYPT_SPAWN_TABLES,
+};
+
+// ---------------------------------------------------------------------------
+// Temple — active sanctum of a dangerous faith, levels 7-8
+// ---------------------------------------------------------------------------
+
+export const THEME_TEMPLE: DungeonTheme = {
+  id: "temple",
+  label: "Temple",
 
   render: {
     colors: {
@@ -143,8 +274,8 @@ export const THEME_BABYLON_ZIGGURAT: DungeonTheme = {
       wallEdge: "#5C4A1E",
       player: "#1E90FF",
       interactable: "#FFD700",
-      hazard: "#CD3333",
-      enemy: "#8B0000",
+      hazard: "#FF4400",
+      enemy: "#CC3322",
     },
     strength: {
       floor: 0.9,
@@ -157,53 +288,60 @@ export const THEME_BABYLON_ZIGGURAT: DungeonTheme = {
   },
 
   roomThemes: [
-    { id: "offering_hall", label: "Offering Hall" },
-    { id: "scribe_chamber", label: "Scribe Chamber" },
-    { id: "sacred_pool", label: "Sacred Pool" },
+    { id: "offering_hall",   label: "Offering Hall"   },
+    { id: "inner_sanctum",   label: "Inner Sanctum"   },
+    { id: "ritual_chamber",  label: "Ritual Chamber"  },
+    { id: "priests_quarter", label: "Priest's Quarter" },
   ],
 
-  spawnTables: BABYLON_SPAWN_TABLES,
+  spawnTables: TEMPLE_SPAWN_TABLES,
 };
 
 // ---------------------------------------------------------------------------
-// Surgical Suite — cold clinical horror
+// Lair — apex predator den, levels 9-10
 // ---------------------------------------------------------------------------
 
-export const THEME_SURGICAL_SUITE: DungeonTheme = {
-  id: "surgical_suite",
-  label: "Surgical Suite",
+export const THEME_LAIR: DungeonTheme = {
+  id: "lair",
+  label: "Lair",
 
   render: {
     colors: {
-      floor: "#D8DEE4",
-      wallEdge: "#7A8B99",
-      player: "#00B7FF",
-      interactable: "#00CC88",
-      hazard: "#FF2244",
-      enemy: "#BB0033",
+      floor: "#5A1A1A",
+      wallEdge: "#2A0808",
+      player: "#3A7DFF",
+      interactable: "#FF8800",
+      hazard: "#FF0000",
+      enemy: "#FF2222",
     },
     strength: {
       floor: 0.7,
-      wallEdge: 0.9,
-      player: 1.15,
+      wallEdge: 1.0,
+      player: 1.0,
       interactable: 1.0,
-      hazard: 1.35,
-      enemy: 1.2,
+      hazard: 1.3,
+      enemy: 1.3,
     },
   },
 
   roomThemes: [
-    { id: "operating_room", label: "Operating Room" },
-    { id: "storage", label: "Storage" },
-    { id: "observation", label: "Observation" },
-    { id: "recovery_ward", label: "Recovery Ward" },
+    { id: "feasting_hall",  label: "Feasting Hall"  },
+    { id: "war_camp",       label: "War Camp"       },
+    { id: "trophy_room",    label: "Trophy Room"    },
+    { id: "chieftain_hall", label: "Chieftain Hall" },
   ],
 
-  spawnTables: SURGICAL_SPAWN_TABLES,
+  spawnTables: LAIR_SPAWN_TABLES,
 };
 
+// ---------------------------------------------------------------------------
+// Registry export
+// ---------------------------------------------------------------------------
+
 export const DEFAULT_THEMES: DungeonTheme[] = [
-  THEME_MEDIEVAL_KEEP,
-  THEME_BABYLON_ZIGGURAT,
-  THEME_SURGICAL_SUITE,
+  THEME_CAVE,
+  THEME_RUINS,
+  THEME_CRYPT,
+  THEME_TEMPLE,
+  THEME_LAIR,
 ];
