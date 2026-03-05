@@ -290,6 +290,9 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
   const loot: ResolvedLootSpawn[] = lootItems.map((c) => {
     const entitySeed = hashSeed(seed, theme.id, "loot", c.stableId, level);
     const spawnId = pickWeighted(tables.loot, entitySeed) ?? "";
+    const equipBudget = (c.tier * 2 + level) * 5;
+    const equipSeed = hashSeed(seed, theme.id, "chest-equip", c.stableId, level);
+    const equipment = generateEquipment(equipBudget, equipSeed);
     return {
       entityId: c.entityId,
       sourceId: c.id,
@@ -298,6 +301,7 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
       roomId: c.roomId,
       tier: c.tier,
       spawnId,
+      equipment,
     };
   });
 

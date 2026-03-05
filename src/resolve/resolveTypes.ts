@@ -66,6 +66,8 @@ export type ResolvedLootSpawn = {
   tier: number;
   /** Theme-resolved loot identifier (from spawnTables.loot) */
   spawnId: string;
+  /** Generated item inside the chest, or null if budget was too low. */
+  equipment: ResolvedEquipment | null;
 };
 
 export type ResolvedPropSpawn = {
