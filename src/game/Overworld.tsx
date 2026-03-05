@@ -64,6 +64,11 @@ import BorderPanel from "./ui/BorderPanel";
 import Tooltip, { TooltipProps } from "./ui/Tooltip";
 import ModalPanel from "./ui/ModalPanel";
 import { useConfirmYesNo } from "./ui/useConfirmYesNo";
+import {
+  generateShopInventory,
+  npcIdToSeed,
+  type ShopItem,
+} from "./merchantShop";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation
@@ -108,7 +113,7 @@ export interface OverworldProps {
 // ---------------------------------------------------------------------------
 
 export default function Overworld({ screen }: OverworldProps) {
-  const { goTo, setSeed, setLevel, setTheme, overworldBsp, setOverworld } = useGame();
+  const { goTo, setSeed, setLevel, setTheme, overworldBsp, setOverworld, player, setPlayer } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   console.log("building screen", screen);
   const result = useMemo(() => {
@@ -558,19 +563,77 @@ export default function Overworld({ screen }: OverworldProps) {
 
       {dialog}
 
-      <ModalPanel
-        title="Camp"
-        visible={showMerchantModal}
-        closeButton
-        onClose={() => setShowMerchantModal(false)}
-      >
-        <div>
-          <h2>Camping</h2>
-        </div>
-        <div>
-          Camping at Location ({playerX}, {playerY})
-        </div>
-      </ModalPanel>
+      {showMerchantModal && npcAtPlayerCell && (() => {
+        const shopItems = generateShopInventory(
+          player.level,
+          npcIdToSeed(npcAtPlayerCell.id),
+        );
+        return (
+          <ModalPanel
+            title="Merchant Wagon"
+            visible={showMerchantModal}
+            closeButton
+            onClose={() => setShowMerchantModal(false)}
+            maxHeight="60vh"
+          >
+            <div style={{ marginBottom: "0.5rem", color: "#f0d060" }}>
+              Gold: {player.gold}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              {shopItems.map((item: ShopItem) => {
+                const canAfford = player.gold >= item.price;
+                const statParts: string[] = [];
+                if (item.bonusAttack > 0) statParts.push(`+${item.bonusAttack} ATK`);
+                if (item.bonusDefense > 0) statParts.push(`+${item.bonusDefense} DEF`);
+                if (item.bonusMaxHp > 0) statParts.push(`+${item.bonusMaxHp} HP`);
+                return (
+                  <div
+                    key={item.instanceId}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.6rem",
+                      padding: "0.25rem 0.4rem",
+                      border: `1px solid ${canAfford ? "#444" : "#2a2a2a"}`,
+                      background: "#111",
+                      opacity: canAfford ? 1 : 0.5,
+                    }}
+                  >
+                    <span style={{ fontFamily: "monospace", color: "#ccc", minWidth: "1.2rem" }}>
+                      {item.glyph}
+                    </span>
+                    <span style={{ flex: 1, color: "#ddd" }}>
+                      {item.name}
+                      <span style={{ color: "#888", marginLeft: "0.5rem", fontSize: "0.85em" }}>
+                        {statParts.join(", ")}
+                      </span>
+                    </span>
+                    <span style={{ color: "#f0d060", minWidth: "3rem", textAlign: "right" }}>
+                      {item.price}g
+                    </span>
+                    <Button
+                      maxWidth="5rem"
+                      onClick={() => {
+                        if (!canAfford) return;
+                        setPlayer({
+                          ...player,
+                          gold: player.gold - item.price,
+                          attack: player.attack + item.bonusAttack,
+                          defense: player.defense + item.bonusDefense,
+                          maxHp: player.maxHp + item.bonusMaxHp,
+                          hp: Math.min(player.hp + item.bonusMaxHp, player.maxHp + item.bonusMaxHp),
+                        });
+                      }}
+                    >
+                      Buy
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </ModalPanel>
+        );
+      })()}
 
       {screen === "overworld" ? (
         <div

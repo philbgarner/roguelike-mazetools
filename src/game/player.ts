@@ -5,6 +5,7 @@ export interface Player {
   level: number;
   attack: number;
   defense: number;
+  gold: number;
 }
 
 /** Extract the persistent Player fields from a PlayerActor. */
@@ -15,6 +16,7 @@ export function playerFromActor(actor: {
   level: number;
   attack: number;
   defense: number;
+  gold?: number;
 }): Player {
   return {
     hp: actor.hp,
@@ -23,6 +25,7 @@ export function playerFromActor(actor: {
     level: actor.level,
     attack: actor.attack,
     defense: actor.defense,
+    gold: actor.gold ?? 100,
   };
 }
 
@@ -33,4 +36,5 @@ export const DEFAULT_PLAYER: Player = {
   level: 1,
   attack: 5,
   defense: 1,
+  gold: 100,
 };
