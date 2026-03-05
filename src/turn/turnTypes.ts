@@ -39,6 +39,8 @@ export type MonsterAlertState = "idle" | "chasing" | "searching";
 export type MonsterActor = ActorBase & {
   kind: "monster";
   spawnId: string;
+  /** Display name from the stat block. */
+  name: string;
   /** Single ASCII/Unicode glyph from the stat block, used for rendering. */
   glyph: string;
   danger: number;

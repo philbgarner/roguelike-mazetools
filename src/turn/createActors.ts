@@ -114,6 +114,7 @@ export function createMonstersFromResolved(
       kind: "monster" as const,
       x: spawn.x,
       y: spawn.y,
+      name: "name" in statBlock ? statBlock.name : spawn.spawnId,
       glyph: "glyph" in statBlock ? statBlock.glyph : "M",
       speed: statBlock.speed,
       hp,
