@@ -41,6 +41,10 @@ export function createPlayerActor(
   startY: number,
   seed?: Player,
 ): PlayerActor {
+  const activeBuffs = seed?.activeBuffs ?? [];
+  // Add any active speed buffs from persistent player state.
+  const buffedSpeed =
+    PLAYER_SPEED + activeBuffs.reduce((sum, b) => sum + b.bonusSpeed, 0);
   return {
     id: "player",
     kind: "player",
@@ -55,7 +59,8 @@ export function createPlayerActor(
     gold: seed?.gold ?? 100,
     inventory: seed?.inventory ?? createInventory(),
     resistances: seed?.resistances ?? [],
-    speed: PLAYER_SPEED,
+    activeBuffs,
+    speed: buffedSpeed,
     alive: true,
     blocksMovement: true,
   };
@@ -121,7 +126,7 @@ function spawnToActor(spawn: AnySpawn): MonsterActor {
   let inventory: Inventory = createInventory();
   if (eq) {
     const template = getItemTemplate(eq.itemId);
-    if (template) {
+    if (template && template.slot) {
       const instanceId = `${spawn.entityId}_eq`;
       const item = createInventoryItem(
         instanceId,

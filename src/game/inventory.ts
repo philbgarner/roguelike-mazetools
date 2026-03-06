@@ -19,8 +19,11 @@ export type InventoryItem = {
   instanceId: string;
   /** References ItemTemplate.id */
   templateId: string;
-  /** Slot this item occupies when equipped (copied from the template). */
-  slot: EquipSlot;
+  /**
+   * Slot this item occupies when equipped (copied from the template).
+   * Undefined for consumables — they cannot be equipped.
+   */
+  slot?: EquipSlot;
   bonusAttack: number;
   bonusDefense: number;
   bonusMaxHp: number;
@@ -28,6 +31,14 @@ export type InventoryItem = {
   value: number;
   /** Optional override for the display name (e.g. "Axe +1" for a level-scaled item). */
   nameOverride?: string;
+  /** True for potions and other single-use items. */
+  isConsumable?: boolean;
+  /** Healing potions: HP restored on use. */
+  healAmount?: number;
+  /** TTL buff potions: number of player move steps the effect lasts. */
+  buffDuration?: number;
+  /** TTL buff: speed bonus applied while active. */
+  bonusSpeed?: number;
 };
 
 export type Inventory = {
@@ -120,6 +131,8 @@ export function equipItem(
 ): { newInventory: Inventory; delta: StatDelta } {
   const item = inventory.items.find((i) => i.instanceId === instanceId);
   if (!item) return { newInventory: inventory, delta: { ...ZERO_DELTA } };
+  // Consumables have no slot and cannot be equipped
+  if (!item.slot) return { newInventory: inventory, delta: { ...ZERO_DELTA } };
 
   const delta: StatDelta = { attack: 0, defense: 0, maxHp: 0 };
   const equipped = { ...inventory.equipped };

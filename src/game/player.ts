@@ -1,5 +1,6 @@
 import { createInventory, Inventory } from "./inventory";
 import type { DamageType } from "./data/itemData";
+import type { ActiveBuff } from "./activeBuffs";
 
 export interface Player {
   hp: number;
@@ -11,6 +12,8 @@ export interface Player {
   gold: number;
   inventory: Inventory;
   resistances: DamageType[];
+  /** Currently active timed buff potions. */
+  activeBuffs: ActiveBuff[];
 }
 
 /** Extract the persistent Player fields from a PlayerActor. */
@@ -24,6 +27,7 @@ export function playerFromActor(actor: {
   gold?: number;
   inventory?: Inventory;
   resistances?: DamageType[];
+  activeBuffs?: ActiveBuff[];
 }): Player {
   return {
     hp: actor.hp,
@@ -35,6 +39,7 @@ export function playerFromActor(actor: {
     gold: actor.gold ?? 100,
     inventory: actor.inventory ?? createInventory(),
     resistances: actor.resistances ?? [],
+    activeBuffs: actor.activeBuffs ?? [],
   };
 }
 
@@ -48,4 +53,5 @@ export const DEFAULT_PLAYER: Player = {
   gold: 100,
   inventory: createInventory(),
   resistances: [],
+  activeBuffs: [],
 };

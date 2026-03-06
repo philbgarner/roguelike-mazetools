@@ -7,7 +7,7 @@
  * XP budget available after placing monsters.
  */
 
-export type ItemType = "weapon" | "armor" | "trinket";
+export type ItemType = "weapon" | "armor" | "trinket" | "consumable";
 
 /**
  * Physical damage category for weapons.
@@ -33,8 +33,11 @@ export type ItemTemplate = {
   name: string;
   glyph: string;
   type: ItemType;
-  /** The equipment slot this item occupies when worn. */
-  slot: EquipSlot;
+  /**
+   * The equipment slot this item occupies when worn.
+   * Undefined for consumables — they cannot be equipped.
+   */
+  slot?: EquipSlot;
   /** Damage type dealt by this weapon (weapons only). */
   damageType?: DamageType;
 };
@@ -55,6 +58,17 @@ export const ITEM_TEMPLATES: ItemTemplate[] = [
   { id: "ring",   name: "Ring",       glyph: "=",  type: "trinket", slot: "ring"    },
   { id: "amulet", name: "Amulet",     glyph: "\"", type: "trinket", slot: "amulet"  },
   { id: "charm",  name: "Charm",      glyph: "*",  type: "trinket", slot: "charm"   },
+
+  // Healing potions — tier scales with player level (1: lvl 1+, 2: lvl 3+, 3: lvl 5+)
+  { id: "heal_potion",   name: "Healing Potion",    glyph: "!", type: "consumable" },
+  { id: "heal_potion_2", name: "Healing Potion II",  glyph: "!", type: "consumable" },
+  { id: "heal_potion_3", name: "Healing Potion III", glyph: "!", type: "consumable" },
+
+  // Timed buff potions — effects last a fixed number of player move steps
+  { id: "power_potion",    name: "Power Potion",    glyph: "!", type: "consumable" },
+  { id: "guard_potion",    name: "Guard Potion",    glyph: "!", type: "consumable" },
+  { id: "speed_potion",    name: "Speed Elixir",    glyph: "!", type: "consumable" },
+  { id: "vitality_potion", name: "Vitality Potion", glyph: "!", type: "consumable" },
 ];
 
 /** Look up a template by id. Returns undefined if not found. */

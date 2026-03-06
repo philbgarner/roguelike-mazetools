@@ -35,7 +35,7 @@ export default function PlayerStatsPanel({
   resistances,
 }: PlayerStatsPanelProps) {
   const equippedItems = inventory.items.filter(
-    (it) => inventory.equipped[it.slot] === it.instanceId,
+    (it) => it.slot !== undefined && inventory.equipped[it.slot] === it.instanceId,
   );
   const bonusAtk = equippedItems.reduce((s, it) => s + it.bonusAttack, 0);
   const bonusDef = equippedItems.reduce((s, it) => s + it.bonusDefense, 0);

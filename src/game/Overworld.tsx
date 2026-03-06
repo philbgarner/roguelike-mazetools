@@ -75,10 +75,13 @@ import {
   addItem,
   createInventoryItem,
   equipItem,
+  removeItem,
   type Inventory,
+  type InventoryItem,
   type StatDelta,
 } from "./inventory";
 import { getItemTemplate } from "./data/itemData";
+import { tickActiveBuffs, type ActiveBuff } from "./activeBuffs";
 import PlayerInventoryModal from "./ui/PlayerInventoryModal";
 import PlayerStatsPanel from "./ui/PlayerStatsPanel";
 
@@ -442,9 +445,75 @@ export default function Overworld({ screen }: OverworldProps) {
     });
   }
 
+  function applyBuffTickToPlayer(p: typeof player): typeof player {
+    if (p.activeBuffs.length === 0) return p;
+    const { updatedBuffs, expiredBuffs } = tickActiveBuffs(p.activeBuffs);
+    if (expiredBuffs.length === 0)
+      return { ...p, activeBuffs: updatedBuffs };
+    let attack = p.attack;
+    let defense = p.defense;
+    let maxHp = p.maxHp;
+    for (const b of expiredBuffs) {
+      attack -= b.bonusAttack;
+      defense -= b.bonusDefense;
+      maxHp -= b.bonusMaxHp;
+    }
+    const newMaxHp = Math.max(1, maxHp);
+    return {
+      ...p,
+      activeBuffs: updatedBuffs,
+      attack,
+      defense,
+      maxHp: newMaxHp,
+      hp: Math.min(p.hp, newMaxHp),
+    };
+  }
+
   function tryCommitMove(dx: number, dy: number) {
     cancelAutoWalkNow();
     attemptCommitPlayerAction({ kind: "move", dx, dy });
+    setPlayer((prev) => applyBuffTickToPlayer(prev));
+  }
+
+  function handleUseConsumable(item: InventoryItem) {
+    setPlayer((prev) => {
+      const newInventory = removeItem(prev.inventory, item.instanceId);
+      if (item.healAmount && item.healAmount > 0) {
+        const healed = Math.min(prev.hp + item.healAmount, prev.maxHp);
+        const name = item.nameOverride ?? getItemTemplate(item.templateId)?.name ?? "Potion";
+        addLogMessage(`You drink a ${name} and recover ${healed - prev.hp} HP.`);
+        return { ...prev, inventory: newInventory, hp: healed };
+      }
+      if (item.buffDuration && item.buffDuration > 0) {
+        const name = item.nameOverride ?? getItemTemplate(item.templateId)?.name ?? "Potion";
+        const buff: ActiveBuff = {
+          id: `buff-${item.instanceId}`,
+          name,
+          stepsRemaining: item.buffDuration,
+          bonusAttack: item.bonusAttack,
+          bonusDefense: item.bonusDefense,
+          bonusMaxHp: item.bonusMaxHp,
+          bonusSpeed: item.bonusSpeed ?? 0,
+        };
+        const parts: string[] = [];
+        if (buff.bonusAttack > 0) parts.push(`+${buff.bonusAttack} ATK`);
+        if (buff.bonusDefense > 0) parts.push(`+${buff.bonusDefense} DEF`);
+        if (buff.bonusMaxHp > 0) parts.push(`+${buff.bonusMaxHp} HP`);
+        if (buff.bonusSpeed > 0) parts.push(`+${buff.bonusSpeed} SPD`);
+        addLogMessage(`You drink a ${name}. ${parts.join(", ")} for ${buff.stepsRemaining} steps.`);
+        const newMaxHp = prev.maxHp + buff.bonusMaxHp;
+        return {
+          ...prev,
+          inventory: newInventory,
+          activeBuffs: [...prev.activeBuffs, buff],
+          attack: prev.attack + buff.bonusAttack,
+          defense: prev.defense + buff.bonusDefense,
+          maxHp: newMaxHp,
+          hp: Math.min(prev.hp + Math.max(0, buff.bonusMaxHp), newMaxHp),
+        };
+      }
+      return { ...prev, inventory: newInventory };
+    });
   }
 
   function tryCommitWait() {
@@ -496,6 +565,9 @@ export default function Overworld({ screen }: OverworldProps) {
 
       setAutoWalk(nextAutoWalk);
       attemptCommitPlayerAction(action);
+      if (action.kind === "move") {
+        setPlayer((prev) => applyBuffTickToPlayer(prev));
+      }
     }, AUTOWALK_DELAY);
 
     return () => clearTimeout(timer);
@@ -629,6 +701,7 @@ export default function Overworld({ screen }: OverworldProps) {
         visible={showInventoryModal}
         onClose={() => setShowInventoryModal(false)}
         inventory={player.inventory}
+        activeBuffs={player.activeBuffs}
         onInventoryChange={(newInventory: Inventory, delta: StatDelta) => {
           setPlayer({
             ...player,
@@ -644,6 +717,7 @@ export default function Overworld({ screen }: OverworldProps) {
             ),
           });
         }}
+        onUseConsumable={(item: InventoryItem) => handleUseConsumable(item)}
       />
       <PlayerStatsPanel
         visible={showPlayerStatsModal}
@@ -686,12 +760,26 @@ export default function Overworld({ screen }: OverworldProps) {
                 {shopItems.map((item: ShopItem) => {
                   const canAfford = player.gold >= item.price;
                   const statParts: string[] = [];
-                  if (item.bonusAttack > 0)
-                    statParts.push(`+${item.bonusAttack} ATK`);
-                  if (item.bonusDefense > 0)
-                    statParts.push(`+${item.bonusDefense} DEF`);
-                  if (item.bonusMaxHp > 0)
-                    statParts.push(`+${item.bonusMaxHp} HP`);
+                  if (item.isConsumable) {
+                    if (item.healAmount && item.healAmount > 0)
+                      statParts.push(`Heals ${item.healAmount} HP`);
+                    if (item.buffDuration && item.buffDuration > 0) {
+                      const buffParts: string[] = [];
+                      if (item.bonusAttack > 0) buffParts.push(`+${item.bonusAttack} ATK`);
+                      if (item.bonusDefense > 0) buffParts.push(`+${item.bonusDefense} DEF`);
+                      if (item.bonusMaxHp > 0) buffParts.push(`+${item.bonusMaxHp} HP`);
+                      if (item.bonusSpeed && item.bonusSpeed > 0) buffParts.push(`+${item.bonusSpeed} SPD`);
+                      if (buffParts.length > 0)
+                        statParts.push(`${buffParts.join(", ")} (${item.buffDuration} steps)`);
+                    }
+                  } else {
+                    if (item.bonusAttack > 0)
+                      statParts.push(`+${item.bonusAttack} ATK`);
+                    if (item.bonusDefense > 0)
+                      statParts.push(`+${item.bonusDefense} DEF`);
+                    if (item.bonusMaxHp > 0)
+                      statParts.push(`+${item.bonusMaxHp} HP`);
+                  }
                   return (
                     <div
                       key={item.instanceId}
@@ -749,18 +837,18 @@ export default function Overworld({ screen }: OverworldProps) {
                             item.bonusMaxHp,
                             item.price,
                           );
-                          const withItem = addItem(
-                            player.inventory,
-                            inventoryItem,
-                          );
-                          // Auto-equip if the slot is currently empty
-                          const slotFree = !withItem.equipped[template.slot];
+                          // Attach consumable metadata
+                          if (item.isConsumable) {
+                            if (item.healAmount) inventoryItem.healAmount = item.healAmount;
+                            if (item.buffDuration) inventoryItem.buffDuration = item.buffDuration;
+                            if (item.bonusSpeed) inventoryItem.bonusSpeed = item.bonusSpeed;
+                            inventoryItem.isConsumable = true;
+                          }
+                          const withItem = addItem(player.inventory, inventoryItem);
                           addLogMessage(`Purchased ${template.name}.`);
-                          if (slotFree) {
-                            const { newInventory, delta } = equipItem(
-                              withItem,
-                              item.instanceId,
-                            );
+                          if (!item.isConsumable && template.slot && !withItem.equipped[template.slot]) {
+                            // Auto-equip equipment if slot is free
+                            const { newInventory, delta } = equipItem(withItem, item.instanceId);
                             setPlayer({
                               ...player,
                               gold: player.gold - item.price,

@@ -5,6 +5,7 @@
 
 import { Inventory } from "../game/inventory";
 import type { DamageType } from "../game/data/itemData";
+import type { ActiveBuff } from "../game/activeBuffs";
 
 export type ActorId = string;
 
@@ -33,6 +34,8 @@ export type PlayerActor = ActorBase & {
   inventory: Inventory;
   /** Damage types that deal 25% less damage to the player. */
   resistances: DamageType[];
+  /** Currently active timed buff potions. */
+  activeBuffs: ActiveBuff[];
 };
 
 /**

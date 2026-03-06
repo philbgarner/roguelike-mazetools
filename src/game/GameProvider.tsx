@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
 import { BspDungeonOutputs, ForestContentOutputs } from "../mazeGen";
 import { Player, DEFAULT_PLAYER } from "./player";
 
@@ -13,7 +13,7 @@ export type GameScreen =
 interface GameState {
   screen: GameScreen;
   player: Player;
-  setPlayer: (player: Player) => void;
+  setPlayer: Dispatch<SetStateAction<Player>>;
   seed: string | number;
   level: number;
   setLevel: (newLevel: number) => void;
