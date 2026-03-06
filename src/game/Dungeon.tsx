@@ -278,17 +278,18 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   function handleUseConsumableInDungeon(item: InventoryItem) {
     setTurnState((prev) => {
+      if (!prev.awaitingPlayerInput) return prev;
       const pa = prev.actors[prev.playerId] as PlayerActor | undefined;
       if (!pa || pa.kind !== "player") return prev;
       const newInventory = removeItem(pa.inventory, item.instanceId);
+      let withEffect: TurnSystemState;
       if (item.healAmount && item.healAmount > 0) {
         const healed = Math.min(pa.hp + item.healAmount, pa.maxHp);
-        return {
+        withEffect = {
           ...prev,
           actors: { ...prev.actors, [prev.playerId]: { ...pa, inventory: newInventory, hp: healed } },
         };
-      }
-      if (item.buffDuration && item.buffDuration > 0) {
+      } else if (item.buffDuration && item.buffDuration > 0) {
         const name = item.nameOverride ?? getItemTemplate(item.templateId)?.name ?? "Potion";
         const buff: ActiveBuff = {
           id: `buff-${item.instanceId}`,
@@ -300,7 +301,7 @@ export default function Dungeon({ seed }: DungeonProps) {
           bonusSpeed: item.bonusSpeed ?? 0,
         };
         const newMaxHp = pa.maxHp + buff.bonusMaxHp;
-        return {
+        withEffect = {
           ...prev,
           actors: {
             ...prev.actors,
@@ -316,8 +317,11 @@ export default function Dungeon({ seed }: DungeonProps) {
             },
           },
         };
+      } else {
+        withEffect = { ...prev, actors: { ...prev.actors, [prev.playerId]: { ...pa, inventory: newInventory } } };
       }
-      return { ...prev, actors: { ...prev.actors, [prev.playerId]: { ...pa, inventory: newInventory } } };
+      const deps = buildDeps(dungeon, content, runtimeRef.current, withEffect.actors);
+      return commitPlayerAction(withEffect, deps, { kind: "wait" });
     });
   }
 
