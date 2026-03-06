@@ -9,6 +9,8 @@
  * xp is awarded to the player on kill; 0 for friendly NPCs.
  */
 
+import type { DamageType } from "./itemData";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -28,6 +30,10 @@ export type CreatureStatBlock = {
   defense: number;
   /** Experience awarded on kill (0 = friendly / neutral). */
   xp: number;
+  /** Damage types that deal 1.5× damage to this creature. */
+  weaknesses?: DamageType[];
+  /** Damage types that deal 0.5× damage to this creature. */
+  resistances?: DamageType[];
 };
 
 export type PropStatBlock = {
@@ -60,6 +66,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 2,
     defense: 0,
     xp: 8,
+    weaknesses: ["blunt"],
+    resistances: ["pierce"],
   },
   giant_spider: {
     glyph: "s",
@@ -69,6 +77,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 3,
     defense: 1,
     xp: 14,
+    weaknesses: ["slash"],
+    resistances: ["blunt"],
   },
   blind_crawler: {
     glyph: "c",
@@ -78,6 +88,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 4,
     defense: 2,
     xp: 18,
+    weaknesses: ["pierce"],
+    resistances: ["blunt"],
   },
   rock_sprite: {
     glyph: "r",
@@ -87,6 +99,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 3,
     defense: 1,
     xp: 12,
+    weaknesses: ["blunt"],
+    resistances: ["slash", "pierce"],
   },
 
   // ── Ruins (levels 3-4) ───────────────────────────────────────────────────
@@ -98,6 +112,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 4,
     defense: 0,
     xp: 16,
+    weaknesses: ["blunt"],
+    resistances: ["pierce"],
   },
   stone_sentinel: {
     glyph: "S",
@@ -107,6 +123,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 5,
     defense: 5,
     xp: 28,
+    weaknesses: ["blunt"],
+    resistances: ["slash", "pierce"],
   },
   vine_stalker: {
     glyph: "v",
@@ -116,6 +134,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 5,
     defense: 1,
     xp: 22,
+    weaknesses: ["slash"],
+    resistances: ["pierce"],
   },
   tomb_rat: {
     glyph: "R",
@@ -125,6 +145,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 3,
     defense: 0,
     xp: 10,
+    weaknesses: ["blunt"],
+    resistances: ["pierce"],
   },
 
   // ── Crypt (levels 5-6) ───────────────────────────────────────────────────
@@ -136,6 +158,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 4,
     defense: 2,
     xp: 22,
+    weaknesses: ["blunt"],
+    resistances: ["slash", "pierce"],
   },
   zombie: {
     glyph: "z",
@@ -145,6 +169,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 5,
     defense: 2,
     xp: 24,
+    weaknesses: ["slash"],
+    resistances: ["blunt"],
   },
   wight: {
     glyph: "w",
@@ -154,6 +180,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 7,
     defense: 1,
     xp: 32,
+    weaknesses: ["slash"],
+    resistances: ["pierce"],
   },
   shadow: {
     glyph: "h",
@@ -163,6 +191,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 6,
     defense: 0,
     xp: 28,
+    weaknesses: ["pierce"],
+    resistances: ["blunt", "slash"],
   },
 
   // ── Temple (levels 7-8) ──────────────────────────────────────────────────
@@ -174,6 +204,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 6,
     defense: 3,
     xp: 35,
+    weaknesses: ["blunt"],
+    resistances: ["slash"],
   },
   stone_idol: {
     glyph: "I",
@@ -183,6 +215,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 7,
     defense: 6,
     xp: 40,
+    weaknesses: ["blunt"],
+    resistances: ["slash", "pierce"],
   },
   flame_cleric: {
     glyph: "f",
@@ -192,6 +226,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 8,
     defense: 2,
     xp: 38,
+    weaknesses: ["pierce"],
+    resistances: ["blunt"],
   },
   divine_construct: {
     glyph: "D",
@@ -201,6 +237,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 7,
     defense: 5,
     xp: 42,
+    weaknesses: ["pierce"],
+    resistances: ["slash"],
   },
 
   // ── Lair (levels 9-10) ───────────────────────────────────────────────────
@@ -212,6 +250,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 8,
     defense: 3,
     xp: 50,
+    weaknesses: ["pierce"],
+    resistances: ["blunt"],
   },
   chaos_brute: {
     glyph: "B",
@@ -221,6 +261,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 9,
     defense: 5,
     xp: 55,
+    weaknesses: ["pierce"],
+    resistances: ["slash"],
   },
   warlord_grunt: {
     glyph: "g",
@@ -230,6 +272,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 9,
     defense: 2,
     xp: 48,
+    weaknesses: ["slash"],
+    resistances: ["blunt"],
   },
   abomination: {
     glyph: "A",
@@ -239,6 +283,8 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
     attack: 10,
     defense: 6,
     xp: 60,
+    weaknesses: ["blunt"],
+    resistances: ["slash", "pierce"],
   },
 };
 
@@ -256,6 +302,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 9,
     defense: 6,
     xp: 160,
+    weaknesses: ["slash"],
+    resistances: ["blunt"],
   },
   nest_mother: {
     glyph: "M",
@@ -265,6 +313,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 7,
     defense: 3,
     xp: 140,
+    weaknesses: ["slash"],
+    resistances: ["pierce"],
   },
 
   // ── Ruins ─────────────────────────────────────────────────────────────────
@@ -276,6 +326,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 11,
     defense: 8,
     xp: 250,
+    weaknesses: ["blunt"],
+    resistances: ["slash", "pierce"],
   },
   ruin_guardian: {
     glyph: "U",
@@ -285,6 +337,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 9,
     defense: 7,
     xp: 210,
+    weaknesses: ["blunt"],
+    resistances: ["pierce"],
   },
 
   // ── Crypt ─────────────────────────────────────────────────────────────────
@@ -296,6 +350,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 12,
     defense: 5,
     xp: 320,
+    weaknesses: ["blunt"],
+    resistances: ["slash", "pierce"],
   },
   death_knight: {
     glyph: "N",
@@ -305,6 +361,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 14,
     defense: 9,
     xp: 400,
+    weaknesses: ["pierce"],
+    resistances: ["blunt"],
   },
 
   // ── Temple ────────────────────────────────────────────────────────────────
@@ -316,6 +374,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 14,
     defense: 7,
     xp: 500,
+    weaknesses: ["pierce"],
+    resistances: ["slash"],
   },
   the_chosen: {
     glyph: "C",
@@ -325,6 +385,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 16,
     defense: 6,
     xp: 480,
+    weaknesses: ["blunt"],
+    resistances: ["pierce"],
   },
 
   // ── Lair ──────────────────────────────────────────────────────────────────
@@ -336,6 +398,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 18,
     defense: 10,
     xp: 700,
+    weaknesses: ["slash"],
+    resistances: ["pierce"],
   },
   the_devourer: {
     glyph: "X",
@@ -345,6 +409,7 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attack: 20,
     defense: 8,
     xp: 900,
+    resistances: ["slash", "blunt", "pierce"],
   },
 };
 

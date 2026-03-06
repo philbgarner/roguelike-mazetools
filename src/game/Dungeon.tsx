@@ -283,11 +283,17 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("damage", (evt) => {
+        const modifierColor =
+          evt.modifier === "weak" ? "#ffaa44" : "#ff4444";
         pushFloatingMessage(`-${evt.amount}`, evt.x, evt.y, {
-          color: "#ff4444",
+          color: evt.actorId === "player" ? "#ff4444" : modifierColor,
         });
         if (evt.actorId === "player") {
           addLogMessage(`You take ${evt.amount} damage!`);
+        } else if (evt.modifier === "weak") {
+          addLogMessage(`You deal ${evt.amount} damage. (WEAK!)`);
+        } else if (evt.modifier === "resist") {
+          addLogMessage(`You deal ${evt.amount} damage. (resisted)`);
         } else {
           addLogMessage(`You deal ${evt.amount} damage.`);
         }
@@ -1037,12 +1043,30 @@ export default function Dungeon({ seed }: DungeonProps) {
                           : difficulty === "tough"
                             ? "#e06b6b"
                             : "#e0c96b";
+                      const weakStr = m.weaknesses.length > 0
+                        ? `Weak: ${m.weaknesses.join(", ")}`
+                        : null;
+                      const resistStr = m.resistances.length > 0
+                        ? `Resists: ${m.resistances.join(", ")}`
+                        : null;
                       return (
-                        <span key={m.id}>
-                          {m.name} (HP {m.hp}/{m.maxHp}){" "}
-                          <span style={{ color: diffColor }}>
-                            [{difficulty}]
+                        <span key={m.id} style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }}>
+                          <span>
+                            {m.name} (HP {m.hp}/{m.maxHp}){" "}
+                            <span style={{ color: diffColor }}>
+                              [{difficulty}]
+                            </span>
                           </span>
+                          {weakStr && (
+                            <span style={{ color: "#ffaa44", fontSize: "0.85em" }}>
+                              {weakStr}
+                            </span>
+                          )}
+                          {resistStr && (
+                            <span style={{ color: "#6699cc", fontSize: "0.85em" }}>
+                              {resistStr}
+                            </span>
+                          )}
                         </span>
                       );
                     })}

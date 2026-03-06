@@ -4,6 +4,7 @@
 // Generator-independent; works with both API result and direct generator output.
 
 import { Inventory } from "../game/inventory";
+import type { DamageType } from "../game/data/itemData";
 
 export type ActorId = string;
 
@@ -56,6 +57,10 @@ export type MonsterActor = ActorBase & {
   xp: number;
   /** Items the monster is carrying / has equipped. */
   inventory: Inventory;
+  /** Damage types that deal 1.5× damage to this monster. */
+  weaknesses: DamageType[];
+  /** Damage types that deal 0.5× damage to this monster. */
+  resistances: DamageType[];
   /** Current awareness state. */
   alertState: MonsterAlertState;
   /**

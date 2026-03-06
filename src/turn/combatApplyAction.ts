@@ -12,6 +12,8 @@
 import type { TurnSystemState, TurnSystemDeps } from "./turnSystem";
 import type { ActorId, MonsterActor, PlayerActor } from "./turnTypes";
 import type { TurnAction } from "./turnTypes";
+import { getItemTemplate } from "../game/data/itemData";
+import { getEquipped } from "../game/inventory";
 
 /**
  * Drop-in replacement for defaultApplyAction that resolves melee combat on bump.
@@ -80,7 +82,29 @@ function resolveCombat(
 
   const attack = attacker.attack;
   const defense = target.defense;
-  const damage = Math.max(1, attack - defense);
+  const baseDamage = Math.max(1, attack - defense);
+
+  // Determine attacker's weapon damage type (player only — monsters deal untyped damage).
+  let damageType = undefined;
+  let modifier: "weak" | "resist" | undefined = undefined;
+  let damage = baseDamage;
+
+  if (attacker.kind === "player" && target.kind === "monster") {
+    const equippedWeapon = getEquipped(attacker.inventory, "weapon");
+    if (equippedWeapon) {
+      const template = getItemTemplate(equippedWeapon.templateId);
+      damageType = template?.damageType;
+    }
+    if (damageType) {
+      if (target.weaknesses.includes(damageType)) {
+        damage = Math.floor(baseDamage * 1.5);
+        modifier = "weak";
+      } else if (target.resistances.includes(damageType)) {
+        damage = Math.max(1, Math.floor(baseDamage * 0.5));
+        modifier = "resist";
+      }
+    }
+  }
 
   const newHp = target.hp - damage;
   const died = newHp <= 0;
@@ -91,6 +115,8 @@ function resolveCombat(
     amount: damage,
     x: target.x,
     y: target.y,
+    damageType,
+    modifier,
   });
 
   if (died) {

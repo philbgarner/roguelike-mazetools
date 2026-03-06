@@ -152,6 +152,8 @@ function spawnToActor(spawn: AnySpawn): MonsterActor {
     defense: statBlock.defense + (eq?.bonusDefense ?? 0),
     xp: statBlock.xp,
     inventory,
+    weaknesses: ("weaknesses" in statBlock ? statBlock.weaknesses : undefined) ?? [],
+    resistances: ("resistances" in statBlock ? statBlock.resistances : undefined) ?? [],
     alive: true,
     blocksMovement: true,
     spawnId: spawn.spawnId,

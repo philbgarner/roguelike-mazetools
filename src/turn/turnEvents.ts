@@ -8,6 +8,7 @@
 // Extend this union as new gameplay interactions are added (status effects, picks, etc.).
 
 import type { ActorId } from "./turnTypes";
+import type { DamageType } from "../game/data/itemData";
 
 // ---------------------------------------------------------------------------
 // Event types
@@ -23,6 +24,10 @@ export type DamageEvent = {
   /** Grid position of the recipient at the time of the hit. */
   x: number;
   y: number;
+  /** Damage type of the attacker's weapon, if any. */
+  damageType?: DamageType;
+  /** Whether a weakness or resistance was applied. */
+  modifier?: "weak" | "resist";
 };
 
 /** An attack that failed to land (dodge / miss). */

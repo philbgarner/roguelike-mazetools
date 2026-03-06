@@ -10,6 +10,12 @@
 export type ItemType = "weapon" | "armor" | "trinket";
 
 /**
+ * Physical damage category for weapons.
+ * Monsters may have weaknesses or resistances to specific damage types.
+ */
+export type DamageType = "slash" | "blunt" | "pierce";
+
+/**
  * The equipment slot an item occupies when worn.
  * Each actor has at most one item per slot equipped at a time.
  */
@@ -29,14 +35,16 @@ export type ItemTemplate = {
   type: ItemType;
   /** The equipment slot this item occupies when worn. */
   slot: EquipSlot;
+  /** Damage type dealt by this weapon (weapons only). */
+  damageType?: DamageType;
 };
 
 export const ITEM_TEMPLATES: ItemTemplate[] = [
   // Weapons — grant bonusAttack
-  { id: "sword",  name: "Sword",      glyph: "/",  type: "weapon",  slot: "weapon"  },
-  { id: "axe",    name: "Axe",        glyph: "\\", type: "weapon",  slot: "weapon"  },
-  { id: "dagger", name: "Dagger",     glyph: "-",  type: "weapon",  slot: "weapon"  },
-  { id: "spear",  name: "Spear",      glyph: "|",  type: "weapon",  slot: "weapon"  },
+  { id: "sword",  name: "Sword",      glyph: "/",  type: "weapon",  slot: "weapon",  damageType: "slash"  },
+  { id: "axe",    name: "Axe",        glyph: "\\", type: "weapon",  slot: "weapon",  damageType: "blunt"  },
+  { id: "dagger", name: "Dagger",     glyph: "-",  type: "weapon",  slot: "weapon",  damageType: "pierce" },
+  { id: "spear",  name: "Spear",      glyph: "|",  type: "weapon",  slot: "weapon",  damageType: "pierce" },
 
   // Armor — grant bonusDefense + bonusMaxHp
   { id: "shield", name: "Shield",     glyph: ")",  type: "armor",   slot: "offhand" },

@@ -42,6 +42,8 @@ export default function PlayerInventoryModal({
             const isEquipped =
               inventory.equipped[item.slot] === item.instanceId;
             const statParts: string[] = [];
+            if (template?.damageType)
+              statParts.push(template.damageType);
             if (item.bonusAttack > 0)
               statParts.push(`+${item.bonusAttack} ATK`);
             if (item.bonusDefense > 0)
