@@ -83,6 +83,8 @@ import { useMessageLog } from "./ui/useMessageLog";
 import {
   addItem,
   createInventoryItem,
+  equipItem,
+  unequipSlot,
   removeItem,
   type Inventory,
   type InventoryItem,
@@ -96,6 +98,7 @@ import type { ResolvedLootSpawn } from "../resolve/resolveTypes";
 import { playerLevelFromXp } from "../resolve/levelBudget";
 import { generateLevelUpRewards, type LevelUpReward } from "./levelUpRewards";
 import LevelUpModal from "./ui/LevelUpModal";
+import QuickSlotPanel from "./ui/QuickSlotPanel";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation (via API so we get resolved monster spawns)
@@ -1027,6 +1030,57 @@ export default function Dungeon({ seed }: DungeonProps) {
         HP: {playerActor.hp}/{playerActor.maxHp} &nbsp;|&nbsp; Floor {floor}/
         {totalFloors}
       </BorderPanel>
+      <QuickSlotPanel
+        inventory={playerActor.inventory}
+        left="21rem"
+        width="calc(100% - 43rem)"
+        onEquipToggle={(item) => {
+          setTurnState((prev) => {
+            const pa = prev.actors[prev.playerId] as PlayerActor;
+            const isEquipped =
+              item.slot !== undefined &&
+              pa.inventory.equipped[item.slot] === item.instanceId;
+            const { newInventory, delta } = isEquipped
+              ? unequipSlot(pa.inventory, item.slot!)
+              : equipItem(pa.inventory, item.instanceId);
+            return {
+              ...prev,
+              actors: {
+                ...prev.actors,
+                [prev.playerId]: {
+                  ...pa,
+                  inventory: newInventory,
+                  attack: pa.attack + delta.attack,
+                  defense: pa.defense + delta.defense,
+                  maxHp: Math.max(1, pa.maxHp + delta.maxHp),
+                  hp: Math.min(
+                    delta.maxHp < 0 ? pa.hp : pa.hp + Math.max(0, delta.maxHp),
+                    Math.max(1, pa.maxHp + delta.maxHp),
+                  ),
+                },
+              },
+            };
+          });
+        }}
+        onUseConsumable={(item) => {
+          const name = item.nameOverride ?? getItemTemplate(item.templateId)?.name ?? "Potion";
+          if (item.healAmount && item.healAmount > 0) {
+            const pa = turnStateRef.current.actors[turnStateRef.current.playerId] as PlayerActor | undefined;
+            if (pa) {
+              const recovered = Math.min(item.healAmount, pa.maxHp - pa.hp);
+              addLogMessage(`You drink a ${name} and recover ${recovered} HP.`);
+            }
+          } else if (item.buffDuration) {
+            const parts: string[] = [];
+            if (item.bonusAttack > 0) parts.push(`+${item.bonusAttack} ATK`);
+            if (item.bonusDefense > 0) parts.push(`+${item.bonusDefense} DEF`);
+            if (item.bonusMaxHp > 0) parts.push(`+${item.bonusMaxHp} HP`);
+            if (item.bonusSpeed && item.bonusSpeed > 0) parts.push(`+${item.bonusSpeed} SPD`);
+            addLogMessage(`You drink a ${name}. ${parts.join(", ")} for ${item.buffDuration} steps.`);
+          }
+          handleUseConsumableInDungeon(item);
+        }}
+      />
       <BorderPanel
         title="Player"
         width="22rem"

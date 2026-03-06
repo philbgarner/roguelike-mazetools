@@ -75,6 +75,7 @@ import {
   addItem,
   createInventoryItem,
   equipItem,
+  unequipSlot,
   removeItem,
   type Inventory,
   type InventoryItem,
@@ -84,6 +85,7 @@ import { getItemTemplate } from "./data/itemData";
 import { tickActiveBuffs, type ActiveBuff } from "./activeBuffs";
 import PlayerInventoryModal from "./ui/PlayerInventoryModal";
 import PlayerStatsPanel from "./ui/PlayerStatsPanel";
+import QuickSlotPanel from "./ui/QuickSlotPanel";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation
@@ -678,6 +680,31 @@ export default function Overworld({ screen }: OverworldProps) {
           </Button>
         ) : null}
       </BorderPanel>
+      <QuickSlotPanel
+        inventory={player.inventory}
+        left="54rem"
+        width="calc(100% - 76rem)"
+        onEquipToggle={(item) => {
+          const isEquipped =
+            item.slot !== undefined &&
+            player.inventory.equipped[item.slot] === item.instanceId;
+          const { newInventory, delta } = isEquipped
+            ? unequipSlot(player.inventory, item.slot!)
+            : equipItem(player.inventory, item.instanceId);
+          setPlayer((prev) => ({
+            ...prev,
+            inventory: newInventory,
+            attack: prev.attack + delta.attack,
+            defense: prev.defense + delta.defense,
+            maxHp: Math.max(1, prev.maxHp + delta.maxHp),
+            hp: Math.min(
+              delta.maxHp < 0 ? prev.hp : prev.hp + Math.max(0, delta.maxHp),
+              Math.max(1, prev.maxHp + delta.maxHp),
+            ),
+          }));
+        }}
+        onUseConsumable={(item) => handleUseConsumable(item)}
+      />
       <BorderPanel
         title="Player"
         width="22rem"
