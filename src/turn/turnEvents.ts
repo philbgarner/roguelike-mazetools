@@ -63,9 +63,18 @@ export type HealEvent = {
   y: number;
 };
 
+/** Player blocked an incoming attack with a shield. */
+export type BlockEvent = {
+  kind: "block";
+  actorId: ActorId;
+  x: number;
+  y: number;
+};
+
 export type TurnEvent =
   | DamageEvent
   | MissEvent
   | DeathEvent
   | XpGainEvent
-  | HealEvent;
+  | HealEvent
+  | BlockEvent;

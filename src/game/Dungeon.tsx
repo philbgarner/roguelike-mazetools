@@ -391,6 +391,15 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   useEffect(
     () =>
+      subscribe("block", (evt) => {
+        pushFloatingMessage("BLOCKED!", evt.x, evt.y, { color: "#88ccff" });
+        addLogMessage("You block the attack with your shield!");
+      }),
+    [subscribe, pushFloatingMessage, addLogMessage],
+  );
+
+  useEffect(
+    () =>
       subscribe("xpGain", (evt) => {
         pushFloatingMessage(`+${evt.amount} xp`, evt.x, evt.y, {
           color: "#ffdd55",

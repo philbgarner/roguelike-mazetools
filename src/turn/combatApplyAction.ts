@@ -105,6 +105,18 @@ function resolveCombat(
       }
     }
   } else if (attacker.kind === "monster" && target.kind === "player") {
+    // Shield block: ~1 in 20 chance to completely negate the attack.
+    const shield = getEquipped((target as PlayerActor).inventory, "offhand");
+    if (shield && Math.random() < 1 / 20) {
+      deps.onEvent?.({
+        kind: "block",
+        actorId: targetId,
+        x: target.x,
+        y: target.y,
+      });
+      return state;
+    }
+
     // Check if the player has resistance against this monster's attack type.
     const attackType = (attacker as MonsterActor).attackDamageType;
     if (attackType && (target as PlayerActor).resistances.includes(attackType)) {
