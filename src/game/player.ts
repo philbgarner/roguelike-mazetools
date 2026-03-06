@@ -1,4 +1,5 @@
 import { createInventory, Inventory } from "./inventory";
+import type { DamageType } from "./data/itemData";
 
 export interface Player {
   hp: number;
@@ -9,6 +10,7 @@ export interface Player {
   defense: number;
   gold: number;
   inventory: Inventory;
+  resistances: DamageType[];
 }
 
 /** Extract the persistent Player fields from a PlayerActor. */
@@ -21,6 +23,7 @@ export function playerFromActor(actor: {
   defense: number;
   gold?: number;
   inventory?: Inventory;
+  resistances?: DamageType[];
 }): Player {
   return {
     hp: actor.hp,
@@ -31,6 +34,7 @@ export function playerFromActor(actor: {
     defense: actor.defense,
     gold: actor.gold ?? 100,
     inventory: actor.inventory ?? createInventory(),
+    resistances: actor.resistances ?? [],
   };
 }
 
@@ -43,4 +47,5 @@ export const DEFAULT_PLAYER: Player = {
   defense: 1,
   gold: 100,
   inventory: createInventory(),
+  resistances: [],
 };

@@ -90,6 +90,12 @@ import { getItemTemplate } from "./data/itemData";
 import PlayerInventoryModal from "./ui/PlayerInventoryModal";
 import PlayerStatsPanel from "./ui/PlayerStatsPanel";
 import type { ResolvedLootSpawn } from "../resolve/resolveTypes";
+import { playerLevelFromXp } from "../resolve/levelBudget";
+import {
+  generateLevelUpRewards,
+  type LevelUpReward,
+} from "./levelUpRewards";
+import LevelUpModal from "./ui/LevelUpModal";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation (via API so we get resolved monster spawns)
@@ -244,6 +250,17 @@ export default function Dungeon({ seed }: DungeonProps) {
   // --- Auto-walk (click-to-navigate route follower) ---
   const [autoWalk, setAutoWalk] = useState<AutoWalkState>({ kind: "idle" });
 
+  // --- Level-up modal ---
+  const [levelUpPending, setLevelUpPending] = useState<{
+    newLevel: number;
+    rewards: LevelUpReward[];
+  } | null>(null);
+  // Ref so stale-closure callbacks (hotkeys, auto-walk) can read it.
+  const levelUpPendingRef = useRef(levelUpPending);
+  useEffect(() => {
+    levelUpPendingRef.current = levelUpPending;
+  }, [levelUpPending]);
+
   // --- Chest interaction ---
   const [lootedChestIds, setLootedChestIds] = useState<Set<number>>(
     () => new Set(),
@@ -286,7 +303,11 @@ export default function Dungeon({ seed }: DungeonProps) {
           color: evt.actorId === "player" ? "#ff4444" : modifierColor,
         });
         if (evt.actorId === "player") {
-          addLogMessage(`You take ${evt.amount} damage!`);
+          if (evt.modifier === "resist") {
+            addLogMessage(`You take ${evt.amount} damage. (resisted)`);
+          } else {
+            addLogMessage(`You take ${evt.amount} damage!`);
+          }
         } else if (evt.modifier === "weak") {
           addLogMessage(`You deal ${evt.amount} damage. (WEAK!)`);
         } else if (evt.modifier === "resist") {
@@ -329,6 +350,19 @@ export default function Dungeon({ seed }: DungeonProps) {
           color: "#ffdd55",
         });
         addLogMessage(`You gain ${evt.amount} XP.`);
+
+        // Level-up detection: read the freshly-updated player from the state ref.
+        const playerActor = turnStateRef.current.actors["player"];
+        if (!playerActor || playerActor.kind !== "player") return;
+        const newLevel = playerLevelFromXp(playerActor.xp);
+        if (newLevel > playerActor.level) {
+          const rewards = generateLevelUpRewards(
+            newLevel,
+            playerActor.resistances,
+            Math.random,
+          );
+          setLevelUpPending({ newLevel, rewards });
+        }
       }),
     [subscribe, pushFloatingMessage, addLogMessage],
   );
@@ -604,6 +638,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   function attemptCommitPlayerAction(action: TurnAction): void {
     const ts = turnStateRef.current;
     if (!ts.awaitingPlayerInput) return;
+    if (levelUpPendingRef.current) return;
 
     if (action.kind === "move") {
       const player = ts.actors[ts.playerId];
@@ -767,6 +802,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(() => {
     if (!turnState.awaitingPlayerInput) return;
     if (autoWalk.kind !== "active") return;
+    if (levelUpPending) return;
 
     const timer = setTimeout(() => {
       const rt = runtimeRef.current;
@@ -814,6 +850,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     turnState.awaitingPlayerInput,
     turnState.actors,
     autoWalk,
+    levelUpPending,
     dungeon,
     content,
     rebuildPathMaskFromPlans,
@@ -842,6 +879,45 @@ export default function Dungeon({ seed }: DungeonProps) {
     const deps = buildDeps(dungeon, content, runtimeRef.current, ts.actors);
     setTurnState(tickUntilPlayer(ts, deps));
   }, [startCell.x, startCell.y]);
+
+  // --- Level-up choice handler ---
+  function handleLevelUpChoice(reward: LevelUpReward) {
+    const pending = levelUpPendingRef.current;
+    if (!pending) return;
+    const { newLevel } = pending;
+
+    setTurnState((prev) => {
+      const pa = prev.actors[prev.playerId] as PlayerActor;
+      if (!pa || pa.kind !== "player") return prev;
+
+      let updated: PlayerActor = { ...pa, level: newLevel };
+
+      if (reward.kind === "stat") {
+        updated = {
+          ...updated,
+          maxHp: updated.maxHp + reward.hpBonus,
+          hp: Math.min(updated.hp + reward.hpBonus, updated.maxHp + reward.hpBonus),
+          attack: updated.attack + reward.attackBonus,
+          defense: updated.defense + reward.defenseBonus,
+        };
+      } else if (reward.kind === "resistance") {
+        updated = {
+          ...updated,
+          resistances: [...updated.resistances, reward.resistance],
+        };
+      } else if (reward.kind === "item") {
+        updated = {
+          ...updated,
+          inventory: addItem(updated.inventory, reward.item),
+        };
+      }
+
+      return { ...prev, actors: { ...prev.actors, [prev.playerId]: updated } };
+    });
+
+    addLogMessage(`You reached level ${newLevel}!`);
+    setLevelUpPending(null);
+  }
 
   return (
     <>
@@ -1314,6 +1390,14 @@ export default function Dungeon({ seed }: DungeonProps) {
             </ModalPanel>
           );
         })()}
+
+      {levelUpPending && (
+        <LevelUpModal
+          newLevel={levelUpPending.newLevel}
+          rewards={levelUpPending.rewards}
+          onChoose={handleLevelUpChoice}
+        />
+      )}
     </>
   );
 }

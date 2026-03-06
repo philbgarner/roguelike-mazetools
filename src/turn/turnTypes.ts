@@ -31,6 +31,8 @@ export type PlayerActor = ActorBase & {
   defense: number;
   gold: number;
   inventory: Inventory;
+  /** Damage types that deal 25% less damage to the player. */
+  resistances: DamageType[];
 };
 
 /**
@@ -61,6 +63,8 @@ export type MonsterActor = ActorBase & {
   weaknesses: DamageType[];
   /** Damage types that deal 0.5× damage to this monster. */
   resistances: DamageType[];
+  /** Damage type this monster deals when attacking the player. */
+  attackDamageType?: DamageType;
   /** Current awareness state. */
   alertState: MonsterAlertState;
   /**

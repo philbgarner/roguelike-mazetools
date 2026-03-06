@@ -48,3 +48,30 @@ export function hpScaleFactor(dungeonLevel: number, naturalLevel: number): numbe
   if (naturalLevel <= 0) return 1;
   return Math.min(2.0, dungeonLevel / naturalLevel);
 }
+
+// ---------------------------------------------------------------------------
+// Player levelling
+// ---------------------------------------------------------------------------
+
+const PLAYER_XP_BASE = 50;
+const PLAYER_XP_EXPONENT = 1.6;
+
+/**
+ * Total cumulative XP required to reach a given player level.
+ * Level 1 = 0 XP (starting level).
+ * Formula: floor(50 * (level-1)^1.6)
+ */
+export function xpToReachLevel(level: number): number {
+  if (level <= 1) return 0;
+  return Math.floor(PLAYER_XP_BASE * Math.pow(level - 1, PLAYER_XP_EXPONENT));
+}
+
+/**
+ * Compute current player level from accumulated XP.
+ * Returns the highest level whose threshold does not exceed xp.
+ */
+export function playerLevelFromXp(xp: number): number {
+  let level = 1;
+  while (xpToReachLevel(level + 1) <= xp) level++;
+  return level;
+}

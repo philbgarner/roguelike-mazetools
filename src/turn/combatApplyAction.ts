@@ -84,7 +84,7 @@ function resolveCombat(
   const defense = target.defense;
   const baseDamage = Math.max(1, attack - defense);
 
-  // Determine attacker's weapon damage type (player only — monsters deal untyped damage).
+  // Determine attacker's weapon damage type (player only — monsters deal typed damage via attackDamageType).
   let damageType = undefined;
   let modifier: "weak" | "resist" | undefined = undefined;
   let damage = baseDamage;
@@ -103,6 +103,13 @@ function resolveCombat(
         damage = Math.max(1, Math.floor(baseDamage * 0.5));
         modifier = "resist";
       }
+    }
+  } else if (attacker.kind === "monster" && target.kind === "player") {
+    // Check if the player has resistance against this monster's attack type.
+    const attackType = (attacker as MonsterActor).attackDamageType;
+    if (attackType && (target as PlayerActor).resistances.includes(attackType)) {
+      damage = Math.max(1, Math.floor(baseDamage * 0.75));
+      modifier = "resist";
     }
   }
 
@@ -129,12 +136,23 @@ function resolveCombat(
 
     // Award XP when the player kills a monster.
     if (attacker.kind === "player" && target.kind === "monster") {
+      const xpAmount = (target as MonsterActor).xp;
       deps.onEvent?.({
         kind: "xpGain",
-        amount: (target as MonsterActor).xp,
+        amount: xpAmount,
         x: target.x,
         y: target.y,
       });
+      // Update player's cumulative XP in state so level-up detection can read it.
+      const player = attacker as PlayerActor;
+      return {
+        ...state,
+        actors: {
+          ...state.actors,
+          [targetId]: { ...target, hp: newHp, alive: false },
+          [attackerId]: { ...player, xp: player.xp + xpAmount },
+        },
+      };
     }
   }
 
