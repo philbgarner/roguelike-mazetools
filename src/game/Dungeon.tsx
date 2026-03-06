@@ -144,8 +144,8 @@ export default function Dungeon({ seed }: DungeonProps) {
     setPlayer,
   } = useGame();
 
-  const totalFloors = level + 1;
-  const isFinalFloor = floor === totalFloors;
+  const totalFloors = Math.min(level + 1, 5);
+  const isFinalFloor = floor >= totalFloors;
 
   // Derive a unique seed per floor so each floor is a distinct dungeon.
   const floorSeed =
