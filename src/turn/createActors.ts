@@ -94,70 +94,86 @@ export function createMerchantWagons(
   return wagons;
 }
 
+type AnySpawn = {
+  entityId: string;
+  x: number;
+  y: number;
+  roomId: number;
+  spawnId: string;
+  scaledHp: number;
+  equipment: import("../resolve/resolveTypes").ResolvedEquipment | null;
+  danger?: number;
+};
+
+function spawnToActor(spawn: AnySpawn): MonsterActor {
+  const statBlock =
+    MONSTER_STATS[spawn.spawnId] ??
+    BOSS_STATS[spawn.spawnId] ??
+    NPC_STATS[spawn.spawnId] ??
+    FALLBACK_STATS;
+  const eq = spawn.equipment;
+  const baseHp = spawn.scaledHp > 0 ? spawn.scaledHp : statBlock.hp;
+  const hp     = baseHp + (eq?.bonusMaxHp ?? 0);
+
+  // Build inventory — bonuses are already baked into attack/defense/hp above,
+  // so we place the item directly into equipped without re-applying deltas.
+  let inventory: Inventory = createInventory();
+  if (eq) {
+    const template = getItemTemplate(eq.itemId);
+    if (template) {
+      const instanceId = `${spawn.entityId}_eq`;
+      const item = createInventoryItem(
+        instanceId,
+        template,
+        eq.bonusAttack,
+        eq.bonusDefense,
+        eq.bonusMaxHp,
+        eq.value,
+        eq.displayName,
+      );
+      inventory = {
+        items: [item],
+        equipped: { [template.slot]: instanceId },
+      };
+    }
+  }
+
+  return {
+    id: spawn.entityId,
+    kind: "monster" as const,
+    x: spawn.x,
+    y: spawn.y,
+    name: "name" in statBlock ? statBlock.name : spawn.spawnId,
+    glyph: "glyph" in statBlock ? statBlock.glyph : "M",
+    speed: statBlock.speed,
+    hp,
+    maxHp: hp,
+    attack: statBlock.attack + (eq?.bonusAttack ?? 0),
+    defense: statBlock.defense + (eq?.bonusDefense ?? 0),
+    xp: statBlock.xp,
+    inventory,
+    alive: true,
+    blocksMovement: true,
+    spawnId: spawn.spawnId,
+    danger: spawn.danger ?? 0,
+    roomId: spawn.roomId,
+    alertState: "idle" as const,
+    searchTurnsLeft: 0,
+    lastKnownPlayerPos: null,
+  };
+}
+
 /**
- * Map resolved monster spawns to runtime MonsterActor instances.
+ * Map resolved monster and boss spawns to runtime MonsterActor instances.
  * Stats (speed, hp, attack, defense, xp) are looked up from spawnTableData
- * using the theme-resolved spawnId.
+ * using the theme-resolved spawnId. Bosses are included and use BOSS_STATS.
  */
 export function createMonstersFromResolved(
   resolved: ResolvedSpawns | null,
 ): MonsterActor[] {
   if (!resolved) return [];
 
-  return resolved.monsters.map((spawn) => {
-    const statBlock =
-      MONSTER_STATS[spawn.spawnId] ??
-      BOSS_STATS[spawn.spawnId] ??
-      NPC_STATS[spawn.spawnId] ??
-      FALLBACK_STATS;
-    const eq = spawn.equipment;
-    const baseHp = spawn.scaledHp > 0 ? spawn.scaledHp : statBlock.hp;
-    const hp     = baseHp + (eq?.bonusMaxHp ?? 0);
-
-    // Build inventory — bonuses are already baked into attack/defense/hp above,
-    // so we place the item directly into equipped without re-applying deltas.
-    let inventory: Inventory = createInventory();
-    if (eq) {
-      const template = getItemTemplate(eq.itemId);
-      if (template) {
-        const instanceId = `${spawn.entityId}_eq`;
-        const item = createInventoryItem(
-          instanceId,
-          template,
-          eq.bonusAttack,
-          eq.bonusDefense,
-          eq.bonusMaxHp,
-          eq.value,
-        );
-        inventory = {
-          items: [item],
-          equipped: { [template.slot]: instanceId },
-        };
-      }
-    }
-
-    return {
-      id: spawn.entityId,
-      kind: "monster" as const,
-      x: spawn.x,
-      y: spawn.y,
-      name: "name" in statBlock ? statBlock.name : spawn.spawnId,
-      glyph: "glyph" in statBlock ? statBlock.glyph : "M",
-      speed: statBlock.speed,
-      hp,
-      maxHp: hp,
-      attack: statBlock.attack + (eq?.bonusAttack ?? 0),
-      defense: statBlock.defense + (eq?.bonusDefense ?? 0),
-      xp: statBlock.xp,
-      inventory,
-      alive: true,
-      blocksMovement: true,
-      spawnId: spawn.spawnId,
-      danger: spawn.danger,
-      roomId: spawn.roomId,
-      alertState: "idle" as const,
-      searchTurnsLeft: 0,
-      lastKnownPlayerPos: null,
-    };
-  });
+  const monsters = resolved.monsters.map(spawnToActor);
+  const bosses   = resolved.bosses.map(spawnToActor);
+  return [...monsters, ...bosses];
 }

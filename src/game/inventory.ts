@@ -26,6 +26,8 @@ export type InventoryItem = {
   bonusMaxHp: number;
   /** Gold value if sold or dropped as loot. */
   value: number;
+  /** Optional override for the display name (e.g. "Axe +1" for a level-scaled item). */
+  nameOverride?: string;
 };
 
 export type Inventory = {
@@ -63,6 +65,7 @@ export function createInventoryItem(
   bonusDefense: number,
   bonusMaxHp: number,
   value: number,
+  nameOverride?: string,
 ): InventoryItem {
   return {
     instanceId,
@@ -72,6 +75,7 @@ export function createInventoryItem(
     bonusDefense,
     bonusMaxHp,
     value,
+    ...(nameOverride ? { nameOverride } : {}),
   };
 }
 

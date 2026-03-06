@@ -38,6 +38,8 @@ export type ResolvedEquipment = {
   bonusMaxHp: number;
   /** Gold value if dropped as loot */
   value: number;
+  /** Display name including level suffix (e.g. "Axe +1"). Set when level > 1. */
+  displayName?: string;
 };
 
 export type ResolvedMonsterSpawn = {
@@ -98,6 +100,10 @@ export type ResolvedBossSpawn = {
   roomId: number;
   /** Theme-resolved boss identifier (from spawnTables.bosses) */
   spawnId: string;
+  /** HP after level-based scaling. */
+  scaledHp: number;
+  /** Equipment on the boss, or null. */
+  equipment: ResolvedEquipment | null;
 };
 
 // ---------------------------------------------------------------------------

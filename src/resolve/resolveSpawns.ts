@@ -71,6 +71,9 @@ const HP_PER_XP  = avg(monsters.filter((m) => m.xp > 0).map((m) => m.hp / m.xp))
 /** Minimum leftover XP to generate equipment. Prevents trivial trinkets. */
 const MIN_EQUIP_BUDGET = 5;
 
+/** Minimum number of regular (non-boss) monsters to guarantee per dungeon. */
+const MIN_REGULAR_MONSTERS = 2;
+
 // ---------------------------------------------------------------------------
 // Stable entity ID helpers
 // ---------------------------------------------------------------------------
@@ -162,6 +165,7 @@ function computeScaledHp(spawnId: string, level: number): number {
 function generateEquipment(
   equipBudget: number,
   seed: number,
+  level: number,
 ): ResolvedEquipment | null {
   if (equipBudget < MIN_EQUIP_BUDGET) return null;
 
@@ -187,13 +191,46 @@ function generateEquipment(
       break;
   }
 
+  const displayName = level >= 2 ? `${template.name} +${level - 1}` : undefined;
+
   return {
     itemId: template.id,
     bonusAttack,
     bonusDefense,
     bonusMaxHp,
     value: Math.round(equipBudget),
+    ...(displayName ? { displayName } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Room center helper — returns a position near the center of a room that
+// has no existing content feature placed on it.
+// ---------------------------------------------------------------------------
+
+function roomCenterPosition(
+  content: ContentOutputs,
+  roomId: number,
+): { x: number; y: number } | null {
+  // rooms array is 0-indexed; roomId is 1-indexed
+  const room = content.meta.rooms[roomId - 1];
+  if (!room) return null;
+
+  const cx = Math.floor(room.x + room.w / 2);
+  const cy = Math.floor(room.y + room.h / 2);
+
+  // Try center then adjacent tiles until we find one clear of content features
+  const offsets = [
+    [0, 0], [1, 0], [-1, 0], [0, 1], [0, -1],
+    [1, 1], [-1, 1], [1, -1], [-1, -1],
+  ];
+  for (const [dx, dy] of offsets) {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (x < 0 || y < 0 || x >= content.width || y >= content.height) continue;
+    if (content.masks.featureType[y * content.width + x] === 0) return { x, y };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +313,7 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
     const leftover = roomRemainingXp.get(monster.roomId) ?? 0;
     if (leftover >= MIN_EQUIP_BUDGET) {
       const equipSeed = hashSeed(seed, theme.id, "equip", monster.entityId, level);
-      const equipment = generateEquipment(leftover, equipSeed);
+      const equipment = generateEquipment(leftover, equipSeed, level);
       if (equipment) {
         monster.equipment = equipment;
         roomEquipAssigned.add(monster.roomId);
@@ -292,7 +329,7 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
     const spawnId = pickWeighted(tables.loot, entitySeed) ?? "";
     const equipBudget = (c.tier * 2 + level) * 5;
     const equipSeed = hashSeed(seed, theme.id, "chest-equip", c.stableId, level);
-    const equipment = generateEquipment(equipBudget, equipSeed);
+    const equipment = generateEquipment(equipBudget, equipSeed, level);
     return {
       entityId: c.entityId,
       sourceId: c.id,
@@ -326,25 +363,93 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
 
   const npcs: ResolvedNpcSpawn[] = [];
 
-  // --- Bosses (farthest room monster with highest danger, if any) ---------
+  // --- Boss (always placed in the farthest / exit room) -------------------
+  //
+  // If a regular monster was placed there by the content generator, we
+  // promote it (remove from `monsters`, add to `bosses` with boss stats).
+  // If no monster exists in the farthest room, we synthesise a position at
+  // the room's centre so a boss is always present.
 
   const bosses: ResolvedBossSpawn[] = [];
-  if (tables.bosses.length > 0 && content.meta.monsters.length > 0) {
-    const farthestRoomId = content.meta.farthestRoomId;
-    const bossCandidate = content.meta.monsters.find(
-      (m) => m.roomId === farthestRoomId,
-    );
-    if (bossCandidate) {
-      const stableId = `${bossCandidate.roomId}:${posKey(bossCandidate.x, bossCandidate.y, width)}`;
+  const farthestRoomId = content.meta.farthestRoomId;
+
+  if (tables.bosses.length > 0) {
+    // Find and remove any regular monster already in the farthest room
+    const bossMonsterIdx = monsters.findIndex((m) => m.roomId === farthestRoomId);
+    let bossPos: { x: number; y: number; roomId: number } | null = null;
+
+    if (bossMonsterIdx >= 0) {
+      const bm = monsters[bossMonsterIdx];
+      bossPos = { x: bm.x, y: bm.y, roomId: bm.roomId };
+      monsters.splice(bossMonsterIdx, 1);
+    } else {
+      // Synthesise a position in the farthest room
+      const synPos = roomCenterPosition(content, farthestRoomId);
+      if (synPos) bossPos = { ...synPos, roomId: farthestRoomId };
+    }
+
+    if (bossPos) {
+      const stableId = `${bossPos.roomId}:${posKey(bossPos.x, bossPos.y, width)}`;
       const entitySeed = hashSeed(seed, theme.id, "boss", stableId, level);
       const spawnId = pickWeighted(tables.bosses, entitySeed) ?? "";
+      const scaledHp = computeScaledHp(spawnId, level);
+      const bossEquipBudget = roomBudget * 0.5;
+      const bossEquipSeed = hashSeed(seed, theme.id, "boss-equip", stableId, level);
+      const equipment = generateEquipment(bossEquipBudget, bossEquipSeed, level);
       bosses.push({
-        entityId: buildEntityId("boss", bossCandidate.roomId, 0),
-        x: bossCandidate.x,
-        y: bossCandidate.y,
-        roomId: bossCandidate.roomId,
+        entityId: buildEntityId("boss", bossPos.roomId, 0),
+        x: bossPos.x,
+        y: bossPos.y,
+        roomId: bossPos.roomId,
         spawnId,
+        scaledHp,
+        equipment,
       });
+    }
+  }
+
+  // --- Minimum regular monster guarantee ----------------------------------
+  //
+  // Ensure at least MIN_REGULAR_MONSTERS non-boss monsters exist by
+  // synthesising entries in non-entrance, non-farthest rooms as needed.
+
+  if (monsters.length < MIN_REGULAR_MONSTERS) {
+    const needed = MIN_REGULAR_MONSTERS - monsters.length;
+    // Prefer rooms that already exist in roomDistance (reachable rooms)
+    const candidateRooms = Array.from(content.meta.roomDistance.keys()).filter(
+      (rid) => rid !== content.meta.entranceRoomId && rid !== farthestRoomId,
+    );
+    // Sort by distance so we pick spread-out rooms
+    candidateRooms.sort(
+      (a, b) => (content.meta.roomDistance.get(a) ?? 0) - (content.meta.roomDistance.get(b) ?? 0),
+    );
+
+    let added = 0;
+    let synId = 9900;
+    for (const roomId of candidateRooms) {
+      if (added >= needed) break;
+      const pos = roomCenterPosition(content, roomId);
+      if (!pos) continue;
+      // Skip if position already occupied by a monster
+      if (monsters.some((m) => m.x === pos.x && m.y === pos.y)) continue;
+
+      const stableId = `${roomId}:${posKey(pos.x, pos.y, width)}`;
+      const entitySeed = hashSeed(seed, theme.id, "monster", stableId, level);
+      const spawnId = pickWeighted(levelFilteredTable, entitySeed) ?? "";
+      const scaledHp = computeScaledHp(spawnId, level);
+
+      monsters.push({
+        entityId: buildEntityId("monster", roomId, synId++),
+        sourceId: synId,
+        x: pos.x,
+        y: pos.y,
+        roomId,
+        danger: 1,
+        spawnId,
+        scaledHp,
+        equipment: null,
+      });
+      added++;
     }
   }
 

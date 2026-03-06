@@ -80,7 +80,12 @@ import ModalPanel from "./ui/ModalPanel";
 import Tooltip, { TooltipProps } from "./ui/Tooltip";
 import MessageLog from "./ui/MessageLog";
 import { useMessageLog } from "./ui/useMessageLog";
-import { addItem, createInventoryItem, type Inventory, type StatDelta } from "./inventory";
+import {
+  addItem,
+  createInventoryItem,
+  type Inventory,
+  type StatDelta,
+} from "./inventory";
 import { getItemTemplate } from "./data/itemData";
 import PlayerInventoryModal from "./ui/PlayerInventoryModal";
 import PlayerStatsPanel from "./ui/PlayerStatsPanel";
@@ -108,7 +113,7 @@ function buildDungeon(seed: string | number, level: number, themeId: string) {
     themeId,
     width: 64,
     height: 64,
-    pattern: { includeIntroGate: true },
+    contentStrategy: "atomic",
   });
 }
 
@@ -222,8 +227,12 @@ export default function Dungeon({ seed }: DungeonProps) {
   const [autoWalk, setAutoWalk] = useState<AutoWalkState>({ kind: "idle" });
 
   // --- Chest interaction ---
-  const [lootedChestIds, setLootedChestIds] = useState<Set<number>>(() => new Set());
-  const [chestModal, setChestModal] = useState<{ loot: ResolvedLootSpawn } | null>(null);
+  const [lootedChestIds, setLootedChestIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [chestModal, setChestModal] = useState<{
+    loot: ResolvedLootSpawn;
+  } | null>(null);
 
   // --- Inventory / stats modal ---
   const [showInventoryModal, setShowInventoryModal] = useState(false);
@@ -688,7 +697,8 @@ export default function Dungeon({ seed }: DungeonProps) {
       const actor = turnState.actors[id];
       if (!actor || actor.kind === "player" || !actor.alive) continue;
       if (seenActorIdsRef.current.has(id)) continue;
-      if (Math.hypot(actor.x - playerX, actor.y - playerY) > PLAYER_VIS_RADIUS) continue;
+      if (Math.hypot(actor.x - playerX, actor.y - playerY) > PLAYER_VIS_RADIUS)
+        continue;
       seenActorIdsRef.current.add(id);
       if (actor.kind === "monster") {
         addLogMessage(`You spot a ${actor.name}!`);
@@ -704,7 +714,8 @@ export default function Dungeon({ seed }: DungeonProps) {
         if (seenChestIndicesRef.current.has(i)) continue;
         const cx = i % W;
         const cy = Math.floor(i / W);
-        if (Math.hypot(cx - playerX, cy - playerY) > PLAYER_VIS_RADIUS) continue;
+        if (Math.hypot(cx - playerX, cy - playerY) > PLAYER_VIS_RADIUS)
+          continue;
         seenChestIndicesRef.current.add(i);
         addLogMessage("You see a chest!");
       }
@@ -997,11 +1008,7 @@ export default function Dungeon({ seed }: DungeonProps) {
                         playerActor.maxHp / 5;
                       const ratio = monsterPower / Math.max(1, playerPower);
                       const difficulty =
-                        ratio < 0.6
-                          ? "easy"
-                          : ratio > 1.4
-                            ? "tough"
-                            : "even";
+                        ratio < 0.6 ? "easy" : ratio > 1.4 ? "tough" : "even";
                       const diffColor =
                         difficulty === "easy"
                           ? "#6be06b"
@@ -1138,94 +1145,118 @@ export default function Dungeon({ seed }: DungeonProps) {
         xp={playerActor.xp}
       />
 
-      {chestModal && (() => {
-        const { loot } = chestModal;
-        const equipment = loot.equipment;
-        const template = equipment ? getItemTemplate(equipment.itemId) : null;
-        const statParts: string[] = [];
-        if (equipment) {
-          if (equipment.bonusAttack > 0) statParts.push(`+${equipment.bonusAttack} ATK`);
-          if (equipment.bonusDefense > 0) statParts.push(`+${equipment.bonusDefense} DEF`);
-          if (equipment.bonusMaxHp > 0) statParts.push(`+${equipment.bonusMaxHp} HP`);
-        }
-        return (
-          <ModalPanel
-            title="Chest"
-            visible={!!chestModal}
-            closeButton
-            onClose={() => setChestModal(null)}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
-              <div style={{ color: "#aaa", fontSize: "0.9em" }}>
-                {loot.spawnId.replace(/_/g, " ")}
-              </div>
-              {template && equipment ? (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.6rem",
-                    padding: "0.25rem 0.4rem",
-                    border: "1px solid #444",
-                    background: "#111",
-                  }}
-                >
-                  <span style={{ fontFamily: "monospace", color: "#ccc", minWidth: "1.2rem" }}>
-                    {template.glyph}
-                  </span>
-                  <span style={{ flex: 1, color: "#ddd" }}>
-                    {template.name}
-                    {statParts.length > 0 && (
-                      <span style={{ color: "#888", marginLeft: "0.5rem", fontSize: "0.85em" }}>
-                        {statParts.join(", ")}
-                      </span>
-                    )}
-                  </span>
+      {chestModal &&
+        (() => {
+          const { loot } = chestModal;
+          const equipment = loot.equipment;
+          const template = equipment ? getItemTemplate(equipment.itemId) : null;
+          const statParts: string[] = [];
+          if (equipment) {
+            if (equipment.bonusAttack > 0)
+              statParts.push(`+${equipment.bonusAttack} ATK`);
+            if (equipment.bonusDefense > 0)
+              statParts.push(`+${equipment.bonusDefense} DEF`);
+            if (equipment.bonusMaxHp > 0)
+              statParts.push(`+${equipment.bonusMaxHp} HP`);
+          }
+          return (
+            <ModalPanel
+              title="Chest"
+              visible={!!chestModal}
+              closeButton
+              onClose={() => setChestModal(null)}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.8rem",
+                }}
+              >
+                <div style={{ color: "#aaa", fontSize: "0.9em" }}>
+                  {loot.spawnId.replace(/_/g, " ")}
                 </div>
-              ) : (
-                <div style={{ color: "#888" }}>The chest is empty.</div>
-              )}
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                {template && equipment && (
-                  <Button
-                    onClick={() => {
-                      const item = createInventoryItem(
-                        loot.entityId,
-                        template,
-                        equipment.bonusAttack,
-                        equipment.bonusDefense,
-                        equipment.bonusMaxHp,
-                        equipment.value,
-                      );
-                      setTurnState((prev) => {
-                        const pa = prev.actors[prev.playerId] as PlayerActor;
-                        return {
-                          ...prev,
-                          actors: {
-                            ...prev.actors,
-                            [prev.playerId]: {
-                              ...pa,
-                              inventory: addItem(pa.inventory, item),
-                            },
-                          },
-                        };
-                      });
-                      setLootedChestIds((prev) => new Set([...prev, loot.sourceId]));
-                      addLogMessage(`Picked up ${template.name}.`);
-                      setChestModal(null);
+                {template && equipment ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.6rem",
+                      padding: "0.25rem 0.4rem",
+                      border: "1px solid #444",
+                      background: "#111",
                     }}
                   >
-                    Take
-                  </Button>
+                    <span
+                      style={{
+                        fontFamily: "monospace",
+                        color: "#ccc",
+                        minWidth: "1.2rem",
+                      }}
+                    >
+                      {template.glyph}
+                    </span>
+                    <span style={{ flex: 1, color: "#ddd" }}>
+                      {template.name}
+                      {statParts.length > 0 && (
+                        <span
+                          style={{
+                            color: "#888",
+                            marginLeft: "0.5rem",
+                            fontSize: "0.85em",
+                          }}
+                        >
+                          {statParts.join(", ")}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{ color: "#888" }}>The chest is empty.</div>
                 )}
-                <Button onClick={() => setChestModal(null)}>
-                  {template ? "Leave" : "Close"}
-                </Button>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  {template && equipment && (
+                    <Button
+                      onClick={() => {
+                        const item = createInventoryItem(
+                          loot.entityId,
+                          template,
+                          equipment.bonusAttack,
+                          equipment.bonusDefense,
+                          equipment.bonusMaxHp,
+                          equipment.value,
+                        );
+                        setTurnState((prev) => {
+                          const pa = prev.actors[prev.playerId] as PlayerActor;
+                          return {
+                            ...prev,
+                            actors: {
+                              ...prev.actors,
+                              [prev.playerId]: {
+                                ...pa,
+                                inventory: addItem(pa.inventory, item),
+                              },
+                            },
+                          };
+                        });
+                        setLootedChestIds(
+                          (prev) => new Set([...prev, loot.sourceId]),
+                        );
+                        addLogMessage(`Picked up ${template.name}.`);
+                        setChestModal(null);
+                      }}
+                    >
+                      Take
+                    </Button>
+                  )}
+                  <Button onClick={() => setChestModal(null)}>
+                    {template ? "Leave" : "Close"}
+                  </Button>
+                </div>
               </div>
-            </div>
-          </ModalPanel>
-        );
-      })()}
+            </ModalPanel>
+          );
+        })()}
     </>
   );
 }

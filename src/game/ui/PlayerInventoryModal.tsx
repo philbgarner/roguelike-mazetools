@@ -69,7 +69,7 @@ export default function PlayerInventoryModal({
                   {template?.glyph ?? "?"}
                 </span>
                 <span style={{ flex: 1, color: "#ddd" }}>
-                  {template?.name ?? item.templateId}
+                  {item.nameOverride ?? template?.name ?? item.templateId}
                   {statParts.length > 0 && (
                     <span
                       style={{
