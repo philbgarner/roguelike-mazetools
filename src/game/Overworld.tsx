@@ -75,10 +75,12 @@ import {
   addItem,
   createInventoryItem,
   equipItem,
-  unequipSlot,
-  type InventoryItem,
+  type Inventory,
+  type StatDelta,
 } from "./inventory";
 import { getItemTemplate } from "./data/itemData";
+import PlayerInventoryModal from "./ui/PlayerInventoryModal";
+import PlayerStatsPanel from "./ui/PlayerStatsPanel";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation
@@ -610,7 +612,6 @@ export default function Overworld({ screen }: OverworldProps) {
         right="0"
         zIndex={99}
       >
-        <Button>Equip.</Button>
         <Button onClick={() => setShowInventoryModal(true)}>Inv.</Button>
       </BorderPanel>
 
@@ -618,226 +619,36 @@ export default function Overworld({ screen }: OverworldProps) {
 
       {dialog}
 
-      {showInventoryModal && (
-        <ModalPanel
-          title="Inventory"
-          visible={showInventoryModal}
-          closeButton
-          onClose={() => setShowInventoryModal(false)}
-          maxHeight="60vh"
-        >
-          {player.inventory.items.length === 0 ? (
-            <div style={{ color: "#888" }}>No items in inventory.</div>
-          ) : (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.4rem",
-              }}
-            >
-              {player.inventory.items.map((item: InventoryItem) => {
-                const template = getItemTemplate(item.templateId);
-                const isEquipped =
-                  player.inventory.equipped[item.slot] === item.instanceId;
-                const statParts: string[] = [];
-                if (item.bonusAttack > 0)
-                  statParts.push(`+${item.bonusAttack} ATK`);
-                if (item.bonusDefense > 0)
-                  statParts.push(`+${item.bonusDefense} DEF`);
-                if (item.bonusMaxHp > 0)
-                  statParts.push(`+${item.bonusMaxHp} HP`);
-                return (
-                  <div
-                    key={item.instanceId}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "0.6rem",
-                      padding: "0.25rem 0.4rem",
-                      border: `1px solid ${isEquipped ? "#446" : "#333"}`,
-                      background: isEquipped ? "#12121e" : "#111",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontFamily: "monospace",
-                        color: "#ccc",
-                        minWidth: "1.2rem",
-                      }}
-                    >
-                      {template?.glyph ?? "?"}
-                    </span>
-                    <span style={{ flex: 1, color: "#ddd" }}>
-                      {template?.name ?? item.templateId}
-                      {statParts.length > 0 && (
-                        <span
-                          style={{
-                            color: "#888",
-                            marginLeft: "0.5rem",
-                            fontSize: "0.85em",
-                          }}
-                        >
-                          {statParts.join(", ")}
-                        </span>
-                      )}
-                    </span>
-                    {isEquipped && (
-                      <span style={{ color: "#88a", fontSize: "0.8em" }}>
-                        [{item.slot}]
-                      </span>
-                    )}
-                    {isEquipped ? (
-                      <Button
-                        maxWidth="6rem"
-                        onClick={() => {
-                          const { newInventory, delta } = unequipSlot(
-                            player.inventory,
-                            item.slot,
-                          );
-                          setPlayer({
-                            ...player,
-                            inventory: newInventory,
-                            attack: player.attack + delta.attack,
-                            defense: player.defense + delta.defense,
-                            maxHp: Math.max(1, player.maxHp + delta.maxHp),
-                            hp: Math.min(
-                              player.hp,
-                              Math.max(1, player.maxHp + delta.maxHp),
-                            ),
-                          });
-                        }}
-                      >
-                        Unequip
-                      </Button>
-                    ) : (
-                      <Button
-                        maxWidth="5rem"
-                        onClick={() => {
-                          const { newInventory, delta } = equipItem(
-                            player.inventory,
-                            item.instanceId,
-                          );
-                          setPlayer({
-                            ...player,
-                            inventory: newInventory,
-                            attack: player.attack + delta.attack,
-                            defense: player.defense + delta.defense,
-                            maxHp: player.maxHp + delta.maxHp,
-                            hp: Math.min(
-                              player.hp + Math.max(0, delta.maxHp),
-                              player.maxHp + delta.maxHp,
-                            ),
-                          });
-                        }}
-                      >
-                        Equip
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </ModalPanel>
-      )}
-      {showInventoryModal && (
-        <BorderPanel
-          right="10vw"
-          top="30vh"
-          width="15vw"
-          height="30vh"
-          background="rgb(25, 25, 25)"
-          zIndex={999999}
-        >
-          {(() => {
-            const inv = player.inventory;
-            const equippedItems = inv.items.filter(
-              (it) => inv.equipped[it.slot] === it.instanceId,
-            );
-            const bonusAtk = equippedItems.reduce(
-              (s, it) => s + it.bonusAttack,
-              0,
-            );
-            const bonusDef = equippedItems.reduce(
-              (s, it) => s + it.bonusDefense,
-              0,
-            );
-            const bonusHp = equippedItems.reduce(
-              (s, it) => s + it.bonusMaxHp,
-              0,
-            );
-            const baseAtk = player.attack - bonusAtk;
-            const baseDef = player.defense - bonusDef;
-            const baseHp = player.maxHp - bonusHp;
-            const row = (label: string, base: number, bonus: number) => (
-              <div
-                key={label}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: "0.5rem",
-                  padding: "0.15rem 0",
-                  borderBottom: "1px solid #333",
-                }}
-              >
-                <span style={{ color: "#aaa" }}>{label}</span>
-                <span>
-                  <span style={{ color: "#eee" }}>{base}</span>
-                  {bonus !== 0 && (
-                    <span
-                      style={{
-                        color: bonus > 0 ? "#6f6" : "#f66",
-                        marginLeft: "0.25rem",
-                      }}
-                    >
-                      ({bonus > 0 ? "+" : ""}
-                      {bonus})
-                    </span>
-                  )}
-                </span>
-              </div>
-            );
-            return (
-              <div style={{ fontSize: "0.85rem", padding: "0.25rem" }}>
-                <div
-                  style={{
-                    color: "#f0d060",
-                    fontWeight: "bold",
-                    marginBottom: "0.4rem",
-                  }}
-                >
-                  Stats
-                </div>
-                {row("HP", baseHp, bonusHp)}
-                {row("ATK", baseAtk, bonusAtk)}
-                {row("DEF", baseDef, bonusDef)}
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "0.15rem 0",
-                    borderBottom: "1px solid #333",
-                  }}
-                >
-                  <span style={{ color: "#aaa" }}>Level</span>
-                  <span style={{ color: "#eee" }}>{player.level}</span>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "0.15rem 0",
-                  }}
-                >
-                  <span style={{ color: "#aaa" }}>XP</span>
-                  <span style={{ color: "#eee" }}>{player.xp}</span>
-                </div>
-              </div>
-            );
-          })()}
-        </BorderPanel>
-      )}
+      <PlayerInventoryModal
+        visible={showInventoryModal}
+        onClose={() => setShowInventoryModal(false)}
+        inventory={player.inventory}
+        onInventoryChange={(newInventory: Inventory, delta: StatDelta) => {
+          setPlayer({
+            ...player,
+            inventory: newInventory,
+            attack: player.attack + delta.attack,
+            defense: player.defense + delta.defense,
+            maxHp: Math.max(1, player.maxHp + delta.maxHp),
+            hp: Math.min(
+              delta.maxHp < 0
+                ? player.hp
+                : player.hp + Math.max(0, delta.maxHp),
+              Math.max(1, player.maxHp + delta.maxHp),
+            ),
+          });
+        }}
+      />
+      <PlayerStatsPanel
+        visible={showInventoryModal}
+        inventory={player.inventory}
+        attack={player.attack}
+        defense={player.defense}
+        maxHp={player.maxHp}
+        hp={player.hp}
+        level={player.level}
+        xp={player.xp}
+      />
 
       {showMerchantModal &&
         npcAtPlayerCell &&

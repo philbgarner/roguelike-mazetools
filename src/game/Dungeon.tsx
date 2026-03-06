@@ -80,8 +80,10 @@ import ModalPanel from "./ui/ModalPanel";
 import Tooltip, { TooltipProps } from "./ui/Tooltip";
 import MessageLog from "./ui/MessageLog";
 import { useMessageLog } from "./ui/useMessageLog";
-import { addItem, createInventoryItem } from "./inventory";
+import { addItem, createInventoryItem, type Inventory, type StatDelta } from "./inventory";
 import { getItemTemplate } from "./data/itemData";
+import PlayerInventoryModal from "./ui/PlayerInventoryModal";
+import PlayerStatsPanel from "./ui/PlayerStatsPanel";
 import type { ResolvedLootSpawn } from "../resolve/resolveTypes";
 
 // ---------------------------------------------------------------------------
@@ -222,6 +224,9 @@ export default function Dungeon({ seed }: DungeonProps) {
   // --- Chest interaction ---
   const [lootedChestIds, setLootedChestIds] = useState<Set<number>>(() => new Set());
   const [chestModal, setChestModal] = useState<{ loot: ResolvedLootSpawn } | null>(null);
+
+  // --- Inventory / stats modal ---
+  const [showInventoryModal, setShowInventoryModal] = useState(false);
 
   // --- Tooltip ---
   const [tooltip, setTooltip] = useState<TooltipProps>({
@@ -811,6 +816,17 @@ export default function Dungeon({ seed }: DungeonProps) {
       <BorderPanel width="20rem" height="5rem" background="#000" bottom="0px">
         HP: {playerActor.hp}/{playerActor.maxHp}
       </BorderPanel>
+      <BorderPanel
+        title="Player"
+        width="22rem"
+        height="5rem"
+        background="#090909"
+        bottom="0px"
+        right="0"
+        zIndex={99}
+      >
+        <Button onClick={() => setShowInventoryModal((v) => !v)}>Inv.</Button>
+      </BorderPanel>
       <div
         onContextMenu={handleContextMenu}
         onWheel={handleWheel}
@@ -1083,6 +1099,44 @@ export default function Dungeon({ seed }: DungeonProps) {
           />
         </DungeonRenderView>
       </div>
+
+      <PlayerInventoryModal
+        visible={showInventoryModal}
+        onClose={() => setShowInventoryModal(false)}
+        inventory={playerActor.inventory}
+        onInventoryChange={(newInventory: Inventory, delta: StatDelta) => {
+          setTurnState((prev) => {
+            const pa = prev.actors[prev.playerId] as PlayerActor;
+            return {
+              ...prev,
+              actors: {
+                ...prev.actors,
+                [prev.playerId]: {
+                  ...pa,
+                  inventory: newInventory,
+                  attack: pa.attack + delta.attack,
+                  defense: pa.defense + delta.defense,
+                  maxHp: Math.max(1, pa.maxHp + delta.maxHp),
+                  hp: Math.min(
+                    delta.maxHp < 0 ? pa.hp : pa.hp + Math.max(0, delta.maxHp),
+                    Math.max(1, pa.maxHp + delta.maxHp),
+                  ),
+                },
+              },
+            };
+          });
+        }}
+      />
+      <PlayerStatsPanel
+        visible={showInventoryModal}
+        inventory={playerActor.inventory}
+        attack={playerActor.attack}
+        defense={playerActor.defense}
+        maxHp={playerActor.maxHp}
+        hp={playerActor.hp}
+        level={playerActor.level}
+        xp={playerActor.xp}
+      />
 
       {chestModal && (() => {
         const { loot } = chestModal;
