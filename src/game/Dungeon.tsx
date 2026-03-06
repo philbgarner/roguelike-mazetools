@@ -91,10 +91,7 @@ import PlayerInventoryModal from "./ui/PlayerInventoryModal";
 import PlayerStatsPanel from "./ui/PlayerStatsPanel";
 import type { ResolvedLootSpawn } from "../resolve/resolveTypes";
 import { playerLevelFromXp } from "../resolve/levelBudget";
-import {
-  generateLevelUpRewards,
-  type LevelUpReward,
-} from "./levelUpRewards";
+import { generateLevelUpRewards, type LevelUpReward } from "./levelUpRewards";
 import LevelUpModal from "./ui/LevelUpModal";
 
 // ---------------------------------------------------------------------------
@@ -271,6 +268,7 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   // --- Inventory / stats modal ---
   const [showInventoryModal, setShowInventoryModal] = useState(false);
+  const [showPlayerStatsModal, setShowPlayerStatsModal] = useState(false);
 
   // --- Tooltip ---
   const [tooltip, setTooltip] = useState<TooltipProps>({
@@ -896,7 +894,10 @@ export default function Dungeon({ seed }: DungeonProps) {
         updated = {
           ...updated,
           maxHp: updated.maxHp + reward.hpBonus,
-          hp: Math.min(updated.hp + reward.hpBonus, updated.maxHp + reward.hpBonus),
+          hp: Math.min(
+            updated.hp + reward.hpBonus,
+            updated.maxHp + reward.hpBonus,
+          ),
           attack: updated.attack + reward.attackBonus,
           defense: updated.defense + reward.defenseBonus,
         };
@@ -939,6 +940,9 @@ export default function Dungeon({ seed }: DungeonProps) {
         zIndex={99}
       >
         <Button onClick={() => setShowInventoryModal((v) => !v)}>Inv.</Button>
+        <Button onClick={() => setShowPlayerStatsModal((v) => !v)}>
+          Stats
+        </Button>
       </BorderPanel>
       <div
         onContextMenu={handleContextMenu}
@@ -1268,7 +1272,8 @@ export default function Dungeon({ seed }: DungeonProps) {
         }}
       />
       <PlayerStatsPanel
-        visible={showInventoryModal}
+        visible={showPlayerStatsModal}
+        onClose={() => setShowPlayerStatsModal(false)}
         inventory={playerActor.inventory}
         attack={playerActor.attack}
         defense={playerActor.defense}
@@ -1276,6 +1281,7 @@ export default function Dungeon({ seed }: DungeonProps) {
         hp={playerActor.hp}
         level={playerActor.level}
         xp={playerActor.xp}
+        resistances={playerActor.resistances}
       />
 
       {chestModal &&

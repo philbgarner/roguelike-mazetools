@@ -158,6 +158,7 @@ export default function Overworld({ screen }: OverworldProps) {
 
   const [showMerchantModal, setShowMerchantModal] = useState(false);
   const [showInventoryModal, setShowInventoryModal] = useState(false);
+  const [showPlayerStatsModal, setShowPlayerStatsModal] = useState(false);
 
   const { confirmPrompt, dialog } = useConfirmYesNo();
 
@@ -561,7 +562,7 @@ export default function Overworld({ screen }: OverworldProps) {
         bottom="0px"
       >
         <div>
-          Player ({playerX}, {playerY})
+          HP: {player.hp} / {player.maxHp}
         </div>
       </BorderPanel>
       <BorderPanel
@@ -615,6 +616,9 @@ export default function Overworld({ screen }: OverworldProps) {
         zIndex={99}
       >
         <Button onClick={() => setShowInventoryModal(true)}>Inv.</Button>
+        <Button onClick={() => setShowPlayerStatsModal((v) => !v)}>
+          Stats
+        </Button>
       </BorderPanel>
 
       <Tooltip {...tooltip} />
@@ -642,7 +646,8 @@ export default function Overworld({ screen }: OverworldProps) {
         }}
       />
       <PlayerStatsPanel
-        visible={showInventoryModal}
+        visible={showPlayerStatsModal}
+        onClose={() => setShowPlayerStatsModal(false)}
         inventory={player.inventory}
         attack={player.attack}
         defense={player.defense}
@@ -650,6 +655,7 @@ export default function Overworld({ screen }: OverworldProps) {
         hp={player.hp}
         level={player.level}
         xp={player.xp}
+        resistances={player.resistances}
       />
 
       {showMerchantModal &&
