@@ -3,6 +3,7 @@ import Dungeon from "./game/Dungeon";
 import Overworld from "./game/Overworld";
 import MainMenu from "./game/MainMenu";
 import Success from "./game/Success";
+import Death from "./game/Death";
 import SeedPicker from "./game/SeedPicker";
 
 function AppInner() {
@@ -14,11 +15,10 @@ function AppInner() {
       {screen === "dungeon" ? <Dungeon seed={seed} key={`dungeon-${seed}-${floor}`} /> : null}
       {screen === "main-menu" ? <MainMenu /> : null}
       {screen === "seed-picker" ? <SeedPicker /> : null}
+      {screen === "death" ? <Death /> : null}
+      {screen === "success" ? <Success /> : null}
     </>
   );
-
-  // Placeholder screens — replace with real components as needed
-  return <div style={{ color: "white", padding: 32 }}>Screen: {screen}</div>;
 }
 
 export default function App() {

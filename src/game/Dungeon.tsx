@@ -416,11 +416,13 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("death", (evt) => {
-        if (evt.actorId !== "player") {
+        if (evt.actorId === "player") {
+          goTo("death");
+        } else {
           addLogMessage("Enemy slain!");
         }
       }),
-    [subscribe, addLogMessage],
+    [subscribe, addLogMessage, goTo],
   );
 
   function buildDeps(
@@ -509,9 +511,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     if (playerActor?.kind === "player") setPlayer(playerFromActor(playerActor));
 
     if (isFinalFloor) {
-      // Return to overworld after clearing the final floor.
-      if (overworldBsp) setSeed(overworldBsp.meta.seedUsed);
-      goTo("overworld");
+      goTo("success");
     } else {
       // Advance to the next floor — changing floor causes Dungeon to remount via key.
       setFloor(floor + 1);
