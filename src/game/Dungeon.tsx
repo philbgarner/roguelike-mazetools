@@ -117,8 +117,8 @@ function buildDungeon(
     level,
     themeId,
     isFinalFloor,
-    width: 64,
-    height: 64,
+    width: 32,
+    height: 32,
     contentStrategy: "atomic",
   });
 }
@@ -149,9 +149,7 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   // Derive a unique seed per floor so each floor is a distinct dungeon.
   const floorSeed =
-    typeof seed === "number"
-      ? seed + floor * 7919
-      : `${seed}_f${floor}`;
+    typeof seed === "number" ? seed + floor * 7919 : `${seed}_f${floor}`;
 
   const result = useMemo(
     () => buildDungeon(floorSeed, level, theme, isFinalFloor),
@@ -283,8 +281,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("damage", (evt) => {
-        const modifierColor =
-          evt.modifier === "weak" ? "#ffaa44" : "#ff4444";
+        const modifierColor = evt.modifier === "weak" ? "#ffaa44" : "#ff4444";
         pushFloatingMessage(`-${evt.amount}`, evt.x, evt.y, {
           color: evt.actorId === "player" ? "#ff4444" : modifierColor,
         });
@@ -853,7 +850,8 @@ export default function Dungeon({ seed }: DungeonProps) {
       <MessageLog messages={logMessages} onMessageExpired={removeLogMessage} />
 
       <BorderPanel width="20rem" height="5rem" background="#000" bottom="0px">
-        HP: {playerActor.hp}/{playerActor.maxHp} &nbsp;|&nbsp; Floor {floor}/{totalFloors}
+        HP: {playerActor.hp}/{playerActor.maxHp} &nbsp;|&nbsp; Floor {floor}/
+        {totalFloors}
       </BorderPanel>
       <BorderPanel
         title="Player"
@@ -1043,14 +1041,23 @@ export default function Dungeon({ seed }: DungeonProps) {
                           : difficulty === "tough"
                             ? "#e06b6b"
                             : "#e0c96b";
-                      const weakStr = m.weaknesses.length > 0
-                        ? `Weak: ${m.weaknesses.join(", ")}`
-                        : null;
-                      const resistStr = m.resistances.length > 0
-                        ? `Resists: ${m.resistances.join(", ")}`
-                        : null;
+                      const weakStr =
+                        m.weaknesses.length > 0
+                          ? `Weak: ${m.weaknesses.join(", ")}`
+                          : null;
+                      const resistStr =
+                        m.resistances.length > 0
+                          ? `Resists: ${m.resistances.join(", ")}`
+                          : null;
                       return (
-                        <span key={m.id} style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }}>
+                        <span
+                          key={m.id}
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.1rem",
+                          }}
+                        >
                           <span>
                             {m.name} (HP {m.hp}/{m.maxHp}){" "}
                             <span style={{ color: diffColor }}>
@@ -1058,12 +1065,16 @@ export default function Dungeon({ seed }: DungeonProps) {
                             </span>
                           </span>
                           {weakStr && (
-                            <span style={{ color: "#ffaa44", fontSize: "0.85em" }}>
+                            <span
+                              style={{ color: "#ffaa44", fontSize: "0.85em" }}
+                            >
                               {weakStr}
                             </span>
                           )}
                           {resistStr && (
-                            <span style={{ color: "#6699cc", fontSize: "0.85em" }}>
+                            <span
+                              style={{ color: "#6699cc", fontSize: "0.85em" }}
+                            >
                               {resistStr}
                             </span>
                           )}
