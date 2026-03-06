@@ -701,6 +701,7 @@ export default function Overworld({ screen }: OverworldProps) {
         visible={showInventoryModal}
         onClose={() => setShowInventoryModal(false)}
         inventory={player.inventory}
+        playerStats={{ attack: player.attack, defense: player.defense, maxHp: player.maxHp }}
         activeBuffs={player.activeBuffs}
         onInventoryChange={(newInventory: Inventory, delta: StatDelta) => {
           setPlayer({

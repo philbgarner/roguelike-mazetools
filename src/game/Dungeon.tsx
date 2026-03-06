@@ -1336,6 +1336,7 @@ export default function Dungeon({ seed }: DungeonProps) {
         visible={showInventoryModal}
         onClose={() => setShowInventoryModal(false)}
         inventory={playerActor.inventory}
+        playerStats={{ attack: playerActor.attack, defense: playerActor.defense, maxHp: playerActor.maxHp }}
         activeBuffs={playerActor.activeBuffs}
         onInventoryChange={(newInventory: Inventory, delta: StatDelta) => {
           setTurnState((prev) => {

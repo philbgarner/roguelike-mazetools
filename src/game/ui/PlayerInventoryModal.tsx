@@ -1,3 +1,4 @@
+import { useState } from "react";
 import Button from "./Button";
 import ModalPanel from "./ModalPanel";
 import {
@@ -14,6 +15,8 @@ export interface PlayerInventoryModalProps {
   visible: boolean;
   onClose: () => void;
   inventory: Inventory;
+  /** Current player stats used to compute before/after tooltip. */
+  playerStats?: { attack: number; defense: number; maxHp: number };
   /** Called when equip/unequip happens. Receives the updated inventory and stat delta. */
   onInventoryChange: (newInventory: Inventory, delta: StatDelta) => void;
   /** Called when a consumable item is used. */
@@ -22,14 +25,79 @@ export interface PlayerInventoryModalProps {
   activeBuffs?: ActiveBuff[];
 }
 
+function StatRow({
+  label,
+  before,
+  after,
+}: {
+  label: string;
+  before: number;
+  after: number;
+}) {
+  const diff = after - before;
+  const diffColor = diff > 0 ? "#6f6" : diff < 0 ? "#f66" : "#888";
+  const diffStr = diff > 0 ? `+${diff}` : diff < 0 ? `${diff}` : "—";
+  return (
+    <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+      <span style={{ color: "#888", minWidth: "2.8rem" }}>{label}:</span>
+      <span style={{ color: "#ccc", minWidth: "1.8rem", textAlign: "right" }}>{before}</span>
+      <span style={{ color: "#555" }}>→</span>
+      <span style={{ color: diff !== 0 ? "#eee" : "#888", minWidth: "1.8rem", textAlign: "right" }}>{after}</span>
+      <span style={{ color: diffColor, minWidth: "2.4rem", textAlign: "right" }}>({diffStr})</span>
+    </div>
+  );
+}
+
+function EquipTooltip({
+  delta,
+  playerStats,
+}: {
+  delta: StatDelta;
+  playerStats: { attack: number; defense: number; maxHp: number };
+}) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        right: "calc(100% + 0.5rem)",
+        top: "50%",
+        transform: "translateY(-50%)",
+        background: "#1a1a2e",
+        border: "1px solid #446",
+        padding: "0.5rem 0.7rem",
+        borderRadius: "4px",
+        fontSize: "0.8em",
+        fontFamily: "monospace",
+        whiteSpace: "nowrap",
+        zIndex: 100,
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.2rem",
+        pointerEvents: "none",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.6)",
+      }}
+    >
+      <div style={{ color: "#aaa", marginBottom: "0.2rem", fontSize: "0.9em" }}>
+        Before → After
+      </div>
+      <StatRow label="ATK" before={playerStats.attack} after={playerStats.attack + delta.attack} />
+      <StatRow label="DEF" before={playerStats.defense} after={playerStats.defense + delta.defense} />
+      <StatRow label="MaxHP" before={playerStats.maxHp} after={playerStats.maxHp + delta.maxHp} />
+    </div>
+  );
+}
+
 export default function PlayerInventoryModal({
   visible,
   onClose,
   inventory,
+  playerStats,
   onInventoryChange,
   onUseConsumable,
   activeBuffs,
 }: PlayerInventoryModalProps) {
+  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
+
   return (
     <ModalPanel
       title="Inventory"
@@ -70,6 +138,18 @@ export default function PlayerInventoryModal({
               if (buffParts.length > 0)
                 statParts.push(`${buffParts.join(", ")} (${item.buffDuration} steps)`);
             }
+
+            // Compute delta for tooltip preview
+            const isHovered = hoveredItemId === item.instanceId;
+            let previewDelta: StatDelta | null = null;
+            if (isHovered && playerStats && !isConsumable) {
+              if (isEquipped) {
+                previewDelta = unequipSlot(inventory, item.slot!).delta;
+              } else {
+                previewDelta = equipItem(inventory, item.instanceId).delta;
+              }
+            }
+
             return (
               <div
                 key={`${item.instanceId}_${index}`}
@@ -118,31 +198,49 @@ export default function PlayerInventoryModal({
                     Use
                   </Button>
                 ) : isEquipped ? (
-                  <Button
-                    maxWidth="6rem"
-                    onClick={() => {
-                      const { newInventory, delta } = unequipSlot(
-                        inventory,
-                        item.slot!,
-                      );
-                      onInventoryChange(newInventory, delta);
-                    }}
+                  <div
+                    style={{ position: "relative" }}
+                    onMouseEnter={() => setHoveredItemId(item.instanceId)}
+                    onMouseLeave={() => setHoveredItemId(null)}
                   >
-                    Unequip
-                  </Button>
+                    {isHovered && previewDelta && playerStats && (
+                      <EquipTooltip delta={previewDelta} playerStats={playerStats} />
+                    )}
+                    <Button
+                      maxWidth="6rem"
+                      onClick={() => {
+                        const { newInventory, delta } = unequipSlot(
+                          inventory,
+                          item.slot!,
+                        );
+                        onInventoryChange(newInventory, delta);
+                      }}
+                    >
+                      Unequip
+                    </Button>
+                  </div>
                 ) : (
-                  <Button
-                    maxWidth="5rem"
-                    onClick={() => {
-                      const { newInventory, delta } = equipItem(
-                        inventory,
-                        item.instanceId,
-                      );
-                      onInventoryChange(newInventory, delta);
-                    }}
+                  <div
+                    style={{ position: "relative" }}
+                    onMouseEnter={() => setHoveredItemId(item.instanceId)}
+                    onMouseLeave={() => setHoveredItemId(null)}
                   >
-                    Equip
-                  </Button>
+                    {isHovered && previewDelta && playerStats && (
+                      <EquipTooltip delta={previewDelta} playerStats={playerStats} />
+                    )}
+                    <Button
+                      maxWidth="5rem"
+                      onClick={() => {
+                        const { newInventory, delta } = equipItem(
+                          inventory,
+                          item.instanceId,
+                        );
+                        onInventoryChange(newInventory, delta);
+                      }}
+                    >
+                      Equip
+                    </Button>
+                  </div>
                 )}
               </div>
             );
