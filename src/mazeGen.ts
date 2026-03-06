@@ -1791,6 +1791,9 @@ export type ContentOptions = {
 
   // Milestone 6, Phase 4 — Exclusion rules (pre-generation pattern filtering)
   excludePatterns?: string[];
+
+  /** When true, always place a chest in the farthest (exit) room even if no side-room chest landed there. */
+  guaranteeChestInFarthestRoom?: boolean;
 };
 
 export type ContentOutputs = {
@@ -2293,6 +2296,8 @@ export function generateDungeonContent(
 
     // Milestone 6, Phase 4 — Exclusion rules
     excludePatterns: opts?.excludePatterns ?? [],
+
+    guaranteeChestInFarthestRoom: opts?.guaranteeChestInFarthestRoom ?? false,
   };
   console.log(
     "opts.level",
@@ -2477,6 +2482,36 @@ export function generateDungeonContent(
 
     chests.push({ id, x: p.x, y: p.y, roomId, tier });
     chestPlaced++;
+  }
+
+  // -----------------------------
+  // Guaranteed chest in farthest (exit) room
+  // -----------------------------
+  if (options.guaranteeChestInFarthestRoom) {
+    const alreadyHasChest = chests.some((c) => c.roomId === farthestRoomId);
+    if (!alreadyHasChest) {
+      const farthestRoom = rooms[farthestRoomId - 1];
+      if (farthestRoom) {
+        const p = sampleRoomFloorPoint(
+          dungeon,
+          farthestRoom,
+          rng,
+          Math.max(1, options.minClearanceToWall),
+        );
+        if (p) {
+          const idx = keyXY(W, p.x, p.y);
+          if (featureType[idx] === 0) {
+            const id = clamp255(nextId++);
+            const d = depthForRoom(farthestRoomId);
+            const tier = clamp255(tierForDepth(d));
+            featureType[idx] = 2;
+            featureId[idx] = id;
+            lootTier[idx] = tier;
+            chests.push({ id, x: p.x, y: p.y, roomId: farthestRoomId, tier });
+          }
+        }
+      }
+    }
   }
 
   // -----------------------------

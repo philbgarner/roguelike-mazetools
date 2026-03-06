@@ -129,6 +129,7 @@ export default function Overworld({ screen }: OverworldProps) {
     goTo,
     setSeed,
     setLevel,
+    setFloor,
     setTheme,
     overworldBsp,
     setOverworld,
@@ -584,6 +585,7 @@ export default function Overworld({ screen }: OverworldProps) {
                 addLogMessage(`Entering ${contentAtPlayerCell.theme}...`);
                 setSeed(contentAtPlayerCell.seed);
                 setLevel(contentAtPlayerCell.level);
+                setFloor(1);
                 setTheme(contentAtPlayerCell.theme);
                 goTo("dungeon");
               }

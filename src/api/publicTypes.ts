@@ -77,6 +77,12 @@ export type GenerateDungeonRequest = {
   /** "atomic" skips puzzle patterns; "patterns" (default) enables them. */
   contentStrategy?: ContentStrategy;
 
+  /**
+   * True when this is the final floor of a multi-floor dungeon.
+   * Controls boss spawning (only on final floor) and loot scaling.
+   */
+  isFinalFloor?: boolean;
+
   // -- Authorial controls (optional — null/undefined = skip validation) -----
   // Provide either an inline value or a preset ID. Inline takes precedence.
 

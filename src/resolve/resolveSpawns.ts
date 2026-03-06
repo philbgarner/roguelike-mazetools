@@ -242,6 +242,8 @@ export type ResolveSpawnsInput = {
   content: ContentOutputs;
   seed: number;
   level: number;
+  /** True when this is the final floor of a multi-floor dungeon. Boss only spawns on final floor. */
+  isFinalFloor?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -256,7 +258,7 @@ export type ResolveSpawnsInput = {
  * - Never throws.
  */
 export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
-  const { theme, content, seed, level } = input;
+  const { theme, content, seed, level, isFinalFloor = true } = input;
   const width = content.width;
   const tables = theme.spawnTables;
 
@@ -323,13 +325,16 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
 
   // --- Loot (chests) ------------------------------------------------------
 
+  const farthestRoomIdForLoot = content.meta.farthestRoomId;
   const lootItems = assignStableIds(content.meta.chests, "loot", width);
   const loot: ResolvedLootSpawn[] = lootItems.map((c) => {
     const entitySeed = hashSeed(seed, theme.id, "loot", c.stableId, level);
     const spawnId = pickWeighted(tables.loot, entitySeed) ?? "";
-    const equipBudget = (c.tier * 2 + level) * 5;
+    // Chest in the farthest (exit) room gets loot scaled to level+1
+    const effectiveLevel = c.roomId === farthestRoomIdForLoot ? level + 1 : level;
+    const equipBudget = (c.tier * 2 + effectiveLevel) * 5;
     const equipSeed = hashSeed(seed, theme.id, "chest-equip", c.stableId, level);
-    const equipment = generateEquipment(equipBudget, equipSeed, level);
+    const equipment = generateEquipment(equipBudget, equipSeed, effectiveLevel);
     return {
       entityId: c.entityId,
       sourceId: c.id,
@@ -373,7 +378,7 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
   const bosses: ResolvedBossSpawn[] = [];
   const farthestRoomId = content.meta.farthestRoomId;
 
-  if (tables.bosses.length > 0) {
+  if (isFinalFloor && tables.bosses.length > 0) {
     // Find and remove any regular monster already in the farthest room
     const bossMonsterIdx = monsters.findIndex((m) => m.roomId === farthestRoomId);
     let bossPos: { x: number; y: number; roomId: number } | null = null;

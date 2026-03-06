@@ -6,12 +6,12 @@ import Success from "./game/Success";
 import SeedPicker from "./game/SeedPicker";
 
 function AppInner() {
-  const { screen, seed } = useGame();
+  const { screen, seed, floor } = useGame();
   console.log("screen", screen);
   return (
     <>
       <Overworld screen={screen} />
-      {screen === "dungeon" ? <Dungeon seed={seed} /> : null}
+      {screen === "dungeon" ? <Dungeon seed={seed} key={`dungeon-${seed}-${floor}`} /> : null}
       {screen === "main-menu" ? <MainMenu /> : null}
       {screen === "seed-picker" ? <SeedPicker /> : null}
     </>

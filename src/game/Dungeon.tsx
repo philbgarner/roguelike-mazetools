@@ -106,11 +106,17 @@ const MAP_ZOOM_MAX = 32;
 
 const TOOLTIP_DELAY = 600;
 
-function buildDungeon(seed: string | number, level: number, themeId: string) {
+function buildDungeon(
+  seed: string | number,
+  level: number,
+  themeId: string,
+  isFinalFloor = true,
+) {
   return generateDungeon({
     seed,
     level,
     themeId,
+    isFinalFloor,
     width: 64,
     height: 64,
     contentStrategy: "atomic",
@@ -131,12 +137,26 @@ export default function Dungeon({ seed }: DungeonProps) {
     overworldBsp,
     setSeed,
     level,
-    setLevel,
+    floor,
+    setFloor,
     theme,
     player,
     setPlayer,
   } = useGame();
-  const result = useMemo(() => buildDungeon(seed, level, theme), []);
+
+  const totalFloors = level + 1;
+  const isFinalFloor = floor === totalFloors;
+
+  // Derive a unique seed per floor so each floor is a distinct dungeon.
+  const floorSeed =
+    typeof seed === "number"
+      ? seed + floor * 7919
+      : `${seed}_f${floor}`;
+
+  const result = useMemo(
+    () => buildDungeon(floorSeed, level, theme, isFinalFloor),
+    [],
+  );
   const dungeon = result.bsp;
   const content = result.content;
   const renderTheme = useMemo(
@@ -400,16 +420,18 @@ export default function Dungeon({ seed }: DungeonProps) {
   }, [dungeon, content]);
 
   useEffect(() => {
-    if (
-      overworldBsp &&
-      exitCell &&
-      playerX === exitCell.x &&
-      playerY === exitCell.y
-    ) {
-      if (playerActor?.kind === "player")
-        setPlayer(playerFromActor(playerActor));
-      setSeed(overworldBsp?.meta.seedUsed);
+    if (!exitCell) return;
+    if (playerX !== exitCell.x || playerY !== exitCell.y) return;
+
+    if (playerActor?.kind === "player") setPlayer(playerFromActor(playerActor));
+
+    if (isFinalFloor) {
+      // Return to overworld after clearing the final floor.
+      if (overworldBsp) setSeed(overworldBsp.meta.seedUsed);
       goTo("overworld");
+    } else {
+      // Advance to the next floor — changing floor causes Dungeon to remount via key.
+      setFloor(floor + 1);
     }
   }, [playerX, playerY, exitCell]);
 
@@ -825,7 +847,7 @@ export default function Dungeon({ seed }: DungeonProps) {
       <MessageLog messages={logMessages} onMessageExpired={removeLogMessage} />
 
       <BorderPanel width="20rem" height="5rem" background="#000" bottom="0px">
-        HP: {playerActor.hp}/{playerActor.maxHp}
+        HP: {playerActor.hp}/{playerActor.maxHp} &nbsp;|&nbsp; Floor {floor}/{totalFloors}
       </BorderPanel>
       <BorderPanel
         title="Player"

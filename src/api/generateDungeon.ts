@@ -37,6 +37,7 @@ export function generateDungeon(
     bsp: bspOverrides,
     pattern: patternOverrides,
     contentStrategy = "patterns",
+    isFinalFloor = true,
     difficultyBandId,
     difficultyBand = null,
     budgetId,
@@ -75,6 +76,7 @@ export function generateDungeon(
   const contentOpts = {
     seed,
     level,
+    guaranteeChestInFarthestRoom: true,
 
     includeLeverHiddenPocket: isAtomic ? false : p.includeLeverHiddenPocket,
     leverHiddenPocketSize: p.leverHiddenPocketSize,
@@ -151,6 +153,7 @@ export function generateDungeon(
       content,
       seed: seedNum,
       level,
+      isFinalFloor,
     });
   }
 

@@ -17,6 +17,9 @@ interface GameState {
   seed: string | number;
   level: number;
   setLevel: (newLevel: number) => void;
+  /** Current floor within the dungeon (1-indexed). Reset to 1 on dungeon entry. */
+  floor: number;
+  setFloor: (floor: number) => void;
   /** Portal theme id (e.g. "cave", "ruins", "crypt", "temple", "lair"). */
   theme: string;
   setTheme: (theme: string) => void;
@@ -34,6 +37,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [player, setPlayer] = useState<Player>(DEFAULT_PLAYER);
   const [seed, setSeed] = useState<string | number>("test");
   const [level, setLevel] = useState<number>(1);
+  const [floor, setFloor] = useState<number>(1);
   const [theme, setTheme] = useState<string>("cave");
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
     null,
@@ -50,6 +54,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         seed,
         level,
         setLevel: (newLevel: number) => setLevel(newLevel),
+        floor,
+        setFloor: (newFloor: number) => setFloor(newFloor),
         theme,
         setTheme: (newTheme: string) => setTheme(newTheme),
         setSeed: (newSeed: string | number) => setSeed(newSeed),
