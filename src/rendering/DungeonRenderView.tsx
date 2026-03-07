@@ -244,6 +244,12 @@ type Props = {
   startFullyExplored?: "no" | "yes" | "pathways-only";
 
   /**
+   * Cells to permanently mark as explored (radius 2 Chebyshev) regardless of player position.
+   * Used to reveal scout-reported secret locations on the overworld map.
+   */
+  preRevealedCells?: Array<{ x: number; y: number }>;
+
+  /**
    * Extra React Three Fiber elements rendered inside the Canvas after the
    * main scene (e.g. floating damage numbers via @react-three/drei <Html>).
    */
@@ -898,6 +904,20 @@ function DungeonRenderScene(props: Props) {
         },
       },
     );
+    // Mark pre-revealed cells (radius 2 Chebyshev) as explored.
+    if (props.preRevealedCells) {
+      for (const cell of props.preRevealedCells) {
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = cell.x + dx;
+            const ny = cell.y + dy;
+            if (nx >= 0 && ny >= 0 && nx < W && ny < H) {
+              vr.data[(ny * W + nx) * 4 + 1] = 255; // G = explored
+            }
+          }
+        }
+      }
+    }
     vr.tex.needsUpdate = true;
     mat.uniforms.uVisExplored.value = vr.tex;
     // Keep wrapper tooltip data in sync
@@ -912,6 +932,7 @@ function DungeonRenderScene(props: Props) {
     props.bsp,
     props.content,
     props.doorStates,
+    props.preRevealedCells,
   ]);
 
   // M8: update path mask uniform when prop changes

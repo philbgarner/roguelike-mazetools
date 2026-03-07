@@ -16,78 +16,78 @@ import type { DungeonTheme } from "./themeTypes";
 
 const CAVE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "cave_bat",     weight: 4 },
-    { value: "spider",       weight: 3 },
-    { value: "rat",          weight: 3 },
+    { value: "cave_bat", weight: 4 },
+    { value: "spider", weight: 3 },
+    { value: "rat", weight: 3 },
     { value: "giant_spider", weight: 2 },
   ],
   loot: [
-    { value: "ore_pouch",     weight: 4 },
+    { value: "ore_pouch", weight: 4 },
     { value: "crystal_shard", weight: 2 },
-    { value: "cave_pearl",    weight: 1 },
+    { value: "cave_pearl", weight: 1 },
   ],
   props: [
-    { value: "stalactite",              weight: 3 },
-    { value: "bioluminescent_fungus",   weight: 3 },
-    { value: "crude_torch",             weight: 2 },
+    { value: "stalactite", weight: 3 },
+    { value: "bioluminescent_fungus", weight: 3 },
+    { value: "crude_torch", weight: 2 },
   ],
   npcs: [
     { value: "lost_prospector", weight: 3 },
-    { value: "cave_hermit",     weight: 2 },
+    { value: "cave_hermit", weight: 2 },
   ],
   bosses: [
-    { value: "cave_troll",  weight: 3 },
-    { value: "nest_mother", weight: 2 },
+    { value: "cave_troll", weight: 3 },
+    { value: "cave_bear", weight: 2 },
   ],
 };
 
 const RUINS_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
     { value: "scavenging_dog", weight: 4 },
-    { value: "tomb_rat",       weight: 3 },
-    { value: "venerator",      weight: 3 },
+    { value: "tomb_rat", weight: 3 },
+    { value: "venerator", weight: 3 },
     { value: "stone_sentinel", weight: 2 },
   ],
   loot: [
-    { value: "clay_tablet",   weight: 4 },
+    { value: "clay_tablet", weight: 4 },
     { value: "corroded_coin", weight: 3 },
-    { value: "carved_idol",   weight: 1 },
+    { value: "carved_idol", weight: 1 },
   ],
   props: [
     { value: "crumbled_column", weight: 3 },
-    { value: "ancient_frieze",  weight: 2 },
-    { value: "worn_mosaic",     weight: 2 },
+    { value: "ancient_frieze", weight: 2 },
+    { value: "worn_mosaic", weight: 2 },
   ],
   npcs: [
     { value: "wandering_antiquarian", weight: 3 },
-    { value: "desperate_scavenger",   weight: 2 },
+    { value: "desperate_scavenger", weight: 2 },
   ],
   bosses: [
-    { value: "ruined_golem",   weight: 2 },
-    { value: "ruin_guardian",  weight: 2 },
+    { value: "ruined_golem", weight: 2 },
+    { value: "ruin_guardian", weight: 2 },
   ],
 };
 
 const CRYPT_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "zombie",   weight: 4 },
+    { value: "zombie", weight: 4 },
     { value: "skeleton", weight: 3 },
-    { value: "shade",    weight: 2 },
-    { value: "wight",    weight: 2 },
+    { value: "shade", weight: 2 },
+    { value: "wight", weight: 2 },
   ],
   loot: [
-    { value: "burial_token",  weight: 4 },
-    { value: "grave_goods",   weight: 2 },
+    { value: "burial_token", weight: 4 },
+    { value: "grave_goods", weight: 2 },
     { value: "funerary_mask", weight: 1 },
   ],
   props: [
     { value: "sarcophagus", weight: 2 },
-    { value: "candle_rack",  weight: 3 },
-    { value: "headstone",    weight: 3 },
+    { value: "candle_rack", weight: 3 },
+    { value: "headstone", weight: 3 },
   ],
   npcs: [
-    { value: "spirit_guide",  weight: 3 },
-    { value: "cursed_noble",  weight: 2 },
+    { value: "spirit_guide", weight: 3 },
+    { value: "cursed_noble", weight: 2 },
   ],
   bosses: [
     { value: "crypt_keeper", weight: 2 },
@@ -97,55 +97,55 @@ const CRYPT_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
 
 const TEMPLE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "temple_zealot",   weight: 4 },
-    { value: "altar_cleric",    weight: 3 },
-    { value: "divine_construct",weight: 2 },
-    { value: "stone_idol",      weight: 2 },
+    { value: "temple_zealot", weight: 4 },
+    { value: "altar_cleric", weight: 3 },
+    { value: "divine_construct", weight: 2 },
+    { value: "stone_idol", weight: 2 },
   ],
   loot: [
     { value: "ritual_vessel", weight: 4 },
-    { value: "sacred_text",   weight: 2 },
-    { value: "blessed_icon",  weight: 1 },
+    { value: "sacred_text", weight: 2 },
+    { value: "blessed_icon", weight: 1 },
   ],
   props: [
-    { value: "ritual_altar",  weight: 2 },
-    { value: "brazier",       weight: 3 },
+    { value: "ritual_altar", weight: 2 },
+    { value: "brazier", weight: 3 },
     { value: "prayer_column", weight: 3 },
   ],
   npcs: [
-    { value: "penitent_monk",  weight: 3 },
+    { value: "penitent_monk", weight: 3 },
     { value: "exiled_devotee", weight: 2 },
   ],
   bosses: [
     { value: "high_oracle", weight: 2 },
-    { value: "the_chosen",  weight: 2 },
+    { value: "the_chosen", weight: 2 },
   ],
 };
 
 const LAIR_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
     { value: "goblin_skirmisher", weight: 4 },
-    { value: "pit_fiend",         weight: 3 },
-    { value: "ogre_brute",        weight: 2 },
-    { value: "abomination",   weight: 2 },
+    { value: "pit_fiend", weight: 3 },
+    { value: "ogre_brute", weight: 2 },
+    { value: "abomination", weight: 2 },
   ],
   loot: [
-    { value: "war_trophy",        weight: 4 },
-    { value: "infernal_gem",      weight: 2 },
+    { value: "war_trophy", weight: 4 },
+    { value: "infernal_gem", weight: 2 },
     { value: "champion_standard", weight: 1 },
   ],
   props: [
-    { value: "bone_pile",    weight: 3 },
-    { value: "kill_trophy",  weight: 3 },
-    { value: "brutal_throne",weight: 1 },
+    { value: "bone_pile", weight: 3 },
+    { value: "kill_trophy", weight: 3 },
+    { value: "brutal_throne", weight: 1 },
   ],
   npcs: [
     { value: "enslaved_prisoner", weight: 3 },
-    { value: "broken_warrior",    weight: 2 },
+    { value: "broken_warrior", weight: 2 },
   ],
   bosses: [
     { value: "warlord_chief", weight: 2 },
-    { value: "the_devourer",  weight: 1 },
+    { value: "the_devourer", weight: 1 },
   ],
 };
 
@@ -177,10 +177,10 @@ export const THEME_CAVE: DungeonTheme = {
   },
 
   roomThemes: [
-    { id: "mushroom_grove",  label: "Mushroom Grove"  },
+    { id: "mushroom_grove", label: "Mushroom Grove" },
     { id: "flooded_passage", label: "Flooded Passage" },
-    { id: "crystal_pocket",  label: "Crystal Pocket"  },
-    { id: "spider_den",      label: "Spider Den"      },
+    { id: "crystal_pocket", label: "Crystal Pocket" },
+    { id: "spider_den", label: "Spider Den" },
   ],
 
   spawnTables: CAVE_SPAWN_TABLES,
@@ -214,10 +214,10 @@ export const THEME_RUINS: DungeonTheme = {
   },
 
   roomThemes: [
-    { id: "collapsed_hall",  label: "Collapsed Hall"  },
+    { id: "collapsed_hall", label: "Collapsed Hall" },
     { id: "overgrown_court", label: "Overgrown Court" },
-    { id: "flooded_vault",   label: "Flooded Vault"   },
-    { id: "tomb_antechamber",label: "Tomb Antechamber"},
+    { id: "flooded_vault", label: "Flooded Vault" },
+    { id: "tomb_antechamber", label: "Tomb Antechamber" },
   ],
 
   spawnTables: RUINS_SPAWN_TABLES,
@@ -251,9 +251,9 @@ export const THEME_CRYPT: DungeonTheme = {
   },
 
   roomThemes: [
-    { id: "burial_chamber",   label: "Burial Chamber"   },
-    { id: "ossuary",          label: "Ossuary"          },
-    { id: "mausoleum",        label: "Mausoleum"        },
+    { id: "burial_chamber", label: "Burial Chamber" },
+    { id: "ossuary", label: "Ossuary" },
+    { id: "mausoleum", label: "Mausoleum" },
     { id: "ceremonial_vault", label: "Ceremonial Vault" },
   ],
 
@@ -288,9 +288,9 @@ export const THEME_TEMPLE: DungeonTheme = {
   },
 
   roomThemes: [
-    { id: "offering_hall",   label: "Offering Hall"   },
-    { id: "inner_sanctum",   label: "Inner Sanctum"   },
-    { id: "ritual_chamber",  label: "Ritual Chamber"  },
+    { id: "offering_hall", label: "Offering Hall" },
+    { id: "inner_sanctum", label: "Inner Sanctum" },
+    { id: "ritual_chamber", label: "Ritual Chamber" },
     { id: "priests_quarter", label: "Priest's Quarter" },
   ],
 
@@ -325,9 +325,9 @@ export const THEME_LAIR: DungeonTheme = {
   },
 
   roomThemes: [
-    { id: "feasting_hall",  label: "Feasting Hall"  },
-    { id: "war_camp",       label: "War Camp"       },
-    { id: "trophy_room",    label: "Trophy Room"    },
+    { id: "feasting_hall", label: "Feasting Hall" },
+    { id: "war_camp", label: "War Camp" },
+    { id: "trophy_room", label: "Trophy Room" },
     { id: "chieftain_hall", label: "Chieftain Hall" },
   ],
 

@@ -189,6 +189,13 @@ export default function Overworld({ screen }: OverworldProps) {
     usedSecrets,
   ]);
 
+  // Positions of revealed (but not yet visited) secrets for fog-of-war pre-reveal.
+  const revealedSecretCells = useMemo(() => {
+    return content.meta.secretLocations
+      .filter((s) => revealedSecrets.has(s.id))
+      .map((s) => ({ x: s.x, y: s.y }));
+  }, [content.meta.secretLocations, revealedSecrets]);
+
   // --- World effects clock ---
   const worldEffectsRef = useRef(createWorldEffectsState());
 
@@ -1436,6 +1443,7 @@ export default function Overworld({ screen }: OverworldProps) {
             npcCharTex={npcCharTex}
             completedPortalIndices={greyedOutIndices}
             _visDataRef={visDataRef}
+            preRevealedCells={revealedSecretCells}
             shaderVariant="forest"
           >
             <FocusLerper
