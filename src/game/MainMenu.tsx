@@ -6,6 +6,7 @@ import BorderPanel from "./ui/BorderPanel";
 import CharacterPicker from "./ui/CharacterPicker";
 import styles from "./styles/MainMenu.module.css";
 import DungeonRenderView from "../rendering/DungeonRenderView";
+import { publicUrl } from "../utils/publicUrl";
 import { FocusLerper } from "./FocusLerper";
 import {
   generateForest,
@@ -48,8 +49,8 @@ const MENU_ITEMS: { label: string; action: "start" | "settings" }[] = [
 
 const EMPTY_RUNTIME = {} as any;
 const BG_SEED = "mainmenu_bg";
-const NPC_GLYPH_TILE = 64;
-const TICK_INTERVAL = 120;
+const NPC_GLYPH_TILE = 2;
+const TICK_INTERVAL = 300;
 
 function buildForest(seed: string) {
   const bsp = generateForest({ seed, width: 64, height: 64 });
@@ -178,8 +179,8 @@ function ForestBackground() {
         focusX={focusX}
         focusY={focusY}
         onCellFocus={() => {}}
-        playerX={spawn.x}
-        playerY={spawn.y}
+        playerX={focusX}
+        playerY={focusY}
         playerTile={0}
         floorTile={CP437_TILES.floor}
         wallTile={5}
@@ -197,7 +198,7 @@ function ForestBackground() {
         hiddenPassageTile={CP437_TILES.hiddenPassage}
         hazardDefaultTile={CP437_TILES.hazard}
         exitTile={CP437_TILES.exit}
-        atlasUrl={"/textures/codepage437.png"}
+        atlasUrl={publicUrl("/textures/codepage437.png")}
         atlasCols={32}
         atlasRows={8}
         hazardTilesByType={{

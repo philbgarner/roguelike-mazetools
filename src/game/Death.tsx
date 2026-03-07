@@ -3,8 +3,9 @@ import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import { Center, Text3D, useFont } from "@react-three/drei";
 import { useGame, type GameScreen } from "./GameProvider";
+import { publicUrl } from "../utils/publicUrl";
 
-const FONT_URL = "/fonts/dosfont.json";
+const FONT_URL = publicUrl("/fonts/dosfont.json");
 
 const MENU_ITEMS: { label: string; target: GameScreen }[] = [
   { label: "Main Menu", target: "main-menu" },

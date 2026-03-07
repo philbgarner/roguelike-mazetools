@@ -741,7 +741,7 @@ export default function CharacterPicker() {
           {chosenReward ? (
             <Button onClick={handleBeginAdventure} background="#1a3a1a">
               <span style={{ color: "#aaffaa", fontSize: "0.9em" }}>
-                Begin Adventure
+                Generate World
               </span>
             </Button>
           ) : (

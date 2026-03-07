@@ -16,6 +16,7 @@ import * as THREE from "three";
 import type { BspDungeonOutputs, ContentOutputs } from "../mazeGen";
 import { imageDataToPngDataUrl } from "../mazeGen";
 import DungeonRenderView from "../rendering/DungeonRenderView";
+import { publicUrl } from "../utils/publicUrl";
 import type { DungeonRuntimeState } from "../dungeonState";
 import { computeStartCell } from "./computeStartCell";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
@@ -1557,7 +1558,7 @@ export function InspectionShell(props: InspectionShellProps) {
               hiddenPassageTile={CP437_TILES.hiddenPassage}
               hazardDefaultTile={CP437_TILES.hazard}
               exitTile={CP437_TILES.exit}
-              atlasUrl={"/textures/codepage437.png"}
+              atlasUrl={publicUrl("/textures/codepage437.png")}
               atlasCols={32}
               atlasRows={8}
               hazardTilesByType={{

@@ -4,6 +4,7 @@ import hotkeys from "hotkeys-js";
 import * as THREE from "three";
 
 import DungeonRenderView from "../rendering/DungeonRenderView";
+import { publicUrl } from "../utils/publicUrl";
 
 import { aStar8 } from "../pathfinding/aStar8";
 import { GameScreen, useGame } from "./GameProvider";
@@ -1010,7 +1011,7 @@ export default function Overworld({ screen }: OverworldProps) {
             hiddenPassageTile={CP437_TILES.hiddenPassage}
             hazardDefaultTile={CP437_TILES.hazard}
             exitTile={CP437_TILES.exit}
-            atlasUrl={"/textures/codepage437.png"}
+            atlasUrl={publicUrl("/textures/codepage437.png")}
             atlasCols={32}
             atlasRows={8}
             hazardTilesByType={{

@@ -16,8 +16,9 @@ import BorderPanel from "./ui/BorderPanel";
 import Button from "./ui/Button";
 import Input from "./ui/Input";
 import { FocusLerper } from "./FocusLerper";
+import { publicUrl } from "../utils/publicUrl";
 
-const FONT_URL = "/fonts/dosfont.json";
+const FONT_URL = publicUrl("/fonts/dosfont.json");
 const MAP_ZOOM_DEFAULT = 20;
 const MAP_ZOOM_MIN = 4;
 const MAP_ZOOM_MAX = 32;
@@ -315,7 +316,7 @@ export default function SeedPicker() {
           zoom={mapZoom}
           startFullyExplored="yes"
           shaderVariant="forest"
-          atlasUrl="/textures/codepage437.png"
+          atlasUrl={publicUrl("/textures/codepage437.png")}
           atlasCols={32}
           atlasRows={8}
           floorTile={CP437_TILES.floor}

@@ -3,6 +3,7 @@ import hotkeys from "hotkeys-js";
 import * as THREE from "three";
 
 import DungeonRenderView from "../rendering/DungeonRenderView";
+import { publicUrl } from "../utils/publicUrl";
 
 import { isTileWalkable } from "../walkability";
 import { aStar8 } from "../pathfinding/aStar8";
@@ -287,6 +288,7 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   function handleUseConsumableInDungeon(item: InventoryItem) {
     setTurnState((prev) => {
+      pendingEventsRef.current = [];
       if (!prev.awaitingPlayerInput) return prev;
       const pa = prev.actors[prev.playerId] as PlayerActor | undefined;
       if (!pa || pa.kind !== "player") return prev;
@@ -822,6 +824,7 @@ export default function Dungeon({ seed }: DungeonProps) {
           runtimeRef.current = rt2;
           setRuntime(rt2);
           setTurnState((prev) => {
+            pendingEventsRef.current = [];
             if (!prev.awaitingPlayerInput) return prev;
             const deps = buildDeps(dungeon, content, rt2, prev.actors);
             let next = commitPlayerAction(prev, deps, action);
@@ -834,6 +837,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     }
 
     setTurnState((prev) => {
+      pendingEventsRef.current = [];
       if (!prev.awaitingPlayerInput) return prev;
       const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
       let next = commitPlayerAction(prev, deps, action);
@@ -851,6 +855,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   function tryCommitWait() {
     cancelAutoWalkNow();
     setTurnState((prev) => {
+      pendingEventsRef.current = [];
       if (!prev.awaitingPlayerInput) return prev;
       const deps = buildDeps(dungeon, content, runtimeRef.current, prev.actors);
       return commitPlayerAction(prev, deps, { kind: "wait" });
@@ -1244,7 +1249,7 @@ export default function Dungeon({ seed }: DungeonProps) {
           hiddenPassageTile={CP437_TILES.hiddenPassage}
           hazardDefaultTile={CP437_TILES.hazard}
           exitTile={CP437_TILES.exit}
-          atlasUrl={"/textures/codepage437.png"}
+          atlasUrl={publicUrl("/textures/codepage437.png")}
           atlasCols={32}
           atlasRows={8}
           hazardTilesByType={{
