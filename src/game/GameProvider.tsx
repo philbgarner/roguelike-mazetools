@@ -13,6 +13,7 @@ import { Howl } from "howler";
 import { BspDungeonOutputs, ForestContentOutputs } from "../mazeGen";
 import { Player, DEFAULT_PLAYER } from "./player";
 import { MUSIC_TRACKS } from "./musicTracks";
+import { SFX_TRACKS } from "./sfxTracks";
 import { publicUrl } from "../utils/publicUrl";
 
 export interface RunStats {
@@ -47,7 +48,15 @@ interface MusicState {
   setMusicVolume: (vol: number) => void;
 }
 
-interface GameState extends MusicState {
+interface SfxState {
+  /** Play a one-shot SFX by key. Multiple concurrent calls are supported. */
+  playSfx: (key: string) => void;
+  /** Master SFX volume [0, 1]. */
+  sfxVolume: number;
+  setSfxVolume: (vol: number) => void;
+}
+
+interface GameState extends MusicState, SfxState {
   screen: GameScreen;
   player: Player;
   setPlayer: Dispatch<SetStateAction<Player>>;
@@ -169,6 +178,53 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }, []);
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── SFX ──────────────────────────────────────────────────────────────────
+  // For series entries, sfxHowlsRef stores an array of Howls; for singles, a 1-element array.
+  const sfxHowlsRef = useRef<Record<string, Howl[]>>({});
+  // Round-robin index per key.
+  const sfxSeriesIndexRef = useRef<Record<string, number>>({});
+  const sfxVolumeRef = useRef(DEFAULT_VOLUME);
+  const [sfxVolume, setSfxVolumeState] = useState(DEFAULT_VOLUME);
+
+  useEffect(() => {
+    const howls = sfxHowlsRef.current;
+    Object.entries(SFX_TRACKS).forEach(([key, entry]) => {
+      const urls = Array.isArray(entry) ? entry : [entry];
+      howls[key] = urls.map(
+        (url) =>
+          new Howl({
+            src: [publicUrl(url)],
+            loop: false,
+            volume: sfxVolumeRef.current,
+            preload: true,
+          }),
+      );
+      sfxSeriesIndexRef.current[key] = 0;
+    });
+
+    return () => {
+      Object.values(howls)
+        .flat()
+        .forEach((h) => h.unload());
+    };
+  }, []);
+
+  const playSfx = useCallback((key: string) => {
+    const series = sfxHowlsRef.current[key];
+    if (!series || series.length === 0) return;
+    const idx = sfxSeriesIndexRef.current[key] ?? 0;
+    const howl = series[idx % series.length];
+    howl.volume(sfxVolumeRef.current);
+    howl.play();
+    sfxSeriesIndexRef.current[key] = (idx + 1) % series.length;
+  }, []);
+
+  const setSfxVolume = useCallback((vol: number) => {
+    sfxVolumeRef.current = vol;
+    setSfxVolumeState(vol);
+  }, []);
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (screen === "") {
     return (
       <div
@@ -228,6 +284,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
         setTrack,
         musicVolume,
         setMusicVolume,
+        playSfx,
+        sfxVolume,
+        setSfxVolume,
       }}
     >
       {children}

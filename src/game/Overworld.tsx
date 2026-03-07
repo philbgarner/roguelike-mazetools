@@ -155,6 +155,7 @@ export default function Overworld({ screen }: OverworldProps) {
     usedSecrets,
     markSecretUsed,
     revealedSecrets,
+    playSfx,
   } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   const result = useMemo(() => {
@@ -585,6 +586,7 @@ export default function Overworld({ screen }: OverworldProps) {
 
   function tryCommitMove(dx: number, dy: number) {
     cancelAutoWalkNow();
+    playSfx("footstep-dirt");
     attemptCommitPlayerAction({ kind: "move", dx, dy });
     setPlayer((prev) => applyBuffTickToPlayer(prev));
   }
@@ -689,6 +691,7 @@ export default function Overworld({ screen }: OverworldProps) {
       }
 
       setAutoWalk(nextAutoWalk);
+      if (action.kind === "move") playSfx("footstep-dirt");
       attemptCommitPlayerAction(action);
       if (action.kind === "move") {
         setPlayer((prev) => applyBuffTickToPlayer(prev));

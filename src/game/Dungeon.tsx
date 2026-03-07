@@ -155,6 +155,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     setPlayer,
     setRunStats,
     markDungeonComplete,
+    playSfx,
   } = useGame();
 
   const totalFloors = Math.min(level + 1, 5);
@@ -872,6 +873,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   // --- Committed move helper ---
   function tryCommitMove(dx: number, dy: number) {
     cancelAutoWalkNow();
+    playSfx("footstep-stone");
     attemptCommitPlayerAction({ kind: "move", dx, dy });
   }
 
@@ -1049,6 +1051,7 @@ export default function Dungeon({ seed }: DungeonProps) {
       }
 
       setAutoWalk(effectiveNextAutoWalk);
+      if (action.kind === "move") playSfx("footstep-stone");
       attemptCommitPlayerAction(action);
     }, AUTOWALK_DELAY);
 

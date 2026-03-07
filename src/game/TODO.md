@@ -1,2 +1,1 @@
-- Exiting dungeon early should result in a warning that you can't reenter the dungeon and will leave with only what you've got.
-- Generate some hidden loot inside the forested areas of the overworld.
+- Stepcounter for stats.
