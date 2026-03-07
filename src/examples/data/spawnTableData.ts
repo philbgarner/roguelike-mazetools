@@ -563,7 +563,7 @@ export const LOOT_STATS: Record<string, LootStatBlock> = {
 
   // ── Ruins ─────────────────────────────────────────────────────────────────
   clay_tablet: { glyph: "_", name: "Clay Tablet", value: 15 },
-  corroded_coin: { glyph: "$", name: "Corroded Coin", value: 25 },
+  corroded_coin: { glyph: "$", name: "Corroded Coin", value: 5 },
   carved_idol: { glyph: "&", name: "Carved Idol", value: 60 },
 
   // ── Crypt ─────────────────────────────────────────────────────────────────

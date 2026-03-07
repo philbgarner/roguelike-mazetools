@@ -29,7 +29,7 @@ export function useConfirmYesNo() {
 
   const dialog = (
     <ModalPanel visible={message !== null} title="Confirm" maxHeight="10rem">
-      <p style={{ margin: "0 0 1rem" }}>{message}</p>
+      <p style={{ margin: "0 0 1rem", lineHeight: "1.3rem" }}>{message}</p>
       <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
         <Button onClick={handleYes} width="8rem">
           Yes

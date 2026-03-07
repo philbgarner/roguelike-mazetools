@@ -63,7 +63,7 @@ export function buildTintMask(
     }
 
     // interactables/items (tinted consistently for now)
-    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage
+    // 1 monster, 2 chest, 4 door, 5 key, 6 lever, 7 plate, 8 block, 9 hidden passage, 11 floor item
     if (
       featureType === 1 ||
       featureType === 2 ||
@@ -72,7 +72,8 @@ export function buildTintMask(
       featureType === 6 ||
       featureType === 7 ||
       (featureType === 8 && !params.suppressBlocks) ||
-      featureType === 9
+      featureType === 9 ||
+      featureType === 11
     ) {
       out[i] = 2;
       continue;
@@ -154,6 +155,9 @@ export function buildCharMask(
           0;
         break;
       }
+      case 11: // floor item — glyph patched in by DungeonRenderView from resolved data
+        t = 0;
+        break;
       default:
         t = 0;
     }

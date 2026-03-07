@@ -26,6 +26,7 @@ import type {
   ResolvedPropSpawn,
   ResolvedNpcSpawn,
   ResolvedBossSpawn,
+  ResolvedFloorItem,
   ResolvedEntityId,
   ResolvedEquipment,
 } from "./resolveTypes";
@@ -39,6 +40,7 @@ import {
 import {
   MONSTER_STATS,
   BOSS_STATS,
+  LOOT_STATS,
 } from "../examples/data/spawnTableData";
 import { ITEM_TEMPLATES } from "../game/data/itemData";
 import type { SpawnTableEntry } from "../theme/themeTypes";
@@ -458,5 +460,30 @@ export function resolveSpawns(input: ResolveSpawnsInput): ResolvedSpawns {
     }
   }
 
-  return { monsters, loot, props, npcs, bosses };
+  // --- Floor items (scattered pickups) ------------------------------------
+
+  const floorItemPlacements = assignStableIds(
+    content.meta.floorItems ?? [],
+    "flooritem",
+    width,
+  );
+  const floorItems: ResolvedFloorItem[] = floorItemPlacements.map((fi) => {
+    const entitySeed = hashSeed(seed, theme.id, "flooritem", fi.stableId, level);
+    const spawnId = pickWeighted(tables.loot, entitySeed) ?? "";
+    const lootStat = LOOT_STATS[spawnId];
+    const glyphTile = lootStat ? lootStat.glyph.charCodeAt(0) : 42; // fallback '*'
+    const value = lootStat ? lootStat.value : 5;
+    return {
+      entityId: fi.entityId,
+      sourceId: fi.id,
+      x: fi.x,
+      y: fi.y,
+      roomId: fi.roomId,
+      spawnId,
+      glyphTile,
+      value,
+    };
+  });
+
+  return { monsters, loot, props, npcs, bosses, floorItems };
 }

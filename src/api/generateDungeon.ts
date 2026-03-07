@@ -95,6 +95,9 @@ export function generateDungeon(
     gateThenOptionalRewardCount: isAtomic ? 0 : p.gateThenOptionalRewardCount,
 
     excludePatterns: inclusionRules?.excludePatterns,
+
+    // Scatter a few pickups per floor; deeper floors get slightly more.
+    floorItemsTargetCount: Math.max(2, level + 1),
   };
 
   const content = generateDungeonContent(bsp, contentOpts);
@@ -105,6 +108,8 @@ export function generateDungeon(
     (content.meta as any).plates = [];
   if (!Array.isArray((content.meta as any).circuits))
     (content.meta as any).circuits = [];
+  if (!Array.isArray((content.meta as any).floorItems))
+    (content.meta as any).floorItems = [];
 
   // ---- Validation ---------------------------------------------------------
 

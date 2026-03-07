@@ -1794,6 +1794,9 @@ export type ContentOptions = {
 
   /** When true, always place a chest in the farthest (exit) room even if no side-room chest landed there. */
   guaranteeChestInFarthestRoom?: boolean;
+
+  /** How many scattered floor items to place across the dungeon (default 0). */
+  floorItemsTargetCount?: number;
 };
 
 export type ContentOutputs = {
@@ -1926,6 +1929,14 @@ export type ContentOutputs = {
       roomId: number;
       hazardType: HazardType;
       activeInitial: boolean;
+    }>;
+
+    /** Scattered floor items — picked up automatically when the player walks over them. */
+    floorItems: Array<{
+      id: number;
+      x: number;
+      y: number;
+      roomId: number;
     }>;
 
     circuits: CircuitDef[];
@@ -2298,6 +2309,8 @@ export function generateDungeonContent(
     excludePatterns: opts?.excludePatterns ?? [],
 
     guaranteeChestInFarthestRoom: opts?.guaranteeChestInFarthestRoom ?? false,
+
+    floorItemsTargetCount: opts?.floorItemsTargetCount ?? 0,
   };
   console.log(
     "opts.level",
@@ -2361,6 +2374,7 @@ export function generateDungeonContent(
   const blocks: ContentOutputs["meta"]["blocks"] = [];
   const hidden: ContentOutputs["meta"]["hidden"] = [];
   const hazards: ContentOutputs["meta"]["hazards"] = [];
+  const floorItems: ContentOutputs["meta"]["floorItems"] = [];
 
   let nextId = 1;
 
@@ -2535,6 +2549,34 @@ export function generateDungeonContent(
     featureId[idx] = id;
 
     secrets.push({ id, x: wallP.x, y: wallP.y, roomId, kind: "secret_door" });
+  }
+
+  // -----------------------------
+  // Floor items (scattered pickups)
+  // -----------------------------
+  const floorItemsTarget = options.floorItemsTargetCount ?? 0;
+  if (floorItemsTarget > 0) {
+    // Prefer mid-path rooms (not entrance, not exit)
+    const floorItemCandidates = mainPathRoomIds
+      .filter((rid) => rid !== entranceRoomId && rid !== farthestRoomId)
+      .concat(sideRoomIds);
+
+    let floorItemsPlaced = 0;
+    for (const roomId of floorItemCandidates) {
+      if (floorItemsPlaced >= floorItemsTarget) break;
+      const room = rooms[roomId - 1];
+      if (!room) continue;
+      const p = sampleRoomFloorPoint(dungeon, room, rng, 0);
+      if (!p) continue;
+      const idx = keyXY(W, p.x, p.y);
+      if (featureType[idx] !== 0) continue;
+
+      const id = clamp255(nextId++);
+      featureType[idx] = 11;
+      featureId[idx] = id;
+      floorItems.push({ id, x: p.x, y: p.y, roomId });
+      floorItemsPlaced++;
+    }
   }
 
   // -----------------------------
@@ -2931,6 +2973,7 @@ export function generateDungeonContent(
     blocks: blocksSorted,
     hidden: hiddenSorted,
     hazards: hazardsSorted,
+    floorItems,
     circuits,
     patternDiagnostics: diagnostics,
     circuitRoles,

@@ -453,7 +453,7 @@ export const NPC_STATS: Record<string, CreatureStatBlock> = {
   // ── Cave ─────────────────────────────────────────────────────────────────
   lost_prospector: {
     glyph: "@",
-    name: "Lost Prospector",
+    name: "Dead Prospector",
     speed: 7,
     hp: 10,
     attack: 2,
@@ -563,7 +563,7 @@ export const LOOT_STATS: Record<string, LootStatBlock> = {
 
   // ── Ruins ─────────────────────────────────────────────────────────────────
   clay_tablet: { glyph: "_", name: "Clay Tablet", value: 15 },
-  corroded_coin: { glyph: "$", name: "Corroded Coin", value: 25 },
+  corroded_coin: { glyph: "$", name: "Corroded Coin", value: 5 },
   carved_idol: { glyph: "&", name: "Carved Idol", value: 60 },
 
   // ── Crypt ─────────────────────────────────────────────────────────────────
@@ -580,6 +580,10 @@ export const LOOT_STATS: Record<string, LootStatBlock> = {
   war_trophy: { glyph: "!", name: "War Trophy", value: 40 },
   infernal_gem: { glyph: "^", name: "Infernal Gem", value: 80 },
   champion_standard: { glyph: "\\", name: "Champion Standard", value: 150 },
+
+  // --- Overworld -----------------------------------------------------------
+  coins: { glyph: "$", name: "Coins", value: 10 },
+  coin_pile: { glyph: "$", name: "Pile of Coins", value: 50 },
 };
 
 // ---------------------------------------------------------------------------

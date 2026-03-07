@@ -268,6 +268,11 @@ export default function Dungeon({ seed }: DungeonProps) {
   const [lootedChestIds, setLootedChestIds] = useState<Set<number>>(
     () => new Set(),
   );
+
+  // --- Floor item pickups ---
+  const [collectedFloorItemIds, setCollectedFloorItemIds] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [chestModal, setChestModal] = useState<{
     loot: ResolvedLootSpawn;
   } | null>(null);
@@ -897,6 +902,29 @@ export default function Dungeon({ seed }: DungeonProps) {
     setChestModal({ loot });
   }, [playerX, playerY]);
 
+  // --- Floor item auto-pickup: player walks onto featureType=11 cell ---
+  useEffect(() => {
+    const idx = playerY * dungeon.width + playerX;
+    const ft = content.masks.featureType[idx] | 0;
+    if (ft !== 11) return;
+    const fid = content.masks.featureId[idx] | 0;
+    if (collectedFloorItemIds.has(fid)) return;
+    const floorItem = result.resolved?.floorItems.find((fi) => fi.sourceId === fid);
+    if (!floorItem) return;
+
+    setCollectedFloorItemIds((prev) => new Set([...prev, fid]));
+    setTurnState((prev) => {
+      const pa = prev.actors[prev.playerId];
+      if (!pa || pa.kind !== "player") return prev;
+      return {
+        ...prev,
+        actors: { ...prev.actors, [prev.playerId]: { ...pa, gold: pa.gold + floorItem.value } },
+      };
+    });
+    const itemName = floorItem.spawnId.replace(/_/g, " ");
+    addLogMessage(`You pick up ${itemName} (+${floorItem.value} gold).`);
+  }, [playerX, playerY]);
+
   // --- Auto-walk step loop ---
   // Runs once per player turn while a route is active. Commits exactly one step,
   // then commitPlayerAction → tickUntilPlayer advances monsters until the player
@@ -1128,6 +1156,8 @@ export default function Dungeon({ seed }: DungeonProps) {
           suppressBlocks
           blockPositions={blockPositions}
           chestTile={CP437_TILES.chest}
+          floorItems={result.resolved?.floorItems}
+          collectedFloorItemIds={collectedFloorItemIds}
           monsterTile={CP437_TILES.monster}
           secretDoorTile={CP437_TILES.secretDoor}
           hiddenPassageTile={CP437_TILES.hiddenPassage}

@@ -163,6 +163,11 @@ type Props = {
   hazardDefaultTile?: number;
   hazardTilesByType?: Partial<Record<number, number>>;
 
+  /** Resolved floor items (scattered pickups). Glyphs are patched into the char mask. */
+  floorItems?: Array<{ x: number; y: number; glyphTile: number; sourceId: number }>;
+  /** Set of sourceIds for floor items that have been picked up (omitted from rendering). */
+  collectedFloorItemIds?: Set<number>;
+
   playerX?: number;
   playerY?: number;
   playerTile?: number;
@@ -451,6 +456,17 @@ function DungeonRenderScene(props: Props) {
       }
     }
 
+    // Patch floor item glyphs (featureType=11 cells get their resolved glyph, or 0 if collected)
+    if (props.floorItems && props.floorItems.length > 0) {
+      for (const item of props.floorItems) {
+        if (props.collectedFloorItemIds?.has(item.sourceId)) continue;
+        const cellIdx = item.y * W + item.x;
+        if (cellIdx >= 0 && cellIdx < mask.length) {
+          mask[cellIdx] = item.glyphTile & 0xff;
+        }
+      }
+    }
+
     return maskToTileTextureR8(mask, W, H, "char_tile_index_r8");
   }, [
     bsp,
@@ -480,6 +496,8 @@ function DungeonRenderScene(props: Props) {
     props.playerTile,
     props.leverStates,
     props.doorStates,
+    props.floorItems,
+    props.collectedFloorItemIds,
   ]);
 
   // tint channel texture (R8)

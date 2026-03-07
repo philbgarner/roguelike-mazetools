@@ -72,6 +72,21 @@ export type ResolvedLootSpawn = {
   equipment: ResolvedEquipment | null;
 };
 
+export type ResolvedFloorItem = {
+  entityId: ResolvedEntityId;
+  /** Source placement id from content.meta.floorItems */
+  sourceId: number;
+  x: number;
+  y: number;
+  roomId: number;
+  /** Theme-resolved loot identifier (from spawnTables.loot) */
+  spawnId: string;
+  /** CP437 tile index derived from the item's glyph character */
+  glyphTile: number;
+  /** Gold value when picked up */
+  value: number;
+};
+
 export type ResolvedPropSpawn = {
   entityId: ResolvedEntityId;
   /** Source placement from content.meta.secrets */
@@ -116,4 +131,5 @@ export type ResolvedSpawns = {
   props: ResolvedPropSpawn[];
   npcs: ResolvedNpcSpawn[];
   bosses: ResolvedBossSpawn[];
+  floorItems: ResolvedFloorItem[];
 };
