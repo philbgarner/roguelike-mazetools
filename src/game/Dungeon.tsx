@@ -100,7 +100,6 @@ import { playerLevelFromXp } from "../resolve/levelBudget";
 import { generateLevelUpRewards, type LevelUpReward } from "./levelUpRewards";
 import LevelUpModal from "./ui/LevelUpModal";
 import QuickSlotPanel from "./ui/QuickSlotPanel";
-import { useConfirmYesNo } from "./ui/useConfirmYesNo";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation (via API so we get resolved monster spawns)
@@ -265,6 +264,9 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(() => {
     levelUpPendingRef.current = levelUpPending;
   }, [levelUpPending]);
+
+  // Blocks input while an exit confirm dialog is open.
+  const confirmPendingRef = useRef(false);
 
   // --- Chest interaction ---
   const [lootedChestIds, setLootedChestIds] = useState<Set<number>>(
@@ -525,7 +527,9 @@ export default function Dungeon({ seed }: DungeonProps) {
     y: number;
   } | null>(null);
 
-  const { confirmPrompt, dialog } = useConfirmYesNo();
+  const [exitConfirm, setExitConfirm] = useState<null | "dungeon" | "floor">(
+    null,
+  );
 
   // When the player moves, snap the focus target back to them.
   useEffect(() => {
@@ -565,17 +569,13 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(() => {
     if (!exitCell) return;
     if (playerX !== exitCell.x || playerY !== exitCell.y) return;
+    if (confirmPendingRef.current) return;
 
     if (playerActor?.kind === "player") setPlayer(playerFromActor(playerActor));
 
-    void (async () => {
-      if (isFinalFloor) {
-        if (await confirmPrompt(`Exit dungeon?`)) goTo("success");
-      } else {
-        // Advance to the next floor — changing floor causes Dungeon to remount via key.
-        if (await confirmPrompt("Advance to next floor?")) setFloor(floor + 1);
-      }
-    })();
+    confirmPendingRef.current = true;
+    cancelAutoWalkNow();
+    setExitConfirm(isFinalFloor ? "dungeon" : "floor");
   }, [playerX, playerY, exitCell]);
 
   // --- Path mask ---
@@ -788,6 +788,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     const ts = turnStateRef.current;
     if (!ts.awaitingPlayerInput) return;
     if (levelUpPendingRef.current) return;
+    if (confirmPendingRef.current) return;
 
     if (action.kind === "move") {
       const player = ts.actors[ts.playerId];
@@ -984,6 +985,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     if (!turnState.awaitingPlayerInput) return;
     if (autoWalk.kind !== "active") return;
     if (levelUpPending) return;
+    if (confirmPendingRef.current) return;
 
     const timer = setTimeout(() => {
       const rt = runtimeRef.current;
@@ -1708,6 +1710,45 @@ export default function Dungeon({ seed }: DungeonProps) {
             </ModalPanel>
           );
         })()}
+
+      {exitConfirm !== null && (
+        <ModalPanel
+          visible
+          title="Confirm"
+          maxHeight="10rem"
+        >
+          <p style={{ margin: "0 0 1rem", lineHeight: "1.3rem" }}>
+            {exitConfirm === "dungeon"
+              ? "Exit dungeon?"
+              : "Advance to next floor?"}
+          </p>
+          <div
+            style={{ display: "flex", gap: "1rem", justifyContent: "center" }}
+          >
+            <Button
+              width="8rem"
+              onClick={() => {
+                const kind = exitConfirm;
+                setExitConfirm(null);
+                confirmPendingRef.current = false;
+                if (kind === "dungeon") goTo("success");
+                else setFloor(floor + 1);
+              }}
+            >
+              Yes
+            </Button>
+            <Button
+              width="8rem"
+              onClick={() => {
+                setExitConfirm(null);
+                confirmPendingRef.current = false;
+              }}
+            >
+              No
+            </Button>
+          </div>
+        </ModalPanel>
+      )}
 
       {levelUpPending && (
         <LevelUpModal
