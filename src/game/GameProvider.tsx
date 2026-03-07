@@ -26,7 +26,8 @@ export interface RunStats {
   goldCollected: number;
 }
 
-const DEFAULT_VOLUME = 0.15;
+const DEFAULT_MUSIC_VOLUME = 0.15;
+const DEFAULT_SFX_VOLUME = 0.45;
 
 export type GameScreen =
   | "main-menu"
@@ -49,8 +50,13 @@ interface MusicState {
 }
 
 interface SfxState {
-  /** Play a one-shot SFX by key. Multiple concurrent calls are supported. */
-  playSfx: (key: string) => void;
+  /**
+   * Play a one-shot SFX by key.
+   * - "immediate" (default): plays concurrently with any already-playing instance.
+   * - "queued": waits for the current sound to finish before playing the next one.
+   *   At most one pending queued play is kept per key; extra calls while waiting are dropped.
+   */
+  playSfx: (key: string, mode?: "immediate" | "queued") => void;
   /** Master SFX volume [0, 1]. */
   sfxVolume: number;
   setSfxVolume: (vol: number) => void;
@@ -115,9 +121,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const FADE_MS = 1000;
   const howlsRef = useRef<Record<string, Howl>>({});
   const currentTrackKeyRef = useRef<string | null>(null);
-  const musicVolumeRef = useRef(DEFAULT_VOLUME);
+  const musicVolumeRef = useRef(DEFAULT_MUSIC_VOLUME);
   const [currentTrack, setCurrentTrack] = useState<string | null>(null);
-  const [musicVolume, setMusicVolumeState] = useState(0.7);
+  const [musicVolume, setMusicVolumeState] = useState(DEFAULT_MUSIC_VOLUME);
 
   useEffect(() => {
     const howls = howlsRef.current;
@@ -183,8 +189,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const sfxHowlsRef = useRef<Record<string, Howl[]>>({});
   // Round-robin index per key.
   const sfxSeriesIndexRef = useRef<Record<string, number>>({});
-  const sfxVolumeRef = useRef(DEFAULT_VOLUME);
-  const [sfxVolume, setSfxVolumeState] = useState(DEFAULT_VOLUME);
+  // Last played Howl + sound ID per key, used for queued mode to check if still playing.
+  const sfxLastPlayRef = useRef<
+    Record<string, { howl: Howl; soundId: number } | null>
+  >({});
+  // Whether a queued play is already pending for a key (cap at one pending per key).
+  const sfxQueuedRef = useRef<Record<string, boolean>>({});
+  const sfxVolumeRef = useRef(DEFAULT_MUSIC_VOLUME);
+  const [sfxVolume, setSfxVolumeState] = useState(DEFAULT_SFX_VOLUME);
 
   useEffect(() => {
     const howls = sfxHowlsRef.current;
@@ -209,15 +221,45 @@ export function GameProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const playSfx = useCallback((key: string) => {
-    const series = sfxHowlsRef.current[key];
-    if (!series || series.length === 0) return;
-    const idx = sfxSeriesIndexRef.current[key] ?? 0;
-    const howl = series[idx % series.length];
-    howl.volume(sfxVolumeRef.current);
-    howl.play();
-    sfxSeriesIndexRef.current[key] = (idx + 1) % series.length;
-  }, []);
+  const playSfx = useCallback(
+    (key: string, mode: "immediate" | "queued" = "immediate") => {
+      const series = sfxHowlsRef.current[key];
+      if (!series || series.length === 0) return;
+
+      const playNow = () => {
+        const idx = sfxSeriesIndexRef.current[key] ?? 0;
+        const howl = series[idx % series.length];
+        howl.volume(sfxVolumeRef.current);
+        const soundId = howl.play();
+        sfxLastPlayRef.current[key] = { howl, soundId };
+        sfxSeriesIndexRef.current[key] = (idx + 1) % series.length;
+      };
+
+      if (mode === "immediate") {
+        playNow();
+        return;
+      }
+
+      // Queued mode: wait for the current sound to finish before playing.
+      const last = sfxLastPlayRef.current[key];
+      if (last && last.howl.playing(last.soundId)) {
+        // Already waiting? Drop this call to avoid pile-up.
+        if (sfxQueuedRef.current[key]) return;
+        sfxQueuedRef.current[key] = true;
+        last.howl.once(
+          "end",
+          () => {
+            sfxQueuedRef.current[key] = false;
+            playNow();
+          },
+          last.soundId,
+        );
+      } else {
+        playNow();
+      }
+    },
+    [],
+  );
 
   const setSfxVolume = useCallback((vol: number) => {
     sfxVolumeRef.current = vol;

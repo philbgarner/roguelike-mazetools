@@ -401,6 +401,22 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("damage", (evt) => {
+        if (evt.actorId !== "player") {
+          // Player attacked a monster — choose SFX based on equipped weapon.
+          const ts = turnStateRef.current;
+          const pa = ts.actors[ts.playerId];
+          const equippedWeapon =
+            pa && pa.kind === "player"
+              ? getEquipped(pa.inventory, "weapon")
+              : null;
+          const weapTemplate = equippedWeapon
+            ? getItemTemplate(equippedWeapon.templateId)
+            : null;
+          playSfx(weapTemplate?.isRanged ? "bow-hit" : "sword-hit");
+        } else {
+          // Monster attacked the player.
+          playSfx("sword-hit");
+        }
         const modifierColor = evt.modifier === "weak" ? "#ffaa44" : "#ff4444";
         pushFloatingMessage(`-${evt.amount}`, evt.x, evt.y, {
           color: evt.actorId === "player" ? "#ff4444" : modifierColor,
@@ -419,7 +435,7 @@ export default function Dungeon({ seed }: DungeonProps) {
           addLogMessage(`You deal ${evt.amount} damage.`);
         }
       }),
-    [subscribe, pushFloatingMessage, addLogMessage],
+    [subscribe, pushFloatingMessage, addLogMessage, playSfx],
   );
 
   useEffect(
@@ -449,10 +465,11 @@ export default function Dungeon({ seed }: DungeonProps) {
   useEffect(
     () =>
       subscribe("block", (evt) => {
+        playSfx("sword-block");
         pushFloatingMessage("BLOCKED!", evt.x, evt.y, { color: "#88ccff" });
         addLogMessage("You block the attack with your shield!");
       }),
-    [subscribe, pushFloatingMessage, addLogMessage],
+    [subscribe, pushFloatingMessage, addLogMessage, playSfx],
   );
 
   useEffect(
@@ -873,7 +890,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   // --- Committed move helper ---
   function tryCommitMove(dx: number, dy: number) {
     cancelAutoWalkNow();
-    playSfx("footstep-stone");
+    playSfx("footstep-stone", "queued");
     attemptCommitPlayerAction({ kind: "move", dx, dy });
   }
 
@@ -972,6 +989,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     const loot = result.resolved?.loot.find((l) => l.sourceId === fid);
     if (!loot) return;
     cancelAutoWalkNow();
+    playSfx("chest-open");
     setChestModal({ loot });
   }, [playerX, playerY]);
 
@@ -1051,7 +1069,7 @@ export default function Dungeon({ seed }: DungeonProps) {
       }
 
       setAutoWalk(effectiveNextAutoWalk);
-      if (action.kind === "move") playSfx("footstep-stone");
+      if (action.kind === "move") playSfx("footstep-stone", "queued");
       attemptCommitPlayerAction(action);
     }, AUTOWALK_DELAY);
 
@@ -1148,6 +1166,16 @@ export default function Dungeon({ seed }: DungeonProps) {
         left="21rem"
         width="calc(100% - 43rem)"
         onEquipToggle={(item) => {
+          if (item.slot === "weapon") {
+            const isEquipped =
+              playerActor.inventory.equipped["weapon"] === item.instanceId;
+            const template = getItemTemplate(item.templateId);
+            playSfx(
+              isEquipped
+                ? template?.isRanged ? "bow-unequip" : "sword-unequip"
+                : template?.isRanged ? "bow-equip" : "sword-equip",
+            );
+          }
           setTurnState((prev) => {
             const pa = prev.actors[prev.playerId] as PlayerActor;
             const isEquipped =
@@ -1535,11 +1563,20 @@ export default function Dungeon({ seed }: DungeonProps) {
 
             // Lever toggle (FeatureType 6)
             if (ft === 6 && fid) {
-              setRuntime((prev) => {
-                const next0 = toggleLever(prev, fid);
-                const next1 = derivePlatesFromBlocks(next0, content);
-                return evaluateCircuits(next1, content.meta.circuits).next;
-              });
+              const currentRuntime = runtimeRef.current;
+              const next0 = toggleLever(currentRuntime, fid);
+              const next1 = derivePlatesFromBlocks(next0, content);
+              const newRuntime = evaluateCircuits(next1, content.meta.circuits).next;
+              // Play door SFX for each door that changed open/closed state.
+              for (const doorIdStr of Object.keys(newRuntime.doors)) {
+                const doorId = Number(doorIdStr);
+                const oldDoor = currentRuntime.doors[doorId];
+                const newDoor = newRuntime.doors[doorId];
+                if (oldDoor && newDoor && oldDoor.isOpen !== newDoor.isOpen) {
+                  playSfx(newDoor.isOpen ? "door-open" : "door-close");
+                }
+              }
+              setRuntime(() => newRuntime);
               return true;
             }
 
@@ -1704,7 +1741,7 @@ export default function Dungeon({ seed }: DungeonProps) {
               title="Chest"
               visible={!!chestModal}
               closeButton
-              onClose={() => setChestModal(null)}
+              onClose={() => { playSfx("chest-close"); setChestModal(null); }}
             >
               <div
                 style={{
@@ -1810,13 +1847,14 @@ export default function Dungeon({ seed }: DungeonProps) {
                         );
                         const displayName = item.nameOverride ?? template.name;
                         addLogMessage(autoEquipped ? `Auto-equipped ${displayName}.` : `Picked up ${displayName}.`);
+                        playSfx("chest-close");
                         setChestModal(null);
                       }}
                     >
                       Take
                     </Button>
                   )}
-                  <Button onClick={() => setChestModal(null)}>
+                  <Button onClick={() => { playSfx("chest-close"); setChestModal(null); }}>
                     {template ? "Leave" : "Close"}
                   </Button>
                 </div>

@@ -10,6 +10,7 @@ import {
 import { getItemTemplate } from "../data/itemData";
 import type { StatDelta } from "../inventory";
 import type { ActiveBuff } from "../activeBuffs";
+import { useGame } from "../GameProvider";
 
 export interface PlayerInventoryModalProps {
   visible: boolean;
@@ -123,6 +124,7 @@ export default function PlayerInventoryModal({
   activeBuffs,
 }: PlayerInventoryModalProps) {
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
+  const { playSfx } = useGame();
 
   return (
     <ModalPanel
@@ -246,6 +248,10 @@ export default function PlayerInventoryModal({
                     <Button
                       maxWidth="6rem"
                       onClick={() => {
+                        if (item.slot === "weapon") {
+                          const template = getItemTemplate(item.templateId);
+                          playSfx(template?.isRanged ? "bow-unequip" : "sword-unequip");
+                        }
                         const { newInventory, delta } = unequipSlot(
                           inventory,
                           item.slot!,
@@ -271,6 +277,10 @@ export default function PlayerInventoryModal({
                     <Button
                       maxWidth="5rem"
                       onClick={() => {
+                        if (item.slot === "weapon") {
+                          const template = getItemTemplate(item.templateId);
+                          playSfx(template?.isRanged ? "bow-equip" : "sword-equip");
+                        }
                         const { newInventory, delta } = equipItem(
                           inventory,
                           item.instanceId,

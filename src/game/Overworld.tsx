@@ -586,7 +586,7 @@ export default function Overworld({ screen }: OverworldProps) {
 
   function tryCommitMove(dx: number, dy: number) {
     cancelAutoWalkNow();
-    playSfx("footstep-dirt");
+    playSfx("footstep-dirt", "queued");
     attemptCommitPlayerAction({ kind: "move", dx, dy });
     setPlayer((prev) => applyBuffTickToPlayer(prev));
   }
@@ -691,7 +691,7 @@ export default function Overworld({ screen }: OverworldProps) {
       }
 
       setAutoWalk(nextAutoWalk);
-      if (action.kind === "move") playSfx("footstep-dirt");
+      if (action.kind === "move") playSfx("footstep-dirt", "queued");
       attemptCommitPlayerAction(action);
       if (action.kind === "move") {
         setPlayer((prev) => applyBuffTickToPlayer(prev));
