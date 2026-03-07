@@ -1737,15 +1737,41 @@ export default function Dungeon({ seed }: DungeonProps) {
                           equipment.bonusMaxHp,
                           equipment.value,
                         );
+                        let autoEquipped = false;
                         setTurnState((prev) => {
                           const pa = prev.actors[prev.playerId] as PlayerActor;
+                          const withItem = addItem(pa.inventory, item);
+                          if (template.slot) {
+                            const currentEquipped = getEquipped(pa.inventory, template.slot);
+                            const newScore = item.bonusAttack + item.bonusDefense + item.bonusMaxHp;
+                            const oldScore = currentEquipped
+                              ? currentEquipped.bonusAttack + currentEquipped.bonusDefense + currentEquipped.bonusMaxHp
+                              : -1;
+                            if (newScore > oldScore) {
+                              autoEquipped = true;
+                              const { newInventory, delta } = equipItem(withItem, loot.entityId);
+                              return {
+                                ...prev,
+                                actors: {
+                                  ...prev.actors,
+                                  [prev.playerId]: {
+                                    ...pa,
+                                    inventory: newInventory,
+                                    attack: pa.attack + delta.attack,
+                                    defense: pa.defense + delta.defense,
+                                    maxHp: pa.maxHp + delta.maxHp,
+                                  },
+                                },
+                              };
+                            }
+                          }
                           return {
                             ...prev,
                             actors: {
                               ...prev.actors,
                               [prev.playerId]: {
                                 ...pa,
-                                inventory: addItem(pa.inventory, item),
+                                inventory: withItem,
                               },
                             },
                           };
@@ -1753,7 +1779,8 @@ export default function Dungeon({ seed }: DungeonProps) {
                         setLootedChestIds(
                           (prev) => new Set([...prev, loot.sourceId]),
                         );
-                        addLogMessage(`Picked up ${template.name}.`);
+                        const displayName = item.nameOverride ?? template.name;
+                        addLogMessage(autoEquipped ? `Auto-equipped ${displayName}.` : `Picked up ${displayName}.`);
                         setChestModal(null);
                       }}
                     >

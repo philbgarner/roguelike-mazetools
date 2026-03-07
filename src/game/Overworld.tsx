@@ -977,6 +977,86 @@ export default function Overworld({ screen }: OverworldProps) {
                   );
                 })}
               </div>
+              {player.inventory.items.filter((it) => !it.isConsumable).length > 0 && (
+                <>
+                  <div style={{ borderTop: "1px solid #333", margin: "0.6rem 0" }} />
+                  <div style={{ color: "#aaa", fontSize: "0.85em", marginBottom: "0.4rem" }}>
+                    Sell Items
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                    {player.inventory.items
+                      .filter((it) => !it.isConsumable)
+                      .map((it: InventoryItem) => {
+                        const tmpl = getItemTemplate(it.templateId);
+                        const sellPrice = Math.max(1, Math.floor(it.value / 2));
+                        const isEquipped = it.slot != null && player.inventory.equipped[it.slot] === it.instanceId;
+                        const statParts: string[] = [];
+                        if (it.bonusAttack > 0) statParts.push(`+${it.bonusAttack} ATK`);
+                        if (it.bonusDefense > 0) statParts.push(`+${it.bonusDefense} DEF`);
+                        if (it.bonusMaxHp > 0) statParts.push(`+${it.bonusMaxHp} HP`);
+                        return (
+                          <div
+                            key={it.instanceId}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.6rem",
+                              padding: "0.25rem 0.4rem",
+                              border: `1px solid ${isEquipped ? "#446" : "#333"}`,
+                              background: "#111",
+                            }}
+                          >
+                            <span style={{ fontFamily: "monospace", color: "#ccc", minWidth: "1.2rem" }}>
+                              {tmpl?.glyph ?? "?"}
+                            </span>
+                            <span style={{ flex: 1, color: "#ddd" }}>
+                              {it.nameOverride ?? tmpl?.name ?? it.templateId}
+                              {isEquipped && (
+                                <span style={{ color: "#66f", marginLeft: "0.4rem", fontSize: "0.8em" }}>[eq]</span>
+                              )}
+                              {statParts.length > 0 && (
+                                <span style={{ color: "#888", marginLeft: "0.5rem", fontSize: "0.85em" }}>
+                                  {statParts.join(", ")}
+                                </span>
+                              )}
+                            </span>
+                            <span style={{ color: "#f0d060", minWidth: "3rem", textAlign: "right" }}>
+                              {sellPrice}g
+                            </span>
+                            <Button
+                              maxWidth="5rem"
+                              onClick={() => {
+                                let inv = player.inventory;
+                                let dAtk = 0, dDef = 0, dHp = 0;
+                                if (it.slot && inv.equipped[it.slot] === it.instanceId) {
+                                  const { newInventory, delta } = unequipSlot(inv, it.slot);
+                                  inv = newInventory;
+                                  dAtk = delta.attack;
+                                  dDef = delta.defense;
+                                  dHp = delta.maxHp;
+                                }
+                                const newInv = removeItem(inv, it.instanceId);
+                                const displayName = it.nameOverride ?? tmpl?.name ?? it.templateId;
+                                addLogMessage(`Sold ${displayName} for ${sellPrice}g.`);
+                                setPlayer((prev) => ({
+                                  ...prev,
+                                  gold: prev.gold + sellPrice,
+                                  inventory: newInv,
+                                  attack: prev.attack + dAtk,
+                                  defense: prev.defense + dDef,
+                                  maxHp: prev.maxHp + dHp,
+                                  hp: Math.min(prev.hp, prev.maxHp + dHp),
+                                }));
+                              }}
+                            >
+                              Sell
+                            </Button>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </>
+              )}
             </ModalPanel>
           );
         })()}
