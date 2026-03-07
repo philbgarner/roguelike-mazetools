@@ -312,7 +312,7 @@ export default function Overworld({ screen }: OverworldProps) {
       cancelAutoWalkNow();
       setSecretPending(secret);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerX, playerY]);
 
   // --- First-discovery log messages ---
@@ -456,7 +456,13 @@ export default function Overworld({ screen }: OverworldProps) {
 
     nm.tex.needsUpdate = true;
     setNpcCharTex(nm.tex);
-  }, [dungeon.width, dungeon.height, turnState.actors, content.meta.secretLocations, usedSecrets]);
+  }, [
+    dungeon.width,
+    dungeon.height,
+    turnState.actors,
+    content.meta.secretLocations,
+    usedSecrets,
+  ]);
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
@@ -958,7 +964,7 @@ export default function Overworld({ screen }: OverworldProps) {
                   gap: "0.4rem",
                 }}
               >
-                {shopItems.map((item: ShopItem) => {
+                {shopItems.map((item: ShopItem, index: number) => {
                   const canAfford = player.gold >= item.price;
                   const statParts: string[] = [];
                   if (item.isConsumable) {
@@ -989,7 +995,7 @@ export default function Overworld({ screen }: OverworldProps) {
                   }
                   return (
                     <div
-                      key={item.instanceId}
+                      key={`${item.instanceId}_${index}`}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -1037,7 +1043,7 @@ export default function Overworld({ screen }: OverworldProps) {
                           const template = getItemTemplate(item.templateId);
                           if (!template) return;
                           const inventoryItem = createInventoryItem(
-                            item.instanceId,
+                            item.instanceId + crypto.randomUUID(),
                             template,
                             item.bonusAttack,
                             item.bonusDefense,
@@ -1096,23 +1102,43 @@ export default function Overworld({ screen }: OverworldProps) {
                   );
                 })}
               </div>
-              {player.inventory.items.filter((it) => !it.isConsumable).length > 0 && (
+              {player.inventory.items.filter((it) => !it.isConsumable).length >
+                0 && (
                 <>
-                  <div style={{ borderTop: "1px solid #333", margin: "0.6rem 0" }} />
-                  <div style={{ color: "#aaa", fontSize: "0.85em", marginBottom: "0.4rem" }}>
+                  <div
+                    style={{ borderTop: "1px solid #333", margin: "0.6rem 0" }}
+                  />
+                  <div
+                    style={{
+                      color: "#aaa",
+                      fontSize: "0.85em",
+                      marginBottom: "0.4rem",
+                    }}
+                  >
                     Sell Items
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.4rem",
+                    }}
+                  >
                     {player.inventory.items
                       .filter((it) => !it.isConsumable)
                       .map((it: InventoryItem) => {
                         const tmpl = getItemTemplate(it.templateId);
                         const sellPrice = Math.max(1, Math.floor(it.value / 2));
-                        const isEquipped = it.slot != null && player.inventory.equipped[it.slot] === it.instanceId;
+                        const isEquipped =
+                          it.slot != null &&
+                          player.inventory.equipped[it.slot] === it.instanceId;
                         const statParts: string[] = [];
-                        if (it.bonusAttack > 0) statParts.push(`+${it.bonusAttack} ATK`);
-                        if (it.bonusDefense > 0) statParts.push(`+${it.bonusDefense} DEF`);
-                        if (it.bonusMaxHp > 0) statParts.push(`+${it.bonusMaxHp} HP`);
+                        if (it.bonusAttack > 0)
+                          statParts.push(`+${it.bonusAttack} ATK`);
+                        if (it.bonusDefense > 0)
+                          statParts.push(`+${it.bonusDefense} DEF`);
+                        if (it.bonusMaxHp > 0)
+                          statParts.push(`+${it.bonusMaxHp} HP`);
                         return (
                           <div
                             key={it.instanceId}
@@ -1125,38 +1151,77 @@ export default function Overworld({ screen }: OverworldProps) {
                               background: "#111",
                             }}
                           >
-                            <span style={{ fontFamily: "monospace", color: "#ccc", minWidth: "1.2rem" }}>
+                            <span
+                              style={{
+                                fontFamily: "monospace",
+                                color: "#ccc",
+                                minWidth: "1.2rem",
+                              }}
+                            >
                               {tmpl?.glyph ?? "?"}
                             </span>
                             <span style={{ flex: 1, color: "#ddd" }}>
                               {it.nameOverride ?? tmpl?.name ?? it.templateId}
                               {isEquipped && (
-                                <span style={{ color: "#66f", marginLeft: "0.4rem", fontSize: "0.8em" }}>[eq]</span>
+                                <span
+                                  style={{
+                                    color: "#66f",
+                                    marginLeft: "0.4rem",
+                                    fontSize: "0.8em",
+                                  }}
+                                >
+                                  [eq]
+                                </span>
                               )}
                               {statParts.length > 0 && (
-                                <span style={{ color: "#888", marginLeft: "0.5rem", fontSize: "0.85em" }}>
+                                <span
+                                  style={{
+                                    color: "#888",
+                                    marginLeft: "0.5rem",
+                                    fontSize: "0.85em",
+                                  }}
+                                >
                                   {statParts.join(", ")}
                                 </span>
                               )}
                             </span>
-                            <span style={{ color: "#f0d060", minWidth: "3rem", textAlign: "right" }}>
+                            <span
+                              style={{
+                                color: "#f0d060",
+                                minWidth: "3rem",
+                                textAlign: "right",
+                              }}
+                            >
                               {sellPrice}g
                             </span>
                             <Button
                               maxWidth="5rem"
                               onClick={() => {
                                 let inv = player.inventory;
-                                let dAtk = 0, dDef = 0, dHp = 0;
-                                if (it.slot && inv.equipped[it.slot] === it.instanceId) {
-                                  const { newInventory, delta } = unequipSlot(inv, it.slot);
+                                let dAtk = 0,
+                                  dDef = 0,
+                                  dHp = 0;
+                                if (
+                                  it.slot &&
+                                  inv.equipped[it.slot] === it.instanceId
+                                ) {
+                                  const { newInventory, delta } = unequipSlot(
+                                    inv,
+                                    it.slot,
+                                  );
                                   inv = newInventory;
                                   dAtk = delta.attack;
                                   dDef = delta.defense;
                                   dHp = delta.maxHp;
                                 }
                                 const newInv = removeItem(inv, it.instanceId);
-                                const displayName = it.nameOverride ?? tmpl?.name ?? it.templateId;
-                                addLogMessage(`Sold ${displayName} for ${sellPrice}g.`);
+                                const displayName =
+                                  it.nameOverride ??
+                                  tmpl?.name ??
+                                  it.templateId;
+                                addLogMessage(
+                                  `Sold ${displayName} for ${sellPrice}g.`,
+                                );
                                 setPlayer((prev) => ({
                                   ...prev,
                                   gold: prev.gold + sellPrice,
@@ -1278,11 +1343,21 @@ export default function Overworld({ screen }: OverworldProps) {
                         </span>
                       ) : null}
                       {secretAtCell ? (
-                        <span style={{ color: usedSecrets.has(secretAtCell.id) ? "#666" : revealedSecrets.has(secretAtCell.id) ? "#ccaa66" : "#888" }}>
+                        <span
+                          style={{
+                            color: usedSecrets.has(secretAtCell.id)
+                              ? "#666"
+                              : revealedSecrets.has(secretAtCell.id)
+                                ? "#ccaa66"
+                                : "#888",
+                          }}
+                        >
                           {usedSecrets.has(secretAtCell.id)
                             ? `${SECRET_LOCATION_TEMPLATES[secretAtCell.templateIndex]?.name ?? "Hidden Location"} (visited)`
                             : revealedSecrets.has(secretAtCell.id)
-                              ? SECRET_LOCATION_TEMPLATES[secretAtCell.templateIndex]?.name ?? "Hidden Location"
+                              ? (SECRET_LOCATION_TEMPLATES[
+                                  secretAtCell.templateIndex
+                                ]?.name ?? "Hidden Location")
                               : "? Something hidden here"}
                         </span>
                       ) : null}

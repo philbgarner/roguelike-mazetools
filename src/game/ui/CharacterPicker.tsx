@@ -134,7 +134,7 @@ function shopItemToInventoryItem(item: ShopItem): InventoryItem {
   const template = getItemTemplate(item.templateId);
   if (!template) throw new Error(`Unknown template: ${item.templateId}`);
   const base = createInventoryItem(
-    item.instanceId,
+    item.instanceId + crypto.randomUUID(),
     template,
     item.bonusAttack,
     item.bonusDefense,

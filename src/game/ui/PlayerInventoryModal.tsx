@@ -40,10 +40,24 @@ function StatRow({
   return (
     <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
       <span style={{ color: "#888", minWidth: "2.8rem" }}>{label}:</span>
-      <span style={{ color: "#ccc", minWidth: "1.8rem", textAlign: "right" }}>{before}</span>
+      <span style={{ color: "#ccc", minWidth: "1.8rem", textAlign: "right" }}>
+        {before}
+      </span>
       <span style={{ color: "#555" }}>→</span>
-      <span style={{ color: diff !== 0 ? "#eee" : "#888", minWidth: "1.8rem", textAlign: "right" }}>{after}</span>
-      <span style={{ color: diffColor, minWidth: "2.4rem", textAlign: "right" }}>({diffStr})</span>
+      <span
+        style={{
+          color: diff !== 0 ? "#eee" : "#888",
+          minWidth: "1.8rem",
+          textAlign: "right",
+        }}
+      >
+        {after}
+      </span>
+      <span
+        style={{ color: diffColor, minWidth: "2.4rem", textAlign: "right" }}
+      >
+        ({diffStr})
+      </span>
     </div>
   );
 }
@@ -80,9 +94,21 @@ function EquipTooltip({
       <div style={{ color: "#aaa", marginBottom: "0.2rem", fontSize: "0.9em" }}>
         Before → After
       </div>
-      <StatRow label="ATK" before={playerStats.attack} after={playerStats.attack + delta.attack} />
-      <StatRow label="DEF" before={playerStats.defense} after={playerStats.defense + delta.defense} />
-      <StatRow label="MaxHP" before={playerStats.maxHp} after={playerStats.maxHp + delta.maxHp} />
+      <StatRow
+        label="ATK"
+        before={playerStats.attack}
+        after={playerStats.attack + delta.attack}
+      />
+      <StatRow
+        label="DEF"
+        before={playerStats.defense}
+        after={playerStats.defense + delta.defense}
+      />
+      <StatRow
+        label="MaxHP"
+        before={playerStats.maxHp}
+        after={playerStats.maxHp + delta.maxHp}
+      />
     </div>
   );
 }
@@ -119,8 +145,7 @@ export default function PlayerInventoryModal({
               item.slot !== undefined &&
               inventory.equipped[item.slot] === item.instanceId;
             const statParts: string[] = [];
-            if (template?.damageType)
-              statParts.push(template.damageType);
+            if (template?.damageType) statParts.push(template.damageType);
             if (item.bonusAttack > 0)
               statParts.push(`+${item.bonusAttack} ATK`);
             if (item.bonusDefense > 0)
@@ -131,12 +156,17 @@ export default function PlayerInventoryModal({
               statParts.push(`Heals ${item.healAmount} HP`);
             if (item.buffDuration && item.buffDuration > 0) {
               const buffParts: string[] = [];
-              if (item.bonusAttack > 0) buffParts.push(`+${item.bonusAttack} ATK`);
-              if (item.bonusDefense > 0) buffParts.push(`+${item.bonusDefense} DEF`);
+              if (item.bonusAttack > 0)
+                buffParts.push(`+${item.bonusAttack} ATK`);
+              if (item.bonusDefense > 0)
+                buffParts.push(`+${item.bonusDefense} DEF`);
               if (item.bonusMaxHp > 0) buffParts.push(`+${item.bonusMaxHp} HP`);
-              if (item.bonusSpeed && item.bonusSpeed > 0) buffParts.push(`+${item.bonusSpeed} SPD`);
+              if (item.bonusSpeed && item.bonusSpeed > 0)
+                buffParts.push(`+${item.bonusSpeed} SPD`);
               if (buffParts.length > 0)
-                statParts.push(`${buffParts.join(", ")} (${item.buffDuration} steps)`);
+                statParts.push(
+                  `${buffParts.join(", ")} (${item.buffDuration} steps)`,
+                );
             }
 
             // Compute delta for tooltip preview
@@ -159,7 +189,11 @@ export default function PlayerInventoryModal({
                   gap: "0.6rem",
                   padding: "0.25rem 0.4rem",
                   border: `1px solid ${isEquipped ? "#446" : isConsumable ? "#244" : "#333"}`,
-                  background: isEquipped ? "#12121e" : isConsumable ? "#101a18" : "#111",
+                  background: isEquipped
+                    ? "#12121e"
+                    : isConsumable
+                      ? "#101a18"
+                      : "#111",
                 }}
               >
                 <span
@@ -204,7 +238,10 @@ export default function PlayerInventoryModal({
                     onMouseLeave={() => setHoveredItemId(null)}
                   >
                     {isHovered && previewDelta && playerStats && (
-                      <EquipTooltip delta={previewDelta} playerStats={playerStats} />
+                      <EquipTooltip
+                        delta={previewDelta}
+                        playerStats={playerStats}
+                      />
                     )}
                     <Button
                       maxWidth="6rem"
@@ -226,7 +263,10 @@ export default function PlayerInventoryModal({
                     onMouseLeave={() => setHoveredItemId(null)}
                   >
                     {isHovered && previewDelta && playerStats && (
-                      <EquipTooltip delta={previewDelta} playerStats={playerStats} />
+                      <EquipTooltip
+                        delta={previewDelta}
+                        playerStats={playerStats}
+                      />
                     )}
                     <Button
                       maxWidth="5rem"
@@ -262,11 +302,14 @@ export default function PlayerInventoryModal({
           >
             Active Effects
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
+          >
             {activeBuffs.map((buff) => {
               const parts: string[] = [];
               if (buff.bonusAttack > 0) parts.push(`+${buff.bonusAttack} ATK`);
-              if (buff.bonusDefense > 0) parts.push(`+${buff.bonusDefense} DEF`);
+              if (buff.bonusDefense > 0)
+                parts.push(`+${buff.bonusDefense} DEF`);
               if (buff.bonusMaxHp > 0) parts.push(`+${buff.bonusMaxHp} HP`);
               if (buff.bonusSpeed > 0) parts.push(`+${buff.bonusSpeed} SPD`);
               return (
@@ -281,8 +324,12 @@ export default function PlayerInventoryModal({
                     background: "#0a1820",
                   }}
                 >
-                  <span>{buff.name} ({parts.join(", ")})</span>
-                  <span style={{ color: "#68a" }}>{buff.stepsRemaining} steps</span>
+                  <span>
+                    {buff.name} ({parts.join(", ")})
+                  </span>
+                  <span style={{ color: "#68a" }}>
+                    {buff.stepsRemaining} steps
+                  </span>
                 </div>
               );
             })}
