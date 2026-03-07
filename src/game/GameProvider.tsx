@@ -13,6 +13,7 @@ import { Howl } from "howler";
 import { BspDungeonOutputs, ForestContentOutputs } from "../mazeGen";
 import { Player, DEFAULT_PLAYER } from "./player";
 import { MUSIC_TRACKS } from "./musicTracks";
+import { publicUrl } from "../utils/publicUrl";
 
 export interface RunStats {
   monstersKilled: number;
@@ -24,6 +25,8 @@ export interface RunStats {
   goldCollected: number;
 }
 
+const DEFAULT_VOLUME = 0.15;
+
 export type GameScreen =
   | "main-menu"
   | "overworld"
@@ -31,7 +34,8 @@ export type GameScreen =
   | "death"
   | "seed-picker"
   | "character-picker"
-  | "success";
+  | "success"
+  | "";
 
 interface MusicState {
   /** Key of the currently playing track, or null if silent. */
@@ -78,7 +82,7 @@ interface GameState extends MusicState {
 const GameContext = createContext<GameState | null>(null);
 
 export function GameProvider({ children }: { children: ReactNode }) {
-  const [screen, setScreen] = useState<GameScreen>("main-menu");
+  const [screen, setScreen] = useState<GameScreen>("");
   const [player, setPlayer] = useState<Player>(DEFAULT_PLAYER);
   const [seed, setSeed] = useState<string | number>("test");
   const [level, setLevel] = useState<number>(1);
@@ -102,7 +106,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const FADE_MS = 1000;
   const howlsRef = useRef<Record<string, Howl>>({});
   const currentTrackKeyRef = useRef<string | null>(null);
-  const musicVolumeRef = useRef(0.7);
+  const musicVolumeRef = useRef(DEFAULT_VOLUME);
   const [currentTrack, setCurrentTrack] = useState<string | null>(null);
   const [musicVolume, setMusicVolumeState] = useState(0.7);
 
@@ -110,12 +114,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const howls = howlsRef.current;
     Object.entries(MUSIC_TRACKS).forEach(([key, url]) => {
       howls[key] = new Howl({
-        src: [url],
+        src: [publicUrl(url)],
         loop: true,
         volume: musicVolumeRef.current,
         preload: true,
       });
     });
+
     return () => {
       Object.values(howls).forEach((h) => h.unload());
     };
@@ -151,6 +156,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setTrack("dark-woods");
     } else if (screen === "dungeon") {
       setTrack("bloodrat-sewers");
+    } else if (screen !== "") {
+      setTrack("frost-mountain");
     }
   }, [screen]);
 
@@ -161,6 +168,26 @@ export function GameProvider({ children }: { children: ReactNode }) {
     if (key) howlsRef.current[key]?.volume(vol);
   }, []);
   // ─────────────────────────────────────────────────────────────────────────
+
+  if (screen === "") {
+    return (
+      <div
+        style={{
+          width: "100vw",
+          height: "100vh",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          cursor: "default",
+        }}
+        onClick={() => setScreen("main-menu")}
+      >
+        <div style={{ maxHeight: "2rem", fontSize: "21pt" }}>
+          Click to Begin!
+        </div>
+      </div>
+    );
+  }
 
   return (
     <GameContext.Provider
