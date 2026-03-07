@@ -261,7 +261,7 @@ export const MONSTER_STATS: Record<string, CreatureStatBlock> = {
 
   // ── Lair (levels 9-10) ───────────────────────────────────────────────────
   pit_fiend: {
-    glyph: "F",
+    glyph: "f",
     name: "Pit Fiend",
     speed: 10,
     hp: 22,
@@ -328,9 +328,9 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     resistances: ["blunt"],
     attackDamageType: "blunt",
   },
-  nest_mother: {
-    glyph: "M",
-    name: "Nest Mother",
+  cave_bear: {
+    glyph: "B",
+    name: "Cave Bear",
     speed: 8,
     hp: 45,
     attack: 7,
@@ -342,9 +342,9 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
   },
 
   // ── Ruins ─────────────────────────────────────────────────────────────────
-  ruined_golem: {
-    glyph: "G",
-    name: "Ruined Golem",
+  ruin_spirit: {
+    glyph: "p",
+    name: "",
     speed: 7,
     hp: 70,
     attack: 11,
@@ -355,7 +355,7 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attackDamageType: "blunt",
   },
   ruin_guardian: {
-    glyph: "U",
+    glyph: "G",
     name: "Ruin Guardian",
     speed: 8,
     hp: 60,
@@ -382,7 +382,7 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
   },
   death_knight: {
     glyph: "N",
-    name: "Death Knight",
+    name: "Undead Knight",
     speed: 10,
     hp: 90,
     attack: 14,
@@ -394,9 +394,9 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
   },
 
   // ── Temple ────────────────────────────────────────────────────────────────
-  high_oracle: {
-    glyph: "O",
-    name: "High Oracle",
+  high_priest: {
+    glyph: "P",
+    name: "High Priest",
     speed: 10,
     hp: 100,
     attack: 14,
@@ -406,9 +406,9 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     resistances: ["slash"],
     attackDamageType: "pierce",
   },
-  the_chosen: {
-    glyph: "C",
-    name: "The Chosen",
+  holy_warrior: {
+    glyph: "W",
+    name: "Holy Warrior",
     speed: 12,
     hp: 85,
     attack: 16,
@@ -420,9 +420,9 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
   },
 
   // ── Lair ──────────────────────────────────────────────────────────────────
-  warlord_chief: {
-    glyph: "W",
-    name: "Warlord Chief",
+  grand_fiend: {
+    glyph: "F",
+    name: "Grand Fiend",
     speed: 10,
     hp: 120,
     attack: 18,
@@ -433,8 +433,8 @@ export const BOSS_STATS: Record<string, CreatureStatBlock> = {
     attackDamageType: "slash",
   },
   the_devourer: {
-    glyph: "X",
-    name: "The Devourer",
+    glyph: "D",
+    name: "Demon Prince",
     speed: 8,
     hp: 150,
     attack: 20,
@@ -453,7 +453,7 @@ export const NPC_STATS: Record<string, CreatureStatBlock> = {
   // ── Cave ─────────────────────────────────────────────────────────────────
   lost_prospector: {
     glyph: "@",
-    name: "Lost Prospector",
+    name: "Dead Prospector",
     speed: 7,
     hp: 10,
     attack: 2,
@@ -580,6 +580,10 @@ export const LOOT_STATS: Record<string, LootStatBlock> = {
   war_trophy: { glyph: "!", name: "War Trophy", value: 40 },
   infernal_gem: { glyph: "^", name: "Infernal Gem", value: 80 },
   champion_standard: { glyph: "\\", name: "Champion Standard", value: 150 },
+
+  // --- Overworld -----------------------------------------------------------
+  coins: { glyph: "$", name: "Coins", value: 10 },
+  coin_pile: { glyph: "$", name: "Pile of Coins", value: 50 },
 };
 
 // ---------------------------------------------------------------------------
@@ -609,7 +613,7 @@ export const PROP_STATS: Record<string, PropStatBlock> = {
 
   // ── Ruins ─────────────────────────────────────────────────────────────────
   crumbled_column: {
-    glyph: "O",
+    glyph: "e",
     name: "Crumbled Column",
     solid: true,
     interactable: false,
