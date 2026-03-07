@@ -16,10 +16,10 @@ import type { DungeonTheme } from "./themeTypes";
 
 const CAVE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "cave_bat",      weight: 4 },
-    { value: "giant_spider",  weight: 3 },
-    { value: "rock_sprite",   weight: 3 },
-    { value: "blind_crawler", weight: 2 },
+    { value: "cave_bat",     weight: 4 },
+    { value: "spider",       weight: 3 },
+    { value: "rat",          weight: 3 },
+    { value: "giant_spider", weight: 2 },
   ],
   loot: [
     { value: "ore_pouch",     weight: 4 },
@@ -43,9 +43,9 @@ const CAVE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
 
 const RUINS_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "feral_dog",      weight: 4 },
+    { value: "scavenging_dog", weight: 4 },
     { value: "tomb_rat",       weight: 3 },
-    { value: "vine_stalker",   weight: 3 },
+    { value: "venerator",      weight: 3 },
     { value: "stone_sentinel", weight: 2 },
   ],
   loot: [
@@ -72,7 +72,7 @@ const CRYPT_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
     { value: "zombie",   weight: 4 },
     { value: "skeleton", weight: 3 },
-    { value: "shadow",   weight: 2 },
+    { value: "shade",    weight: 2 },
     { value: "wight",    weight: 2 },
   ],
   loot: [
@@ -98,7 +98,7 @@ const CRYPT_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
 const TEMPLE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
     { value: "temple_zealot",   weight: 4 },
-    { value: "flame_cleric",    weight: 3 },
+    { value: "altar_cleric",    weight: 3 },
     { value: "divine_construct",weight: 2 },
     { value: "stone_idol",      weight: 2 },
   ],
@@ -124,9 +124,9 @@ const TEMPLE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
 
 const LAIR_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   monsters: [
-    { value: "warlord_grunt", weight: 4 },
-    { value: "pit_fiend",     weight: 3 },
-    { value: "chaos_brute",   weight: 2 },
+    { value: "goblin_skirmisher", weight: 4 },
+    { value: "pit_fiend",         weight: 3 },
+    { value: "ogre_brute",        weight: 2 },
     { value: "abomination",   weight: 2 },
   ],
   loot: [

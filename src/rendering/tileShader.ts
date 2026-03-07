@@ -964,17 +964,22 @@ export const forestFrag = /* glsl */ `
     // ------------------------------------------------------------
     // M7 — fog of war + visibility
     // Player always renders at full brightness regardless of dim/visibility.
+    // "$" glyphs with a tint mask also bypass visibility dimming — but only
+    // when tintId > 0 (zero means the cell was already cleared by the game).
     // ------------------------------------------------------------
-    float effectiveDim = mix(dim, 1.0, isPlayerHere);
+    float isDollarGlyph = 1.0 - step(0.5, abs(ch - 168.0));
+    float isDollarItem  = isDollarGlyph * step(0.5, tintId);
+    float bypassDim     = max(isPlayerHere, isDollarItem);
+    float effectiveDim = mix(dim, 1.0, bypassDim);
     outRgb *= effectiveDim;
     // Forest: cooler, greener ambient glow for visible cells.
     outRgb += vis * uVisBgBoost * vec3(0.08, 0.12, 0.06);
-    float effectiveVis = mix(vis, 1.0, isPlayerHere);
+    float effectiveVis = mix(vis, 1.0, bypassDim);
     outRgb = clamp(outRgb + effectiveVis * uVisFgBoost * inkA * vec3(1.0), 0.0, 1.0);
 
     float notVisible = 1.0 - step(0.5 / 255.0, vis);
     // Brighter base for explored-but-dark cells: empty areas ~0.06, ink pixels ~0.18.
-    outRgb = mix(outRgb, mix(vec3(0.06), vec3(0.18), inkA), notVisible * (1.0 - isPlayerHere));
+    outRgb = mix(outRgb, mix(vec3(0.06), vec3(0.18), inkA), notVisible * (1.0 - bypassDim));
 
     // Path overlay applied after fog-of-war so it shows on explored-but-dark
     // cells too (pathBg handles visible cells; this covers the rest).

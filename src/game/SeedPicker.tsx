@@ -10,6 +10,8 @@ import {
   type ContentOutputs,
 } from "../mazeGen";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
+const tileDefs = { ...CP437_TILES, chest: 168 };
+
 import { useGame } from "./GameProvider";
 import styles from "./styles/SeedPicker.module.css";
 import BorderPanel from "./ui/BorderPanel";
@@ -63,7 +65,6 @@ function themeColor(theme: string): string {
       return "#cccccc";
   }
 }
-
 
 export default function SeedPicker() {
   const { goTo, setOverworld } = useGame();
@@ -157,8 +158,12 @@ export default function SeedPicker() {
               hash 0x
               {bsp.meta.seedUsed.toString(16).padStart(8, "0").toUpperCase()}
             </div>
-            <div className={styles.worldName}>{content.meta.worldName.name}</div>
-            <div className={styles.worldDescription}>{content.meta.worldName.description}</div>
+            <div className={styles.worldName}>
+              {content.meta.worldName.name}
+            </div>
+            <div className={styles.worldDescription}>
+              {content.meta.worldName.description}
+            </div>
           </div>
 
           {/* Start button */}
@@ -292,9 +297,7 @@ export default function SeedPicker() {
                 >
                   {p.theme}
                 </span>
-                <span className={styles.portalListName}>
-                  {p.name}
-                </span>
+                <span className={styles.portalListName}>{p.name}</span>
                 <span className={styles.portalListLevel}>lvl {p.level}</span>
               </div>
             ))}
@@ -319,19 +322,19 @@ export default function SeedPicker() {
           atlasUrl={publicUrl("/textures/codepage437.png")}
           atlasCols={32}
           atlasRows={8}
-          floorTile={CP437_TILES.floor}
+          floorTile={tileDefs.floor}
           wallTile={5}
-          exitTile={CP437_TILES.exit}
-          doorTile={CP437_TILES.doorClosed}
-          keyTile={CP437_TILES.key}
-          leverTile={CP437_TILES.lever}
-          plateTile={CP437_TILES.plate}
-          blockTile={CP437_TILES.block}
-          chestTile={CP437_TILES.chest}
-          monsterTile={CP437_TILES.monster}
-          secretDoorTile={CP437_TILES.secretDoor}
-          hiddenPassageTile={CP437_TILES.hiddenPassage}
-          hazardDefaultTile={CP437_TILES.hazard}
+          exitTile={tileDefs.exit}
+          doorTile={tileDefs.doorClosed}
+          keyTile={tileDefs.key}
+          leverTile={tileDefs.lever}
+          plateTile={tileDefs.plate}
+          blockTile={tileDefs.block}
+          chestTile={tileDefs.chest}
+          monsterTile={tileDefs.monster}
+          secretDoorTile={tileDefs.secretDoor}
+          hiddenPassageTile={tileDefs.hiddenPassage}
+          hazardDefaultTile={tileDefs.hazard}
           suppressBlocks
           blockPositions={[]}
           playerX={hoveredCell?.x}
