@@ -9,6 +9,7 @@ export interface ModalPanelProps {
   title?: string;
 
   closeButton?: boolean;
+  scrollContents?: boolean;
 
   onClose?: () => void;
 
@@ -23,6 +24,7 @@ export default function ModalPanel({
   closeButton,
   onClose,
   maxHeight,
+  scrollContents,
 }: ModalPanelProps) {
   useEffect(() => {
     if (!visible && onClose) {
@@ -52,6 +54,7 @@ export default function ModalPanel({
         <div
           style={{
             padding: "1rem",
+            overflowY: scrollContents ? "scroll" : "hidden",
           }}
         >
           {children}

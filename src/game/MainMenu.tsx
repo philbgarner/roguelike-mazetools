@@ -1,133 +1,255 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import * as THREE from "three";
-import { Canvas } from "@react-three/fiber";
-import { Center, Text3D, useFont } from "@react-three/drei";
+
 import { useGame, type GameScreen } from "./GameProvider";
 import BorderPanel from "./ui/BorderPanel";
+import CharacterPicker from "./ui/CharacterPicker";
 import styles from "./styles/MainMenu.module.css";
-const FONT_URL = "/fonts/dosfont.json";
+import DungeonRenderView from "../rendering/DungeonRenderView";
+import { FocusLerper } from "./FocusLerper";
+import {
+  generateForest,
+  generateForestContent,
+  type ForestContentOutputs,
+  type ContentOutputs,
+} from "../mazeGen";
+import { CP437_TILES } from "../rendering/codepage437Tiles";
+import {
+  createActorCharMaskR8,
+  clearActorCharMask,
+  stampNpcsToNpcCharMask,
+  type ActorCharMask,
+} from "../rendering/actorCharMask";
+import {
+  createPlayerActor,
+  createMonstersFromResolved,
+  createMerchantWagons,
+} from "../turn/createActors";
+import {
+  createTurnSystemState,
+  tickUntilPlayer,
+  commitPlayerAction,
+  defaultComputeCost,
+  defaultApplyAction,
+  type TurnSystemState,
+  type TurnSystemDeps,
+} from "../turn/turnSystem";
+import { decideMerchantWagon } from "../turn/npcAI";
+import {
+  createWorldEffectsState,
+  advanceWorldEffects,
+} from "../world/worldEffects";
+import type { NpcActor } from "../turn/turnTypes";
 
-const MENU_ITEMS: { label: string; target: GameScreen }[] = [
-  { label: "Start Game", target: "character-picker" },
-  { label: "Settings", target: "character-picker" },
+const MENU_ITEMS: { label: string; action: "start" | "settings" }[] = [
+  { label: "Start Game", action: "start" },
+  { label: "Settings", action: "settings" },
 ];
 
-function MenuItem({
-  label,
-  y,
-  onClick,
-}: {
-  label: string;
-  y: number;
-  onClick: () => void;
-}) {
-  const font = useFont(FONT_URL);
-  const [hovered, setHovered] = useState(false);
-  const textRef = useRef<THREE.Mesh>(null);
-  const planeRef = useRef<THREE.Mesh>(null);
+const EMPTY_RUNTIME = {} as any;
+const BG_SEED = "mainmenu_bg";
+const NPC_GLYPH_TILE = 64;
+const TICK_INTERVAL = 120;
+
+function buildForest(seed: string) {
+  const bsp = generateForest({ seed, width: 64, height: 64 });
+  const walkDungeon = {
+    ...bsp,
+    masks: { ...bsp.masks, solid: new Uint8Array(bsp.width * bsp.height) },
+  };
+  const content = generateForestContent(bsp, { seed, portalCount: 10 });
+  return { bsp, walkDungeon, content };
+}
+
+function ForestBackground() {
+  const { bsp, walkDungeon, content } = useMemo(() => buildForest(BG_SEED), []);
+  const contentLegacy = content as unknown as ContentOutputs;
+
+  const worldEffectsRef = useRef(createWorldEffectsState());
+
+  function buildDeps(
+    _actors: TurnSystemState["actors"],
+  ): TurnSystemDeps {
+    return {
+      dungeon: bsp,
+      content: contentLegacy,
+      runtime: EMPTY_RUNTIME,
+      isWalkable: (x, y) =>
+        x >= 0 && y >= 0 && x < bsp.width && y < bsp.height,
+      monsterDecide: () => {
+        throw new Error("No monsters");
+      },
+      npcDecide: (state, npcId) =>
+        decideMerchantWagon(
+          state,
+          npcId,
+          walkDungeon,
+          contentLegacy,
+          content.meta.dungeonPortals,
+        ),
+      computeCost: (actorId, action) =>
+        defaultComputeCost(actorId, action, _actors),
+      applyAction: defaultApplyAction,
+      log: false,
+      onTimeAdvanced: ({ prevTime, nextTime }) => {
+        const dt = nextTime - prevTime;
+        if (dt <= 0) return;
+        const r = advanceWorldEffects(worldEffectsRef.current, dt);
+        worldEffectsRef.current = r.next;
+      },
+    };
+  }
+
+  const spawn = content.meta.playerSpawn;
+  const [turnState, setTurnState] = useState<TurnSystemState>(() => {
+    const playerActor = createPlayerActor(spawn.x, spawn.y);
+    const wagons = createMerchantWagons(content.meta.dungeonPortals, 3);
+    const ts = createTurnSystemState(playerActor, createMonstersFromResolved(null), wagons);
+    const deps = buildDeps(ts.actors);
+    return tickUntilPlayer(ts, deps);
+  });
+
+  // Auto-commit wait on a fixed interval to keep wagons moving
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTurnState((prev) => {
+        if (!prev.awaitingPlayerInput) return prev;
+        const deps = buildDeps(prev.actors);
+        return commitPlayerAction(prev, deps, { kind: "wait" });
+      });
+    }, TICK_INTERVAL);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Camera: follow the first alive NPC
+  const targetFocusRef = useRef({ x: spawn.x, y: spawn.y });
+  const animFocusRef = useRef({ x: spawn.x, y: spawn.y });
+  const [focusX, setFocusX] = useState(spawn.x);
+  const [focusY, setFocusY] = useState(spawn.y);
 
   useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      if (!textRef.current || !planeRef.current) return;
-      const box = new THREE.Box3().setFromObject(textRef.current);
-      const center = new THREE.Vector3();
-      const size = new THREE.Vector3();
-      box.getCenter(center);
-      box.getSize(size);
-      planeRef.current.position.copy(center);
-      planeRef.current.position.z -= 0.1;
-      planeRef.current.scale.set(size.x + 0.3, size.y + 0.3, 1);
+    const npc = Object.values(turnState.actors).find(
+      (a): a is NpcActor => a.kind === "npc" && a.alive,
+    );
+    if (npc) {
+      targetFocusRef.current = { x: npc.x, y: npc.y };
+    }
+  }, [turnState.actors]);
+
+  // NPC char overlay texture
+  const npcMaskRef = useRef<ActorCharMask | null>(null);
+  const [npcCharTex, setNpcCharTex] = useState<THREE.DataTexture | null>(null);
+
+  useEffect(() => {
+    if (npcMaskRef.current) npcMaskRef.current.tex.dispose();
+    const nm = createActorCharMaskR8(bsp.width, bsp.height, "bg_npc_char_r8");
+    npcMaskRef.current = nm;
+    setNpcCharTex(nm.tex);
+    return () => {
+      nm.tex.dispose();
+      npcMaskRef.current = null;
+    };
+  }, [bsp.width, bsp.height]);
+
+  useEffect(() => {
+    const nm = npcMaskRef.current;
+    if (!nm) return;
+    clearActorCharMask(nm.data);
+    const npcs = Object.values(turnState.actors).filter(
+      (a): a is NpcActor => a.kind === "npc" && a.alive,
+    );
+    stampNpcsToNpcCharMask({
+      data: nm.data,
+      W: bsp.width,
+      H: bsp.height,
+      npcs: npcs.map((npc) => ({ id: npc.id, x: npc.x, y: npc.y })),
+      npcTile: NPC_GLYPH_TILE,
     });
-    return () => cancelAnimationFrame(raf);
-  }, [label]);
+    nm.tex.needsUpdate = true;
+    setNpcCharTex(nm.tex);
+  }, [bsp.width, bsp.height, turnState.actors]);
 
   return (
-    <group position={[0, y, 0]}>
-      <mesh
-        ref={planeRef}
-        onPointerEnter={() => setHovered(true)}
-        onPointerLeave={() => setHovered(false)}
-        onClick={onClick}
+    <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+      <DungeonRenderView
+        bsp={bsp}
+        content={contentLegacy}
+        focusX={focusX}
+        focusY={focusY}
+        onCellFocus={() => {}}
+        playerX={spawn.x}
+        playerY={spawn.y}
+        playerTile={0}
+        floorTile={CP437_TILES.floor}
+        wallTile={5}
+        doorTile={CP437_TILES.doorClosed}
+        keyTile={CP437_TILES.key}
+        leverTile={CP437_TILES.lever}
+        plateTile={CP437_TILES.plate}
+        blockTile={CP437_TILES.block}
+        suppressBlocks
+        startFullyExplored="pathways-only"
+        blockPositions={[]}
+        chestTile={CP437_TILES.chest}
+        monsterTile={CP437_TILES.monster}
+        secretDoorTile={CP437_TILES.secretDoor}
+        hiddenPassageTile={CP437_TILES.hiddenPassage}
+        hazardDefaultTile={CP437_TILES.hazard}
+        exitTile={CP437_TILES.exit}
+        atlasUrl={"/textures/codepage437.png"}
+        atlasCols={32}
+        atlasRows={8}
+        hazardTilesByType={{
+          1: 48,
+          2: 49,
+          3: 50,
+          4: 51,
+        }}
+        npcCharTex={npcCharTex}
+        shaderVariant="forest"
       >
-        <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
-      <Center>
-        <Text3D
-          ref={textRef}
-          font={font.data}
-          size={0.5}
-          height={0.1}
-          curveSegments={4}
-        >
-          {label}
-          <meshStandardMaterial color={hovered ? "#ffff00" : "white"} />
-        </Text3D>
-      </Center>
-    </group>
-  );
-}
-
-function Title() {
-  const font = useFont(FONT_URL);
-
-  return (
-    <>
-      <Center position={[0, 1.5, 0]}>
-        <Text3D font={font.data} size={1} height={0.2} curveSegments={6}>
-          Wilderness Rogue
-          <meshStandardMaterial color="#aaffaa" />
-        </Text3D>
-      </Center>
-      <Center position={[0, 0.75, 0]}>
-        <Text3D font={font.data} size={0.3} height={0.2} curveSegments={6}>
-          A 7DRL 2026 game.
-          <meshStandardMaterial color="#aaffaa" />
-        </Text3D>
-      </Center>
-    </>
-  );
-}
-
-function MenuScene() {
-  const { goTo } = useGame();
-
-  return (
-    <>
-      <ambientLight intensity={0.6} />
-      <directionalLight position={[5, 5, 5]} intensity={1} />
-      <Title />
-      {MENU_ITEMS.map((item, i) => (
-        <MenuItem
-          key={item.label}
-          label={item.label}
-          y={-i * 0.8}
-          onClick={() => goTo(item.target)}
+        <FocusLerper
+          targetRef={targetFocusRef}
+          animRef={animFocusRef}
+          onUpdate={(x, y) => {
+            setFocusX(x);
+            setFocusY(y);
+          }}
         />
-      ))}
-    </>
+      </DungeonRenderView>
+    </div>
   );
 }
 
 export default function MainMenu() {
-  const { goTo } = useGame();
+  const [showPicker, setShowPicker] = useState(false);
   const width = "40vw";
   const halfWidth = "20vw";
   return (
-    <BorderPanel
-      left={`calc(50vw - ${halfWidth})`}
-      bottom={`10vh`}
-      width={width}
-      height={"30vh"}
-      background={"#090909c0"}
-    >
-      <div className={styles.content}>
-        {MENU_ITEMS.map((item, i) => (
-          <span className={styles.menuItem} onClick={() => goTo(item.target)}>
-            <span className={styles.menuItemText}>{item.label}</span>
-          </span>
-        ))}
-      </div>
-    </BorderPanel>
+    <div style={{ position: "absolute", inset: 0 }}>
+      <ForestBackground />
+      <BorderPanel
+        left={`calc(50vw - ${halfWidth})`}
+        bottom={`10vh`}
+        width={width}
+        height={"30vh"}
+        background={"#090909c0"}
+      >
+        <div className={styles.content}>
+          {MENU_ITEMS.map((item) => (
+            <span
+              key={item.label}
+              className={styles.menuItem}
+              onClick={() => {
+                if (item.action === "start") setShowPicker(true);
+              }}
+            >
+              <span className={styles.menuItemText}>{item.label}</span>
+            </span>
+          ))}
+        </div>
+      </BorderPanel>
+      {showPicker && <CharacterPicker />}
+    </div>
   );
 }

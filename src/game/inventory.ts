@@ -87,6 +87,7 @@ export function createInventoryItem(
     bonusMaxHp,
     value,
     ...(nameOverride ? { nameOverride } : {}),
+    ...(template.type === "consumable" ? { isConsumable: true } : {}),
   };
 }
 
