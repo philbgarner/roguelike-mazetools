@@ -1107,7 +1107,7 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   return (
     <>
-      <Tooltip {...tooltip} />
+      <Tooltip {...tooltip} zIndex={300} />
 
       <MessageLog messages={logMessages} onMessageExpired={removeLogMessage} />
 

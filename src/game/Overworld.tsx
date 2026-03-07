@@ -710,23 +710,25 @@ export default function Overworld({ screen }: OverworldProps) {
         left="54rem"
         width="calc(100% - 76rem)"
         onEquipToggle={(item) => {
-          const isEquipped =
-            item.slot !== undefined &&
-            player.inventory.equipped[item.slot] === item.instanceId;
-          const { newInventory, delta } = isEquipped
-            ? unequipSlot(player.inventory, item.slot!)
-            : equipItem(player.inventory, item.instanceId);
-          setPlayer((prev) => ({
-            ...prev,
-            inventory: newInventory,
-            attack: prev.attack + delta.attack,
-            defense: prev.defense + delta.defense,
-            maxHp: Math.max(1, prev.maxHp + delta.maxHp),
-            hp: Math.min(
-              delta.maxHp < 0 ? prev.hp : prev.hp + Math.max(0, delta.maxHp),
-              Math.max(1, prev.maxHp + delta.maxHp),
-            ),
-          }));
+          setPlayer((prev) => {
+            const isEquipped =
+              item.slot !== undefined &&
+              prev.inventory.equipped[item.slot] === item.instanceId;
+            const { newInventory, delta } = isEquipped
+              ? unequipSlot(prev.inventory, item.slot!)
+              : equipItem(prev.inventory, item.instanceId);
+            return {
+              ...prev,
+              inventory: newInventory,
+              attack: prev.attack + delta.attack,
+              defense: prev.defense + delta.defense,
+              maxHp: Math.max(1, prev.maxHp + delta.maxHp),
+              hp: Math.min(
+                delta.maxHp < 0 ? prev.hp : prev.hp + Math.max(0, delta.maxHp),
+                Math.max(1, prev.maxHp + delta.maxHp),
+              ),
+            };
+          });
         }}
         onUseConsumable={(item) => handleUseConsumable(item)}
         onSlotHover={(item, e) => {
@@ -766,7 +768,7 @@ export default function Overworld({ screen }: OverworldProps) {
         </Button>
       </BorderPanel>
 
-      <Tooltip {...tooltip} />
+      <Tooltip {...tooltip} zIndex={300} />
 
       {dialog}
 

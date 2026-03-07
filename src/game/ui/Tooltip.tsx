@@ -1,8 +1,8 @@
 import React, { useRef } from "react";
 import BorderPanel from "./BorderPanel";
 
-/** Height of bottom UI bar (5rem) + a small buffer. */
-const BOTTOM_UI_CLEARANCE = 256;
+/** Height of bottom UI bar (5rem) + a generous buffer for tall tooltips. */
+const BOTTOM_UI_CLEARANCE = 400;
 /** Offset below cursor when rendering under it. */
 const BELOW_OFFSET = 20;
 /** Offset above cursor when flipping. */

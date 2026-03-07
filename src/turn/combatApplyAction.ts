@@ -240,6 +240,24 @@ function resolveCombat(
     }
   }
 
+  // When the player hits a monster, immediately alert it so it starts chasing.
+  if (attacker.kind === "player" && target.kind === "monster") {
+    return {
+      ...state,
+      actors: {
+        ...state.actors,
+        [targetId]: {
+          ...target,
+          hp: newHp,
+          alive: !died,
+          alertState: "chasing" as const,
+          lastKnownPlayerPos: { x: attacker.x, y: attacker.y },
+          searchTurnsLeft: 0,
+        },
+      },
+    };
+  }
+
   return {
     ...state,
     actors: {

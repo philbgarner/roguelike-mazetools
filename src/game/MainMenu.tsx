@@ -67,15 +67,12 @@ function ForestBackground() {
 
   const worldEffectsRef = useRef(createWorldEffectsState());
 
-  function buildDeps(
-    _actors: TurnSystemState["actors"],
-  ): TurnSystemDeps {
+  function buildDeps(_actors: TurnSystemState["actors"]): TurnSystemDeps {
     return {
       dungeon: bsp,
       content: contentLegacy,
       runtime: EMPTY_RUNTIME,
-      isWalkable: (x, y) =>
-        x >= 0 && y >= 0 && x < bsp.width && y < bsp.height,
+      isWalkable: (x, y) => x >= 0 && y >= 0 && x < bsp.width && y < bsp.height,
       monsterDecide: () => {
         throw new Error("No monsters");
       },
@@ -104,7 +101,11 @@ function ForestBackground() {
   const [turnState, setTurnState] = useState<TurnSystemState>(() => {
     const playerActor = createPlayerActor(spawn.x, spawn.y);
     const wagons = createMerchantWagons(content.meta.dungeonPortals, 3);
-    const ts = createTurnSystemState(playerActor, createMonstersFromResolved(null), wagons);
+    const ts = createTurnSystemState(
+      playerActor,
+      createMonstersFromResolved(null),
+      wagons,
+    );
     const deps = buildDeps(ts.actors);
     return tickUntilPlayer(ts, deps);
   });
@@ -188,7 +189,7 @@ function ForestBackground() {
         plateTile={CP437_TILES.plate}
         blockTile={CP437_TILES.block}
         suppressBlocks
-        startFullyExplored="pathways-only"
+        startFullyExplored="yes"
         blockPositions={[]}
         chestTile={CP437_TILES.chest}
         monsterTile={CP437_TILES.monster}
@@ -226,30 +227,61 @@ export default function MainMenu() {
   const width = "40vw";
   const halfWidth = "20vw";
   return (
-    <div style={{ position: "absolute", inset: 0 }}>
-      <ForestBackground />
-      <BorderPanel
-        left={`calc(50vw - ${halfWidth})`}
-        bottom={`10vh`}
-        width={width}
-        height={"30vh"}
-        background={"#090909c0"}
+    <>
+      <div
+        style={{
+          position: "absolute",
+          left: "0",
+          top: "10vh",
+          width: "100vw",
+          height: "40vh",
+          lineHeight: "96pt",
+          zIndex: 999,
+          display: "flex",
+        }}
       >
-        <div className={styles.content}>
-          {MENU_ITEMS.map((item) => (
-            <span
-              key={item.label}
-              className={styles.menuItem}
-              onClick={() => {
-                if (item.action === "start") setShowPicker(true);
-              }}
-            >
-              <span className={styles.menuItemText}>{item.label}</span>
-            </span>
-          ))}
+        <div
+          style={{
+            fontSize: "96pt",
+            lineHeight: "96pt",
+            textAlign: "center",
+            background:
+              "linear-gradient(180deg, #ff4444 0%, #8b0000 60%, #4a0000 100%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            backgroundClip: "text",
+            filter:
+              "drop-shadow(0 4px 8px rgba(0,0,0,0.8)) drop-shadow(0 2px 3px rgba(0,0,0,0.9))",
+          }}
+        >
+          Darkwild Dungeons
         </div>
-      </BorderPanel>
-      {showPicker && <CharacterPicker />}
-    </div>
+      </div>
+      <div style={{ position: "absolute", inset: 0 }}>
+        <ForestBackground />
+        <BorderPanel
+          left={`calc(50vw - ${halfWidth})`}
+          bottom={`10vh`}
+          width={width}
+          height={"30vh"}
+          background={"#090909c0"}
+        >
+          <div className={styles.content}>
+            {MENU_ITEMS.map((item) => (
+              <span
+                key={item.label}
+                className={styles.menuItem}
+                onClick={() => {
+                  if (item.action === "start") setShowPicker(true);
+                }}
+              >
+                <span className={styles.menuItemText}>{item.label}</span>
+              </span>
+            ))}
+          </div>
+        </BorderPanel>
+        {showPicker && <CharacterPicker />}
+      </div>
+    </>
   );
 }
