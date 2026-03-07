@@ -1438,8 +1438,17 @@ export default function Dungeon({ seed }: DungeonProps) {
             }, TOOLTIP_DELAY);
 
             if (hasRangedWeapon) {
-              // Show straight projectile line instead of A* walk path.
-              setProjectileDst({ x, y });
+              // Only show projectile line when hovering a living enemy; otherwise
+              // fall back to the normal A* walk-path preview.
+              const hasEnemyAtCell = Object.values(turnState.actors).some(
+                (a) => a.kind === "monster" && a.hp > 0 && a.x === x && a.y === y,
+              );
+              if (hasEnemyAtCell) {
+                setProjectileDst({ x, y });
+              } else {
+                setProjectileDst(null);
+                recomputePlayerPath(x, y);
+              }
             } else {
               recomputePlayerPath(x, y);
             }
@@ -1536,7 +1545,7 @@ export default function Dungeon({ seed }: DungeonProps) {
           pathMaskTex={pathMaskTex ?? undefined}
           actorCharTex={actorCharTex}
           _visDataRef={visDataRef}
-          projectileSrc={hasRangedWeapon ? { x: playerX, y: playerY } : null}
+          projectileSrc={hasRangedWeapon && projectileDst ? { x: playerX, y: playerY } : null}
           projectileDst={hasRangedWeapon ? projectileDst : null}
         >
           {floatingMessages}

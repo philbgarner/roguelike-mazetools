@@ -445,30 +445,54 @@ export const tileFrag = /* glsl */ `
     outRgb = mix(outRgb, pathColor, pathBlendFinal * 0.5);
 
     // --- Projectile line overlay (ranged weapon preview) ---
-    // Active when uProjectileSrc.x >= 0. Renders a straight animated bolt
-    // from src cell to dst cell, suppressing the player A* walk path above.
+    // Active when uProjectileSrc.x >= 0. Renders ASCII direction glyphs
+    // (| - / \) along the line from src to dst cell.
     if (projectileActive > 0.5 && curWall < 0.5) {
       vec2 segA = uProjectileSrc + 0.5;  // src cell center
       vec2 segB = uProjectileDst + 0.5;  // dst cell center
       vec2 cellCenter = cell + 0.5;
       vec2 ab = segB - segA;
       float abLen2 = dot(ab, ab);
-      float t = clamp(dot(cellCenter - segA, ab) / max(abLen2, 0.0001), 0.0, 1.0);
-      vec2 closest = segA + t * ab;
+      float tParam = clamp(dot(cellCenter - segA, ab) / max(abLen2, 0.0001), 0.0, 1.0);
+      vec2 closest = segA + tParam * ab;
       float distToSeg = length(cellCenter - closest);
       float onLine = step(distToSeg, 0.5);
 
       if (onLine > 0.5) {
-        // Animate bolt traveling from src toward dst
+        // Choose ASCII glyph based on line direction:
+        //   |  = 124 (vertical)   -  = 45 (horizontal)
+        //   /  = 47  (anti-diag)  \  = 92 (diag)
+        vec2 abNorm = ab / max(length(ab), 0.0001);
+        float adx = abs(abNorm.x);
+        float ady = abs(abNorm.y);
+        float glyphId;
+        if (adx < 0.42) {
+          glyphId = 124.0; // | mostly vertical
+        } else if (ady < 0.42) {
+          glyphId = 45.0;  // - mostly horizontal
+        } else if (abNorm.x * abNorm.y > 0.0) {
+          glyphId = 92.0;  // \ same-sign diagonal
+        } else {
+          glyphId = 47.0;  // / opposite-sign diagonal
+        }
+
+        float gtx = mod(glyphId, cols);
+        float gty = floor(glyphId / cols);
+        vec2 glyphUv = (vec2(gtx, gty) + local) / vec2(cols, rows);
+        if (uFlipAtlasY > 0.5) glyphUv.y = 1.0 - glyphUv.y;
+        float glyphAlpha = smoothstep(0.05, 0.20, texture2D(uAtlas, glyphUv).a);
+
+        // Animate ink traveling from src toward dst
         vec2 abDir = ab / max(length(ab), 0.0001);
-        float proj = dot(cellCenter - segA, abDir);
-        float phase = fract(proj * 0.4 - uTime * 3.0);
+        float projLen = dot(cellCenter - segA, abDir);
+        float phase = fract(projLen * 0.4 - uTime * 3.0);
         float bolt = smoothstep(0.05, 0.3, phase) * (1.0 - smoothstep(0.7, 0.95, phase));
-        // Destination cell: solid bright highlight
+        // Destination cell: full-intensity highlight
         float isDst = step(length(cellCenter - segB), 0.5);
         float intensity = mix(bolt, 1.0, isDst * 0.6);
+
         vec3 projColor = mix(vec3(1.0, 0.75, 0.15), vec3(1.0, 0.35, 0.1), isDst);
-        outRgb = mix(outRgb, projColor, intensity * 0.7);
+        outRgb = mix(outRgb, projColor, glyphAlpha * intensity * 0.9);
       }
     }
 
