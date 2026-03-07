@@ -40,14 +40,24 @@ export type ItemTemplate = {
   slot?: EquipSlot;
   /** Damage type dealt by this weapon (weapons only). */
   damageType?: DamageType;
+  /** True for ranged weapons — attack by clicking a distant enemy, not by bumping. */
+  isRanged?: boolean;
+  /** Maximum attack range in Chebyshev tiles (ranged weapons only). */
+  range?: number;
 };
 
 export const ITEM_TEMPLATES: ItemTemplate[] = [
   // Weapons — grant bonusAttack
-  { id: "sword",  name: "Sword",      glyph: "/",  type: "weapon",  slot: "weapon",  damageType: "slash"  },
-  { id: "axe",    name: "Axe",        glyph: "\\", type: "weapon",  slot: "weapon",  damageType: "blunt"  },
-  { id: "dagger", name: "Dagger",     glyph: "-",  type: "weapon",  slot: "weapon",  damageType: "pierce" },
-  { id: "spear",  name: "Spear",      glyph: "|",  type: "weapon",  slot: "weapon",  damageType: "pierce" },
+  { id: "sword",    name: "Sword",    glyph: "/",  type: "weapon", slot: "weapon", damageType: "slash"  },
+  { id: "axe",      name: "Axe",      glyph: "\\", type: "weapon", slot: "weapon", damageType: "blunt"  },
+  { id: "dagger",   name: "Dagger",   glyph: "-",  type: "weapon", slot: "weapon", damageType: "pierce" },
+  { id: "spear",    name: "Spear",    glyph: "|",  type: "weapon", slot: "weapon", damageType: "pierce" },
+
+  // Ranged weapons — attack by clicking a distant enemy (no bump required)
+  { id: "bow",      name: "Bow",      glyph: "}",  type: "weapon", slot: "weapon", damageType: "pierce", isRanged: true, range: 8  },
+  { id: "crossbow", name: "Crossbow", glyph: "{",  type: "weapon", slot: "weapon", damageType: "pierce", isRanged: true, range: 10 },
+  { id: "javelin",  name: "Javelin",  glyph: ";",  type: "weapon", slot: "weapon", damageType: "pierce", isRanged: true, range: 4  },
+  { id: "sling",    name: "Sling",    glyph: "~",  type: "weapon", slot: "weapon", damageType: "blunt",  isRanged: true, range: 6  },
 
   // Armor — grant bonusDefense + bonusMaxHp
   { id: "shield", name: "Shield",     glyph: ")",  type: "armor",   slot: "offhand" },

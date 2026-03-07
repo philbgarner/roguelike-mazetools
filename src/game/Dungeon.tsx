@@ -86,6 +86,7 @@ import {
   equipItem,
   unequipSlot,
   removeItem,
+  getEquipped,
   type Inventory,
   type InventoryItem,
   type StatDelta,
@@ -1427,6 +1428,32 @@ export default function Dungeon({ seed }: DungeonProps) {
                 return evaluateCircuits(next1, content.meta.circuits).next;
               });
               return true;
+            }
+
+            // Ranged attack: if the player has a ranged weapon equipped and
+            // clicks on a living monster, fire at it instead of auto-walking.
+            {
+              const ts = turnStateRef.current;
+              const pa = ts.actors[ts.playerId] as PlayerActor | undefined;
+              if (pa && pa.kind === "player") {
+                const equippedWeapon = getEquipped(pa.inventory, "weapon");
+                const weapTemplate = equippedWeapon
+                  ? getItemTemplate(equippedWeapon.templateId)
+                  : null;
+                if (weapTemplate?.isRanged) {
+                  const targetMonster = Object.values(ts.actors).find(
+                    (a) => a.kind === "monster" && a.alive && a.x === x && a.y === y,
+                  );
+                  if (targetMonster) {
+                    cancelAutoWalkNow();
+                    attemptCommitPlayerAction({
+                      kind: "attack",
+                      targetId: targetMonster.id,
+                    });
+                    return true;
+                  }
+                }
+              }
             }
 
             // Click-to-navigate: start auto-walk toward target.

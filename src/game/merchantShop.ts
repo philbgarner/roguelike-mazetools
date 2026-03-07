@@ -38,7 +38,7 @@ function seededRng(seed: number) {
   };
 }
 
-const WEAPON_IDS = ["sword", "axe", "dagger", "spear"];
+const WEAPON_IDS = ["sword", "axe", "dagger", "spear", "bow", "crossbow", "javelin", "sling"];
 const ARMOR_IDS  = ["shield", "mail", "helm"];
 
 /** Which heal potion tier to stock based on player level. */

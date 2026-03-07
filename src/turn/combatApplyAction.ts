@@ -16,14 +16,82 @@ import { getItemTemplate } from "../game/data/itemData";
 import { getEquipped } from "../game/inventory";
 
 /**
- * Drop-in replacement for defaultApplyAction that resolves melee combat on bump.
+ * Bresenham line-of-sight check. Returns true if the path from (x0,y0) to
+ * (x1,y1) passes through no unwalkable intermediate cells.
+ */
+function hasLineOfSight(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  isWalkable: (x: number, y: number) => boolean,
+): boolean {
+  const absDx = Math.abs(x1 - x0);
+  const absDy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = absDx - absDy;
+  let x = x0;
+  let y = y0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (x === x1 && y === y1) return true;
+    const e2 = 2 * err;
+    if (e2 > -absDy) { err -= absDy; x += sx; }
+    if (e2 < absDx) { err += absDx; y += sy; }
+    // Intermediate cell — must be walkable for the projectile to pass
+    if (x !== x1 || y !== y1) {
+      if (!isWalkable(x, y)) return false;
+    }
+  }
+}
+
+/**
+ * Resolve a ranged attack: validate weapon, range, and line of sight,
+ * then delegate to resolveCombat.
+ */
+function resolveRangedAttack(
+  state: TurnSystemState,
+  attackerId: ActorId,
+  targetId: ActorId,
+  deps: TurnSystemDeps,
+): TurnSystemState {
+  const attacker = state.actors[attackerId];
+  const target = state.actors[targetId];
+  if (!attacker || !target || !target.alive) return state;
+  if (attacker.kind !== "player" || target.kind !== "monster") return state;
+
+  const equippedWeapon = getEquipped((attacker as PlayerActor).inventory, "weapon");
+  if (!equippedWeapon) return state;
+  const template = getItemTemplate(equippedWeapon.templateId);
+  if (!template?.isRanged || !template.range) return state;
+
+  // Chebyshev distance check
+  const dist = Math.max(
+    Math.abs(target.x - attacker.x),
+    Math.abs(target.y - attacker.y),
+  );
+  if (dist > template.range) return state;
+
+  if (!hasLineOfSight(attacker.x, attacker.y, target.x, target.y, deps.isWalkable)) {
+    return state;
+  }
+
+  return resolveCombat(state, attackerId, targetId, deps);
+}
+
+/**
+ * Drop-in replacement for defaultApplyAction that resolves melee combat on bump
+ * and ranged combat via explicit attack actions.
  *
  * For move actions:
  *   - If the target cell contains a hostile actor → resolve combat (no movement).
  *   - If the target cell is walkable and empty → move as normal.
  *   - Otherwise → no-op (blocked wall / same-faction actor).
  *
- * All other action kinds (wait, interact, explicit attack) are no-ops for now.
+ * For attack actions with targetId:
+ *   - If the player has a ranged weapon equipped and the target is in range with
+ *     clear line of sight → resolve ranged combat.
  */
 export function combatApplyAction(
   state: TurnSystemState,
@@ -31,6 +99,10 @@ export function combatApplyAction(
   action: TurnAction,
   deps: TurnSystemDeps,
 ): TurnSystemState {
+  if (action.kind === "attack" && action.targetId) {
+    return resolveRangedAttack(state, actorId, action.targetId, deps);
+  }
+
   if (action.kind !== "move" || action.dx == null || action.dy == null) {
     return state;
   }
