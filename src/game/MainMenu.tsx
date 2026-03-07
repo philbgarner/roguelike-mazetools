@@ -15,6 +15,8 @@ import {
   type ContentOutputs,
 } from "../mazeGen";
 import { CP437_TILES } from "../rendering/codepage437Tiles";
+const tileDefs = { ...CP437_TILES, chest: 168 };
+
 import {
   createActorCharMaskR8,
   clearActorCharMask,
@@ -182,22 +184,22 @@ function ForestBackground() {
         playerX={focusX}
         playerY={focusY}
         playerTile={0}
-        floorTile={CP437_TILES.floor}
+        floorTile={tileDefs.floor}
         wallTile={5}
-        doorTile={CP437_TILES.doorClosed}
-        keyTile={CP437_TILES.key}
-        leverTile={CP437_TILES.lever}
-        plateTile={CP437_TILES.plate}
-        blockTile={CP437_TILES.block}
+        doorTile={tileDefs.doorClosed}
+        keyTile={tileDefs.key}
+        leverTile={tileDefs.lever}
+        plateTile={tileDefs.plate}
+        blockTile={tileDefs.block}
         suppressBlocks
         startFullyExplored="yes"
         blockPositions={[]}
-        chestTile={CP437_TILES.chest}
-        monsterTile={CP437_TILES.monster}
-        secretDoorTile={CP437_TILES.secretDoor}
-        hiddenPassageTile={CP437_TILES.hiddenPassage}
-        hazardDefaultTile={CP437_TILES.hazard}
-        exitTile={CP437_TILES.exit}
+        chestTile={tileDefs.chest}
+        monsterTile={tileDefs.monster}
+        secretDoorTile={tileDefs.secretDoor}
+        hiddenPassageTile={tileDefs.hiddenPassage}
+        hazardDefaultTile={tileDefs.hazard}
+        exitTile={tileDefs.exit}
         atlasUrl={publicUrl("/textures/codepage437.png")}
         atlasCols={32}
         atlasRows={8}
