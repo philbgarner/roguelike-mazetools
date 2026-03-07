@@ -1,13 +1,18 @@
 import {
   createContext,
+  useCallback,
   useContext,
+  useEffect,
+  useRef,
   useState,
   type ReactNode,
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { Howl } from "howler";
 import { BspDungeonOutputs, ForestContentOutputs } from "../mazeGen";
 import { Player, DEFAULT_PLAYER } from "./player";
+import { MUSIC_TRACKS } from "./musicTracks";
 
 export interface RunStats {
   monstersKilled: number;
@@ -28,7 +33,17 @@ export type GameScreen =
   | "character-picker"
   | "success";
 
-interface GameState {
+interface MusicState {
+  /** Key of the currently playing track, or null if silent. */
+  currentTrack: string | null;
+  /** Start playing a track by key (fades out previous, fades in new). No-op if already playing that key. */
+  setTrack: (key: string | null) => void;
+  /** Master music volume [0, 1]. */
+  musicVolume: number;
+  setMusicVolume: (vol: number) => void;
+}
+
+interface GameState extends MusicState {
   screen: GameScreen;
   player: Player;
   setPlayer: Dispatch<SetStateAction<Player>>;
@@ -69,15 +84,83 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [level, setLevel] = useState<number>(1);
   const [floor, setFloor] = useState<number>(1);
   const [theme, setTheme] = useState<string>("cave");
-  const [completedDungeons, setCompletedDungeons] = useState<Set<string | number>>(new Set());
+  const [completedDungeons, setCompletedDungeons] = useState<
+    Set<string | number>
+  >(new Set());
   const [usedSecrets, setUsedSecrets] = useState<Set<number>>(new Set());
-  const [revealedSecrets, setRevealedSecrets] = useState<Set<number>>(new Set());
+  const [revealedSecrets, setRevealedSecrets] = useState<Set<number>>(
+    new Set(),
+  );
   const [runStats, setRunStats] = useState<RunStats | null>(null);
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
     null,
   );
   const [overworldContent, setOverworldContent] =
     useState<ForestContentOutputs | null>(null);
+
+  // ── Music ────────────────────────────────────────────────────────────────
+  const FADE_MS = 1000;
+  const howlsRef = useRef<Record<string, Howl>>({});
+  const currentTrackKeyRef = useRef<string | null>(null);
+  const musicVolumeRef = useRef(0.7);
+  const [currentTrack, setCurrentTrack] = useState<string | null>(null);
+  const [musicVolume, setMusicVolumeState] = useState(0.7);
+
+  useEffect(() => {
+    const howls = howlsRef.current;
+    Object.entries(MUSIC_TRACKS).forEach(([key, url]) => {
+      howls[key] = new Howl({
+        src: [url],
+        loop: true,
+        volume: musicVolumeRef.current,
+        preload: true,
+      });
+    });
+    return () => {
+      Object.values(howls).forEach((h) => h.unload());
+    };
+  }, []);
+
+  const setTrack = useCallback((key: string | null) => {
+    const prevKey = currentTrackKeyRef.current;
+    if (prevKey === key) return;
+
+    if (prevKey) {
+      const prev = howlsRef.current[prevKey];
+      if (prev) {
+        prev.fade(prev.volume(), 0, FADE_MS);
+        setTimeout(() => prev.stop(), FADE_MS);
+      }
+    }
+
+    currentTrackKeyRef.current = key;
+    setCurrentTrack(key);
+
+    if (key) {
+      const next = howlsRef.current[key];
+      if (next) {
+        next.volume(0);
+        next.play();
+        next.fade(0, musicVolumeRef.current, FADE_MS);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (screen === "overworld") {
+      setTrack("dark-woods");
+    } else if (screen === "dungeon") {
+      setTrack("bloodrat-sewers");
+    }
+  }, [screen]);
+
+  const setMusicVolume = useCallback((vol: number) => {
+    musicVolumeRef.current = vol;
+    setMusicVolumeState(vol);
+    const key = currentTrackKeyRef.current;
+    if (key) howlsRef.current[key]?.volume(vol);
+  }, []);
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <GameContext.Provider
@@ -114,6 +197,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
           setRevealedSecrets((prev) => new Set([...prev, id])),
         runStats,
         setRunStats,
+        currentTrack,
+        setTrack,
+        musicVolume,
+        setMusicVolume,
       }}
     >
       {children}

@@ -24,6 +24,7 @@
     "ttf2woff2": "^8.0.1"
   },
   "devDependencies": {
+    "@types/howler": "^2.2.12",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
     "typescript": "~5.9.3",
