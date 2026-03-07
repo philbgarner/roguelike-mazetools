@@ -6,6 +6,6 @@
  */
 export function publicUrl(path: string): string {
   const clean = path.startsWith("/") ? path.slice(1) : path;
-  console.log("publicUrl", import.meta.env.DEV ? `/${clean}` : clean);
+
   return import.meta.env.DEV ? `/${clean}` : clean;
 }

@@ -66,10 +66,15 @@ function themeColor(theme: string): string {
   }
 }
 
+const randomSeed = () => {
+  const s = `${Math.floor(Date.now() / 1000)}`;
+  return s;
+};
+
 export default function SeedPicker() {
   const { goTo, setOverworld } = useGame();
 
-  const [localSeed, setLocalSeed] = useState<string | number>("test");
+  const [localSeed, setLocalSeed] = useState<string | number>(randomSeed());
   const [focusX, setFocusX] = useState(32);
   const [focusY, setFocusY] = useState(32);
   const targetFocusRef = useRef({ x: 32, y: 32 });

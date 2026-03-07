@@ -157,9 +157,7 @@ export default function Overworld({ screen }: OverworldProps) {
     revealedSecrets,
   } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
-  console.log("building screen", screen);
   const result = useMemo(() => {
-    console.log("building forest for seed", seed);
     return buildForest(seed);
   }, [seed]);
   const dungeon = result.bsp;
