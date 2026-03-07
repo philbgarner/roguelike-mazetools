@@ -509,6 +509,22 @@ export default function Dungeon({ seed }: DungeonProps) {
   const playerX = playerActor?.x ?? startCell.x;
   const playerY = playerActor?.y ?? startCell.y;
 
+  // --- Ranged weapon detection ---
+  const _equippedWeapon =
+    playerActor?.kind === "player"
+      ? getEquipped(playerActor.inventory, "weapon")
+      : null;
+  const _weapTemplate = _equippedWeapon
+    ? getItemTemplate(_equippedWeapon.templateId)
+    : null;
+  const hasRangedWeapon = !!_weapTemplate?.isRanged;
+
+  // Projectile preview destination cell (only used when hasRangedWeapon)
+  const [projectileDst, setProjectileDst] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+
   const { confirmPrompt, dialog } = useConfirmYesNo();
 
   // When the player moves, snap the focus target back to them.
@@ -1394,13 +1410,21 @@ export default function Dungeon({ seed }: DungeonProps) {
               });
             }, TOOLTIP_DELAY);
 
-            recomputePlayerPath(x, y);
+            if (hasRangedWeapon) {
+              // Show straight projectile line instead of A* walk path.
+              setProjectileDst({ x, y });
+            } else {
+              recomputePlayerPath(x, y);
+            }
           }}
           onCellHoverEnd={() => {
             lastHoverCellRef.current = null;
             if (hoverTimerRef.current !== null) {
               clearTimeout(hoverTimerRef.current);
               hoverTimerRef.current = null;
+            }
+            if (hasRangedWeapon) {
+              setProjectileDst(null);
             }
             // While auto-walking, preserve the route overlay.
             if (autoWalk.kind === "active") return;
@@ -1485,6 +1509,8 @@ export default function Dungeon({ seed }: DungeonProps) {
           pathMaskTex={pathMaskTex ?? undefined}
           actorCharTex={actorCharTex}
           _visDataRef={visDataRef}
+          projectileSrc={hasRangedWeapon ? { x: playerX, y: playerY } : null}
+          projectileDst={hasRangedWeapon ? projectileDst : null}
         >
           {floatingMessages}
           <FocusLerper

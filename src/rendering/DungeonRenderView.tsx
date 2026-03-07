@@ -221,6 +221,10 @@ type Props = {
   pathStrength?: number;
   pathAnimSpeed?: number;
 
+  // Ranged weapon projectile preview (cell coords; null = disabled)
+  projectileSrc?: { x: number; y: number } | null;
+  projectileDst?: { x: number; y: number } | null;
+
   // Runtime state for levers and doors (drives glyph + tint changes)
   leverStates?: Record<number, { toggled: boolean }>;
   doorStates?: Record<number, { isOpen: boolean }>;
@@ -690,6 +694,9 @@ function DungeonRenderScene(props: Props) {
         uPathMask: { value: props.pathMaskTex ?? fallbackPathTex },
         uPathStrength: { value: props.pathStrength ?? 0.7 },
         uPathAnimSpeed: { value: props.pathAnimSpeed ?? 0.5 },
+        // Ranged weapon projectile preview
+        uProjectileSrc: { value: new THREE.Vector2(-1, -1) },
+        uProjectileDst: { value: new THREE.Vector2(-1, -1) },
       },
       depthTest: false,
       depthWrite: false,
@@ -901,6 +908,23 @@ function DungeonRenderScene(props: Props) {
   useEffect(() => {
     mat.uniforms.uPathMask.value = props.pathMaskTex ?? fallbackPathTex;
   }, [mat, props.pathMaskTex, fallbackPathTex]);
+
+  // Ranged weapon projectile preview uniforms
+  useEffect(() => {
+    const src = props.projectileSrc;
+    mat.uniforms.uProjectileSrc.value.set(
+      src != null ? src.x : -1,
+      src != null ? src.y : -1,
+    );
+  }, [mat, props.projectileSrc]);
+
+  useEffect(() => {
+    const dst = props.projectileDst;
+    mat.uniforms.uProjectileDst.value.set(
+      dst != null ? dst.x : -1,
+      dst != null ? dst.y : -1,
+    );
+  }, [mat, props.projectileDst]);
 
   // Actor overlay: update uActorChar uniform when prop changes
   useEffect(() => {

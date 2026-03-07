@@ -67,6 +67,10 @@ export const tileFrag = /* glsl */ `
   uniform float uPathStrength;
   uniform float uPathAnimSpeed;
 
+  // Ranged weapon projectile preview (grid cell coords; src.x < 0 = disabled)
+  uniform vec2 uProjectileSrc;
+  uniform vec2 uProjectileDst;
+
   varying vec2 vUv;
 
   // ------------------------------------------------------------
@@ -249,7 +253,9 @@ export const tileFrag = /* glsl */ `
     vec3 playerPath = vec3(0.3, 0.6, 1.0);
     float hasEnemy  = step(0.5, pathData.r);
     float hasNpc    = step(0.5, pathData.g);
-    float hasPlayer = step(0.5, pathData.b);
+    // Suppress player A* path when projectile mode is active
+    float projectileActive = step(0.0, uProjectileSrc.x);
+    float hasPlayer = step(0.5, pathData.b) * (1.0 - projectileActive);
     vec3 pathColor = enemyPath * hasEnemy + npcPath * hasNpc + playerPath * hasPlayer;
     float totalKinds = hasEnemy + hasNpc + hasPlayer;
     pathColor = (totalKinds > 0.0) ? pathColor / totalKinds : playerPath;
@@ -438,6 +444,34 @@ export const tileFrag = /* glsl */ `
     float pathBlendFinal = pathIntensity;
     outRgb = mix(outRgb, pathColor, pathBlendFinal * 0.5);
 
+    // --- Projectile line overlay (ranged weapon preview) ---
+    // Active when uProjectileSrc.x >= 0. Renders a straight animated bolt
+    // from src cell to dst cell, suppressing the player A* walk path above.
+    if (projectileActive > 0.5 && curWall < 0.5) {
+      vec2 segA = uProjectileSrc + 0.5;  // src cell center
+      vec2 segB = uProjectileDst + 0.5;  // dst cell center
+      vec2 cellCenter = cell + 0.5;
+      vec2 ab = segB - segA;
+      float abLen2 = dot(ab, ab);
+      float t = clamp(dot(cellCenter - segA, ab) / max(abLen2, 0.0001), 0.0, 1.0);
+      vec2 closest = segA + t * ab;
+      float distToSeg = length(cellCenter - closest);
+      float onLine = step(distToSeg, 0.5);
+
+      if (onLine > 0.5) {
+        // Animate bolt traveling from src toward dst
+        vec2 abDir = ab / max(length(ab), 0.0001);
+        float proj = dot(cellCenter - segA, abDir);
+        float phase = fract(proj * 0.4 - uTime * 3.0);
+        float bolt = smoothstep(0.05, 0.3, phase) * (1.0 - smoothstep(0.7, 0.95, phase));
+        // Destination cell: solid bright highlight
+        float isDst = step(length(cellCenter - segB), 0.5);
+        float intensity = mix(bolt, 1.0, isDst * 0.6);
+        vec3 projColor = mix(vec3(1.0, 0.75, 0.15), vec3(1.0, 0.35, 0.1), isDst);
+        outRgb = mix(outRgb, projColor, intensity * 0.7);
+      }
+    }
+
     gl_FragColor = vec4(outRgb, 1.0);
   }
 
@@ -503,6 +537,10 @@ export const forestFrag = /* glsl */ `
   uniform sampler2D uPathMask;
   uniform float uPathStrength;
   uniform float uPathAnimSpeed;
+
+  // Ranged weapon projectile preview (grid cell coords; src.x < 0 = disabled)
+  uniform vec2 uProjectileSrc;
+  uniform vec2 uProjectileDst;
 
   varying vec2 vUv;
 
@@ -702,7 +740,8 @@ export const forestFrag = /* glsl */ `
     vec3 playerPath = vec3(0.3, 0.6, 1.0);
     float hasEnemy  = step(0.5, pathData.r);
     float hasNpc    = step(0.5, pathData.g);
-    float hasPlayer = step(0.5, pathData.b);
+    float projectileActive = step(0.0, uProjectileSrc.x);
+    float hasPlayer = step(0.5, pathData.b) * (1.0 - projectileActive);
     vec3 pathColor = enemyPath * hasEnemy + npcPath * hasNpc + playerPath * hasPlayer;
     float totalKinds = hasEnemy + hasNpc + hasPlayer;
     pathColor = (totalKinds > 0.0) ? pathColor / totalKinds : playerPath;
@@ -957,6 +996,30 @@ export const forestFrag = /* glsl */ `
     // Max ~30% opacity so the underlying tile always reads through.
     float mistAlpha = mistDensity * 0.30 * explored;
     outRgb = mix(outRgb, mix(outRgb, mistCol, 0.55), mistAlpha);
+
+    // --- Projectile line overlay (ranged weapon preview) ---
+    if (projectileActive > 0.5 && curWall < 0.5) {
+      vec2 segA = uProjectileSrc + 0.5;
+      vec2 segB = uProjectileDst + 0.5;
+      vec2 cellCenter = cell + 0.5;
+      vec2 ab = segB - segA;
+      float abLen2 = dot(ab, ab);
+      float t = clamp(dot(cellCenter - segA, ab) / max(abLen2, 0.0001), 0.0, 1.0);
+      vec2 closest = segA + t * ab;
+      float distToSeg = length(cellCenter - closest);
+      float onLine = step(distToSeg, 0.5);
+
+      if (onLine > 0.5) {
+        vec2 abDir = ab / max(length(ab), 0.0001);
+        float proj = dot(cellCenter - segA, abDir);
+        float phase = fract(proj * 0.4 - uTime * 3.0);
+        float bolt = smoothstep(0.05, 0.3, phase) * (1.0 - smoothstep(0.7, 0.95, phase));
+        float isDst = step(length(cellCenter - segB), 0.5);
+        float intensity = mix(bolt, 1.0, isDst * 0.6);
+        vec3 projColor = mix(vec3(1.0, 0.75, 0.15), vec3(1.0, 0.35, 0.1), isDst);
+        outRgb = mix(outRgb, projColor, intensity * 0.7);
+      }
+    }
 
     gl_FragColor = vec4(outRgb, 1.0);
   }
