@@ -91,9 +91,11 @@ import QuickSlotPanel from "./ui/QuickSlotPanel";
 import SecretLocationModal from "./ui/SecretLocationModal";
 import {
   SECRET_LOCATION_TEMPLATES,
+  scaleSecretTemplate,
   type SecretChoice,
   type SecretOutcome,
 } from "./data/secretLocationData";
+import { playerLevelFromXp } from "../resolve/levelBudget";
 import type { SecretLocation } from "../mazeGen";
 
 // ---------------------------------------------------------------------------
@@ -152,6 +154,7 @@ export default function Overworld({ screen }: OverworldProps) {
     completedDungeons,
     usedSecrets,
     markSecretUsed,
+    revealedSecrets,
   } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   console.log("building screen", screen);
@@ -744,7 +747,10 @@ export default function Overworld({ screen }: OverworldProps) {
       {/* --- Secret location modal --- */}
       {secretPending && (
         <SecretLocationModal
-          template={SECRET_LOCATION_TEMPLATES[secretPending.templateIndex]}
+          template={scaleSecretTemplate(
+            SECRET_LOCATION_TEMPLATES[secretPending.templateIndex],
+            playerLevelFromXp(player.xp),
+          )}
           onChoose={(choice: SecretChoice) => {
             setPlayer((prev) => applySecretOutcome(prev, choice.outcome));
           }}
@@ -1272,10 +1278,12 @@ export default function Overworld({ screen }: OverworldProps) {
                         </span>
                       ) : null}
                       {secretAtCell ? (
-                        <span style={{ color: usedSecrets.has(secretAtCell.id) ? "#666" : "#ccaa66" }}>
+                        <span style={{ color: usedSecrets.has(secretAtCell.id) ? "#666" : revealedSecrets.has(secretAtCell.id) ? "#ccaa66" : "#888" }}>
                           {usedSecrets.has(secretAtCell.id)
                             ? `${SECRET_LOCATION_TEMPLATES[secretAtCell.templateIndex]?.name ?? "Hidden Location"} (visited)`
-                            : "? Something hidden here"}
+                            : revealedSecrets.has(secretAtCell.id)
+                              ? SECRET_LOCATION_TEMPLATES[secretAtCell.templateIndex]?.name ?? "Hidden Location"
+                              : "? Something hidden here"}
                         </span>
                       ) : null}
                       {npcsAtCell.map((npc) => (

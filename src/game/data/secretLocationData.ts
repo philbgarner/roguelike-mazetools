@@ -257,3 +257,64 @@ export const SECRET_LOCATION_TEMPLATES: SecretLocationTemplate[] = [
 ];
 
 export const SECRET_TEMPLATE_COUNT = SECRET_LOCATION_TEMPLATES.length;
+
+// ---------------------------------------------------------------------------
+// Level scaling
+// ---------------------------------------------------------------------------
+
+/** Scale factor for a given player level. Level 1 → 1.0, level 4 → 2.0, level 9 → 3.0. */
+function scaleFactor(level: number): number {
+  return Math.sqrt(Math.max(1, level));
+}
+
+function scaleOutcome(outcome: SecretOutcome, level: number): SecretOutcome {
+  const f = scaleFactor(level);
+  switch (outcome.kind) {
+    case "gold":
+      return { ...outcome, amount: Math.round(outcome.amount * f) };
+    case "xp":
+      return { ...outcome, amount: Math.round(outcome.amount * f) };
+    case "stat":
+      return {
+        ...outcome,
+        hpBonus: outcome.hpBonus > 0 ? Math.max(1, Math.round(outcome.hpBonus * f)) : 0,
+        attackBonus: outcome.attackBonus > 0 ? Math.max(1, Math.round(outcome.attackBonus * f)) : 0,
+        defenseBonus: outcome.defenseBonus > 0 ? Math.max(1, Math.round(outcome.defenseBonus * f)) : 0,
+      };
+    case "curse":
+      return { ...outcome, hpLoss: Math.max(1, Math.round(outcome.hpLoss * f)) };
+    case "item":
+      return {
+        ...outcome,
+        attackBonus: outcome.attackBonus > 0 ? Math.max(1, Math.round(outcome.attackBonus * f)) : 0,
+        defenseBonus: outcome.defenseBonus > 0 ? Math.max(1, Math.round(outcome.defenseBonus * f)) : 0,
+        hpBonus: outcome.hpBonus > 0 ? Math.max(1, Math.round(outcome.hpBonus * f)) : 0,
+        value: Math.round(outcome.value * f),
+      };
+    case "resistance":
+    case "nothing":
+      return outcome;
+  }
+}
+
+function scaleChoice(choice: SecretChoice, level: number): SecretChoice {
+  return { ...choice, outcome: scaleOutcome(choice.outcome, level) };
+}
+
+/**
+ * Returns a copy of the template with all numeric outcome values scaled for
+ * the given player level (level 1 = unscaled, level 4 ≈ 2×, level 9 ≈ 3×).
+ */
+export function scaleSecretTemplate(
+  template: SecretLocationTemplate,
+  playerLevel: number,
+): SecretLocationTemplate {
+  return {
+    ...template,
+    choices: [
+      scaleChoice(template.choices[0], playerLevel),
+      scaleChoice(template.choices[1], playerLevel),
+      scaleChoice(template.choices[2], playerLevel),
+    ],
+  };
+}

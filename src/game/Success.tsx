@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { useGame } from "./GameProvider";
+import { SECRET_LOCATION_TEMPLATES } from "./data/secretLocationData";
 
 function StatRow({ label, value, total }: { label: string; value: number; total: number }) {
   const pct = total > 0 ? Math.round((value / total) * 100) : 0;
@@ -13,7 +15,27 @@ function StatRow({ label, value, total }: { label: string; value: number; total:
 }
 
 export default function Success() {
-  const { goTo, seed, markDungeonComplete, runStats } = useGame();
+  const {
+    goTo,
+    seed,
+    markDungeonComplete,
+    runStats,
+    overworldContent,
+    usedSecrets,
+    revealedSecrets,
+    revealSecret,
+  } = useGame();
+
+  // Pick a random undiscovered secret to reveal when the player returns.
+  const secretToReveal = useMemo(() => {
+    if (!overworldContent) return null;
+    const candidates = overworldContent.meta.secretLocations.filter(
+      (s) => !usedSecrets.has(s.id) && !revealedSecrets.has(s.id),
+    );
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // computed once when success screen mounts
 
   return (
     <div
@@ -66,6 +88,17 @@ export default function Success() {
           </div>
         )}
 
+        {secretToReveal && (
+          <div style={{ marginBottom: "1.5rem", borderBottom: "1px solid #333", paddingBottom: "1rem", fontSize: "0.85em" }}>
+            <div style={{ color: "#888", fontSize: "0.8em", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              Scout Report
+            </div>
+            <span style={{ color: "#ccaa66" }}>
+              {SECRET_LOCATION_TEMPLATES[secretToReveal.templateIndex]?.name ?? "A hidden location"} has been located in the forest.
+            </span>
+          </div>
+        )}
+
         <div style={{ display: "flex", justifyContent: "center" }}>
           <button
             style={{
@@ -87,6 +120,7 @@ export default function Success() {
             }}
             onClick={() => {
               markDungeonComplete(seed);
+              if (secretToReveal) revealSecret(secretToReveal.id);
               goTo("overworld");
             }}
           >
