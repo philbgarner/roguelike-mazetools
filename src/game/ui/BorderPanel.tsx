@@ -18,23 +18,28 @@ export interface BorderPanelProps {
   zIndex?: number;
 }
 
-export default function BorderPanel({
-  title,
-  children,
-  width,
-  height,
-  background,
-  left,
-  right,
-  top,
-  bottom,
-  hidden,
-  flexMode,
-  zIndex,
-}: BorderPanelProps) {
+const BorderPanel = React.forwardRef<HTMLDivElement, BorderPanelProps>(
+  function BorderPanel(
+    {
+      title,
+      children,
+      width,
+      height,
+      background,
+      left,
+      right,
+      top,
+      bottom,
+      hidden,
+      flexMode,
+      zIndex,
+    },
+    ref,
+  ) {
   return (
     <>
       <div
+        ref={ref}
         className={styles.borderPanelContainer}
         style={{
           width,
@@ -68,4 +73,7 @@ export default function BorderPanel({
       </div>
     </>
   );
-}
+  },
+);
+
+export default BorderPanel;

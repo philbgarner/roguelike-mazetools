@@ -1363,6 +1363,7 @@ export default function Dungeon({ seed }: DungeonProps) {
                 x: clientX,
                 y: clientY,
                 visible: true,
+                cellPxH: MAP_ZOOM_DEFAULT,
                 title: `(${x}, ${y})`,
                 children: (
                   <div
