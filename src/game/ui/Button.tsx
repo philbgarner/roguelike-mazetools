@@ -6,6 +6,8 @@ export interface ButtonProps {
   children: React.ReactNode;
 
   onClick?: () => void;
+  onMouseEnter?: (e: React.MouseEvent) => void;
+  onMouseLeave?: (e: React.MouseEvent) => void;
 
   maxWidth?: string;
   minWidth?: string;
@@ -22,6 +24,8 @@ export default function Button({
   minWidth,
   width,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
 }: ButtonProps) {
   const [state, setState] = useState<ButtonState>("Normal");
 
@@ -31,6 +35,8 @@ export default function Button({
       onMouseUp={() => setState("Normal")}
       onMouseOut={() => setState("Normal")}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       className={`${styles.buttonContainer} ${state === "Pressed" ? styles.pressed : ""}`}
       style={{
         maxWidth,

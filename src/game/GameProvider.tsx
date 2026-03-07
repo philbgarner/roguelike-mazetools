@@ -36,6 +36,9 @@ interface GameState {
   setOverworld: (bsp: BspDungeonOutputs, content: ForestContentOutputs) => void;
   setSeed: (newSeed: string | number) => void;
   goTo: (screen: GameScreen) => void;
+  /** Set of dungeon seeds the player has fully cleared. */
+  completedDungeons: Set<string | number>;
+  markDungeonComplete: (seed: string | number) => void;
 }
 
 const GameContext = createContext<GameState | null>(null);
@@ -47,6 +50,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [level, setLevel] = useState<number>(1);
   const [floor, setFloor] = useState<number>(1);
   const [theme, setTheme] = useState<string>("cave");
+  const [completedDungeons, setCompletedDungeons] = useState<Set<string | number>>(new Set());
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
     null,
   );
@@ -77,6 +81,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
           setOverworldContent(content);
         },
         goTo: setScreen,
+        completedDungeons,
+        markDungeonComplete: (seed: string | number) =>
+          setCompletedDungeons((prev) => new Set([...prev, seed])),
       }}
     >
       {children}

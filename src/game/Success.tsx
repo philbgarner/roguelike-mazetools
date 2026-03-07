@@ -2,13 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import { Center, Text3D, useFont } from "@react-three/drei";
-import { useGame, type GameScreen } from "./GameProvider";
+import { useGame } from "./GameProvider";
 
 const FONT_URL = "/fonts/dosfont.json";
-
-const MENU_ITEMS: { label: string; target: GameScreen }[] = [
-  { label: "Main Menu", target: "main-menu" },
-];
 
 function MenuItem({
   label,
@@ -80,21 +76,21 @@ function Title() {
 }
 
 function MenuScene() {
-  const { goTo } = useGame();
+  const { goTo, seed, markDungeonComplete } = useGame();
 
   return (
     <>
       <ambientLight intensity={0.6} />
       <directionalLight position={[5, 5, 5]} intensity={1} />
       <Title />
-      {MENU_ITEMS.map((item, i) => (
-        <MenuItem
-          key={item.label}
-          label={item.label}
-          y={-i * 0.9}
-          onClick={() => goTo(item.target)}
-        />
-      ))}
+      <MenuItem
+        label="Return to World"
+        y={0}
+        onClick={() => {
+          markDungeonComplete(seed);
+          goTo("overworld");
+        }}
+      />
     </>
   );
 }

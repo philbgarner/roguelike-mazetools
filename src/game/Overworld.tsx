@@ -140,6 +140,7 @@ export default function Overworld({ screen }: OverworldProps) {
     setOverworld,
     player,
     setPlayer,
+    completedDungeons,
   } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   console.log("building screen", screen);
@@ -157,6 +158,14 @@ export default function Overworld({ screen }: OverworldProps) {
 
   // Player spawn comes directly from forest content — no need for computeStartCell.
   const startCell = content.meta.playerSpawn;
+
+  // Flat grid indices of completed dungeon portals (for grey tint in DungeonRenderView).
+  const completedPortalIndices = useMemo(() => {
+    const W = dungeon.width;
+    return content.meta.dungeonPortals
+      .filter((p) => completedDungeons.has(p.seed))
+      .map((p) => p.y * W + p.x);
+  }, [completedDungeons, content.meta.dungeonPortals, dungeon.width]);
 
   // --- World effects clock ---
   const worldEffectsRef = useRef(createWorldEffectsState());
@@ -642,6 +651,7 @@ export default function Overworld({ screen }: OverworldProps) {
           HP: {player.hp} / {player.maxHp}
         </div>
       </BorderPanel>
+      {/* --- Action --- */}
       <BorderPanel
         title={
           contentAtPlayerCell
@@ -658,25 +668,31 @@ export default function Overworld({ screen }: OverworldProps) {
         zIndex={99}
       >
         {contentAtPlayerCell ? (
-          <Button
-            maxWidth="auto"
-            onClick={async () => {
-              if (
-                await confirmPrompt(
-                  `Are you sure you want to enter the ${contentAtPlayerCell.theme} of ${contentAtPlayerCell.name}?`,
-                )
-              ) {
-                addLogMessage(`Entering ${contentAtPlayerCell.theme}...`);
-                setSeed(contentAtPlayerCell.seed);
-                setLevel(contentAtPlayerCell.level);
-                setFloor(1);
-                setTheme(contentAtPlayerCell.theme);
-                goTo("dungeon");
-              }
-            }}
-          >
-            Enter {contentAtPlayerCell.theme} of {contentAtPlayerCell.name}
-          </Button>
+          completedDungeons.has(contentAtPlayerCell.seed) ? (
+            <span style={{ color: "#aaffaa" }}>
+              {contentAtPlayerCell.name} has been cleared
+            </span>
+          ) : (
+            <Button
+              maxWidth="auto"
+              onClick={async () => {
+                if (
+                  await confirmPrompt(
+                    `Are you sure you want to enter the ${contentAtPlayerCell.theme} of ${contentAtPlayerCell.name}?`,
+                  )
+                ) {
+                  addLogMessage(`Entering ${contentAtPlayerCell.theme}...`);
+                  setSeed(contentAtPlayerCell.seed);
+                  setLevel(contentAtPlayerCell.level);
+                  setFloor(1);
+                  setTheme(contentAtPlayerCell.theme);
+                  goTo("dungeon");
+                }
+              }}
+            >
+              Enter {contentAtPlayerCell.theme} of {contentAtPlayerCell.name}
+            </Button>
+          )
         ) : null}
         {npcAtPlayerCell ? (
           <Button
@@ -713,6 +729,27 @@ export default function Overworld({ screen }: OverworldProps) {
           }));
         }}
         onUseConsumable={(item) => handleUseConsumable(item)}
+        onSlotHover={(item, e) => {
+          const template = getItemTemplate(item.templateId);
+          const parts: string[] = [];
+          if (template?.damageType) parts.push(template.damageType);
+          if (item.bonusAttack > 0) parts.push(`+${item.bonusAttack} ATK`);
+          if (item.bonusDefense > 0) parts.push(`+${item.bonusDefense} DEF`);
+          if (item.bonusMaxHp > 0) parts.push(`+${item.bonusMaxHp} HP`);
+          if (template?.isRanged && template.range != null)
+            parts.push(`range ${template.range}`);
+          setTooltip({
+            x: e.clientX,
+            y: e.clientY,
+            visible: true,
+            title: item.nameOverride ?? template?.name ?? item.templateId,
+            children:
+              parts.length > 0 ? <span>{parts.join(" · ")}</span> : <></>,
+          });
+        }}
+        onSlotHoverEnd={() =>
+          setTooltip({ x: 0, y: 0, visible: false, children: <></> })
+        }
       />
       <BorderPanel
         title="Player"
@@ -1109,6 +1146,7 @@ export default function Overworld({ screen }: OverworldProps) {
             pathMaskTex={pathMaskTex ?? undefined}
             actorCharTex={actorCharTex}
             npcCharTex={npcCharTex}
+            completedPortalIndices={completedPortalIndices}
             _visDataRef={visDataRef}
             shaderVariant="forest"
           >

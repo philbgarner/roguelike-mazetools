@@ -1173,6 +1173,26 @@ export default function Dungeon({ seed }: DungeonProps) {
           }
           handleUseConsumableInDungeon(item);
         }}
+        onSlotHover={(item, e) => {
+          const template = getItemTemplate(item.templateId);
+          const parts: string[] = [];
+          if (template?.damageType) parts.push(template.damageType);
+          if (item.bonusAttack > 0) parts.push(`+${item.bonusAttack} ATK`);
+          if (item.bonusDefense > 0) parts.push(`+${item.bonusDefense} DEF`);
+          if (item.bonusMaxHp > 0) parts.push(`+${item.bonusMaxHp} HP`);
+          if (template?.isRanged && template.range != null)
+            parts.push(`range ${template.range}`);
+          setTooltip({
+            x: e.clientX,
+            y: e.clientY,
+            visible: true,
+            title: item.nameOverride ?? template?.name ?? item.templateId,
+            children: parts.length > 0 ? <span>{parts.join(" · ")}</span> : <></>,
+          });
+        }}
+        onSlotHoverEnd={() =>
+          setTooltip({ x: 0, y: 0, visible: false, children: <></> })
+        }
       />
       <BorderPanel
         title="Player"

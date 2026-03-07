@@ -235,6 +235,9 @@ type Props = {
   // NPC overlay: separate R8 DataTexture for NPC glyphs (rendered in blue)
   npcCharTex?: THREE.DataTexture | null;
 
+  /** Flat grid indices of dungeon portals that have been cleared (rendered grey). */
+  completedPortalIndices?: number[];
+
   shaderVariant?: "dungeon" | "forest";
 
   /** When true, all cells are pre-marked as explored on creation. */
@@ -533,6 +536,12 @@ function DungeonRenderScene(props: Props) {
         }
       }
     }
+    // Stamp completed portals with tintId=4 (grey — visually indicates cleared dungeon)
+    if (props.completedPortalIndices) {
+      for (const idx of props.completedPortalIndices) {
+        if (idx >= 0 && idx < mask.length) mask[idx] = 4;
+      }
+    }
 
     return maskToTileTextureR8(mask, W, H, "tint_channel_r8");
   }, [
@@ -544,6 +553,7 @@ function DungeonRenderScene(props: Props) {
     props.playerY,
     props.blockPositions,
     props.doorStates,
+    props.completedPortalIndices,
   ]);
 
   // M8: 1×1 transparent fallback for uPathMask when no prop is supplied

@@ -14,6 +14,8 @@ export interface QuickSlotPanelProps {
   width?: string;
   onEquipToggle: (item: InventoryItem) => void;
   onUseConsumable: (item: InventoryItem) => void;
+  onSlotHover?: (item: InventoryItem, e: React.MouseEvent) => void;
+  onSlotHoverEnd?: () => void;
 }
 
 function isHealPotion(item: InventoryItem): boolean {
@@ -34,9 +36,7 @@ function buildSlots(inventory: Inventory): InventoryItem[] {
   const daggers = items.filter((it) => it.slot === "weapon" && isDagger(it));
 
   // Heal potions
-  const healPotions = items.filter(
-    (it) => it.isConsumable && isHealPotion(it),
-  );
+  const healPotions = items.filter((it) => it.isConsumable && isHealPotion(it));
 
   // Other potions (consumable but not heal)
   const otherPotions = items.filter(
@@ -55,6 +55,8 @@ export default function QuickSlotPanel({
   width = "calc(100% - 43rem)",
   onEquipToggle,
   onUseConsumable,
+  onSlotHover,
+  onSlotHoverEnd,
 }: QuickSlotPanelProps) {
   const slots = buildSlots(inventory);
 
@@ -117,6 +119,8 @@ export default function QuickSlotPanel({
                     onEquipToggle(item);
                   }
                 }}
+                onMouseEnter={(e) => onSlotHover?.(item, e)}
+                onMouseLeave={() => onSlotHoverEnd?.()}
               >
                 <div
                   style={{
@@ -131,7 +135,11 @@ export default function QuickSlotPanel({
                   <span
                     style={{
                       fontFamily: "monospace",
-                      color: isEquipped ? "#8f8" : item.isConsumable ? "#fa8" : "#ccc",
+                      color: isEquipped
+                        ? "#8f8"
+                        : item.isConsumable
+                          ? "#fa8"
+                          : "#ccc",
                       fontSize: "1rem",
                     }}
                   >

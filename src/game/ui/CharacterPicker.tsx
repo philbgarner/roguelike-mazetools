@@ -12,8 +12,17 @@ import React, { useState, useMemo } from "react";
 import { useGame } from "../GameProvider";
 import { DEFAULT_PLAYER, Player } from "../player";
 import { generateShopInventory, ShopItem } from "../merchantShop";
-import { generateLevelUpRewards, LevelUpReward, resistanceLabel } from "../levelUpRewards";
-import { addItem, createInventoryItem, equipItem, InventoryItem } from "../inventory";
+import {
+  generateLevelUpRewards,
+  LevelUpReward,
+  resistanceLabel,
+} from "../levelUpRewards";
+import {
+  addItem,
+  createInventoryItem,
+  equipItem,
+  InventoryItem,
+} from "../inventory";
 import { getItemTemplate } from "../data/itemData";
 import Button from "./Button";
 import styles from "./styles/ModalPanelBackdrop.module.css";
@@ -23,19 +32,72 @@ import styles from "./styles/ModalPanelBackdrop.module.css";
 // ---------------------------------------------------------------------------
 
 const FIRST_NAMES = [
-  "Aldric", "Brenna", "Cael", "Dara", "Edwyn", "Fira", "Gavyn", "Hilda",
-  "Idris", "Jorna", "Kira", "Lorn", "Mira", "Nael", "Oryn", "Pella",
-  "Rael", "Sela", "Tarn", "Ulra", "Vara", "Wren", "Xan", "Yra", "Zoel",
-  "Aerin", "Bran", "Cress", "Dwyn", "Eirik", "Fyra", "Gael", "Holt",
+  "Aldric",
+  "Brenna",
+  "Cael",
+  "Dara",
+  "Edwyn",
+  "Fira",
+  "Gavyn",
+  "Hilda",
+  "Idris",
+  "Jorna",
+  "Kira",
+  "Lorn",
+  "Mira",
+  "Nael",
+  "Oryn",
+  "Pella",
+  "Rael",
+  "Sela",
+  "Tarn",
+  "Ulra",
+  "Vara",
+  "Wren",
+  "Xan",
+  "Yra",
+  "Zoel",
+  "Aerin",
+  "Bran",
+  "Cress",
+  "Dwyn",
+  "Eirik",
+  "Fyra",
+  "Gael",
+  "Holt",
 ];
 
 const SURNAMES = [
-  "Ashford", "Blackwood", "Coldwater", "Duskmantle", "Emberveil",
-  "Frostholm", "Grimtide", "Hawksong", "Ironfist", "Jadespire",
-  "Keldren", "Lorecraft", "Moonwhisper", "Nighthollow", "Oakenshield",
-  "Pyreveil", "Ravenscar", "Stonegate", "Thornwall", "Underhill",
-  "Voidwalker", "Wintermere", "Yarrowfen", "Zephyrstone", "Ashbane",
-  "Coldmere", "Dreadhollow", "Fellmark", "Grimward", "Hollowborn",
+  "Ashford",
+  "Blackwood",
+  "Coldwater",
+  "Duskmantle",
+  "Emberveil",
+  "Frostholm",
+  "Grimtide",
+  "Hawksong",
+  "Ironfist",
+  "Jadespire",
+  "Keldren",
+  "Lorecraft",
+  "Moonwhisper",
+  "Nighthollow",
+  "Oakenshield",
+  "Pyreveil",
+  "Ravenscar",
+  "Stonegate",
+  "Thornwall",
+  "Underhill",
+  "Voidwalker",
+  "Wintermere",
+  "Yarrowfen",
+  "Zephyrstone",
+  "Ashbane",
+  "Coldmere",
+  "Dreadhollow",
+  "Fellmark",
+  "Grimward",
+  "Hollowborn",
 ];
 
 function hashSeed(seed: number): number {
@@ -83,7 +145,9 @@ function shopItemToInventoryItem(item: ShopItem): InventoryItem {
     ...base,
     ...(item.isConsumable ? { isConsumable: true } : {}),
     ...(item.healAmount !== undefined ? { healAmount: item.healAmount } : {}),
-    ...(item.buffDuration !== undefined ? { buffDuration: item.buffDuration } : {}),
+    ...(item.buffDuration !== undefined
+      ? { buffDuration: item.buffDuration }
+      : {}),
     ...(item.bonusSpeed !== undefined ? { bonusSpeed: item.bonusSpeed } : {}),
   };
 }
@@ -100,7 +164,10 @@ function applyRewardToPlayer(player: Player, reward: LevelUpReward): Player {
     };
   }
   if (reward.kind === "resistance") {
-    return { ...player, resistances: [...player.resistances, reward.resistance] };
+    return {
+      ...player,
+      resistances: [...player.resistances, reward.resistance],
+    };
   }
   // item reward
   const invItem = reward.item;
@@ -171,18 +238,47 @@ function ShopRow({ item, gold, purchased, onBuy }: ShopRowProps) {
         border: `1px solid ${purchased ? "#335533" : "#333"}`,
       }}
     >
-      <span style={{ color: "#ffdd88", fontFamily: "monospace", fontSize: "1em", minWidth: "1.2em" }}>
+      <span
+        style={{
+          color: "#ffdd88",
+          fontFamily: "monospace",
+          fontSize: "1em",
+          minWidth: "1.2em",
+        }}
+      >
         {item.glyph}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ color: purchased ? "#88cc88" : "#dddddd", fontSize: "0.85em", fontWeight: purchased ? "normal" : "bold" }}>
+        <div
+          style={{
+            color: purchased ? "#88cc88" : "#dddddd",
+            fontSize: "0.85em",
+            fontWeight: purchased ? "normal" : "bold",
+          }}
+        >
           {item.name}
-          {template?.slot ? <span style={{ color: "#777", fontSize: "0.8em" }}> [{template.slot}]</span> : null}
-          {template?.isRanged ? <span style={{ color: "#88aaff", fontSize: "0.8em" }}> ranged</span> : null}
+          {template?.slot ? (
+            <span style={{ color: "#777", fontSize: "0.8em" }}>
+              {" "}
+              [{template.slot}]
+            </span>
+          ) : null}
+          {template?.isRanged ? (
+            <span style={{ color: "#88aaff", fontSize: "0.8em" }}> ranged</span>
+          ) : null}
         </div>
-        <div style={{ color: "#888", fontSize: "0.75em" }}>{shopItemDescription(item)}</div>
+        <div style={{ color: "#888", fontSize: "0.75em" }}>
+          {shopItemDescription(item)}
+        </div>
       </div>
-      <div style={{ color: "#ffcc44", fontSize: "0.85em", minWidth: "3.5rem", textAlign: "right" }}>
+      <div
+        style={{
+          color: "#ffcc44",
+          fontSize: "0.85em",
+          minWidth: "3.5rem",
+          textAlign: "right",
+        }}
+      >
         {item.price}g
       </div>
       <div style={{ minWidth: "4rem" }}>
@@ -193,7 +289,14 @@ function ShopRow({ item, gold, purchased, onBuy }: ShopRowProps) {
             onClick={canAfford ? onBuy : undefined}
             background={canAfford ? "#1a3a1a" : "#1a1a1a"}
           >
-            <span style={{ color: canAfford ? "#aaffaa" : "#555", fontSize: "0.8em" }}>Buy</span>
+            <span
+              style={{
+                color: canAfford ? "#aaffaa" : "#555",
+                fontSize: "0.8em",
+              }}
+            >
+              Buy
+            </span>
           </Button>
         )}
       </div>
@@ -226,7 +329,9 @@ function RewardCard({ reward, chosen, onChoose }: RewardCardProps) {
     if (reward.attackBonus > 0) parts.push(`+${reward.attackBonus} Attack`);
     if (reward.defenseBonus > 0) parts.push(`+${reward.defenseBonus} Defense`);
     body = parts.map((p) => (
-      <div key={p} style={{ color: "#aaffaa", fontSize: "0.85em" }}>{p}</div>
+      <div key={p} style={{ color: "#aaffaa", fontSize: "0.85em" }}>
+        {p}
+      </div>
     ));
   } else if (reward.kind === "resistance") {
     title = resistanceLabel(reward.resistance);
@@ -241,17 +346,29 @@ function RewardCard({ reward, chosen, onChoose }: RewardCardProps) {
     title = reward.item.nameOverride ?? template?.name ?? "Item";
     accent = "#ffdd88";
     const statParts: string[] = [];
-    if (reward.item.bonusAttack > 0) statParts.push(`+${reward.item.bonusAttack} ATK`);
-    if (reward.item.bonusDefense > 0) statParts.push(`+${reward.item.bonusDefense} DEF`);
-    if (reward.item.bonusMaxHp > 0) statParts.push(`+${reward.item.bonusMaxHp} HP`);
+    if (reward.item.bonusAttack > 0)
+      statParts.push(`+${reward.item.bonusAttack} ATK`);
+    if (reward.item.bonusDefense > 0)
+      statParts.push(`+${reward.item.bonusDefense} DEF`);
+    if (reward.item.bonusMaxHp > 0)
+      statParts.push(`+${reward.item.bonusMaxHp} HP`);
     body = (
       <>
-        <div style={{ color: "#aaaaaa", fontSize: "0.75em", marginBottom: "0.3em" }}>
-          {template?.type ?? ""}{template?.slot ? ` · ${template.slot}` : ""}
+        <div
+          style={{
+            color: "#aaaaaa",
+            fontSize: "0.75em",
+            marginBottom: "0.3em",
+          }}
+        >
+          {template?.type ?? ""}
+          {template?.slot ? ` · ${template.slot}` : ""}
           {template?.damageType ? ` · ${template.damageType}` : ""}
         </div>
         {statParts.map((p) => (
-          <div key={p} style={{ color: "#ffdd88", fontSize: "0.85em" }}>{p}</div>
+          <div key={p} style={{ color: "#ffdd88", fontSize: "0.85em" }}>
+            {p}
+          </div>
         ))}
       </>
     );
@@ -278,7 +395,9 @@ function RewardCard({ reward, chosen, onChoose }: RewardCardProps) {
         outline: chosen ? `1px solid ${accent}` : "none",
       }}
     >
-      <div style={{ color: accent, fontWeight: "bold", fontSize: "0.95em" }}>{title}</div>
+      <div style={{ color: accent, fontWeight: "bold", fontSize: "0.95em" }}>
+        {title}
+      </div>
       <div>{body}</div>
     </div>
   );
@@ -291,7 +410,9 @@ function RewardCard({ reward, chosen, onChoose }: RewardCardProps) {
 export default function CharacterPicker() {
   const { setPlayer, goTo } = useGame();
 
-  const [nameSeed, setNameSeed] = useState(() => Math.floor(Math.random() * 1_000_000));
+  const [nameSeed, setNameSeed] = useState(() =>
+    Math.floor(Math.random() * 1_000_000),
+  );
   const playerName = useMemo(() => generateCharacterName(nameSeed), [nameSeed]);
 
   const [step, setStep] = useState<"stats" | "bonuses">("stats");
@@ -299,7 +420,10 @@ export default function CharacterPicker() {
 
   // Shop: regenerate when name (seed) changes so rerolling name also refreshes shop
   const shopSeed = useMemo(() => hashSeed(nameSeed ^ 0xabcdef), [nameSeed]);
-  const shopItems = useMemo(() => generateShopInventory(1, shopSeed, 6), [shopSeed]);
+  const shopItems = useMemo(
+    () => generateShopInventory(1, shopSeed, 6),
+    [shopSeed],
+  );
   const [purchasedIds, setPurchasedIds] = useState<Set<string>>(new Set());
 
   // Level-up rewards for step 2 (generated when advancing)
@@ -314,7 +438,8 @@ export default function CharacterPicker() {
   }
 
   function handleBuy(item: ShopItem) {
-    if (purchasedIds.has(item.instanceId) || localPlayer.gold < item.price) return;
+    if (purchasedIds.has(item.instanceId) || localPlayer.gold < item.price)
+      return;
     const invItem = shopItemToInventoryItem(item);
     setLocalPlayer((prev) => {
       const withItem = addItem(prev.inventory, invItem);
@@ -354,7 +479,7 @@ export default function CharacterPicker() {
   function handleBeginAdventure() {
     if (!chosenReward) return;
     setPlayer({ ...localPlayer, name: playerName });
-    goTo("overworld");
+    goTo("seed-picker");
   }
 
   // -------------------------------------------------------------------------
@@ -381,25 +506,65 @@ export default function CharacterPicker() {
       <div className={styles.modalPanelBackdrop}>
         <div style={{ ...panelStyle, width: "min(72vw, 760px)" }}>
           {/* Title */}
-          <div style={{ textAlign: "center", color: "#ffdd55", fontSize: "1.15em", fontWeight: "bold" }}>
+          <div
+            style={{
+              textAlign: "center",
+              color: "#ffdd55",
+              fontSize: "1.15em",
+              fontWeight: "bold",
+            }}
+          >
             Create Your Character
           </div>
 
           {/* Main body: two columns */}
-          <div style={{ display: "flex", gap: "1.5rem", alignItems: "flex-start" }}>
+          <div
+            style={{ display: "flex", gap: "1.5rem", alignItems: "flex-start" }}
+          >
             {/* Left: character sheet */}
-            <div style={{ flex: "0 0 auto", width: "200px", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div
+              style={{
+                flex: "0 0 auto",
+                width: "200px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.75rem",
+              }}
+            >
               {/* Name */}
               <div>
-                <div style={{ color: "#888", fontSize: "0.72em", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.3rem" }}>
+                <div
+                  style={{
+                    color: "#888",
+                    fontSize: "0.72em",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    marginBottom: "0.3rem",
+                  }}
+                >
                   Name
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <div style={{ color: "#eeeedd", fontSize: "1em", fontWeight: "bold", flex: 1 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: "#eeeedd",
+                      fontSize: "1em",
+                      fontWeight: "bold",
+                      flex: 1,
+                    }}
+                  >
                     {playerName}
                   </div>
                   <Button onClick={handleRerollName} background="#222">
-                    <span style={{ fontSize: "0.8em", color: "#aaaaaa" }}>⟳</span>
+                    <span style={{ fontSize: "0.8em", color: "#aaaaaa" }}>
+                      ⟳
+                    </span>
                   </Button>
                 </div>
               </div>
@@ -408,14 +573,43 @@ export default function CharacterPicker() {
               <div style={{ borderTop: "1px solid #333" }} />
 
               {/* Stats */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.35rem",
+                }}
+              >
                 {[
-                  { label: "HP", value: `${localPlayer.hp} / ${localPlayer.maxHp}`, color: "#ff6666" },
-                  { label: "Attack", value: localPlayer.attack, color: "#ffaa44" },
-                  { label: "Defense", value: localPlayer.defense, color: "#44aaff" },
-                  { label: "Gold", value: `${localPlayer.gold}g`, color: "#ffcc44" },
+                  {
+                    label: "HP",
+                    value: `${localPlayer.hp} / ${localPlayer.maxHp}`,
+                    color: "#ff6666",
+                  },
+                  {
+                    label: "Attack",
+                    value: localPlayer.attack,
+                    color: "#ffaa44",
+                  },
+                  {
+                    label: "Defense",
+                    value: localPlayer.defense,
+                    color: "#44aaff",
+                  },
+                  {
+                    label: "Gold",
+                    value: `${localPlayer.gold}g`,
+                    color: "#ffcc44",
+                  },
                 ].map(({ label, value, color }) => (
-                  <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.88em" }}>
+                  <div
+                    key={label}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: "0.88em",
+                    }}
+                  >
                     <span style={{ color: "#888" }}>{label}</span>
                     <span style={{ color }}>{value}</span>
                   </div>
@@ -424,9 +618,20 @@ export default function CharacterPicker() {
 
               {/* Resistances (if any bought from shop — unlikely at start but just in case) */}
               {localPlayer.resistances.length > 0 && (
-                <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap" }}>
+                <div
+                  style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap" }}
+                >
                   {localPlayer.resistances.map((r) => (
-                    <span key={r} style={{ fontSize: "0.72em", color: RESIST_COLORS[r] ?? "#aaa", border: `1px solid ${RESIST_COLORS[r] ?? "#aaa"}`, borderRadius: "3px", padding: "1px 4px" }}>
+                    <span
+                      key={r}
+                      style={{
+                        fontSize: "0.72em",
+                        color: RESIST_COLORS[r] ?? "#aaa",
+                        border: `1px solid ${RESIST_COLORS[r] ?? "#aaa"}`,
+                        borderRadius: "3px",
+                        padding: "1px 4px",
+                      }}
+                    >
                       {r}
                     </span>
                   ))}
@@ -435,8 +640,23 @@ export default function CharacterPicker() {
             </div>
 
             {/* Right: shop */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-              <div style={{ color: "#888", fontSize: "0.72em", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.1rem" }}>
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.4rem",
+              }}
+            >
+              <div
+                style={{
+                  color: "#888",
+                  fontSize: "0.72em",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  marginBottom: "0.1rem",
+                }}
+              >
                 Starting Equipment
               </div>
               {shopItems.map((item) => (
@@ -452,9 +672,18 @@ export default function CharacterPicker() {
           </div>
 
           {/* Footer */}
-          <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid #333", paddingTop: "0.75rem" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              borderTop: "1px solid #333",
+              paddingTop: "0.75rem",
+            }}
+          >
             <Button onClick={handleNext} background="#1a2a3a">
-              <span style={{ color: "#88ccff", fontSize: "0.9em" }}>Next →</span>
+              <span style={{ color: "#88ccff", fontSize: "0.9em" }}>
+                Next →
+              </span>
             </Button>
           </div>
         </div>
@@ -468,10 +697,18 @@ export default function CharacterPicker() {
       <div style={{ ...panelStyle, width: "min(60vw, 660px)" }}>
         {/* Title */}
         <div style={{ textAlign: "center" }}>
-          <div style={{ color: "#ffdd55", fontSize: "1.2em", fontWeight: "bold" }}>
+          <div
+            style={{ color: "#ffdd55", fontSize: "1.2em", fontWeight: "bold" }}
+          >
             Choose Your Starting Bonus
           </div>
-          <div style={{ color: "#aaaaaa", fontSize: "0.85em", marginTop: "0.25rem" }}>
+          <div
+            style={{
+              color: "#aaaaaa",
+              fontSize: "0.85em",
+              marginTop: "0.25rem",
+            }}
+          >
             Every hero begins with a special gift.
           </div>
         </div>
@@ -489,16 +726,28 @@ export default function CharacterPicker() {
         </div>
 
         {/* Footer */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #333", paddingTop: "0.75rem" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderTop: "1px solid #333",
+            paddingTop: "0.75rem",
+          }}
+        >
           <Button onClick={() => setStep("stats")} background="#222">
             <span style={{ color: "#888", fontSize: "0.85em" }}>← Back</span>
           </Button>
           {chosenReward ? (
             <Button onClick={handleBeginAdventure} background="#1a3a1a">
-              <span style={{ color: "#aaffaa", fontSize: "0.9em" }}>Begin Adventure</span>
+              <span style={{ color: "#aaffaa", fontSize: "0.9em" }}>
+                Begin Adventure
+              </span>
             </Button>
           ) : (
-            <span style={{ color: "#555", fontSize: "0.85em" }}>Select a bonus to continue</span>
+            <span style={{ color: "#555", fontSize: "0.85em" }}>
+              Select a bonus to continue
+            </span>
           )}
         </div>
       </div>
