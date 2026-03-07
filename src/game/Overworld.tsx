@@ -632,13 +632,7 @@ export default function Overworld({ screen }: OverworldProps) {
       <MessageLog messages={logMessages} onMessageExpired={removeLogMessage} />
 
       <BorderPanel
-        title={
-          contentAtPlayerCell
-            ? contentAtPlayerCell.name
-            : npcAtPlayerCell
-              ? "Merchant Wagon"
-              : cellAtFeet
-        }
+        title={player.name}
         width="20rem"
         height="5rem"
         background="#090909"
@@ -649,7 +643,13 @@ export default function Overworld({ screen }: OverworldProps) {
         </div>
       </BorderPanel>
       <BorderPanel
-        title="Actions"
+        title={
+          contentAtPlayerCell
+            ? contentAtPlayerCell.name
+            : npcAtPlayerCell
+              ? "Merchant Wagon"
+              : cellAtFeet
+        }
         width="32rem"
         height="5rem"
         background="#090909"

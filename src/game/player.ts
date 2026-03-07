@@ -3,6 +3,7 @@ import type { DamageType } from "./data/itemData";
 import type { ActiveBuff } from "./activeBuffs";
 
 export interface Player {
+  name?: string;
   hp: number;
   maxHp: number;
   xp: number;
@@ -40,6 +41,7 @@ export function playerFromActor(actor: {
     inventory: actor.inventory ?? createInventory(),
     resistances: actor.resistances ?? [],
     activeBuffs: actor.activeBuffs ?? [],
+    name: (actor as { name?: string }).name,
   };
 }
 

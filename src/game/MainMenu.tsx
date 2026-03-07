@@ -8,8 +8,8 @@ import styles from "./styles/MainMenu.module.css";
 const FONT_URL = "/fonts/dosfont.json";
 
 const MENU_ITEMS: { label: string; target: GameScreen }[] = [
-  { label: "Start Game", target: "seed-picker" },
-  { label: "Settings", target: "seed-picker" },
+  { label: "Start Game", target: "character-picker" },
+  { label: "Settings", target: "character-picker" },
 ];
 
 function MenuItem({

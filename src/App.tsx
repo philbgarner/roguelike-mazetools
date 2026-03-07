@@ -5,6 +5,7 @@ import MainMenu from "./game/MainMenu";
 import Success from "./game/Success";
 import Death from "./game/Death";
 import SeedPicker from "./game/SeedPicker";
+import CharacterPicker from "./game/ui/CharacterPicker";
 
 function AppInner() {
   const { screen, seed, floor } = useGame();
@@ -15,6 +16,7 @@ function AppInner() {
       {screen === "dungeon" ? <Dungeon seed={seed} key={`dungeon-${seed}-${floor}`} /> : null}
       {screen === "main-menu" ? <MainMenu /> : null}
       {screen === "seed-picker" ? <SeedPicker /> : null}
+      {screen === "character-picker" ? <CharacterPicker /> : null}
       {screen === "death" ? <Death /> : null}
       {screen === "success" ? <Success /> : null}
     </>
