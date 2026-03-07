@@ -1,112 +1,96 @@
-import { useState, useRef, useEffect } from "react";
-import * as THREE from "three";
-import { Canvas } from "@react-three/fiber";
-import { Center, Text3D, useFont } from "@react-three/drei";
-import { useGame, type GameScreen } from "./GameProvider";
-import { publicUrl } from "../utils/publicUrl";
+import { useGame } from "./GameProvider";
 
-const FONT_URL = publicUrl("/fonts/dosfont.json");
-
-const MENU_ITEMS: { label: string; target: GameScreen }[] = [
-  { label: "Main Menu", target: "main-menu" },
-];
-
-function MenuItem({
-  label,
-  y,
-  onClick,
-}: {
-  label: string;
-  y: number;
-  onClick: () => void;
-}) {
-  const font = useFont(FONT_URL);
-  const [hovered, setHovered] = useState(false);
-  const textRef = useRef<THREE.Mesh>(null);
-  const planeRef = useRef<THREE.Mesh>(null);
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      if (!textRef.current || !planeRef.current) return;
-      const box = new THREE.Box3().setFromObject(textRef.current);
-      const center = new THREE.Vector3();
-      const size = new THREE.Vector3();
-      box.getCenter(center);
-      box.getSize(size);
-      planeRef.current.position.copy(center);
-      planeRef.current.position.z -= 0.1;
-      planeRef.current.scale.set(size.x + 0.3, size.y + 0.3, 1);
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [label]);
-
+function StatRow({ label, value, total }: { label: string; value: number; total: number }) {
+  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
   return (
-    <group position={[0, y, 0]}>
-      <mesh
-        ref={planeRef}
-        onPointerEnter={() => setHovered(true)}
-        onPointerLeave={() => setHovered(false)}
-        onClick={onClick}
-      >
-        <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
-      <Center>
-        <Text3D
-          ref={textRef}
-          font={font.data}
-          size={0.5}
-          height={0.1}
-          curveSegments={4}
-        >
-          {label}
-          <meshStandardMaterial color={hovered ? "#ffff00" : "white"} />
-        </Text3D>
-      </Center>
-    </group>
-  );
-}
-
-function Title() {
-  const font = useFont(FONT_URL);
-
-  return (
-    <Center position={[0, 1.5, 0]}>
-      <Text3D font={font.data} size={1} height={0.2} curveSegments={6}>
-        You Died
-        <meshStandardMaterial color="#ff4444" />
-      </Text3D>
-    </Center>
-  );
-}
-
-function MenuScene() {
-  const { goTo } = useGame();
-
-  return (
-    <>
-      <ambientLight intensity={0.6} />
-      <directionalLight position={[5, 5, 5]} intensity={1} />
-      <Title />
-      {MENU_ITEMS.map((item, i) => (
-        <MenuItem
-          key={item.label}
-          label={item.label}
-          y={-i * 0.9}
-          onClick={() => goTo(item.target)}
-        />
-      ))}
-    </>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
+      <span style={{ color: "#aaa" }}>{label}</span>
+      <span style={{ color: "#eee", fontFamily: "monospace" }}>
+        {value}/{total} <span style={{ color: "#666" }}>({pct}%)</span>
+      </span>
+    </div>
   );
 }
 
 export default function Death() {
+  const { goTo, runStats } = useGame();
+
   return (
-    <Canvas
-      style={{ width: "100vw", height: "100vh", background: "#0a0000" }}
-      camera={{ position: [0, 0, 8], fov: 50 }}
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 500,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.8)",
+      }}
     >
-      <MenuScene />
-    </Canvas>
+      <div
+        style={{
+          background: "#0a0000",
+          border: "2px solid #a44",
+          padding: "2rem 2.5rem",
+          minWidth: "22rem",
+          maxWidth: "90vw",
+          fontFamily: "monospace",
+          color: "#eee",
+          boxShadow: "0 0 40px rgba(200,0,0,0.25)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "1.8rem",
+            color: "#f44",
+            marginBottom: "1.5rem",
+            textAlign: "center",
+            letterSpacing: "0.1em",
+          }}
+        >
+          YOU DIED
+        </div>
+
+        {runStats && (
+          <div style={{ marginBottom: "1.5rem", borderTop: "1px solid #331111", borderBottom: "1px solid #331111", padding: "1rem 0" }}>
+            <div style={{ color: "#888", fontSize: "0.8em", marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              Run Summary
+            </div>
+            <StatRow label="Monsters slain" value={runStats.monstersKilled} total={runStats.totalMonsters} />
+            <StatRow label="Chests opened" value={runStats.chestsLooted} total={runStats.totalChests} />
+            <StatRow label="Items collected" value={runStats.floorItemsCollected} total={runStats.totalFloorItems} />
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
+              <span style={{ color: "#aaa" }}>Gold found</span>
+              <span style={{ color: "#fd4", fontFamily: "monospace" }}>{runStats.goldCollected} gp</span>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <button
+            style={{
+              background: "#0a0000",
+              border: "1px solid #a44",
+              color: "#a44",
+              fontFamily: "monospace",
+              fontSize: "1rem",
+              padding: "0.5rem 1.5rem",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "#fff";
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "#fff";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "#a44";
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "#a44";
+            }}
+            onClick={() => goTo("main-menu")}
+          >
+            Main Menu
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

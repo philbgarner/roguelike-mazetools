@@ -9,6 +9,16 @@ import {
 import { BspDungeonOutputs, ForestContentOutputs } from "../mazeGen";
 import { Player, DEFAULT_PLAYER } from "./player";
 
+export interface RunStats {
+  monstersKilled: number;
+  totalMonsters: number;
+  chestsLooted: number;
+  totalChests: number;
+  floorItemsCollected: number;
+  totalFloorItems: number;
+  goldCollected: number;
+}
+
 export type GameScreen =
   | "main-menu"
   | "overworld"
@@ -39,6 +49,9 @@ interface GameState {
   /** Set of dungeon seeds the player has fully cleared. */
   completedDungeons: Set<string | number>;
   markDungeonComplete: (seed: string | number) => void;
+  /** Stats from the most recent dungeon run (set before transitioning to success/death). */
+  runStats: RunStats | null;
+  setRunStats: (stats: RunStats) => void;
 }
 
 const GameContext = createContext<GameState | null>(null);
@@ -51,6 +64,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [floor, setFloor] = useState<number>(1);
   const [theme, setTheme] = useState<string>("cave");
   const [completedDungeons, setCompletedDungeons] = useState<Set<string | number>>(new Set());
+  const [runStats, setRunStats] = useState<RunStats | null>(null);
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
     null,
   );
@@ -84,6 +98,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         completedDungeons,
         markDungeonComplete: (seed: string | number) =>
           setCompletedDungeons((prev) => new Set([...prev, seed])),
+        runStats,
+        setRunStats,
       }}
     >
       {children}

@@ -7,7 +7,7 @@ import { publicUrl } from "../utils/publicUrl";
 
 import { isTileWalkable } from "../walkability";
 import { aStar8 } from "../pathfinding/aStar8";
-import { useGame } from "./GameProvider";
+import { useGame, type RunStats } from "./GameProvider";
 import { playerFromActor } from "./player";
 import {
   clearPathMaskRGBA,
@@ -153,6 +153,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     theme,
     player,
     setPlayer,
+    setRunStats,
   } = useGame();
 
   const totalFloors = Math.min(level + 1, 5);
@@ -269,6 +270,13 @@ export default function Dungeon({ seed }: DungeonProps) {
   // Blocks input while an exit confirm dialog is open.
   const confirmPendingRef = useRef(false);
 
+  // --- Run stats tracking ---
+  const monstersKilledRef = useRef(0);
+  const goldCollectedRef = useRef(0);
+  const totalMonsters = result.resolved?.monsters?.length ?? 0;
+  const totalChests = result.resolved?.loot?.length ?? 0;
+  const totalFloorItems = result.resolved?.floorItems?.length ?? 0;
+
   // --- Chest interaction ---
   const [lootedChestIds, setLootedChestIds] = useState<Set<number>>(
     () => new Set(),
@@ -278,6 +286,18 @@ export default function Dungeon({ seed }: DungeonProps) {
   const [collectedFloorItemIds, setCollectedFloorItemIds] = useState<
     Set<number>
   >(() => new Set());
+
+  function buildRunStats(): RunStats {
+    return {
+      monstersKilled: monstersKilledRef.current,
+      totalMonsters,
+      chestsLooted: lootedChestIds.size,
+      totalChests,
+      floorItemsCollected: collectedFloorItemIds.size,
+      totalFloorItems,
+      goldCollected: goldCollectedRef.current,
+    };
+  }
   const [chestModal, setChestModal] = useState<{
     loot: ResolvedLootSpawn;
   } | null>(null);
@@ -461,8 +481,10 @@ export default function Dungeon({ seed }: DungeonProps) {
     () =>
       subscribe("death", (evt) => {
         if (evt.actorId === "player") {
+          setRunStats(buildRunStats());
           goTo("death");
         } else {
+          monstersKilledRef.current += 1;
           addLogMessage("Enemy slain!");
         }
       }),
@@ -967,6 +989,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     if (!floorItem) return;
 
     setCollectedFloorItemIds((prev) => new Set([...prev, fid]));
+    goldCollectedRef.current += floorItem.value;
     setTurnState((prev) => {
       const pa = prev.actors[prev.playerId];
       if (!pa || pa.kind !== "player") return prev;
@@ -1766,8 +1789,10 @@ export default function Dungeon({ seed }: DungeonProps) {
                 const kind = exitConfirm;
                 setExitConfirm(null);
                 confirmPendingRef.current = false;
-                if (kind === "dungeon") goTo("success");
-                else setFloor(floor + 1);
+                if (kind === "dungeon") {
+                  setRunStats(buildRunStats());
+                  goTo("success");
+                } else setFloor(floor + 1);
               }}
             >
               Yes

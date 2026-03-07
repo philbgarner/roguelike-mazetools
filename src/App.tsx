@@ -8,10 +8,11 @@ import SeedPicker from "./game/SeedPicker";
 function AppInner() {
   const { screen, seed, floor } = useGame();
   console.log("screen", screen);
+  const showDungeon = screen === "dungeon" || screen === "success" || screen === "death";
   return (
     <>
       <Overworld screen={screen} />
-      {screen === "dungeon" ? <Dungeon seed={seed} key={`dungeon-${seed}-${floor}`} /> : null}
+      {showDungeon ? <Dungeon seed={seed} key={`dungeon-${seed}-${floor}`} /> : null}
       {screen === "main-menu" ? <MainMenu /> : null}
       {screen === "seed-picker" ? <SeedPicker /> : null}
       {screen === "death" ? <Death /> : null}
