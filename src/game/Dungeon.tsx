@@ -99,6 +99,7 @@ import { playerLevelFromXp } from "../resolve/levelBudget";
 import { generateLevelUpRewards, type LevelUpReward } from "./levelUpRewards";
 import LevelUpModal from "./ui/LevelUpModal";
 import QuickSlotPanel from "./ui/QuickSlotPanel";
+import { useConfirmYesNo } from "./ui/useConfirmYesNo";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation (via API so we get resolved monster spawns)
@@ -270,9 +271,9 @@ export default function Dungeon({ seed }: DungeonProps) {
   );
 
   // --- Floor item pickups ---
-  const [collectedFloorItemIds, setCollectedFloorItemIds] = useState<Set<number>>(
-    () => new Set(),
-  );
+  const [collectedFloorItemIds, setCollectedFloorItemIds] = useState<
+    Set<number>
+  >(() => new Set());
   const [chestModal, setChestModal] = useState<{
     loot: ResolvedLootSpawn;
   } | null>(null);
@@ -292,10 +293,16 @@ export default function Dungeon({ seed }: DungeonProps) {
         const healed = Math.min(pa.hp + item.healAmount, pa.maxHp);
         withEffect = {
           ...prev,
-          actors: { ...prev.actors, [prev.playerId]: { ...pa, inventory: newInventory, hp: healed } },
+          actors: {
+            ...prev.actors,
+            [prev.playerId]: { ...pa, inventory: newInventory, hp: healed },
+          },
         };
       } else if (item.buffDuration && item.buffDuration > 0) {
-        const name = item.nameOverride ?? getItemTemplate(item.templateId)?.name ?? "Potion";
+        const name =
+          item.nameOverride ??
+          getItemTemplate(item.templateId)?.name ??
+          "Potion";
         const buff: ActiveBuff = {
           id: `buff-${item.instanceId}`,
           name,
@@ -323,9 +330,20 @@ export default function Dungeon({ seed }: DungeonProps) {
           },
         };
       } else {
-        withEffect = { ...prev, actors: { ...prev.actors, [prev.playerId]: { ...pa, inventory: newInventory } } };
+        withEffect = {
+          ...prev,
+          actors: {
+            ...prev.actors,
+            [prev.playerId]: { ...pa, inventory: newInventory },
+          },
+        };
       }
-      const deps = buildDeps(dungeon, content, runtimeRef.current, withEffect.actors);
+      const deps = buildDeps(
+        dungeon,
+        content,
+        runtimeRef.current,
+        withEffect.actors,
+      );
       return commitPlayerAction(withEffect, deps, { kind: "wait" });
     });
   }
@@ -490,6 +508,8 @@ export default function Dungeon({ seed }: DungeonProps) {
   const playerX = playerActor?.x ?? startCell.x;
   const playerY = playerActor?.y ?? startCell.y;
 
+  const { confirmPrompt, dialog } = useConfirmYesNo();
+
   // When the player moves, snap the focus target back to them.
   useEffect(() => {
     targetFocusRef.current = { x: playerX, y: playerY };
@@ -531,12 +551,14 @@ export default function Dungeon({ seed }: DungeonProps) {
 
     if (playerActor?.kind === "player") setPlayer(playerFromActor(playerActor));
 
-    if (isFinalFloor) {
-      goTo("success");
-    } else {
-      // Advance to the next floor — changing floor causes Dungeon to remount via key.
-      setFloor(floor + 1);
-    }
+    void (async () => {
+      if (isFinalFloor) {
+        if (await confirmPrompt(`Exit dungeon?`)) goTo("success");
+      } else {
+        // Advance to the next floor — changing floor causes Dungeon to remount via key.
+        if (await confirmPrompt("Advance to next floor?")) setFloor(floor + 1);
+      }
+    })();
   }, [playerX, playerY, exitCell]);
 
   // --- Path mask ---
@@ -704,20 +726,27 @@ export default function Dungeon({ seed }: DungeonProps) {
   // --- Tick active buff potions on player move steps ---
   function tickPlayerBuffsInState(state: TurnSystemState): TurnSystemState {
     const pa = state.actors[state.playerId] as PlayerActor | undefined;
-    if (!pa || pa.kind !== "player" || pa.activeBuffs.length === 0) return state;
+    if (!pa || pa.kind !== "player" || pa.activeBuffs.length === 0)
+      return state;
     const { updatedBuffs, expiredBuffs } = tickActiveBuffs(pa.activeBuffs);
     if (expiredBuffs.length === 0) {
       return {
         ...state,
-        actors: { ...state.actors, [state.playerId]: { ...pa, activeBuffs: updatedBuffs } },
+        actors: {
+          ...state.actors,
+          [state.playerId]: { ...pa, activeBuffs: updatedBuffs },
+        },
       };
     }
-    let speedAdj = 0, attackAdj = 0, defenseAdj = 0, maxHpAdj = 0;
+    let speedAdj = 0,
+      attackAdj = 0,
+      defenseAdj = 0,
+      maxHpAdj = 0;
     for (const b of expiredBuffs) {
-      speedAdj  -= b.bonusSpeed;
+      speedAdj -= b.bonusSpeed;
       attackAdj -= b.bonusAttack;
       defenseAdj -= b.bonusDefense;
-      maxHpAdj  -= b.bonusMaxHp;
+      maxHpAdj -= b.bonusMaxHp;
     }
     const newMaxHp = Math.max(1, pa.maxHp + maxHpAdj);
     return {
@@ -909,7 +938,9 @@ export default function Dungeon({ seed }: DungeonProps) {
     if (ft !== 11) return;
     const fid = content.masks.featureId[idx] | 0;
     if (collectedFloorItemIds.has(fid)) return;
-    const floorItem = result.resolved?.floorItems.find((fi) => fi.sourceId === fid);
+    const floorItem = result.resolved?.floorItems.find(
+      (fi) => fi.sourceId === fid,
+    );
     if (!floorItem) return;
 
     setCollectedFloorItemIds((prev) => new Set([...prev, fid]));
@@ -918,7 +949,10 @@ export default function Dungeon({ seed }: DungeonProps) {
       if (!pa || pa.kind !== "player") return prev;
       return {
         ...prev,
-        actors: { ...prev.actors, [prev.playerId]: { ...pa, gold: pa.gold + floorItem.value } },
+        actors: {
+          ...prev.actors,
+          [prev.playerId]: { ...pa, gold: pa.gold + floorItem.value },
+        },
       };
     });
     const itemName = floorItem.spawnId.replace(/_/g, " ");
@@ -1095,9 +1129,14 @@ export default function Dungeon({ seed }: DungeonProps) {
           });
         }}
         onUseConsumable={(item) => {
-          const name = item.nameOverride ?? getItemTemplate(item.templateId)?.name ?? "Potion";
+          const name =
+            item.nameOverride ??
+            getItemTemplate(item.templateId)?.name ??
+            "Potion";
           if (item.healAmount && item.healAmount > 0) {
-            const pa = turnStateRef.current.actors[turnStateRef.current.playerId] as PlayerActor | undefined;
+            const pa = turnStateRef.current.actors[
+              turnStateRef.current.playerId
+            ] as PlayerActor | undefined;
             if (pa) {
               const recovered = Math.min(item.healAmount, pa.maxHp - pa.hp);
               addLogMessage(`You drink a ${name} and recover ${recovered} HP.`);
@@ -1107,8 +1146,11 @@ export default function Dungeon({ seed }: DungeonProps) {
             if (item.bonusAttack > 0) parts.push(`+${item.bonusAttack} ATK`);
             if (item.bonusDefense > 0) parts.push(`+${item.bonusDefense} DEF`);
             if (item.bonusMaxHp > 0) parts.push(`+${item.bonusMaxHp} HP`);
-            if (item.bonusSpeed && item.bonusSpeed > 0) parts.push(`+${item.bonusSpeed} SPD`);
-            addLogMessage(`You drink a ${name}. ${parts.join(", ")} for ${item.buffDuration} steps.`);
+            if (item.bonusSpeed && item.bonusSpeed > 0)
+              parts.push(`+${item.bonusSpeed} SPD`);
+            addLogMessage(
+              `You drink a ${name}. ${parts.join(", ")} for ${item.buffDuration} steps.`,
+            );
           }
           handleUseConsumableInDungeon(item);
         }}
@@ -1433,7 +1475,11 @@ export default function Dungeon({ seed }: DungeonProps) {
         visible={showInventoryModal}
         onClose={() => setShowInventoryModal(false)}
         inventory={playerActor.inventory}
-        playerStats={{ attack: playerActor.attack, defense: playerActor.defense, maxHp: playerActor.maxHp }}
+        playerStats={{
+          attack: playerActor.attack,
+          defense: playerActor.defense,
+          maxHp: playerActor.maxHp,
+        }}
         activeBuffs={playerActor.activeBuffs}
         onInventoryChange={(newInventory: Inventory, delta: StatDelta) => {
           setTurnState((prev) => {
@@ -1458,9 +1504,14 @@ export default function Dungeon({ seed }: DungeonProps) {
           });
         }}
         onUseConsumable={(item: InventoryItem) => {
-          const name = item.nameOverride ?? getItemTemplate(item.templateId)?.name ?? "Potion";
+          const name =
+            item.nameOverride ??
+            getItemTemplate(item.templateId)?.name ??
+            "Potion";
           if (item.healAmount && item.healAmount > 0) {
-            const pa = turnStateRef.current.actors[turnStateRef.current.playerId] as PlayerActor | undefined;
+            const pa = turnStateRef.current.actors[
+              turnStateRef.current.playerId
+            ] as PlayerActor | undefined;
             if (pa) {
               const recovered = Math.min(item.healAmount, pa.maxHp - pa.hp);
               addLogMessage(`You drink a ${name} and recover ${recovered} HP.`);
@@ -1470,8 +1521,11 @@ export default function Dungeon({ seed }: DungeonProps) {
             if (item.bonusAttack > 0) parts.push(`+${item.bonusAttack} ATK`);
             if (item.bonusDefense > 0) parts.push(`+${item.bonusDefense} DEF`);
             if (item.bonusMaxHp > 0) parts.push(`+${item.bonusMaxHp} HP`);
-            if (item.bonusSpeed && item.bonusSpeed > 0) parts.push(`+${item.bonusSpeed} SPD`);
-            addLogMessage(`You drink a ${name}. ${parts.join(", ")} for ${item.buffDuration} steps.`);
+            if (item.bonusSpeed && item.bonusSpeed > 0)
+              parts.push(`+${item.bonusSpeed} SPD`);
+            addLogMessage(
+              `You drink a ${name}. ${parts.join(", ")} for ${item.buffDuration} steps.`,
+            );
           }
           handleUseConsumableInDungeon(item);
         }}
