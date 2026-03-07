@@ -904,7 +904,8 @@ export const forestFrag = /* glsl */ `
     // Player always renders at full glyph alpha even on tree cells; only
     // non-player entities get the nestled-in-trees half-body fade.
     float baseEntityAlpha = charInkA * mix(1.0, entityForestMask, curWall);
-    float entityAlphaForest = mix(baseEntityAlpha, charInkA, isPlayerHere);
+    // NPCs (merchant wagons, secret markers) render fully on top of trees, same as the player.
+    float entityAlphaForest = mix(baseEntityAlpha, charInkA, max(isPlayerHere, isNpc));
 
     // -------------------------
     // Output composite

@@ -1360,6 +1360,15 @@ export type ForestContentOptions = {
   };
 };
 
+/** A hidden discovery location inside the tree-covered solid areas of the forest. */
+export type SecretLocation = {
+  id: number;
+  x: number;
+  y: number;
+  /** Index into SECRET_LOCATION_TEMPLATES in secretLocationData.ts */
+  templateIndex: number;
+};
+
 export type ForestContentOutputs = {
   width: number;
   height: number;
@@ -1395,6 +1404,7 @@ export type ForestContentOutputs = {
     playerSpawn: Point;
     playerSpawnRoomId: number;
     dungeonPortals: DungeonPortal[];
+    secretLocations: SecretLocation[];
     roomGraph: Map<number, Set<number>>;
     roomDistance: Map<number, number>;
     rooms: Rect[];
@@ -1596,7 +1606,66 @@ export function generateForestContent(
     });
   }
 
-  // ---- Step 8: build textures and debug images ----
+  // ---- Step 8: place secret locations (inside solid tree areas, away from portals) ----
+  const solidMask = forest.masks.solid;
+  const innerSolidCandidates: Array<{ x: number; y: number }> = [];
+  for (let cy = 2; cy < H - 2; cy++) {
+    for (let cx = 2; cx < W - 2; cx++) {
+      if (solidMask[cy * W + cx] !== 255) continue;
+      // Require all 8 neighbours also solid (not on the edge of trees)
+      let inner = true;
+      outer: for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          if (solidMask[(cy + dy) * W + (cx + dx)] !== 255) {
+            inner = false;
+            break outer;
+          }
+        }
+      }
+      if (!inner) continue;
+      // Keep away from portals and player spawn (Chebyshev distance >= 6)
+      let tooClose = false;
+      if (
+        Math.max(Math.abs(cx - spawnPoint.x), Math.abs(cy - spawnPoint.y)) < 6
+      ) {
+        tooClose = true;
+      }
+      if (!tooClose) {
+        for (const portal of portals) {
+          if (
+            Math.max(Math.abs(cx - portal.x), Math.abs(cy - portal.y)) < 6
+          ) {
+            tooClose = true;
+            break;
+          }
+        }
+      }
+      if (!tooClose) innerSolidCandidates.push({ x: cx, y: cy });
+    }
+  }
+  // Shuffle and pick 3-5 secret locations
+  for (let i = innerSolidCandidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [innerSolidCandidates[i], innerSolidCandidates[j]] = [
+      innerSolidCandidates[j],
+      innerSolidCandidates[i],
+    ];
+  }
+  const secretCount = Math.min(
+    5,
+    Math.max(3, Math.floor(innerSolidCandidates.length * 0.015)),
+  );
+  const secretLocations: SecretLocation[] = innerSolidCandidates
+    .slice(0, secretCount)
+    .map((p, i) => ({
+      id: i + 1,
+      x: p.x,
+      y: p.y,
+      templateIndex: Math.floor(rng() * 6), // 6 templates in SECRET_LOCATION_TEMPLATES
+    }));
+
+  // ---- Step 9: build textures and debug images ----
   const featureTypeTex = maskToDataTextureR8(
     featureType,
     W,
@@ -1610,7 +1679,7 @@ export function generateForestContent(
   const featureIdImg = maskToImageDataGrayscale(featureId, W, H);
   const dangerImg = maskToImageDataGrayscale(danger, W, H);
 
-  // ---- Step 9: ASCII overlay ----
+  // ---- Step 10: ASCII overlay ----
   const overlay: Array<{ x: number; y: number; ch: string }> = [];
   overlay.push({ x: spawnPoint.x, y: spawnPoint.y, ch: "@" });
   for (const portal of portals) {
@@ -1645,6 +1714,7 @@ export function generateForestContent(
       playerSpawn: spawnPoint,
       playerSpawnRoomId: spawnRoomId,
       dungeonPortals: portals,
+      secretLocations,
       roomGraph,
       roomDistance,
       rooms,

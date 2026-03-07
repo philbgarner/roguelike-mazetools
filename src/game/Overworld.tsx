@@ -88,6 +88,13 @@ import { tickActiveBuffs, type ActiveBuff } from "./activeBuffs";
 import PlayerInventoryModal from "./ui/PlayerInventoryModal";
 import PlayerStatsPanel from "./ui/PlayerStatsPanel";
 import QuickSlotPanel from "./ui/QuickSlotPanel";
+import SecretLocationModal from "./ui/SecretLocationModal";
+import {
+  SECRET_LOCATION_TEMPLATES,
+  type SecretChoice,
+  type SecretOutcome,
+} from "./data/secretLocationData";
+import type { SecretLocation } from "../mazeGen";
 
 // ---------------------------------------------------------------------------
 // Dungeon generation
@@ -143,6 +150,8 @@ export default function Overworld({ screen }: OverworldProps) {
     player,
     setPlayer,
     completedDungeons,
+    usedSecrets,
+    markSecretUsed,
   } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   console.log("building screen", screen);
@@ -161,13 +170,23 @@ export default function Overworld({ screen }: OverworldProps) {
   // Player spawn comes directly from forest content — no need for computeStartCell.
   const startCell = content.meta.playerSpawn;
 
-  // Flat grid indices of completed dungeon portals (for grey tint in DungeonRenderView).
-  const completedPortalIndices = useMemo(() => {
+  // Flat grid indices of completed portals + used secrets (for grey tint in DungeonRenderView).
+  const greyedOutIndices = useMemo(() => {
     const W = dungeon.width;
-    return content.meta.dungeonPortals
+    const portalIdxs = content.meta.dungeonPortals
       .filter((p) => completedDungeons.has(p.seed))
       .map((p) => p.y * W + p.x);
-  }, [completedDungeons, content.meta.dungeonPortals, dungeon.width]);
+    const secretIdxs = content.meta.secretLocations
+      .filter((s) => usedSecrets.has(s.id))
+      .map((s) => s.y * W + s.x);
+    return [...portalIdxs, ...secretIdxs];
+  }, [
+    completedDungeons,
+    content.meta.dungeonPortals,
+    content.meta.secretLocations,
+    dungeon.width,
+    usedSecrets,
+  ]);
 
   // --- World effects clock ---
   const worldEffectsRef = useRef(createWorldEffectsState());
@@ -175,6 +194,9 @@ export default function Overworld({ screen }: OverworldProps) {
   const [showMerchantModal, setShowMerchantModal] = useState(false);
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [showPlayerStatsModal, setShowPlayerStatsModal] = useState(false);
+  const [secretPending, setSecretPending] = useState<SecretLocation | null>(
+    null,
+  );
 
   const { confirmPrompt, dialog } = useConfirmYesNo();
 
@@ -275,6 +297,19 @@ export default function Overworld({ screen }: OverworldProps) {
   // When the player moves, snap the focus target back to them.
   useEffect(() => {
     targetFocusRef.current = { x: playerX, y: playerY };
+  }, [playerX, playerY]);
+
+  // --- Secret location detection: trigger modal when player steps on one ---
+  useEffect(() => {
+    if (secretPending) return; // already showing one
+    const secret = content.meta.secretLocations.find(
+      (s) => s.x === playerX && s.y === playerY && !usedSecrets.has(s.id),
+    );
+    if (secret) {
+      cancelAutoWalkNow();
+      setSecretPending(secret);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerX, playerY]);
 
   // --- First-discovery log messages ---
@@ -385,10 +420,11 @@ export default function Overworld({ screen }: OverworldProps) {
     setOverworld(dungeon, content);
   }, [dungeon, content]);
 
-  // CP437 tile ID for '@' (ASCII 64).
+  // CP437 tile ID for '@' (ASCII 64) and '*' (ASCII 42).
   const NPC_GLYPH_TILE = 64;
+  const SECRET_GLYPH_TILE = 42; // '*' — mystery marker
 
-  // Stamp NPC positions into the NPC char mask each turn.
+  // Stamp NPC positions and undiscovered secrets into the NPC char mask each turn.
   useEffect(() => {
     const nm = npcMaskRef.current;
     if (!nm) return;
@@ -407,9 +443,17 @@ export default function Overworld({ screen }: OverworldProps) {
       npcTile: NPC_GLYPH_TILE,
     });
 
+    // Stamp undiscovered secret locations with '*'
+    for (const s of content.meta.secretLocations) {
+      if (usedSecrets.has(s.id)) continue;
+      if (s.x >= 0 && s.x < W && s.y >= 0 && s.y < H) {
+        nm.data[s.y * W + s.x] = SECRET_GLYPH_TILE;
+      }
+    }
+
     nm.tex.needsUpdate = true;
     setNpcCharTex(nm.tex);
-  }, [dungeon.width, dungeon.height, turnState.actors]);
+  }, [dungeon.width, dungeon.height, turnState.actors, content.meta.secretLocations, usedSecrets]);
 
   const recomputePlayerPath = useCallback(
     (targetX: number, targetY: number) => {
@@ -449,6 +493,7 @@ export default function Overworld({ screen }: OverworldProps) {
 
   // --- Centralized player action commit ---
   function attemptCommitPlayerAction(action: TurnAction): void {
+    if (secretPending) return;
     const ts = turnStateRef.current;
     if (!ts.awaitingPlayerInput) return;
     setTurnState((prev) => {
@@ -456,6 +501,49 @@ export default function Overworld({ screen }: OverworldProps) {
       const deps = buildDeps(dungeon, prev.actors);
       return commitPlayerAction(prev, deps, action);
     });
+  }
+
+  function applySecretOutcome(
+    p: typeof player,
+    outcome: SecretOutcome,
+  ): typeof player {
+    switch (outcome.kind) {
+      case "gold":
+        return { ...p, gold: p.gold + outcome.amount };
+      case "xp":
+        return { ...p, xp: p.xp + outcome.amount };
+      case "stat": {
+        const newMaxHp = p.maxHp + outcome.hpBonus;
+        return {
+          ...p,
+          attack: p.attack + outcome.attackBonus,
+          defense: p.defense + outcome.defenseBonus,
+          maxHp: newMaxHp,
+          hp: Math.min(p.hp + outcome.hpBonus, newMaxHp),
+        };
+      }
+      case "resistance":
+        if (p.resistances.includes(outcome.resistance)) return p;
+        return { ...p, resistances: [...p.resistances, outcome.resistance] };
+      case "item": {
+        const template = getItemTemplate(outcome.templateId);
+        if (!template) return p;
+        const item = createInventoryItem(
+          `secret_${Date.now()}`,
+          template,
+          outcome.attackBonus,
+          outcome.defenseBonus,
+          outcome.hpBonus,
+          outcome.value,
+          outcome.nameOverride,
+        );
+        return { ...p, inventory: addItem(p.inventory, item) };
+      }
+      case "nothing":
+        return p;
+      case "curse":
+        return { ...p, hp: Math.max(1, p.hp - outcome.hpLoss) };
+    }
   }
 
   function applyBuffTickToPlayer(p: typeof player): typeof player {
@@ -566,6 +654,7 @@ export default function Overworld({ screen }: OverworldProps) {
   useEffect(() => {
     if (!turnState.awaitingPlayerInput) return;
     if (autoWalk.kind !== "active") return;
+    if (secretPending) return;
 
     const timer = setTimeout(() => {
       const { nextAutoWalk, action, pathForOverlay } =
@@ -602,6 +691,7 @@ export default function Overworld({ screen }: OverworldProps) {
     dungeon,
     content,
     rebuildPathMaskFromPlans,
+    secretPending,
   ]);
 
   // Reset turn state when start cell changes (new dungeon).
@@ -626,6 +716,10 @@ export default function Overworld({ screen }: OverworldProps) {
     (a) => a.kind === "npc" && a.x === playerX && a.y === playerY,
   );
 
+  const secretAtPlayerCell = content.meta.secretLocations.find(
+    (s) => s.x === playerX && s.y === playerY,
+  );
+
   if (screen !== "overworld") {
     return <></>;
   }
@@ -635,12 +729,31 @@ export default function Overworld({ screen }: OverworldProps) {
     const terrain = dungeon.masks.solid[idx] === 255 ? "Trees" : "Pathway";
     if (contentAtPlayerCell) return `${terrain} (${contentAtPlayerCell.theme})`;
     if (npcAtPlayerCell) return `${terrain} (Merchant Wagon)`;
+    if (secretAtPlayerCell) {
+      const template =
+        SECRET_LOCATION_TEMPLATES[secretAtPlayerCell.templateIndex];
+      return template?.name ?? "Hidden Location";
+    }
     return terrain;
   })();
 
   return (
     <>
       <MessageLog messages={logMessages} onMessageExpired={removeLogMessage} />
+
+      {/* --- Secret location modal --- */}
+      {secretPending && (
+        <SecretLocationModal
+          template={SECRET_LOCATION_TEMPLATES[secretPending.templateIndex]}
+          onChoose={(choice: SecretChoice) => {
+            setPlayer((prev) => applySecretOutcome(prev, choice.outcome));
+          }}
+          onClose={() => {
+            markSecretUsed(secretPending.id);
+            setSecretPending(null);
+          }}
+        />
+      )}
 
       <BorderPanel
         title={player.name}
@@ -1126,6 +1239,9 @@ export default function Overworld({ screen }: OverworldProps) {
                 const portal = content.meta.dungeonPortals.find(
                   (f) => f.x === x && f.y === y,
                 );
+                const secretAtCell = content.meta.secretLocations.find(
+                  (s) => s.x === x && s.y === y,
+                );
                 const npcsAtCell = Object.values(
                   turnStateRef.current.actors,
                 ).filter(
@@ -1153,6 +1269,13 @@ export default function Overworld({ screen }: OverworldProps) {
                       {portal ? (
                         <span>
                           {portal.name} — {portal.theme} (lvl {portal.level})
+                        </span>
+                      ) : null}
+                      {secretAtCell ? (
+                        <span style={{ color: usedSecrets.has(secretAtCell.id) ? "#666" : "#ccaa66" }}>
+                          {usedSecrets.has(secretAtCell.id)
+                            ? `${SECRET_LOCATION_TEMPLATES[secretAtCell.templateIndex]?.name ?? "Hidden Location"} (visited)`
+                            : "? Something hidden here"}
                         </span>
                       ) : null}
                       {npcsAtCell.map((npc) => (
@@ -1230,7 +1353,7 @@ export default function Overworld({ screen }: OverworldProps) {
             pathMaskTex={pathMaskTex ?? undefined}
             actorCharTex={actorCharTex}
             npcCharTex={npcCharTex}
-            completedPortalIndices={completedPortalIndices}
+            completedPortalIndices={greyedOutIndices}
             _visDataRef={visDataRef}
             shaderVariant="forest"
           >

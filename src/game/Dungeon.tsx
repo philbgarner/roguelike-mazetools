@@ -154,6 +154,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     player,
     setPlayer,
     setRunStats,
+    markDungeonComplete,
   } = useGame();
 
   const totalFloors = Math.min(level + 1, 5);
@@ -551,9 +552,9 @@ export default function Dungeon({ seed }: DungeonProps) {
     y: number;
   } | null>(null);
 
-  const [exitConfirm, setExitConfirm] = useState<null | "dungeon" | "floor">(
-    null,
-  );
+  const [exitConfirm, setExitConfirm] = useState<
+    null | "dungeon" | "floor" | "early"
+  >(null);
 
   // When the player moves, snap the focus target back to them.
   useEffect(() => {
@@ -893,12 +894,8 @@ export default function Dungeon({ seed }: DungeonProps) {
     hotkeys(".", () => tryCommitWait());
     hotkeys("q", () => {
       if (overworldBsp) {
-        const ts = turnStateRef.current;
-        const currentActor = ts.actors[ts.playerId];
-        if (currentActor?.kind === "player")
-          setPlayer(playerFromActor(currentActor));
-        setSeed(overworldBsp?.meta.seedUsed);
-        goTo("overworld");
+        cancelAutoWalkNow();
+        setExitConfirm("early");
       }
     });
     hotkeys("esc", (e) => {
@@ -1235,6 +1232,35 @@ export default function Dungeon({ seed }: DungeonProps) {
         <Button onClick={() => setShowPlayerStatsModal((v) => !v)}>
           Stats
         </Button>
+        {overworldBsp && (
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <Button
+              onClick={() => {
+                cancelAutoWalkNow();
+                setExitConfirm("early");
+              }}
+              onMouseEnter={(e) => {
+                setTooltip({
+                  x: e.clientX,
+                  y: e.clientY,
+                  visible: true,
+                  title: "Exit Dungeon Early",
+                  children: (
+                    <span style={{ maxWidth: "16rem", display: "block" }}>
+                      Leave now with your current loot. This dungeon will be
+                      marked as cleared — you cannot re-enter.
+                    </span>
+                  ),
+                });
+              }}
+              onMouseLeave={() =>
+                setTooltip({ x: 0, y: 0, visible: false, children: <></> })
+              }
+            >
+              Exit
+            </Button>
+          </div>
+        )}
       </BorderPanel>
       <div
         onContextMenu={handleContextMenu}
@@ -1799,13 +1825,15 @@ export default function Dungeon({ seed }: DungeonProps) {
       {exitConfirm !== null && (
         <ModalPanel
           visible
-          title="Confirm"
-          maxHeight="10rem"
+          title={exitConfirm === "early" ? "Exit Dungeon Early?" : "Confirm"}
+          maxHeight={exitConfirm === "early" ? "14rem" : "10rem"}
         >
           <p style={{ margin: "0 0 1rem", lineHeight: "1.3rem" }}>
             {exitConfirm === "dungeon"
               ? "Exit dungeon?"
-              : "Advance to next floor?"}
+              : exitConfirm === "floor"
+                ? "Advance to next floor?"
+                : "Leave the dungeon now? You will keep everything you've collected so far, but this dungeon will be marked as cleared and you won't be able to re-enter."}
           </p>
           <div
             style={{ display: "flex", gap: "1rem", justifyContent: "center" }}
@@ -1819,10 +1847,21 @@ export default function Dungeon({ seed }: DungeonProps) {
                 if (kind === "dungeon") {
                   setRunStats(buildRunStats());
                   goTo("success");
-                } else setFloor(floor + 1);
+                } else if (kind === "floor") {
+                  setFloor(floor + 1);
+                } else {
+                  // Early exit: save player state, mark dungeon complete, return to overworld
+                  const ts = turnStateRef.current;
+                  const currentActor = ts.actors[ts.playerId];
+                  if (currentActor?.kind === "player")
+                    setPlayer(playerFromActor(currentActor));
+                  markDungeonComplete(seed);
+                  setSeed(overworldBsp!.meta.seedUsed);
+                  goTo("overworld");
+                }
               }}
             >
-              Yes
+              {exitConfirm === "early" ? "Leave" : "Yes"}
             </Button>
             <Button
               width="8rem"
@@ -1831,7 +1870,7 @@ export default function Dungeon({ seed }: DungeonProps) {
                 confirmPendingRef.current = false;
               }}
             >
-              No
+              {exitConfirm === "early" ? "Stay" : "No"}
             </Button>
           </div>
         </ModalPanel>
