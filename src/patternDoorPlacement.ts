@@ -196,6 +196,9 @@ export function pickOrderedDoorSiteFromCorridors(args: {
   featureType: Uint8Array;
   entranceRoomId: number;
 
+  // Optional: constrain which room is the gated (far) side
+  requireGateRoomId?: number;
+
   // forwarded to doorSites
   maxRadius?: number;
   minDistToWall?: number;
@@ -222,6 +225,7 @@ export function pickOrderedDoorSiteFromCorridors(args: {
     dungeon,
     featureType,
     entranceRoomId,
+    requireGateRoomId,
     maxRadius = 10,
     minDistToWall = 1,
     preferCorridor = true,
@@ -252,6 +256,7 @@ export function pickOrderedDoorSiteFromCorridors(args: {
     rng,
     candidates,
     roomDistance: dist,
+    requireGateRoomId,
   });
 
   if (!pick.ok) return { ok: false, reason: "NoOrderedCandidate", stats };

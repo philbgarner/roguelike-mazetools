@@ -53,9 +53,7 @@ export default function Tooltip({
 
   const isNearBottom =
     y + tooltipHeight + belowClear + BOTTOM_UI_CLEARANCE > window.innerHeight;
-  const topPos = isNearBottom
-    ? y - tooltipHeight - aboveClear
-    : y + belowClear;
+  const topPos = isNearBottom ? y - tooltipHeight - aboveClear : y + belowClear;
 
   return (
     <BorderPanel
@@ -67,6 +65,7 @@ export default function Tooltip({
       left={`${x - 18}px`}
       top={`${topPos}px`}
       zIndex={zIndex}
+      mouseEvents={false}
     >
       {children}
     </BorderPanel>

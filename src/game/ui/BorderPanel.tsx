@@ -16,6 +16,7 @@ export interface BorderPanelProps {
   left?: string;
   right?: string;
   zIndex?: number;
+  mouseEvents?: boolean;
 }
 
 const BorderPanel = React.forwardRef<HTMLDivElement, BorderPanelProps>(
@@ -33,46 +34,51 @@ const BorderPanel = React.forwardRef<HTMLDivElement, BorderPanelProps>(
       hidden,
       flexMode,
       zIndex,
+      mouseEvents,
     },
     ref,
   ) {
-  return (
-    <>
-      <div
-        ref={ref}
-        className={styles.borderPanelContainer}
-        style={{
-          width,
-          height,
-          left,
-          right,
-          top,
-          bottom,
-          zIndex,
-          opacity: hidden ? 0 : 1,
-        }}
-      >
-        {title ? (
-          <div className={styles.title} style={{ backgroundColor: background }}>
-            {title}
-          </div>
-        ) : null}
+    return (
+      <>
         <div
-          className={styles.content}
+          ref={ref}
+          className={styles.borderPanelContainer}
           style={{
-            backgroundColor: background,
-            flexDirection: flexMode
-              ? flexMode === "Column"
-                ? "column"
-                : "row"
-              : undefined,
+            width,
+            height,
+            left,
+            right,
+            top,
+            bottom,
+            zIndex,
+            opacity: hidden ? 0 : 1,
+            pointerEvents: !mouseEvents ? "none" : "all",
           }}
         >
-          {children}
+          {title ? (
+            <div
+              className={styles.title}
+              style={{ backgroundColor: background }}
+            >
+              {title}
+            </div>
+          ) : null}
+          <div
+            className={styles.content}
+            style={{
+              backgroundColor: background,
+              flexDirection: flexMode
+                ? flexMode === "Column"
+                  ? "column"
+                  : "row"
+                : undefined,
+            }}
+          >
+            {children}
+          </div>
         </div>
-      </div>
-    </>
-  );
+      </>
+    );
   },
 );
 

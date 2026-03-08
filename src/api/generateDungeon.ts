@@ -5,6 +5,7 @@
  */
 
 import { generateBspDungeon, generateDungeonContent } from "../mazeGen";
+import type { CircuitDef } from "../mazeGen";
 import { DEFAULT_BSP, DEFAULT_PATTERN } from "../configTypes";
 import { getTheme } from "../theme/themeRegistry";
 import { dungeonThemeToShaderUniforms } from "../rendering/renderTheme";
@@ -18,6 +19,7 @@ import {
 import { validatePacingTargets } from "../pacingTargets";
 import { validateInclusionRules } from "../inclusionRules";
 import { getBand, getBudget, getPacingPreset } from "./authorialPresets";
+import { applyBossRoomGatePattern } from "../puzzlePatterns";
 import type {
   GenerateDungeonRequest,
   GenerateDungeonResult,
@@ -101,6 +103,68 @@ export function generateDungeon(
   };
 
   const content = generateDungeonContent(bsp, contentOpts);
+
+  // --- Boss room gate (final floor only) ---
+  if (isFinalFloor) {
+    // Seeded RNG offset from the main dungeon seed
+    const seedNum = bsp.meta?.seedUsed ?? 0;
+    let t = (seedNum + 0xb055_babe) >>> 0;
+    function mulberry32step(): number {
+      t += 0x6d2b79f5;
+      let x = t;
+      x = Math.imul(x ^ (x >>> 15), x | 1);
+      x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    }
+    const patternRng = {
+      nextFloat(): number {
+        return mulberry32step();
+      },
+      nextInt(lo: number, hi: number): number {
+        return lo + Math.floor(mulberry32step() * (hi - lo + 1));
+      },
+    };
+
+    // Allocate IDs above all existing ones
+    let maxId = 0;
+    for (const arr of [
+      content.meta.doors,
+      content.meta.levers,
+      content.meta.plates,
+      content.meta.blocks,
+      content.meta.circuits,
+    ] as Array<Array<{ id: number }>>) {
+      for (const item of arr) if (item.id > maxId) maxId = item.id;
+    }
+    let nextId = maxId + 1;
+
+    const circuitsById = new Map<number, CircuitDef>();
+    const result = applyBossRoomGatePattern({
+      rng: patternRng,
+      dungeon: bsp,
+      rooms: bsp.meta.rooms,
+      entranceRoomId: content.meta.entranceRoomId,
+      farthestRoomId: content.meta.farthestRoomId,
+      featureType: content.masks.featureType,
+      featureId: content.masks.featureId,
+      featureParam: content.masks.featureParam,
+      doors: content.meta.doors,
+      levers: content.meta.levers,
+      plates: content.meta.plates,
+      blocks: content.meta.blocks,
+      circuitsById,
+      allocId: () => nextId++,
+    });
+
+    if (result.ok) {
+      for (const circuit of circuitsById.values()) {
+        content.meta.circuits.push(circuit);
+      }
+      content.textures.featureType.needsUpdate = true;
+      content.textures.featureId.needsUpdate = true;
+      content.textures.featureParam.needsUpdate = true;
+    }
+  }
 
   // Normalize arrays that downstream code iterates (matches App.tsx pattern)
   if (!content.meta) (content as any).meta = {} as any;

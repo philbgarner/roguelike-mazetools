@@ -3042,3 +3042,279 @@ export function applyPlateOpensDoorPattern(args: {
     stats: { doorSites: stats },
   };
 }
+
+/**
+ * Samples a floor cell inside a room that has distanceToWall >= 2,
+ * ensuring the cell is NOT in the AO-mask border ring.
+ */
+function sampleRoomFloorMinDist2(
+  rng: PatternRng,
+  dungeon: BspDungeonOutputs,
+  room: BspDungeonOutputs["meta"]["rooms"][number],
+  featureType: Uint8Array,
+  tries = 80,
+): Point | null {
+  const W = dungeon.width;
+  const H = dungeon.height;
+
+  for (let k = 0; k < tries; k++) {
+    const x = rng.nextInt(room.x + 1, room.x + room.w - 2);
+    const y = rng.nextInt(room.y + 1, room.y + room.h - 2);
+    if (!inBounds(W, H, x, y)) continue;
+    const i = idxOf(W, x, y);
+    if (dungeon.masks.solid[i] !== 0) continue;
+    if ((featureType[i] | 0) !== 0) continue;
+    if (dungeon.masks.distanceToWall[i] < 2) continue;
+    return { x, y };
+  }
+  return null;
+}
+
+/**
+ * Pattern: Boss room gate (final-floor only)
+ *
+ * Gates the entrance(s) to the farthest room with either:
+ *   - A lever door (lever placed in the trigger room)
+ *   - A block door (plate+block in the trigger room; block always has distanceToWall >= 2)
+ *
+ * The pattern variant is chosen randomly.
+ */
+export function applyBossRoomGatePattern(args: {
+  rng: PatternRng;
+  dungeon: BspDungeonOutputs;
+  rooms: BspDungeonOutputs["meta"]["rooms"];
+  entranceRoomId: number;
+  farthestRoomId: number;
+
+  featureType: Uint8Array;
+  featureId: Uint8Array;
+  featureParam: Uint8Array;
+
+  doors: ContentOutputs["meta"]["doors"];
+  levers: ContentOutputs["meta"]["levers"];
+  plates: ContentOutputs["meta"]["plates"];
+  blocks: ContentOutputs["meta"]["blocks"];
+  circuitsById: Map<number, CircuitDef>;
+
+  allocId: () => number;
+}): PatternResult {
+  const {
+    rng,
+    dungeon,
+    rooms,
+    entranceRoomId,
+    farthestRoomId,
+    featureType: ft,
+    featureId: fid,
+    featureParam: fparam,
+    doors,
+    levers,
+    plates,
+    blocks,
+    circuitsById,
+    allocId,
+  } = args;
+
+  const { candidates, stats } = findDoorSiteCandidatesAndStatsFromCorridors(
+    dungeon,
+    ft,
+    {
+      minDistToWall: 1,
+      preferCorridor: true,
+      trimEnds: 0,
+      duplicateBias: 1,
+      maxRadius: 10,
+      requireThroat: true,
+    },
+  );
+
+  if (!candidates.length) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "BossGate: no door site candidates.",
+      stats: { doorSites: stats },
+    };
+  }
+
+  const pick = pickOrderedDoorSiteFromCorridors({
+    rng,
+    dungeon,
+    featureType: ft,
+    entranceRoomId,
+    requireGateRoomId: farthestRoomId,
+    maxRadius: 10,
+    minDistToWall: 1,
+    preferCorridor: true,
+    trimEnds: 0,
+    duplicateBias: 1,
+  });
+
+  if (!pick.ok) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: `BossGate: no ordered door site (${pick.reason}).`,
+      stats: { doorSites: stats },
+    };
+  }
+
+  const di = idxOf(dungeon.width, pick.x, pick.y);
+  if ((ft[di] | 0) !== 0) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "BossGate: door site already occupied.",
+      stats: { doorSites: stats },
+    };
+  }
+
+  const circuitId = allocId();
+
+  // Place lever-door (kind=2)
+  ft[di] = 4;
+  fid[di] = circuitId;
+  fparam[di] = 2;
+
+  doors.push({
+    id: circuitId,
+    x: pick.x,
+    y: pick.y,
+    roomA: pick.triggerRoomId,
+    roomB: pick.gateRoomId,
+    kind: 2,
+    depth: pick.gateDepth,
+  });
+
+  const triggerRoom = rooms[pick.triggerRoomId - 1];
+  if (!triggerRoom) {
+    ft[di] = 0;
+    fid[di] = 0;
+    fparam[di] = 0;
+    doors.pop();
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "BossGate: no trigger room found.",
+      stats: { doorSites: stats },
+    };
+  }
+
+  const useLever = rng.nextInt(0, 1) === 0;
+
+  if (useLever) {
+    // --- Lever door ---
+    const leverP = sampleRoomFloorNoFeatures(rng, dungeon, triggerRoom, ft);
+    if (!leverP) {
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      return {
+        ok: false,
+        didCarve: false,
+        reason: "BossGate: no lever placement found.",
+        stats: { doorSites: stats },
+      };
+    }
+
+    const li = idxOf(dungeon.width, leverP.x, leverP.y);
+    ft[li] = 6;
+    fid[li] = circuitId;
+    fparam[li] = 0;
+
+    levers.push({
+      id: circuitId,
+      x: leverP.x,
+      y: leverP.y,
+      roomId: pick.triggerRoomId,
+    });
+
+    circuitsById.set(circuitId, {
+      id: circuitId,
+      logic: { type: "OR" },
+      behavior: { mode: "MOMENTARY" },
+      triggers: [{ kind: "LEVER", refId: circuitId }],
+      targets: [{ kind: "DOOR", refId: circuitId, effect: "TOGGLE" }],
+    });
+  } else {
+    // --- Block door (plate + block; block must have distanceToWall >= 2) ---
+
+    // Place block first from inner cells (AO-safe), then plate adjacent to it.
+    const blockP = sampleRoomFloorMinDist2(rng, dungeon, triggerRoom, ft);
+    if (!blockP) {
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      return {
+        ok: false,
+        didCarve: false,
+        reason: "BossGate: no block placement (distanceToWall>=2) found.",
+        stats: { doorSites: stats },
+      };
+    }
+
+    const plateP = sampleAdjacentFloorNoFeatures(rng, dungeon, blockP, ft);
+    if (!plateP) {
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      return {
+        ok: false,
+        didCarve: false,
+        reason: "BossGate: no plate placement adjacent to block.",
+        stats: { doorSites: stats },
+      };
+    }
+
+    const plateCfg = {
+      mode: "momentary" as const,
+      activatedByPlayer: false,
+      activatedByBlock: true,
+      inverted: false,
+    };
+
+    const pi = idxOf(dungeon.width, plateP.x, plateP.y);
+    ft[pi] = 7;
+    fid[pi] = circuitId;
+    fparam[pi] = encodePlateParam(plateCfg);
+
+    plates.push({
+      id: circuitId,
+      x: plateP.x,
+      y: plateP.y,
+      roomId: pick.triggerRoomId,
+      mode: plateCfg.mode,
+      activatedByPlayer: plateCfg.activatedByPlayer,
+      activatedByBlock: plateCfg.activatedByBlock,
+      activatedByBlockOrPlayer: false,
+      inverted: plateCfg.inverted,
+    });
+
+    const blockId = allocId();
+    const bi = idxOf(dungeon.width, blockP.x, blockP.y);
+    ft[bi] = 8;
+    fid[bi] = blockId;
+    fparam[bi] = 0;
+
+    blocks.push({
+      id: blockId,
+      x: blockP.x,
+      y: blockP.y,
+      roomId: pick.triggerRoomId,
+      weightClass: 0,
+    });
+
+    circuitsById.set(circuitId, {
+      id: circuitId,
+      logic: { type: "OR" },
+      behavior: { mode: "MOMENTARY" },
+      triggers: [{ kind: "PLATE", refId: circuitId }],
+      targets: [{ kind: "DOOR", refId: circuitId, effect: "OPEN" }],
+    });
+  }
+
+  return { ok: true, didCarve: false, stats: { doorSites: stats } };
+}
