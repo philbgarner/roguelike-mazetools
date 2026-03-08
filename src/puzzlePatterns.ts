@@ -3044,18 +3044,25 @@ export function applyPlateOpensDoorPattern(args: {
 }
 
 /**
- * Samples a floor cell inside a room that has distanceToWall >= 2,
- * ensuring the cell is NOT in the AO-mask border ring.
+ * Samples a floor cell inside a room that has distanceToWall >= 2 AND is as
+ * far as possible from a reference point (used to place the block on the
+ * opposite side of the room from the plate).
+ *
+ * Collects up to `tries` random valid candidates, then returns one of the
+ * farthest few so there's a little variance while still being "far away".
  */
-function sampleRoomFloorMinDist2(
+function sampleRoomFloorFarFromPoint(
   rng: PatternRng,
   dungeon: BspDungeonOutputs,
   room: BspDungeonOutputs["meta"]["rooms"][number],
+  from: Point,
   featureType: Uint8Array,
   tries = 80,
 ): Point | null {
   const W = dungeon.width;
   const H = dungeon.height;
+
+  const candidates: Array<{ x: number; y: number; dist: number }> = [];
 
   for (let k = 0; k < tries; k++) {
     const x = rng.nextInt(room.x + 1, room.x + room.w - 2);
@@ -3065,9 +3072,16 @@ function sampleRoomFloorMinDist2(
     if (dungeon.masks.solid[i] !== 0) continue;
     if ((featureType[i] | 0) !== 0) continue;
     if (dungeon.masks.distanceToWall[i] < 2) continue;
-    return { x, y };
+    const dist = Math.abs(x - from.x) + Math.abs(y - from.y);
+    candidates.push({ x, y, dist });
   }
-  return null;
+
+  if (!candidates.length) return null;
+
+  // Pick from the farthest few to allow some variety while staying "far"
+  candidates.sort((a, b) => b.dist - a.dist);
+  const topN = Math.min(3, candidates.length);
+  return candidates[rng.nextInt(0, topN - 1)]!;
 }
 
 /**
@@ -3238,24 +3252,10 @@ export function applyBossRoomGatePattern(args: {
       targets: [{ kind: "DOOR", refId: circuitId, effect: "TOGGLE" }],
     });
   } else {
-    // --- Block door (plate + block; block must have distanceToWall >= 2) ---
-
-    // Place block first from inner cells (AO-safe), then plate adjacent to it.
-    const blockP = sampleRoomFloorMinDist2(rng, dungeon, triggerRoom, ft);
-    if (!blockP) {
-      ft[di] = 0;
-      fid[di] = 0;
-      fparam[di] = 0;
-      doors.pop();
-      return {
-        ok: false,
-        didCarve: false,
-        reason: "BossGate: no block placement (distanceToWall>=2) found.",
-        stats: { doorSites: stats },
-      };
-    }
-
-    const plateP = sampleAdjacentFloorNoFeatures(rng, dungeon, blockP, ft);
+    // --- Block door ---
+    // Plate placed first anywhere in the room; block placed on the far side
+    // (distanceToWall >= 2, maximising distance from the plate).
+    const plateP = sampleRoomFloorNoFeatures(rng, dungeon, triggerRoom, ft);
     if (!plateP) {
       ft[di] = 0;
       fid[di] = 0;
@@ -3264,7 +3264,27 @@ export function applyBossRoomGatePattern(args: {
       return {
         ok: false,
         didCarve: false,
-        reason: "BossGate: no plate placement adjacent to block.",
+        reason: "BossGate: no plate placement found.",
+        stats: { doorSites: stats },
+      };
+    }
+
+    const blockP = sampleRoomFloorFarFromPoint(
+      rng,
+      dungeon,
+      triggerRoom,
+      plateP,
+      ft,
+    );
+    if (!blockP) {
+      ft[di] = 0;
+      fid[di] = 0;
+      fparam[di] = 0;
+      doors.pop();
+      return {
+        ok: false,
+        didCarve: false,
+        reason: "BossGate: no block placement (distanceToWall>=2, far from plate) found.",
         stats: { doorSites: stats },
       };
     }

@@ -34,7 +34,7 @@ const BorderPanel = React.forwardRef<HTMLDivElement, BorderPanelProps>(
       hidden,
       flexMode,
       zIndex,
-      mouseEvents,
+      mouseEvents = true,
     },
     ref,
   ) {
