@@ -243,6 +243,9 @@ type Props = {
   /** When true, all cells are pre-marked as explored on creation. */
   startFullyExplored?: "no" | "yes" | "pathways-only";
 
+  /** Debug: when true, marks every cell as explored every visibility update. */
+  forceFullyExplored?: boolean;
+
   /**
    * Cells to permanently mark as explored (radius 2 Chebyshev) regardless of player position.
    * Used to reveal scout-reported secret locations on the overworld map.
@@ -904,6 +907,10 @@ function DungeonRenderScene(props: Props) {
         },
       },
     );
+    // Debug: reveal entire map.
+    if (props.forceFullyExplored) {
+      for (let i = 0; i < W * H; i++) vr.data[i * 4 + 1] = 255;
+    }
     // Mark pre-revealed cells (radius 2 Chebyshev) as explored.
     if (props.preRevealedCells) {
       for (const cell of props.preRevealedCells) {
@@ -933,6 +940,7 @@ function DungeonRenderScene(props: Props) {
     props.content,
     props.doorStates,
     props.preRevealedCells,
+    props.forceFullyExplored,
   ]);
 
   // M8: update path mask uniform when prop changes

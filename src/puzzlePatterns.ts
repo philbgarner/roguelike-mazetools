@@ -3119,7 +3119,6 @@ export function applyBossRoomGatePattern(args: {
     dungeon,
     rooms,
     farthestRoomId,
-    roomDistance,
     featureType: ft,
     featureId: fid,
     featureParam: fparam,
@@ -3140,7 +3139,7 @@ export function applyBossRoomGatePattern(args: {
       trimEnds: 0,
       duplicateBias: 1,
       maxRadius: 10,
-      requireThroat: true,
+      requireThroat: false,
     },
   );
 
@@ -3153,55 +3152,33 @@ export function applyBossRoomGatePattern(args: {
     };
   }
 
-  const pick = pickOrderedDoorSiteFromCandidates({
-    rng,
-    candidates,
-    roomDistance,
-    requireGateRoomId: farthestRoomId,
-  });
+  // Filter to candidates that directly border the farthest (boss) room,
+  // then orient so triggerRoomId is always the approach room (not farthestRoomId).
+  type OrientedCandidate = { x: number; y: number; triggerRoomId: number; gateRoomId: number };
+  const bossEntries: OrientedCandidate[] = [];
+  for (const c of candidates) {
+    if (c.roomA === farthestRoomId) {
+      bossEntries.push({ x: c.x, y: c.y, triggerRoomId: c.roomB, gateRoomId: c.roomA });
+    } else if (c.roomB === farthestRoomId) {
+      bossEntries.push({ x: c.x, y: c.y, triggerRoomId: c.roomA, gateRoomId: c.roomB });
+    }
+  }
 
-  if (!pick.ok) {
+  if (!bossEntries.length) {
     return {
       ok: false,
       didCarve: false,
-      reason: `BossGate: no ordered door site (${pick.reason}).`,
+      reason: "BossGate: no door site adjacent to boss room.",
       stats: { doorSites: stats },
     };
   }
 
-  const di = idxOf(dungeon.width, pick.x, pick.y);
-  if ((ft[di] | 0) !== 0) {
-    return {
-      ok: false,
-      didCarve: false,
-      reason: "BossGate: door site already occupied.",
-      stats: { doorSites: stats },
-    };
-  }
-
-  const circuitId = allocId();
-
-  // Place lever-door (kind=2)
-  ft[di] = 4;
-  fid[di] = circuitId;
-  fparam[di] = 2;
-
-  doors.push({
-    id: circuitId,
-    x: pick.x,
-    y: pick.y,
-    roomA: pick.triggerRoomId,
-    roomB: pick.gateRoomId,
-    kind: 2,
-    depth: pick.gateDepth,
-  });
-
-  const triggerRoom = rooms[pick.triggerRoomId - 1];
+  // --- Pick trigger room (one of the approach rooms) ---
+  // Collect unique trigger room IDs from all boss-border candidates.
+  const triggerRoomIds = Array.from(new Set(bossEntries.map((e) => e.triggerRoomId)));
+  const chosenTriggerRoomId = triggerRoomIds[rng.nextInt(0, triggerRoomIds.length - 1)]!;
+  const triggerRoom = rooms[chosenTriggerRoomId - 1];
   if (!triggerRoom) {
-    ft[di] = 0;
-    fid[di] = 0;
-    fparam[di] = 0;
-    doors.pop();
     return {
       ok: false,
       didCarve: false,
@@ -3210,125 +3187,122 @@ export function applyBossRoomGatePattern(args: {
     };
   }
 
+  // circuitId doubles as the lever/plate ID (trigger refId must match).
+  const circuitId = allocId();
+
+  // --- Decide variant before placing anything (so we can bail cleanly) ---
   const useLever = rng.nextInt(0, 1) === 0;
 
-  if (useLever) {
-    // --- Lever door ---
-    const leverP = sampleRoomFloorNoFeatures(rng, dungeon, triggerRoom, ft);
-    if (!leverP) {
-      ft[di] = 0;
-      fid[di] = 0;
-      fparam[di] = 0;
-      doors.pop();
-      return {
-        ok: false,
-        didCarve: false,
-        reason: "BossGate: no lever placement found.",
-        stats: { doorSites: stats },
-      };
-    }
+  // Try to find trigger placement first; if it fails, don't place any doors.
+  let triggerClear = false;
+  let leverP: Point | null = null;
+  let plateP: Point | null = null;
+  let blockP: Point | null = null;
 
-    const li = idxOf(dungeon.width, leverP.x, leverP.y);
+  if (useLever) {
+    leverP = sampleRoomFloorNoFeatures(rng, dungeon, triggerRoom, ft);
+    triggerClear = leverP !== null;
+  } else {
+    plateP = sampleRoomFloorNoFeatures(rng, dungeon, triggerRoom, ft);
+    if (plateP) {
+      blockP = sampleRoomFloorFarFromPoint(rng, dungeon, triggerRoom, plateP, ft);
+      triggerClear = blockP !== null;
+    }
+  }
+
+  if (!triggerClear) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "BossGate: no trigger placement found in approach room.",
+      stats: { doorSites: stats },
+    };
+  }
+
+  // --- Place a door at every boss-border site ---
+  const placedDoorIds: number[] = [];
+  for (const entry of bossEntries) {
+    const di = idxOf(dungeon.width, entry.x, entry.y);
+    if ((ft[di] | 0) !== 0) continue; // already occupied, skip
+    const doorId = allocId();
+    ft[di] = 4;
+    fid[di] = doorId;
+    fparam[di] = 2; // kind=2 lever-door
+    doors.push({
+      id: doorId,
+      x: entry.x,
+      y: entry.y,
+      roomA: entry.triggerRoomId,
+      roomB: entry.gateRoomId,
+      kind: 2,
+      depth: 0,
+    });
+    placedDoorIds.push(doorId);
+  }
+
+  if (!placedDoorIds.length) {
+    return {
+      ok: false,
+      didCarve: false,
+      reason: "BossGate: all boss-border sites were already occupied.",
+      stats: { doorSites: stats },
+    };
+  }
+
+  // Circuit targets: one entry per placed door
+  const doorTargets = placedDoorIds.map((id) => ({
+    kind: "DOOR" as const,
+    refId: id,
+    effect: (useLever ? "TOGGLE" : "OPEN") as "TOGGLE" | "OPEN",
+  }));
+
+  if (useLever) {
+    const li = idxOf(dungeon.width, leverP!.x, leverP!.y);
     ft[li] = 6;
     fid[li] = circuitId;
     fparam[li] = 0;
-
-    levers.push({
-      id: circuitId,
-      x: leverP.x,
-      y: leverP.y,
-      roomId: pick.triggerRoomId,
-    });
-
+    levers.push({ id: circuitId, x: leverP!.x, y: leverP!.y, roomId: chosenTriggerRoomId });
     circuitsById.set(circuitId, {
       id: circuitId,
       logic: { type: "OR" },
       behavior: { mode: "MOMENTARY" },
       triggers: [{ kind: "LEVER", refId: circuitId }],
-      targets: [{ kind: "DOOR", refId: circuitId, effect: "TOGGLE" }],
+      targets: doorTargets,
     });
   } else {
-    // --- Block door ---
-    // Plate placed first anywhere in the room; block placed on the far side
-    // (distanceToWall >= 2, maximising distance from the plate).
-    const plateP = sampleRoomFloorNoFeatures(rng, dungeon, triggerRoom, ft);
-    if (!plateP) {
-      ft[di] = 0;
-      fid[di] = 0;
-      fparam[di] = 0;
-      doors.pop();
-      return {
-        ok: false,
-        didCarve: false,
-        reason: "BossGate: no plate placement found.",
-        stats: { doorSites: stats },
-      };
-    }
-
-    const blockP = sampleRoomFloorFarFromPoint(
-      rng,
-      dungeon,
-      triggerRoom,
-      plateP,
-      ft,
-    );
-    if (!blockP) {
-      ft[di] = 0;
-      fid[di] = 0;
-      fparam[di] = 0;
-      doors.pop();
-      return {
-        ok: false,
-        didCarve: false,
-        reason: "BossGate: no block placement (distanceToWall>=2, far from plate) found.",
-        stats: { doorSites: stats },
-      };
-    }
-
     const plateCfg = {
       mode: "momentary" as const,
       activatedByPlayer: false,
       activatedByBlock: true,
       inverted: false,
     };
-
-    const pi = idxOf(dungeon.width, plateP.x, plateP.y);
+    const pi = idxOf(dungeon.width, plateP!.x, plateP!.y);
     ft[pi] = 7;
     fid[pi] = circuitId;
     fparam[pi] = encodePlateParam(plateCfg);
-
     plates.push({
       id: circuitId,
-      x: plateP.x,
-      y: plateP.y,
-      roomId: pick.triggerRoomId,
+      x: plateP!.x,
+      y: plateP!.y,
+      roomId: chosenTriggerRoomId,
       mode: plateCfg.mode,
       activatedByPlayer: plateCfg.activatedByPlayer,
       activatedByBlock: plateCfg.activatedByBlock,
       activatedByBlockOrPlayer: false,
       inverted: plateCfg.inverted,
     });
-
     const blockId = allocId();
-    const bi = idxOf(dungeon.width, blockP.x, blockP.y);
+    const bi = idxOf(dungeon.width, blockP!.x, blockP!.y);
     ft[bi] = 8;
     fid[bi] = blockId;
     fparam[bi] = 0;
-
-    blocks.push({
-      id: blockId,
-      x: blockP.x,
-      y: blockP.y,
-      roomId: pick.triggerRoomId,
-      weightClass: 0,
-    });
-
+    blocks.push({ id: blockId, x: blockP!.x, y: blockP!.y, roomId: chosenTriggerRoomId, weightClass: 0 });
     circuitsById.set(circuitId, {
       id: circuitId,
       logic: { type: "OR" },
       behavior: { mode: "MOMENTARY" },
       triggers: [{ kind: "PLATE", refId: circuitId }],
-      targets: [{ kind: "DOOR", refId: circuitId, effect: "OPEN" }],
+      targets: doorTargets,
     });
   }
 

@@ -234,7 +234,9 @@ export default function Overworld({ screen }: OverworldProps) {
     const ts = createTurnSystemState(player, monsters, wagons);
     const deps = buildDeps(dungeon, ts.actors);
     // Let NPCs take one turn before handing control to the player
-    return commitPlayerAction(tickUntilPlayer(ts, deps), deps, { kind: "wait" });
+    return commitPlayerAction(tickUntilPlayer(ts, deps), deps, {
+      kind: "wait",
+    });
   });
 
   const turnStateRef = useRef(turnState);
@@ -697,7 +699,14 @@ export default function Overworld({ screen }: OverworldProps) {
     });
 
     return () => hotkeys.unbind();
-  }, [screen, dungeon, cancelAutoWalkNow, content, markDungeonComplete, setPlayer]);
+  }, [
+    screen,
+    dungeon,
+    cancelAutoWalkNow,
+    content,
+    markDungeonComplete,
+    setPlayer,
+  ]);
 
   // --- Auto-walk step loop ---
   useEffect(() => {
@@ -849,7 +858,9 @@ export default function Overworld({ screen }: OverworldProps) {
                     `Are you sure you want to enter the ${contentAtPlayerCell.theme} of ${contentAtPlayerCell.name}?`,
                   )
                 ) {
-                  addLogMessage(`Entering ${contentAtPlayerCell.theme}...`);
+                  addLogMessage(
+                    `${contentAtPlayerCell.theme.slice(0, 1).toUpperCase() + contentAtPlayerCell.theme.slice(1)} ${contentAtPlayerCell.name} cleared!`,
+                  );
                   accumulateRunStats({
                     stepsTaken: overworldSteps,
                     monstersKilled: 0,

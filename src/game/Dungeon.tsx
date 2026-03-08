@@ -591,6 +591,8 @@ export default function Dungeon({ seed }: DungeonProps) {
     null | "dungeon" | "floor" | "early"
   >(null);
 
+  const [debugRevealMap, setDebugRevealMap] = useState(false);
+
   // When the player moves, snap the focus target back to them.
   useEffect(() => {
     targetFocusRef.current = { x: playerX, y: playerY };
@@ -940,6 +942,10 @@ export default function Dungeon({ seed }: DungeonProps) {
         cancelAutoWalkNow();
         setExitConfirm("early");
       }
+    });
+    hotkeys("alt+x", (e) => {
+      e.preventDefault();
+      setDebugRevealMap((v) => !v);
     });
     hotkeys("esc", (e) => {
       e.preventDefault();
@@ -1350,6 +1356,7 @@ export default function Dungeon({ seed }: DungeonProps) {
           blockTile={CP437_TILES.block}
           suppressBlocks
           blockPositions={blockPositions}
+          forceFullyExplored={debugRevealMap}
           chestTile={CP437_TILES.chest}
           floorItems={result.resolved?.floorItems}
           collectedFloorItemIds={collectedFloorItemIds}
@@ -1524,6 +1531,11 @@ export default function Dungeon({ seed }: DungeonProps) {
                             <span style={{ color: diffColor }}>
                               [{difficulty}]
                             </span>
+                            {m.attackDamageType && (
+                              <span style={{ color: "#cccccc" }}>
+                                {" "}[{m.attackDamageType}]
+                              </span>
+                            )}
                           </span>
                           {weakStr && (
                             <span

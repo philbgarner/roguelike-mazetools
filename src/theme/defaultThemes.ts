@@ -145,7 +145,7 @@ const LAIR_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
   ],
   bosses: [
     { value: "warlord_chief", weight: 2 },
-    { value: "the_devourer", weight: 1 },
+    { value: "demon_prince", weight: 1 },
   ],
 };
 
