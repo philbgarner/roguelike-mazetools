@@ -131,6 +131,7 @@ export default function PlayerInventoryModal({
       title="Inventory"
       visible={visible}
       closeButton
+      scrollContents
       onClose={onClose}
       maxHeight="60vh"
     >
@@ -250,7 +251,11 @@ export default function PlayerInventoryModal({
                       onClick={() => {
                         if (item.slot === "weapon") {
                           const template = getItemTemplate(item.templateId);
-                          playSfx(template?.isRanged ? "bow-unequip" : "sword-unequip");
+                          playSfx(
+                            template?.isRanged
+                              ? "bow-unequip"
+                              : "sword-unequip",
+                          );
                         }
                         const { newInventory, delta } = unequipSlot(
                           inventory,
@@ -279,7 +284,9 @@ export default function PlayerInventoryModal({
                       onClick={() => {
                         if (item.slot === "weapon") {
                           const template = getItemTemplate(item.templateId);
-                          playSfx(template?.isRanged ? "bow-equip" : "sword-equip");
+                          playSfx(
+                            template?.isRanged ? "bow-equip" : "sword-equip",
+                          );
                         }
                         const { newInventory, delta } = equipItem(
                           inventory,

@@ -152,6 +152,7 @@ export default function Overworld({ screen }: OverworldProps) {
     player,
     setPlayer,
     completedDungeons,
+    markDungeonComplete,
     usedSecrets,
     markSecretUsed,
     revealedSecrets,
@@ -653,18 +654,35 @@ export default function Overworld({ screen }: OverworldProps) {
 
   // --- Keyboard input ---
   useEffect(() => {
-    hotkeys("a,left", () => tryCommitMove(-1, 0));
-    hotkeys("d,right", () => tryCommitMove(1, 0));
-    hotkeys("s,down", () => tryCommitMove(0, 1));
-    hotkeys("w,up", () => tryCommitMove(0, -1));
-    hotkeys(".", () => tryCommitWait());
+    hotkeys("a,left,num_4", () => tryCommitMove(-1, 0));
+    hotkeys("d,right,num_6", () => tryCommitMove(1, 0));
+    hotkeys("s,down,num_2", () => tryCommitMove(0, 1));
+    hotkeys("w,up,num_8", () => tryCommitMove(0, -1));
+    hotkeys("num_7", () => tryCommitMove(-1, -1));
+    hotkeys("num_9", () => tryCommitMove(1, -1));
+    hotkeys("num_1", () => tryCommitMove(-1, 1));
+    hotkeys("num_3", () => tryCommitMove(1, 1));
+    hotkeys(".,num_5", () => tryCommitWait());
     hotkeys("esc", (e) => {
       e.preventDefault();
       cancelAutoWalkNow();
     });
 
+    hotkeys("ctrl+q", () => {
+      // Debug: mark all portals complete except the last, and give player massive stats
+      const portals = content.meta.dungeonPortals;
+      portals.slice(0, -1).forEach((p) => markDungeonComplete(p.seed));
+      setPlayer((prev) => ({
+        ...prev,
+        maxHp: 9999,
+        hp: 9999,
+        attack: 9999,
+        defense: 9999,
+      }));
+    });
+
     return () => hotkeys.unbind();
-  }, [dungeon, cancelAutoWalkNow]);
+  }, [dungeon, cancelAutoWalkNow, content, markDungeonComplete, setPlayer]);
 
   // --- Auto-walk step loop ---
   useEffect(() => {
@@ -961,6 +979,7 @@ export default function Overworld({ screen }: OverworldProps) {
               closeButton
               onClose={() => setShowMerchantModal(false)}
               maxHeight="60vh"
+              scrollContents
             >
               <div style={{ marginBottom: "0.5rem", color: "#f0d060" }}>
                 Gold: {player.gold}

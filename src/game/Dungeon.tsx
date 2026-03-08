@@ -920,11 +920,16 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   // --- Keyboard input ---
   useEffect(() => {
-    hotkeys("a,left", () => tryCommitMove(-1, 0));
-    hotkeys("d,right", () => tryCommitMove(1, 0));
-    hotkeys("s,down", () => tryCommitMove(0, 1));
-    hotkeys("w,up", () => tryCommitMove(0, -1));
-    hotkeys(".", () => tryCommitWait());
+    hotkeys("a,left,num_4", () => tryCommitMove(-1, 0));
+    hotkeys("d,right,num_6", () => tryCommitMove(1, 0));
+    hotkeys("s,down,num_2", () => tryCommitMove(0, 1));
+    hotkeys("w,up,num_8", () => tryCommitMove(0, -1));
+    hotkeys("num_7", () => tryCommitMove(-1, -1));
+    hotkeys("num_9", () => tryCommitMove(1, -1));
+    hotkeys("num_1", () => tryCommitMove(-1, 1));
+    hotkeys("num_3", () => tryCommitMove(1, 1));
+    hotkeys(".,num_5", () => tryCommitWait());
+
     hotkeys("q", () => {
       if (overworldBsp) {
         cancelAutoWalkNow();
@@ -1186,8 +1191,12 @@ export default function Dungeon({ seed }: DungeonProps) {
             const template = getItemTemplate(item.templateId);
             playSfx(
               isEquipped
-                ? template?.isRanged ? "bow-unequip" : "sword-unequip"
-                : template?.isRanged ? "bow-equip" : "sword-equip",
+                ? template?.isRanged
+                  ? "bow-unequip"
+                  : "sword-unequip"
+                : template?.isRanged
+                  ? "bow-equip"
+                  : "sword-equip",
             );
           }
           setTurnState((prev) => {
@@ -1257,7 +1266,8 @@ export default function Dungeon({ seed }: DungeonProps) {
             y: e.clientY,
             visible: true,
             title: item.nameOverride ?? template?.name ?? item.templateId,
-            children: parts.length > 0 ? <span>{parts.join(" · ")}</span> : <></>,
+            children:
+              parts.length > 0 ? <span>{parts.join(" · ")}</span> : <></>,
           });
         }}
         onSlotHoverEnd={() =>
@@ -1536,7 +1546,8 @@ export default function Dungeon({ seed }: DungeonProps) {
               // Only show projectile line when hovering a living enemy; otherwise
               // fall back to the normal A* walk-path preview.
               const hasEnemyAtCell = Object.values(turnState.actors).some(
-                (a) => a.kind === "monster" && a.hp > 0 && a.x === x && a.y === y,
+                (a) =>
+                  a.kind === "monster" && a.hp > 0 && a.x === x && a.y === y,
               );
               if (hasEnemyAtCell) {
                 setProjectileDst({ x, y });
@@ -1580,7 +1591,10 @@ export default function Dungeon({ seed }: DungeonProps) {
               const currentRuntime = runtimeRef.current;
               const next0 = toggleLever(currentRuntime, fid);
               const next1 = derivePlatesFromBlocks(next0, content);
-              const newRuntime = evaluateCircuits(next1, content.meta.circuits).next;
+              const newRuntime = evaluateCircuits(
+                next1,
+                content.meta.circuits,
+              ).next;
               // Play door SFX for each door that changed open/closed state.
               for (const doorIdStr of Object.keys(newRuntime.doors)) {
                 const doorId = Number(doorIdStr);
@@ -1606,7 +1620,8 @@ export default function Dungeon({ seed }: DungeonProps) {
                   : null;
                 if (weapTemplate?.isRanged) {
                   const targetMonster = Object.values(ts.actors).find(
-                    (a) => a.kind === "monster" && a.alive && a.x === x && a.y === y,
+                    (a) =>
+                      a.kind === "monster" && a.alive && a.x === x && a.y === y,
                   );
                   if (targetMonster) {
                     cancelAutoWalkNow();
@@ -1649,7 +1664,9 @@ export default function Dungeon({ seed }: DungeonProps) {
           pathMaskTex={pathMaskTex ?? undefined}
           actorCharTex={actorCharTex}
           _visDataRef={visDataRef}
-          projectileSrc={hasRangedWeapon && projectileDst ? { x: playerX, y: playerY } : null}
+          projectileSrc={
+            hasRangedWeapon && projectileDst ? { x: playerX, y: playerY } : null
+          }
           projectileDst={hasRangedWeapon ? projectileDst : null}
         >
           {floatingMessages}
@@ -1755,7 +1772,10 @@ export default function Dungeon({ seed }: DungeonProps) {
               title="Chest"
               visible={!!chestModal}
               closeButton
-              onClose={() => { playSfx("chest-close"); setChestModal(null); }}
+              onClose={() => {
+                playSfx("chest-close");
+                setChestModal(null);
+              }}
             >
               <div
                 style={{
@@ -1822,14 +1842,25 @@ export default function Dungeon({ seed }: DungeonProps) {
                           const pa = prev.actors[prev.playerId] as PlayerActor;
                           const withItem = addItem(pa.inventory, item);
                           if (template.slot) {
-                            const currentEquipped = getEquipped(pa.inventory, template.slot);
-                            const newScore = item.bonusAttack + item.bonusDefense + item.bonusMaxHp;
+                            const currentEquipped = getEquipped(
+                              pa.inventory,
+                              template.slot,
+                            );
+                            const newScore =
+                              item.bonusAttack +
+                              item.bonusDefense +
+                              item.bonusMaxHp;
                             const oldScore = currentEquipped
-                              ? currentEquipped.bonusAttack + currentEquipped.bonusDefense + currentEquipped.bonusMaxHp
+                              ? currentEquipped.bonusAttack +
+                                currentEquipped.bonusDefense +
+                                currentEquipped.bonusMaxHp
                               : -1;
                             if (newScore > oldScore) {
                               autoEquipped = true;
-                              const { newInventory, delta } = equipItem(withItem, loot.entityId);
+                              const { newInventory, delta } = equipItem(
+                                withItem,
+                                loot.entityId,
+                              );
                               return {
                                 ...prev,
                                 actors: {
@@ -1860,7 +1891,11 @@ export default function Dungeon({ seed }: DungeonProps) {
                           (prev) => new Set([...prev, loot.sourceId]),
                         );
                         const displayName = item.nameOverride ?? template.name;
-                        addLogMessage(autoEquipped ? `Auto-equipped ${displayName}.` : `Picked up ${displayName}.`);
+                        addLogMessage(
+                          autoEquipped
+                            ? `Auto-equipped ${displayName}.`
+                            : `Picked up ${displayName}.`,
+                        );
                         playSfx("chest-close");
                         setChestModal(null);
                       }}
@@ -1868,7 +1903,12 @@ export default function Dungeon({ seed }: DungeonProps) {
                       Take
                     </Button>
                   )}
-                  <Button onClick={() => { playSfx("chest-close"); setChestModal(null); }}>
+                  <Button
+                    onClick={() => {
+                      playSfx("chest-close");
+                      setChestModal(null);
+                    }}
+                  >
                     {template ? "Leave" : "Close"}
                   </Button>
                 </div>
@@ -1904,9 +1944,11 @@ export default function Dungeon({ seed }: DungeonProps) {
                   markDungeonComplete(seed);
                   accumulateRunStats(buildRunStats());
                   // Victory only when ALL portals are cleared
-                  const totalPortals = overworldContent?.meta.dungeonPortals.length ?? 0;
+                  const totalPortals =
+                    overworldContent?.meta.dungeonPortals.length ?? 0;
                   const newCompleted = new Set([...completedDungeons, seed]);
-                  const isVictory = totalPortals > 0 && newCompleted.size >= totalPortals;
+                  const isVictory =
+                    totalPortals > 0 && newCompleted.size >= totalPortals;
                   if (isVictory) {
                     goTo("success");
                   } else {
