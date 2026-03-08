@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useGame } from "./GameProvider";
+import { useEffect, useMemo, useRef } from "react";
+import { useGame, computeCompleteness, playerLevelFromXp } from "./GameProvider";
 import { SECRET_LOCATION_TEMPLATES } from "./data/secretLocationData";
 
 function StatRow({ label, value, total }: { label: string; value: number; total: number }) {
@@ -17,14 +17,24 @@ function StatRow({ label, value, total }: { label: string; value: number; total:
 export default function Success() {
   const {
     goTo,
-    seed,
-    markDungeonComplete,
     runStats,
+    recordRun,
+    lastRunTreasureScore,
+    legacyXp,
+    legacyPointsSpent,
     overworldContent,
     usedSecrets,
     revealedSecrets,
     revealSecret,
   } = useGame();
+
+  const recordedRef = useRef(false);
+  useEffect(() => {
+    if (recordedRef.current) return;
+    recordedRef.current = true;
+    recordRun("success");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Pick a random undiscovered secret to reveal when the player returns.
   const secretToReveal = useMemo(() => {
@@ -36,6 +46,13 @@ export default function Success() {
     return candidates[Math.floor(Math.random() * candidates.length)];
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // computed once when success screen mounts
+
+  const completeness = runStats ? computeCompleteness(runStats) : 0;
+
+  const oldXp = legacyXp - (lastRunTreasureScore ?? 0);
+  const oldLevel = playerLevelFromXp(Math.max(0, oldXp));
+  const newLevel = playerLevelFromXp(legacyXp);
+  const pointsGained = Math.max(0, (newLevel - 1 - legacyPointsSpent) - Math.max(0, oldLevel - 1 - legacyPointsSpent));
 
   return (
     <div
@@ -85,6 +102,31 @@ export default function Success() {
               <span style={{ color: "#aaa" }}>Gold found</span>
               <span style={{ color: "#fd4", fontFamily: "monospace" }}>{runStats.goldCollected} gp</span>
             </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
+              <span style={{ color: "#aaa" }}>Steps taken</span>
+              <span style={{ color: "#eee", fontFamily: "monospace" }}>{runStats.stepsTaken}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.6rem 0 0.2rem" }}>
+              <span style={{ color: "#aaa" }}>Completeness</span>
+              <span style={{ color: completeness >= 80 ? "#4af" : completeness >= 50 ? "#fa4" : "#f44", fontFamily: "monospace", fontWeight: "bold" }}>
+                {completeness}%
+              </span>
+            </div>
+          </div>
+        )}
+
+        {lastRunTreasureScore !== null && (
+          <div style={{ marginBottom: "1.5rem", borderBottom: "1px solid #333", paddingBottom: "0.8rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "0.2rem 0" }}>
+              <span style={{ color: "#aaa" }}>Treasure score</span>
+              <span style={{ color: "#fd4", fontFamily: "monospace", fontWeight: "bold" }}>{lastRunTreasureScore} pts</span>
+            </div>
+            {pointsGained > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "0.2rem 0" }}>
+                <span style={{ color: "#aaa" }}>Legacy points gained</span>
+                <span style={{ color: "#4af", fontFamily: "monospace", fontWeight: "bold" }}>+{pointsGained}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -119,7 +161,6 @@ export default function Success() {
               (e.currentTarget as HTMLButtonElement).style.borderColor = "#4a8";
             }}
             onClick={() => {
-              markDungeonComplete(seed);
               if (secretToReveal) revealSecret(secretToReveal.id);
               goTo("overworld");
             }}

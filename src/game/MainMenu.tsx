@@ -44,8 +44,9 @@ import {
 } from "../world/worldEffects";
 import type { NpcActor } from "../turn/turnTypes";
 
-const MENU_ITEMS: { label: string; action: "start" | "settings" }[] = [
+const MENU_ITEMS: { label: string; action: "start" | "graveyard" | "settings" }[] = [
   { label: "Start Game", action: "start" },
+  { label: "Hall of the Fallen", action: "graveyard" },
   { label: "Settings", action: "settings" },
 ];
 
@@ -226,6 +227,7 @@ function ForestBackground() {
 }
 
 export default function MainMenu() {
+  const { goTo } = useGame();
   const [showPicker, setShowPicker] = useState(false);
   const width = "40vw";
   const halfWidth = "20vw";
@@ -276,6 +278,7 @@ export default function MainMenu() {
                 className={styles.menuItem}
                 onClick={() => {
                   if (item.action === "start") setShowPicker(true);
+                  else if (item.action === "graveyard") goTo("graveyard");
                 }}
               >
                 <span className={styles.menuItemText}>{item.label}</span>

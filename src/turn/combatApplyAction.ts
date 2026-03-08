@@ -214,6 +214,7 @@ function resolveCombat(
     deps.onEvent?.({
       kind: "death",
       actorId: targetId,
+      sourceId: attacker.id,
       x: target.x,
       y: target.y,
     });

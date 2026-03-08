@@ -1,4 +1,5 @@
-import { useGame } from "./GameProvider";
+import { useEffect, useRef } from "react";
+import { useGame, computeCompleteness, availableLegacyPoints, playerLevelFromXp } from "./GameProvider";
 
 function StatRow({ label, value, total }: { label: string; value: number; total: number }) {
   const pct = total > 0 ? Math.round((value / total) * 100) : 0;
@@ -13,7 +14,23 @@ function StatRow({ label, value, total }: { label: string; value: number; total:
 }
 
 export default function Death() {
-  const { goTo, runStats } = useGame();
+  const { goTo, runStats, killedBy, recordRun, lastRunTreasureScore, legacyXp, legacyPointsSpent } = useGame();
+
+  const recordedRef = useRef(false);
+  useEffect(() => {
+    if (recordedRef.current) return;
+    recordedRef.current = true;
+    recordRun("death");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const completeness = runStats ? computeCompleteness(runStats) : 0;
+
+  // Attr points gained this run = new available - old available
+  const oldXp = legacyXp - (lastRunTreasureScore ?? 0);
+  const oldLevel = playerLevelFromXp(Math.max(0, oldXp));
+  const newLevel = playerLevelFromXp(legacyXp);
+  const pointsGained = Math.max(0, (newLevel - 1 - legacyPointsSpent) - Math.max(0, oldLevel - 1 - legacyPointsSpent));
 
   return (
     <div
@@ -63,6 +80,37 @@ export default function Death() {
               <span style={{ color: "#aaa" }}>Gold found</span>
               <span style={{ color: "#fd4", fontFamily: "monospace" }}>{runStats.goldCollected} gp</span>
             </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
+              <span style={{ color: "#aaa" }}>Steps taken</span>
+              <span style={{ color: "#eee", fontFamily: "monospace" }}>{runStats.stepsTaken}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.6rem 0 0.2rem" }}>
+              <span style={{ color: "#aaa" }}>Completeness</span>
+              <span style={{ color: completeness >= 80 ? "#4af" : completeness >= 50 ? "#fa4" : "#f44", fontFamily: "monospace", fontWeight: "bold" }}>
+                {completeness}%
+              </span>
+            </div>
+            {killedBy && (
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
+                <span style={{ color: "#aaa" }}>Slain by</span>
+                <span style={{ color: "#f88", fontFamily: "monospace" }}>{killedBy}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {lastRunTreasureScore !== null && (
+          <div style={{ marginBottom: "1.5rem", borderBottom: "1px solid #331111", paddingBottom: "0.8rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "0.2rem 0" }}>
+              <span style={{ color: "#aaa" }}>Treasure score</span>
+              <span style={{ color: "#fd4", fontFamily: "monospace", fontWeight: "bold" }}>{lastRunTreasureScore} pts</span>
+            </div>
+            {pointsGained > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "0.2rem 0" }}>
+                <span style={{ color: "#aaa" }}>Legacy points gained</span>
+                <span style={{ color: "#4af", fontFamily: "monospace", fontWeight: "bold" }}>+{pointsGained}</span>
+              </div>
+            )}
           </div>
         )}
 

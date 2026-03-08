@@ -5,6 +5,7 @@ import MainMenu from "./game/MainMenu";
 import Success from "./game/Success";
 import Death from "./game/Death";
 import SeedPicker from "./game/SeedPicker";
+import Graveyard from "./game/Graveyard";
 function AppInner() {
   const { screen, seed, floor } = useGame();
   console.log("screen", screen);
@@ -17,6 +18,7 @@ function AppInner() {
       {screen === "seed-picker" ? <SeedPicker /> : null}
       {screen === "death" ? <Death /> : null}
       {screen === "success" ? <Success /> : null}
+      {screen === "graveyard" ? <Graveyard /> : null}
     </>
   );
 }

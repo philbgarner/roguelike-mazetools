@@ -146,6 +146,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   const {
     goTo,
     overworldBsp,
+    overworldContent,
     setSeed,
     level,
     floor,
@@ -153,8 +154,13 @@ export default function Dungeon({ seed }: DungeonProps) {
     theme,
     player,
     setPlayer,
-    setRunStats,
+    accumulateRunStats,
+    recordRun,
     markDungeonComplete,
+    completedDungeons,
+    incrementRunCompleted,
+    incrementRunExitedEarly,
+    setKilledBy,
     playSfx,
   } = useGame();
 
@@ -275,6 +281,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   // --- Run stats tracking ---
   const monstersKilledRef = useRef(0);
   const goldCollectedRef = useRef(0);
+  const stepsTakenRef = useRef(0);
   const totalMonsters = result.resolved?.monsters?.length ?? 0;
   const totalChests = result.resolved?.loot?.length ?? 0;
   const totalFloorItems = result.resolved?.floorItems?.length ?? 0;
@@ -298,6 +305,7 @@ export default function Dungeon({ seed }: DungeonProps) {
       floorItemsCollected: collectedFloorItemIds.size,
       totalFloorItems,
       goldCollected: goldCollectedRef.current,
+      stepsTaken: stepsTakenRef.current,
     };
   }
   const [chestModal, setChestModal] = useState<{
@@ -500,7 +508,12 @@ export default function Dungeon({ seed }: DungeonProps) {
     () =>
       subscribe("death", (evt) => {
         if (evt.actorId === "player") {
-          setRunStats(buildRunStats());
+          // Identify killer from the turn state
+          if (evt.sourceId) {
+            const killerActor = turnStateRef.current.actors[evt.sourceId];
+            if (killerActor?.kind === "monster") setKilledBy(killerActor.name);
+          }
+          accumulateRunStats(buildRunStats());
           goTo("death");
         } else {
           monstersKilledRef.current += 1;
@@ -832,6 +845,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     if (!ts.awaitingPlayerInput) return;
     if (levelUpPendingRef.current) return;
     if (confirmPendingRef.current) return;
+    stepsTakenRef.current += 1;
 
     if (action.kind === "move") {
       const player = ts.actors[ts.playerId];
@@ -1886,12 +1900,30 @@ export default function Dungeon({ seed }: DungeonProps) {
                 setExitConfirm(null);
                 confirmPendingRef.current = false;
                 if (kind === "dungeon") {
-                  setRunStats(buildRunStats());
-                  goTo("success");
+                  incrementRunCompleted();
+                  markDungeonComplete(seed);
+                  accumulateRunStats(buildRunStats());
+                  // Victory only when ALL portals are cleared
+                  const totalPortals = overworldContent?.meta.dungeonPortals.length ?? 0;
+                  const newCompleted = new Set([...completedDungeons, seed]);
+                  const isVictory = totalPortals > 0 && newCompleted.size >= totalPortals;
+                  if (isVictory) {
+                    goTo("success");
+                  } else {
+                    // More portals remain — save player and return to overworld
+                    const ts = turnStateRef.current;
+                    const currentActor = ts.actors[ts.playerId];
+                    if (currentActor?.kind === "player")
+                      setPlayer(playerFromActor(currentActor));
+                    setSeed(overworldBsp!.meta.seedUsed);
+                    goTo("overworld");
+                  }
                 } else if (kind === "floor") {
                   setFloor(floor + 1);
                 } else {
                   // Early exit: save player state, mark dungeon complete, return to overworld
+                  incrementRunExitedEarly();
+                  accumulateRunStats(buildRunStats());
                   const ts = turnStateRef.current;
                   const currentActor = ts.actors[ts.playerId];
                   if (currentActor?.kind === "player")

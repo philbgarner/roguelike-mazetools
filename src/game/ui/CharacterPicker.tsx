@@ -4,6 +4,9 @@
  * Step 1 — Name & Equipment: shows the player's randomly generated name,
  * base stats, and a starting shop where they can spend their starting gold.
  *
+ * Step 1b — Legacy Points (only if available): spend accumulated legacy
+ * attribute points on permanent stat bonuses and resistances.
+ *
  * Step 2 — Starting Bonus: presents 3 level-up reward choices (simulating
  * "achieving level 1") before beginning the adventure.
  */
@@ -24,6 +27,7 @@ import {
   InventoryItem,
 } from "../inventory";
 import { getItemTemplate } from "../data/itemData";
+import type { DamageType } from "../data/itemData";
 import Button from "./Button";
 import styles from "./styles/ModalPanelBackdrop.module.css";
 
@@ -404,19 +408,135 @@ function RewardCard({ reward, chosen, onChoose }: RewardCardProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Legacy upgrade definitions
+// ---------------------------------------------------------------------------
+
+interface LegacyUpgrade {
+  id: string;
+  label: string;
+  description: string;
+  cost: number;
+  apply: (player: Player) => Player;
+  available: (player: Player) => boolean;
+}
+
+const ALL_RESISTANCES: DamageType[] = ["slash", "blunt", "pierce"];
+
+const LEGACY_UPGRADES: LegacyUpgrade[] = [
+  {
+    id: "+hp5",
+    label: "+5 Max HP",
+    description: "Increases your maximum health by 5.",
+    cost: 1,
+    apply: (p) => ({ ...p, maxHp: p.maxHp + 5, hp: p.hp + 5 }),
+    available: () => true,
+  },
+  {
+    id: "+atk1",
+    label: "+1 Attack",
+    description: "Increases your base attack damage by 1.",
+    cost: 1,
+    apply: (p) => ({ ...p, attack: p.attack + 1 }),
+    available: () => true,
+  },
+  {
+    id: "+def1",
+    label: "+1 Defense",
+    description: "Increases your base defense by 1.",
+    cost: 1,
+    apply: (p) => ({ ...p, defense: p.defense + 1 }),
+    available: () => true,
+  },
+  ...ALL_RESISTANCES.map<LegacyUpgrade>((r) => ({
+    id: `resist-${r}`,
+    label: `${r.charAt(0).toUpperCase() + r.slice(1)} Resistance`,
+    description: `Reduce incoming ${r} damage by 25%.`,
+    cost: 2,
+    apply: (p) => ({ ...p, resistances: [...p.resistances, r] }),
+    available: (p) => !p.resistances.includes(r),
+  })),
+];
+
+function LegacyUpgradeRow({
+  upgrade,
+  player,
+  remainingPoints,
+  onBuy,
+}: {
+  upgrade: LegacyUpgrade;
+  player: Player;
+  remainingPoints: number;
+  onBuy: () => void;
+}) {
+  const isResist = upgrade.id.startsWith("resist-");
+  const resistType = isResist ? (upgrade.id.replace("resist-", "") as DamageType) : null;
+  const canBuy = upgrade.available(player) && remainingPoints >= upgrade.cost;
+  const alreadyOwned = isResist && !upgrade.available(player);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        padding: "0.4rem 0.5rem",
+        borderRadius: "3px",
+        background: alreadyOwned ? "#1a1a2a" : "#181818",
+        border: `1px solid ${alreadyOwned ? "#335" : "#333"}`,
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            color: alreadyOwned ? "#666" : resistType ? (RESIST_COLORS[resistType] ?? "#ddd") : "#ddd",
+            fontSize: "0.85em",
+            fontWeight: "bold",
+          }}
+        >
+          {upgrade.label}
+        </div>
+        <div style={{ color: "#666", fontSize: "0.75em" }}>{upgrade.description}</div>
+      </div>
+      <div style={{ color: "#88ccff", fontSize: "0.82em", minWidth: "4rem", textAlign: "right" }}>
+        {upgrade.cost} pt{upgrade.cost !== 1 ? "s" : ""}
+      </div>
+      <div style={{ minWidth: "4rem" }}>
+        {alreadyOwned ? (
+          <span style={{ color: "#446", fontSize: "0.8em" }}>Owned</span>
+        ) : (
+          <Button
+            onClick={canBuy ? onBuy : undefined}
+            background={canBuy ? "#1a2a3a" : "#1a1a1a"}
+          >
+            <span style={{ color: canBuy ? "#88ccff" : "#555", fontSize: "0.8em" }}>
+              Buy
+            </span>
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export default function CharacterPicker() {
-  const { setPlayer, goTo } = useGame();
+  const { setPlayer, goTo, availableLegacyPoints, spendLegacyPoints } = useGame();
 
   const [nameSeed, setNameSeed] = useState(() =>
     Math.floor(Math.random() * 1_000_000),
   );
   const playerName = useMemo(() => generateCharacterName(nameSeed), [nameSeed]);
 
-  const [step, setStep] = useState<"stats" | "bonuses">("stats");
+  const hasLegacyPoints = availableLegacyPoints > 0;
+  const [step, setStep] = useState<"stats" | "legacy" | "bonuses">("stats");
   const [localPlayer, setLocalPlayer] = useState<Player>({ ...DEFAULT_PLAYER });
+
+  // Legacy points spent this session (not committed until Begin Adventure)
+  const [legacySpentThisSession, setLegacySpentThisSession] = useState(0);
+  const remainingLegacyPoints = availableLegacyPoints - legacySpentThisSession;
 
   // Shop: regenerate when name (seed) changes so rerolling name also refreshes shop
   const shopSeed = useMemo(() => hashSeed(nameSeed ^ 0xabcdef), [nameSeed]);
@@ -435,6 +555,7 @@ export default function CharacterPicker() {
     setNameSeed((s) => s + 1);
     setPurchasedIds(new Set());
     setLocalPlayer({ ...DEFAULT_PLAYER });
+    setLegacySpentThisSession(0);
   }
 
   function handleBuy(item: ShopItem) {
@@ -463,7 +584,24 @@ export default function CharacterPicker() {
     setPurchasedIds((prev) => new Set([...prev, item.instanceId]));
   }
 
-  function handleNext() {
+  function handleBuyLegacy(upgrade: LegacyUpgrade) {
+    if (!upgrade.available(localPlayer) || remainingLegacyPoints < upgrade.cost) return;
+    setLocalPlayer((prev) => upgrade.apply(prev));
+    setLegacySpentThisSession((prev) => prev + upgrade.cost);
+  }
+
+  function handleNextFromStats() {
+    if (hasLegacyPoints) {
+      setStep("legacy");
+    } else {
+      const rng = seededRng(nameSeed + 777);
+      setRewards(generateLevelUpRewards(1, localPlayer.resistances, rng));
+      setChosenReward(null);
+      setStep("bonuses");
+    }
+  }
+
+  function handleNextFromLegacy() {
     const rng = seededRng(nameSeed + 777);
     setRewards(generateLevelUpRewards(1, localPlayer.resistances, rng));
     setChosenReward(null);
@@ -478,6 +616,7 @@ export default function CharacterPicker() {
 
   function handleBeginAdventure() {
     if (!chosenReward) return;
+    if (legacySpentThisSession > 0) spendLegacyPoints(legacySpentThisSession);
     setPlayer({ ...localPlayer, name: playerName });
     goTo("seed-picker");
   }
@@ -501,6 +640,7 @@ export default function CharacterPicker() {
     zIndex: 1000,
   };
 
+  // ── Step: stats ──────────────────────────────────────────────────────────
   if (step === "stats") {
     return (
       <div className={styles.modalPanelBackdrop}>
@@ -637,6 +777,23 @@ export default function CharacterPicker() {
                   ))}
                 </div>
               )}
+
+              {/* Legacy points notice */}
+              {hasLegacyPoints && (
+                <div
+                  style={{
+                    marginTop: "0.25rem",
+                    padding: "0.4rem 0.6rem",
+                    background: "#0d1a2a",
+                    border: "1px solid #2255aa",
+                    borderRadius: "3px",
+                    fontSize: "0.78em",
+                    color: "#88ccff",
+                  }}
+                >
+                  {availableLegacyPoints} legacy point{availableLegacyPoints !== 1 ? "s" : ""} available
+                </div>
+              )}
             </div>
 
             {/* Right: shop */}
@@ -680,7 +837,7 @@ export default function CharacterPicker() {
               paddingTop: "0.75rem",
             }}
           >
-            <Button onClick={handleNext} background="#1a2a3a">
+            <Button onClick={handleNextFromStats} background="#1a2a3a">
               <span style={{ color: "#88ccff", fontSize: "0.9em" }}>
                 Next →
               </span>
@@ -691,7 +848,92 @@ export default function CharacterPicker() {
     );
   }
 
-  // Step: bonuses
+  // ── Step: legacy points ──────────────────────────────────────────────────
+  if (step === "legacy") {
+    return (
+      <div className={styles.modalPanelBackdrop}>
+        <div style={{ ...panelStyle, width: "min(60vw, 620px)" }}>
+          {/* Title */}
+          <div style={{ textAlign: "center" }}>
+            <div style={{ color: "#88ccff", fontSize: "1.15em", fontWeight: "bold" }}>
+              Legacy Upgrades
+            </div>
+            <div style={{ color: "#666", fontSize: "0.82em", marginTop: "0.2rem" }}>
+              Earned across your past adventures
+            </div>
+          </div>
+
+          {/* Points counter */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              background: "#0d1a2a",
+              border: "1px solid #2255aa",
+              borderRadius: "4px",
+              padding: "0.5rem 0.8rem",
+            }}
+          >
+            <span style={{ color: "#88ccff", fontSize: "0.9em" }}>Available points</span>
+            <span style={{ color: remainingLegacyPoints > 0 ? "#4af" : "#555", fontSize: "1.1em", fontWeight: "bold", fontFamily: "monospace" }}>
+              {remainingLegacyPoints}
+            </span>
+          </div>
+
+          {/* Current stats preview */}
+          <div style={{ display: "flex", gap: "1.5rem", fontSize: "0.82em", color: "#888", paddingBottom: "0.25rem", borderBottom: "1px solid #2a2a2a" }}>
+            <span>HP <span style={{ color: "#f66" }}>{localPlayer.maxHp}</span></span>
+            <span>ATK <span style={{ color: "#fa6" }}>{localPlayer.attack}</span></span>
+            <span>DEF <span style={{ color: "#4af" }}>{localPlayer.defense}</span></span>
+            {localPlayer.resistances.length > 0 && (
+              <span>
+                Resists:{" "}
+                {localPlayer.resistances.map((r) => (
+                  <span key={r} style={{ color: RESIST_COLORS[r] ?? "#aaa", marginRight: "0.3em" }}>{r}</span>
+                ))}
+              </span>
+            )}
+          </div>
+
+          {/* Upgrade list */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+            {LEGACY_UPGRADES.map((upgrade) => (
+              <LegacyUpgradeRow
+                key={upgrade.id}
+                upgrade={upgrade}
+                player={localPlayer}
+                remainingPoints={remainingLegacyPoints}
+                onBuy={() => handleBuyLegacy(upgrade)}
+              />
+            ))}
+          </div>
+
+          {/* Footer */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              borderTop: "1px solid #333",
+              paddingTop: "0.75rem",
+            }}
+          >
+            <Button onClick={() => setStep("stats")} background="#222">
+              <span style={{ color: "#888", fontSize: "0.85em" }}>← Back</span>
+            </Button>
+            <Button onClick={handleNextFromLegacy} background="#1a2a3a">
+              <span style={{ color: "#88ccff", fontSize: "0.9em" }}>
+                Next →
+              </span>
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step: bonuses ────────────────────────────────────────────────────────
   return (
     <div className={styles.modalPanelBackdrop}>
       <div style={{ ...panelStyle, width: "min(60vw, 660px)" }}>
@@ -735,7 +977,7 @@ export default function CharacterPicker() {
             paddingTop: "0.75rem",
           }}
         >
-          <Button onClick={() => setStep("stats")} background="#222">
+          <Button onClick={() => setStep(hasLegacyPoints ? "legacy" : "stats")} background="#222">
             <span style={{ color: "#888", fontSize: "0.85em" }}>← Back</span>
           </Button>
           {chosenReward ? (

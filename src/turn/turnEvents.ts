@@ -42,6 +42,8 @@ export type MissEvent = {
 export type DeathEvent = {
   kind: "death";
   actorId: ActorId;
+  /** The actor that delivered the killing blow, if any. */
+  sourceId?: ActorId;
   x: number;
   y: number;
 };
