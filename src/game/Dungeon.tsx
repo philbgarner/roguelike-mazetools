@@ -162,6 +162,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     incrementRunExitedEarly,
     setKilledBy,
     playSfx,
+    setIsWorldVictory,
   } = useGame();
 
   const totalFloors = Math.min(level + 1, 5);
@@ -1950,6 +1951,7 @@ export default function Dungeon({ seed }: DungeonProps) {
                   const isVictory =
                     totalPortals > 0 && newCompleted.size >= totalPortals;
                   if (isVictory) {
+                    setIsWorldVictory(true);
                     goTo("success");
                   } else {
                     // More portals remain — save player and return to overworld

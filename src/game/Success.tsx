@@ -26,6 +26,8 @@ export default function Success() {
     usedSecrets,
     revealedSecrets,
     revealSecret,
+    isWorldVictory,
+    setIsWorldVictory,
   } = useGame();
 
   const recordedRef = useRef(false);
@@ -69,26 +71,31 @@ export default function Success() {
       <div
         style={{
           background: "#0a0a0a",
-          border: "2px solid #4a8",
+          border: `2px solid ${isWorldVictory ? "#fd4" : "#4a8"}`,
           padding: "2rem 2.5rem",
           minWidth: "22rem",
           maxWidth: "90vw",
           fontFamily: "monospace",
           color: "#eee",
-          boxShadow: "0 0 40px rgba(0,200,100,0.2)",
+          boxShadow: isWorldVictory ? "0 0 40px rgba(255,220,50,0.25)" : "0 0 40px rgba(0,200,100,0.2)",
         }}
       >
         <div
           style={{
             fontSize: "1.8rem",
-            color: "#4af",
+            color: isWorldVictory ? "#fd4" : "#4af",
             marginBottom: "1.5rem",
             textAlign: "center",
             letterSpacing: "0.1em",
           }}
         >
-          DUNGEON COMPLETE
+          {isWorldVictory ? "WORLD CLEARED" : "DUNGEON COMPLETE"}
         </div>
+        {isWorldVictory && (
+          <div style={{ textAlign: "center", color: "#cca", fontSize: "0.9em", marginBottom: "1rem" }}>
+            All portals have been conquered. Your legend is complete.
+          </div>
+        )}
 
         {runStats && (
           <div style={{ marginBottom: "1.5rem", borderTop: "1px solid #333", borderBottom: "1px solid #333", padding: "1rem 0" }}>
@@ -145,8 +152,8 @@ export default function Success() {
           <button
             style={{
               background: "#0a0a0a",
-              border: "1px solid #4a8",
-              color: "#4a8",
+              border: `1px solid ${isWorldVictory ? "#fd4" : "#4a8"}`,
+              color: isWorldVictory ? "#fd4" : "#4a8",
               fontFamily: "monospace",
               fontSize: "1rem",
               padding: "0.5rem 1.5rem",
@@ -157,15 +164,21 @@ export default function Success() {
               (e.currentTarget as HTMLButtonElement).style.borderColor = "#fff";
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "#4a8";
-              (e.currentTarget as HTMLButtonElement).style.borderColor = "#4a8";
+              const c = isWorldVictory ? "#fd4" : "#4a8";
+              (e.currentTarget as HTMLButtonElement).style.color = c;
+              (e.currentTarget as HTMLButtonElement).style.borderColor = c;
             }}
             onClick={() => {
-              if (secretToReveal) revealSecret(secretToReveal.id);
-              goTo("overworld");
+              if (isWorldVictory) {
+                setIsWorldVictory(false);
+                goTo("main-menu");
+              } else {
+                if (secretToReveal) revealSecret(secretToReveal.id);
+                goTo("overworld");
+              }
             }}
           >
-            Return to World
+            {isWorldVictory ? "Return to Main Menu" : "Return to World"}
           </button>
         </div>
       </div>

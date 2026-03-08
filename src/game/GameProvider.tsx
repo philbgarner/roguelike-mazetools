@@ -218,6 +218,9 @@ interface GameState extends MusicState, SfxState {
   /** Points currently available to spend in CharacterPicker. */
   availableLegacyPoints: number;
   spendLegacyPoints: (n: number) => void;
+  /** True when the player has cleared all overworld portals (world victory). */
+  isWorldVictory: boolean;
+  setIsWorldVictory: (v: boolean) => void;
 }
 
 const GameContext = createContext<GameState | null>(null);
@@ -335,6 +338,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       return next;
     });
   }, []);
+
+  const [isWorldVictory, setIsWorldVictory] = useState(false);
 
   const [overworldBsp, setOverworldBsp] = useState<BspDungeonOutputs | null>(
     null,
@@ -560,6 +565,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         legacyPointsSpent,
         availableLegacyPoints: availableLegacyPoints(legacyXp, legacyPointsSpent),
         spendLegacyPoints,
+        isWorldVictory,
+        setIsWorldVictory,
         currentTrack,
         setTrack,
         musicVolume,
