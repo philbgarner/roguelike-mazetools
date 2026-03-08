@@ -117,8 +117,8 @@ const TEMPLE_SPAWN_TABLES: DungeonTheme["spawnTables"] = {
     { value: "exiled_devotee", weight: 2 },
   ],
   bosses: [
-    { value: "high_oracle", weight: 2 },
-    { value: "the_chosen", weight: 2 },
+    { value: "grand_fiend", weight: 2 },
+    { value: "demon_prince", weight: 2 },
   ],
 };
 

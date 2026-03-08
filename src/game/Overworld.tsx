@@ -668,7 +668,7 @@ export default function Overworld({ screen }: OverworldProps) {
       cancelAutoWalkNow();
     });
 
-    hotkeys("ctrl+q", () => {
+    hotkeys("alt+q", () => {
       // Debug: mark all portals complete except the last, and give player massive stats
       const portals = content.meta.dungeonPortals;
       portals.slice(0, -1).forEach((p) => markDungeonComplete(p.seed));
