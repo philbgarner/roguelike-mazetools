@@ -39,6 +39,7 @@ import type {
 import { graphEdgeId } from "./graphEdgeId";
 import {
   orientRoomsByDistance,
+  pickOrderedDoorSiteFromCandidates,
   pickOrderedDoorSiteFromCorridors,
 } from "./patternDoorPlacement";
 
@@ -3099,6 +3100,7 @@ export function applyBossRoomGatePattern(args: {
   rooms: BspDungeonOutputs["meta"]["rooms"];
   entranceRoomId: number;
   farthestRoomId: number;
+  roomDistance: Map<number, number>;
 
   featureType: Uint8Array;
   featureId: Uint8Array;
@@ -3116,8 +3118,8 @@ export function applyBossRoomGatePattern(args: {
     rng,
     dungeon,
     rooms,
-    entranceRoomId,
     farthestRoomId,
+    roomDistance,
     featureType: ft,
     featureId: fid,
     featureParam: fparam,
@@ -3151,17 +3153,11 @@ export function applyBossRoomGatePattern(args: {
     };
   }
 
-  const pick = pickOrderedDoorSiteFromCorridors({
+  const pick = pickOrderedDoorSiteFromCandidates({
     rng,
-    dungeon,
-    featureType: ft,
-    entranceRoomId,
+    candidates,
+    roomDistance,
     requireGateRoomId: farthestRoomId,
-    maxRadius: 10,
-    minDistToWall: 1,
-    preferCorridor: true,
-    trimEnds: 0,
-    duplicateBias: 1,
   });
 
   if (!pick.ok) {

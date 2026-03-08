@@ -145,6 +145,7 @@ export function generateDungeon(
       rooms: bsp.meta.rooms,
       entranceRoomId: content.meta.entranceRoomId,
       farthestRoomId: content.meta.farthestRoomId,
+      roomDistance: content.meta.roomDistance,
       featureType: content.masks.featureType,
       featureId: content.masks.featureId,
       featureParam: content.masks.featureParam,
