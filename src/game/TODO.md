@@ -1,1 +1,1 @@
-- Stepcounter for stats.
+- When zoomed in/out the useFloatingMessage text is no longer on the correct cell.

@@ -9,7 +9,7 @@ function StatRow({ label, value, total }: { label: string; value: number; total:
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
       <span style={{ color: "#aaa" }}>{label}</span>
-      <span style={{ color: "#eee", fontFamily: "monospace" }}>
+      <span style={{ color: "#eee", fontFamily: "var(--mono)" }}>
         {value}/{total} <span style={{ color: "#666" }}>({pct}%)</span>
       </span>
     </div>
@@ -73,7 +73,7 @@ export default function Success() {
         }}
       >
         <BorderPanel background="#0a0a0a" width="26rem" height="34rem" top="0" left="0" flexMode="Column">
-          <div style={{ padding: "1rem 1.5rem", fontFamily: "monospace", color: "#eee", overflowY: "auto" }}>
+          <div style={{ padding: "1rem 1.5rem", fontFamily: "var(--mono)", color: "#eee", overflowY: "auto" }}>
             <div
               style={{
                 fontSize: "1.8rem",
@@ -101,15 +101,15 @@ export default function Success() {
                 <StatRow label="Items collected" value={runStats.floorItemsCollected} total={runStats.totalFloorItems} />
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
                   <span style={{ color: "#aaa" }}>Gold found</span>
-                  <span style={{ color: "#fd4", fontFamily: "monospace" }}>{runStats.goldCollected} gp</span>
+                  <span style={{ color: "#fd4", fontFamily: "var(--mono)" }}>{runStats.goldCollected} gp</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.2rem 0" }}>
                   <span style={{ color: "#aaa" }}>Steps taken</span>
-                  <span style={{ color: "#eee", fontFamily: "monospace" }}>{runStats.stepsTaken}</span>
+                  <span style={{ color: "#eee", fontFamily: "var(--mono)" }}>{runStats.stepsTaken}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "2rem", padding: "0.6rem 0 0.2rem" }}>
                   <span style={{ color: "#aaa" }}>Completeness</span>
-                  <span style={{ color: completeness >= 80 ? "#4af" : completeness >= 50 ? "#fa4" : "#f44", fontFamily: "monospace", fontWeight: "bold" }}>
+                  <span style={{ color: completeness >= 80 ? "#4af" : completeness >= 50 ? "#fa4" : "#f44", fontFamily: "var(--mono)", fontWeight: "bold" }}>
                     {completeness}%
                   </span>
                 </div>
@@ -120,12 +120,12 @@ export default function Success() {
               <div style={{ marginBottom: "1.5rem", borderBottom: "1px solid #333", paddingBottom: "0.8rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "0.2rem 0" }}>
                   <span style={{ color: "#aaa" }}>Treasure score</span>
-                  <span style={{ color: "#fd4", fontFamily: "monospace", fontWeight: "bold" }}>{lastRunTreasureScore} pts</span>
+                  <span style={{ color: "#fd4", fontFamily: "var(--mono)", fontWeight: "bold" }}>{lastRunTreasureScore} pts</span>
                 </div>
                 {pointsGained > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "0.2rem 0" }}>
                     <span style={{ color: "#aaa" }}>Legacy points gained</span>
-                    <span style={{ color: "#4af", fontFamily: "monospace", fontWeight: "bold" }}>+{pointsGained}</span>
+                    <span style={{ color: "#4af", fontFamily: "var(--mono)", fontWeight: "bold" }}>+{pointsGained}</span>
                   </div>
                 )}
               </div>

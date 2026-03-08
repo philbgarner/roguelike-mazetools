@@ -163,6 +163,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     setKilledBy,
     playSfx,
     setIsWorldVictory,
+    runStats,
   } = useGame();
 
   const totalFloors = Math.min(level + 1, 5);
@@ -1752,6 +1753,7 @@ export default function Dungeon({ seed }: DungeonProps) {
         level={playerActor.level}
         xp={playerActor.xp}
         resistances={playerActor.resistances}
+        steps={(runStats?.stepsTaken ?? 0) + stepsTakenRef.current}
       />
 
       {chestModal &&

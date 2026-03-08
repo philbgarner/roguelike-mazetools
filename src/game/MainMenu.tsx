@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import { useGame, type GameScreen } from "./GameProvider";
+import ModalPanel from "./ui/ModalPanel";
+import Button from "./ui/Button";
 import BorderPanel from "./ui/BorderPanel";
 import CharacterPicker from "./ui/CharacterPicker";
 import styles from "./styles/MainMenu.module.css";
@@ -44,9 +46,13 @@ import {
 } from "../world/worldEffects";
 import type { NpcActor } from "../turn/turnTypes";
 
-const MENU_ITEMS: { label: string; action: "start" | "graveyard" | "settings" }[] = [
+const MENU_ITEMS: {
+  label: string;
+  action: "start" | "graveyard" | "settings" | "credits";
+}[] = [
   { label: "Start Game", action: "start" },
   { label: "Hall of the Fallen", action: "graveyard" },
+  { label: "Credits", action: "credits" },
   { label: "Settings", action: "settings" },
 ];
 
@@ -226,9 +232,151 @@ function ForestBackground() {
   );
 }
 
+function SettingsModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { musicVolume, setMusicVolume, sfxVolume, setSfxVolume } = useGame();
+  return (
+    <ModalPanel
+      visible={visible}
+      onClose={onClose}
+      title="Settings"
+      closeButton
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+        <div
+          style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}
+        >
+          <label style={{ color: "#aaa", fontSize: "13pt" }}>
+            Music Volume: {Math.round(musicVolume * 100)}%
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={musicVolume}
+            onChange={(e) => setMusicVolume(Number(e.target.value))}
+            style={{ width: "100%", accentColor: "#cc4444" }}
+          />
+        </div>
+        <div
+          style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}
+        >
+          <label style={{ color: "#aaa", fontSize: "13pt" }}>
+            SFX Volume: {Math.round(sfxVolume * 100)}%
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={sfxVolume}
+            onChange={(e) => setSfxVolume(Number(e.target.value))}
+            style={{ width: "100%", accentColor: "#cc4444" }}
+          />
+        </div>
+      </div>
+    </ModalPanel>
+  );
+}
+
+function CreditsModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <ModalPanel
+      visible={visible}
+      onClose={onClose}
+      title="Credits"
+      scrollContents
+      maxHeight="60vh"
+    >
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "1.2rem",
+          color: "#ccc",
+          fontSize: "12pt",
+          lineHeight: "1.6",
+        }}
+      >
+        <section>
+          <div
+            style={{
+              color: "#cc4444",
+              marginBottom: "0.3rem",
+              fontSize: "13pt",
+            }}
+          >
+            Game Design & Programming
+          </div>
+          <div>Phil B. Garner</div>
+        </section>
+        <section>
+          <div
+            style={{
+              color: "#cc4444",
+              marginBottom: "0.3rem",
+              fontSize: "13pt",
+            }}
+          >
+            Music
+          </div>
+          <div>JDSherbert — Ambiences Music Pack</div>
+          <div style={{ color: "#777", fontSize: "11pt" }}>
+            Dark Dark Woods · Bloodrat Sewers · Frost Mountain Aura
+          </div>
+        </section>
+        <section>
+          <div
+            style={{
+              color: "#cc4444",
+              marginBottom: "0.3rem",
+              fontSize: "13pt",
+            }}
+          >
+            Sound Effects
+          </div>
+          <div>Free Fantasy SFX Pack By TomMusic</div>
+          <div style={{ color: "#777", fontSize: "11pt" }}>
+            https://tommusic.itch.io/
+          </div>
+        </section>
+        <section>
+          <div
+            style={{
+              color: "#777",
+              fontSize: "11pt",
+            }}
+          >
+            Thank you to my wife for supporting me.
+          </div>
+        </section>
+        <div style={{ marginTop: "1rem", textAlign: "center" }}>
+          <Button onClick={onClose} background="#191919" minWidth="8rem">
+            Back
+          </Button>
+        </div>
+      </div>
+    </ModalPanel>
+  );
+}
+
 export default function MainMenu() {
   const { goTo } = useGame();
   const [showPicker, setShowPicker] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showCredits, setShowCredits] = useState(false);
   const width = "40vw";
   const halfWidth = "20vw";
   return (
@@ -279,6 +427,8 @@ export default function MainMenu() {
                 onClick={() => {
                   if (item.action === "start") setShowPicker(true);
                   else if (item.action === "graveyard") goTo("graveyard");
+                  else if (item.action === "settings") setShowSettings(true);
+                  else if (item.action === "credits") setShowCredits(true);
                 }}
               >
                 <span className={styles.menuItemText}>{item.label}</span>
@@ -287,6 +437,14 @@ export default function MainMenu() {
           </div>
         </BorderPanel>
         {showPicker && <CharacterPicker />}
+        <SettingsModal
+          visible={showSettings}
+          onClose={() => setShowSettings(false)}
+        />
+        <CreditsModal
+          visible={showCredits}
+          onClose={() => setShowCredits(false)}
+        />
       </div>
     </>
   );

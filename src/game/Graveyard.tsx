@@ -49,7 +49,7 @@ function DeathCard({
         background: record.outcome === "death" ? "#0b0505" : "#050b07",
         border: `1px solid ${highlight ? "#fff" : borderColor}`,
         padding: compact ? "0.8rem 1rem" : "1rem 1.2rem",
-        fontFamily: "monospace",
+        fontFamily: "var(--mono)",
         color: "#ddd",
         boxShadow: `0 0 16px ${glowColor}`,
         minWidth: compact ? "12rem" : "16rem",
@@ -185,7 +185,7 @@ function SeedGallery({
           paddingBottom: "0.4rem",
         }}
       >
-        <span style={{ color: "#aaa", fontFamily: "monospace", fontSize: "0.9em" }}>
+        <span style={{ color: "#aaa", fontFamily: "var(--mono)", fontSize: "0.9em" }}>
           Seed: <span style={{ color: "#fff" }}>{seedKey}</span>
         </span>
         <span style={{ color: "#555", fontSize: "0.8em" }}>{records.length} run{records.length !== 1 ? "s" : ""}</span>
@@ -238,7 +238,7 @@ export default function Graveyard() {
         flexMode="Column"
         title="HALL OF THE FALLEN"
       >
-        <div style={{ padding: "1.5rem 2rem", fontFamily: "monospace", color: "#eee", overflowY: "auto", height: "100%" }}>
+        <div style={{ padding: "1.5rem 2rem", fontFamily: "var(--mono)", color: "#eee", overflowY: "auto", height: "100%" }}>
           {/* Header */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
             <div style={{ color: "#444", fontSize: "0.8em" }}>

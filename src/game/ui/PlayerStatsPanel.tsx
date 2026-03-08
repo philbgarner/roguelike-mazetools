@@ -14,6 +14,7 @@ export interface PlayerStatsPanelProps {
   level: number;
   xp: number;
   resistances: DamageType[];
+  steps: number;
 }
 
 const DAMAGE_TYPE_COLORS: Record<DamageType, string> = {
@@ -33,6 +34,7 @@ export default function PlayerStatsPanel({
   level,
   xp,
   resistances,
+  steps,
 }: PlayerStatsPanelProps) {
   const equippedItems = inventory.items.filter(
     (it) => it.slot !== undefined && inventory.equipped[it.slot] === it.instanceId,
@@ -95,6 +97,7 @@ export default function PlayerStatsPanel({
         {simpleRow("Level", level)}
         {simpleRow("XP", xp)}
         {simpleRow("Next level", `${xpToNext} XP needed`)}
+        {simpleRow("Steps taken", steps.toLocaleString(), true)}
 
         <div style={{ color: "#f0d060", fontWeight: "bold", margin: "0.6rem 0 0.3rem" }}>
           Resistances

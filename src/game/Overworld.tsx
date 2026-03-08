@@ -157,6 +157,8 @@ export default function Overworld({ screen }: OverworldProps) {
     markSecretUsed,
     revealedSecrets,
     playSfx,
+    runStats,
+    accumulateRunStats,
   } = useGame();
   const seed = overworldBsp ? overworldBsp.meta.seedUsed : "test";
   const result = useMemo(() => {
@@ -231,7 +233,8 @@ export default function Overworld({ screen }: OverworldProps) {
     const wagons = createMerchantWagons(content.meta.dungeonPortals, 3);
     const ts = createTurnSystemState(player, monsters, wagons);
     const deps = buildDeps(dungeon, ts.actors);
-    return tickUntilPlayer(ts, deps);
+    // Let NPCs take one turn before handing control to the player
+    return commitPlayerAction(tickUntilPlayer(ts, deps), deps, { kind: "wait" });
   });
 
   const turnStateRef = useRef(turnState);
@@ -321,6 +324,9 @@ export default function Overworld({ screen }: OverworldProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerX, playerY]);
+
+  // --- Overworld steps tracking ---
+  const [overworldSteps, setOverworldSteps] = useState(0);
 
   // --- First-discovery log messages ---
   const seenNpcIdsRef = useRef<Set<string>>(new Set());
@@ -512,6 +518,7 @@ export default function Overworld({ screen }: OverworldProps) {
     if (secretPending) return;
     const ts = turnStateRef.current;
     if (!ts.awaitingPlayerInput) return;
+    setOverworldSteps((s) => s + 1);
     setTurnState((prev) => {
       if (!prev.awaitingPlayerInput) return prev;
       const deps = buildDeps(dungeon, prev.actors);
@@ -680,6 +687,13 @@ export default function Overworld({ screen }: OverworldProps) {
         defense: 9999,
       }));
     });
+    hotkeys("alt+c", () => {
+      // Debug: give player lots of gold.
+      setPlayer((prev) => ({
+        ...prev,
+        gold: 999,
+      }));
+    });
 
     return () => hotkeys.unbind();
   }, [dungeon, cancelAutoWalkNow, content, markDungeonComplete, setPlayer]);
@@ -835,6 +849,17 @@ export default function Overworld({ screen }: OverworldProps) {
                   )
                 ) {
                   addLogMessage(`Entering ${contentAtPlayerCell.theme}...`);
+                  accumulateRunStats({
+                    stepsTaken: overworldSteps,
+                    monstersKilled: 0,
+                    totalMonsters: 0,
+                    chestsLooted: 0,
+                    totalChests: 0,
+                    floorItemsCollected: 0,
+                    totalFloorItems: 0,
+                    goldCollected: 0,
+                  });
+                  setOverworldSteps(0);
                   setSeed(contentAtPlayerCell.seed);
                   setLevel(contentAtPlayerCell.level);
                   setFloor(1);
@@ -907,7 +932,7 @@ export default function Overworld({ screen }: OverworldProps) {
         }
       />
       <BorderPanel
-        title="Player"
+        title={`Gold: ${player.gold}g`}
         width="22rem"
         height="5rem"
         background="#090909"
@@ -963,6 +988,7 @@ export default function Overworld({ screen }: OverworldProps) {
         level={player.level}
         xp={player.xp}
         resistances={player.resistances}
+        steps={(runStats?.stepsTaken ?? 0) + overworldSteps}
       />
 
       {showMerchantModal &&
