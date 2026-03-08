@@ -13,7 +13,7 @@ export const CP437_TILES = {
   lever: 33, // '!' — toggled ON
   leverOff: 173, // '¡' — toggled OFF (inverted exclamation)
   plate: 95, // '_'
-  block: 254, // square
+  block: 220, // bottom-half square
   chest: 36, // '$'
 
   // Special / optional
