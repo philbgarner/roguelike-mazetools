@@ -400,6 +400,7 @@ export default function Dungeon({ seed }: DungeonProps) {
   const { push: pushFloatingMessage, floatingMessages } = useFloatingMessage({
     mapWidth: dungeon.width,
     mapHeight: dungeon.height,
+    pxPerCell: mapZoom,
   });
 
   const {
