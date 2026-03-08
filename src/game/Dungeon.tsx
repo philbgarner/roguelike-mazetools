@@ -1533,7 +1533,8 @@ export default function Dungeon({ seed }: DungeonProps) {
                             </span>
                             {m.attackDamageType && (
                               <span style={{ color: "#cccccc" }}>
-                                {" "}[{m.attackDamageType}]
+                                {" "}
+                                [{m.attackDamageType}]
                               </span>
                             )}
                           </span>
