@@ -145,6 +145,7 @@ export interface DungeonProps {
 export default function Dungeon({ seed }: DungeonProps) {
   const {
     goTo,
+    screen,
     overworldBsp,
     overworldContent,
     setSeed,
@@ -923,6 +924,7 @@ export default function Dungeon({ seed }: DungeonProps) {
 
   // --- Keyboard input ---
   useEffect(() => {
+    if (screen !== "dungeon") return;
     hotkeys("a,left,num_4", () => tryCommitMove(-1, 0));
     hotkeys("d,right,num_6", () => tryCommitMove(1, 0));
     hotkeys("s,down,num_2", () => tryCommitMove(0, 1));
@@ -945,7 +947,7 @@ export default function Dungeon({ seed }: DungeonProps) {
     });
 
     return () => hotkeys.unbind();
-  }, [dungeon, content, cancelAutoWalkNow]);
+  }, [screen, dungeon, content, cancelAutoWalkNow]);
 
   // --- Autowalk cancel trigger: visible monster count increases ---
   useEffect(() => {

@@ -661,6 +661,7 @@ export default function Overworld({ screen }: OverworldProps) {
 
   // --- Keyboard input ---
   useEffect(() => {
+    if (screen !== "overworld") return;
     hotkeys("a,left,num_4", () => tryCommitMove(-1, 0));
     hotkeys("d,right,num_6", () => tryCommitMove(1, 0));
     hotkeys("s,down,num_2", () => tryCommitMove(0, 1));
@@ -696,7 +697,7 @@ export default function Overworld({ screen }: OverworldProps) {
     });
 
     return () => hotkeys.unbind();
-  }, [dungeon, cancelAutoWalkNow, content, markDungeonComplete, setPlayer]);
+  }, [screen, dungeon, cancelAutoWalkNow, content, markDungeonComplete, setPlayer]);
 
   // --- Auto-walk step loop ---
   useEffect(() => {
