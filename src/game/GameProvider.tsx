@@ -67,6 +67,8 @@ export interface DeathRecord {
   treasureScore: number;
   /** Monster (or other source) that killed the player, if known. */
   killedBy?: string;
+  /** Character name at time of run. */
+  characterName?: string;
 }
 
 export function computeTreasureScore(record: Omit<DeathRecord, "treasureScore">): number {
@@ -305,6 +307,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       dungeonsCompleted,
       dungeonsExitedEarly,
       killedBy: killedByRef.current ?? undefined,
+      characterName: p.name,
     };
     const score = computeTreasureScore(partial);
     const record: DeathRecord = { ...partial, treasureScore: score };

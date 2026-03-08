@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { useGame, type DeathRecord } from "./GameProvider";
+import BorderPanel from "./ui/BorderPanel";
+import Button from "./ui/Button";
 
 const OUTCOME_COLOR = { death: "#f44", success: "#4af" } as const;
 const OUTCOME_LABEL = { death: "DIED", success: "VICTORY" } as const;
@@ -55,7 +57,7 @@ function DeathCard({
       }}
     >
       {/* Header row */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.2rem" }}>
         <span
           style={{
             color: OUTCOME_COLOR[record.outcome],
@@ -68,6 +70,13 @@ function DeathCard({
         </span>
         <span style={{ color: "#555", fontSize: "0.75em" }}>{timeAgo(record.timestamp)}</span>
       </div>
+
+      {/* Character name */}
+      {record.characterName && (
+        <div style={{ color: "#eee", fontSize: compact ? "0.85em" : "0.95em", marginBottom: "0.5rem", letterSpacing: "0.04em" }}>
+          {record.characterName}
+        </div>
+      )}
 
       {/* Theme + level */}
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.6rem", fontSize: "0.8em" }}>
@@ -151,7 +160,15 @@ function DeathCard({
   );
 }
 
-function SeedGallery({ seedKey, records }: { seedKey: string; records: DeathRecord[] }) {
+function SeedGallery({
+  seedKey,
+  records,
+  onReplay,
+}: {
+  seedKey: string;
+  records: DeathRecord[];
+  onReplay: () => void;
+}) {
   const best = records.reduce((a, b) =>
     (b.treasureScore ?? 0) > (a.treasureScore ?? 0) ? b : a,
   );
@@ -175,6 +192,7 @@ function SeedGallery({ seedKey, records }: { seedKey: string; records: DeathReco
         <span style={{ color: "#555", fontSize: "0.8em" }}>
           Best: <span style={{ color: "#fd4" }}>{best.treasureScore ?? best.completenessPercent + "%"} pts</span>
         </span>
+        <Button background="transparent" onClick={onReplay}>replay</Button>
       </div>
       <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap" }}>
         {records.map((r) => (
@@ -209,147 +227,88 @@ export default function Graveyard() {
     );
   }, [filtered]);
 
-  const btnStyle = (active: boolean) => ({
-    background: active ? "#222" : "transparent",
-    border: `1px solid ${active ? "#555" : "#333"}`,
-    color: active ? "#eee" : "#666",
-    fontFamily: "monospace",
-    fontSize: "0.85rem",
-    padding: "0.3rem 0.8rem",
-    cursor: "pointer",
-  });
-
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 400,
-        background: "#060606",
-        overflow: "auto",
-        fontFamily: "monospace",
-        color: "#eee",
-      }}
-    >
-      <div style={{ maxWidth: "80rem", margin: "0 auto", padding: "2rem" }}>
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "1.5rem" }}>
-          <div>
-            <div
-              style={{
-                fontSize: "1.6rem",
-                letterSpacing: "0.12em",
-                background: "linear-gradient(180deg, #aaa 0%, #555 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
-            >
-              HALL OF THE FALLEN
-            </div>
-            <div style={{ color: "#444", fontSize: "0.8em", marginTop: "0.2rem" }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 400, background: "#060606" }}>
+      <BorderPanel
+        background="#0c0c0c"
+        width="80vw"
+        height="85vh"
+        top="7.5vh"
+        left="10vw"
+        flexMode="Column"
+        title="HALL OF THE FALLEN"
+      >
+        <div style={{ padding: "1.5rem 2rem", fontFamily: "monospace", color: "#eee", overflowY: "auto", height: "100%" }}>
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+            <div style={{ color: "#444", fontSize: "0.8em" }}>
               {deathRecords.length} run{deathRecords.length !== 1 ? "s" : ""} recorded
             </div>
+            <Button background="#0c0c0c" onClick={() => goTo("main-menu")}>← Back</Button>
           </div>
-          <button
-            style={btnStyle(false)}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#eee")}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#666")}
-            onClick={() => goTo("main-menu")}
-          >
-            ← Back
-          </button>
-        </div>
 
-        {/* Filter bar */}
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
-          {(["all", "death", "success"] as const).map((f) => (
-            <button key={f} style={btnStyle(filter === f)} onClick={() => setFilter(f)}>
-              {f === "all" ? "All" : f === "death" ? "Deaths" : "Victories"}
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        {groups.length === 0 ? (
-          <div style={{ color: "#444", textAlign: "center", marginTop: "6rem", fontSize: "1.1em" }}>
-            No runs recorded yet.
+          {/* Filter bar */}
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
+            {(["all", "death", "success"] as const).map((f) => (
+              <Button
+                key={f}
+                background={filter === f ? "#222" : "transparent"}
+                onClick={() => setFilter(f)}
+              >
+                {f === "all" ? "All" : f === "death" ? "Deaths" : "Victories"}
+              </Button>
+            ))}
           </div>
-        ) : (
-          groups.map(([seedKey, records]) =>
-            records.length === 1 ? (
-              <div key={seedKey} style={{ marginBottom: "1.5rem" }}>
-                <div
-                  style={{
-                    color: "#555",
-                    fontSize: "0.78em",
-                    marginBottom: "0.4rem",
-                    display: "flex",
-                    gap: "0.8rem",
-                    alignItems: "center",
-                  }}
-                >
-                  <span>
-                    Seed: <span style={{ color: "#888" }}>{seedKey}</span>
-                  </span>
-                  <button
+
+          {/* Content */}
+          {groups.length === 0 ? (
+            <div style={{ color: "#444", textAlign: "center", marginTop: "6rem", fontSize: "1.1em" }}>
+              No runs recorded yet.
+            </div>
+          ) : (
+            groups.map(([seedKey, records]) =>
+              records.length === 1 ? (
+                <div key={seedKey} style={{ marginBottom: "1.5rem" }}>
+                  <div
                     style={{
-                      background: "transparent",
-                      border: "1px solid #333",
                       color: "#555",
-                      fontFamily: "monospace",
-                      fontSize: "0.75em",
-                      padding: "0.1rem 0.5rem",
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#aaa")}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#555")}
-                    onClick={() => {
-                      setSeed(records[0].seed);
-                      goTo("main-menu");
+                      fontSize: "0.78em",
+                      marginBottom: "0.4rem",
+                      display: "flex",
+                      gap: "0.8rem",
+                      alignItems: "center",
                     }}
                   >
-                    replay
-                  </button>
+                    <span>Seed: <span style={{ color: "#888" }}>{seedKey}</span></span>
+                    <Button
+                      background="transparent"
+                      onClick={() => {
+                        setSeed(records[0].seed);
+                        goTo("main-menu");
+                      }}
+                    >
+                      replay
+                    </Button>
+                  </div>
+                  <div style={{ display: "flex" }}>
+                    <DeathCard record={records[0]} />
+                  </div>
                 </div>
-                <div style={{ display: "flex" }}>
-                  <DeathCard record={records[0]} />
-                </div>
-              </div>
-            ) : (
-              <div key={seedKey} style={{ position: "relative" }}>
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "0.4rem",
-                    right: 0,
+              ) : (
+                <SeedGallery
+                  key={seedKey}
+                  seedKey={seedKey}
+                  records={records}
+                  onReplay={() => {
+                    setSeed(records[0].seed);
+                    goTo("main-menu");
                   }}
-                >
-                  <button
-                    style={{
-                      background: "transparent",
-                      border: "1px solid #333",
-                      color: "#555",
-                      fontFamily: "monospace",
-                      fontSize: "0.75em",
-                      padding: "0.1rem 0.5rem",
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#aaa")}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#555")}
-                    onClick={() => {
-                      setSeed(records[0].seed);
-                      goTo("main-menu");
-                    }}
-                  >
-                    replay
-                  </button>
-                </div>
-                <SeedGallery seedKey={seedKey} records={records} />
-              </div>
-            ),
-          )
-        )}
-      </div>
+                />
+              ),
+            )
+          )}
+        </div>
+      </BorderPanel>
     </div>
   );
 }
