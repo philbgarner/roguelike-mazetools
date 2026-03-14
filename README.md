@@ -1,70 +1,27 @@
-# BSP Dungeon Generator Lab
+# Post-Jam Refactor
 
-A small in-browser **TypeScript + React** project for experimenting with BSP-based dungeon generation (inspired by the RogueBasin write-up).
+After the 7drl jam I realized the DX was very poor, too clunky and verbose to add new content and calculate whether or not positions were correct, lever/door placement, etc.
 
-The project focuses on **data-first dungeon generation** with strong debugging tools:
-- byte-based grid masks
-- GPU-friendly `THREE.DataTexture` outputs
-- ASCII and PNG-style visualizations for inspection
+A simpler approach should be possible.
 
-This repo is intended as a **generator playground**, not a finished game.
+## New Approach
 
----
+The rot.js callback system does seem to be the best compromise for placing content.
 
-## Features
+The new plan will be to run the bsp generation step (pretty much left as-is, that worked very well), but when it's time to generate content we go through cell-by-cell on all walls and floors and call the callback function for each one.
 
-- BSP dungeon generation (rooms + corridors)
-- Deterministic generation via seed
-- Multiple output layers:
-  - **solid** — wall / floor mask
-  - **regionId** — room identifiers
-  - **distanceToWall** — Manhattan distance field
-- Interactive parameter UI
-- Pixel-perfect canvas preview
-- Export:
-  - ASCII map
-  - PNG image per layer
+Cell mask data will be passed in to the callback args param.
 
----
+## API Utilities
 
-## Public API
+Functions available to the developer for interacting with the BSP graph.
 
-The generator exposes a single entry point for game integration:
+### BSP Mask DataTexture Interfaces
 
-```typescript
-import { generateDungeon } from "./src/api";
+Functions should be provided for getting/setting values on each mask with native typescript typing to return values that are relevant to the developer for use in the callback.
 
-const result = generateDungeon({
-  seed: 42,
-  level: 1,
-  themeId: "medieval_keep",
-  difficultyBandId: "medium",
-  budgetId: "balanced",
-  pacingId: "standard",
-});
-```
+Example: `getMaskSolid(x, y)` would return a value of "wall" or "floor", but you could also extend the interface that function returns to include another state value like "bars" which could be used elsewhere.
 
-Returns geometry, content placements, theme-resolved spawnables, render
-uniforms, and validation diagnostics — all deterministic for a given seed.
+### BSP Gamelogic Functions
 
-See:
-- **[API-QUICKSTART.md](API-QUICKSTART.md)** — usage examples, render uniforms, seed curation workflow
-- **[RUNTIME-FILE-MANIFEST.md](RUNTIME-FILE-MANIFEST.md)** — files to copy for standalone use
-
----
-
-## Tech Stack
-
-- **TypeScript** 5.9
-- **React** 19
-- **Vite** 7
-- **Three.js** 0.182 (dev harness rendering only — runtime API has zero external deps)
-
----
-
-## Running the project
-
-Install dependencies:
-
-```bash
-npm install
+We'll need callbacks for determining whether or not a cell is in or out of LOS, walkable (A*), etc.  This way if the developer does something like add another possible state to a DataTexture mask we can make a decision based on that inside the cell's callback.
