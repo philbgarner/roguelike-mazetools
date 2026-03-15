@@ -191,6 +191,7 @@ function DungeonScene({
 
   return (
     <>
+      <color attach="background" args={["#000000"]} />
       {/* Ambient + directional light so tiles aren't pitch-black */}
       <ambientLight intensity={0.6} />
       <pointLight
