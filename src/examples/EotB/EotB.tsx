@@ -37,8 +37,8 @@ const TILE_OFF = 16; // first tile origin
 
 // pixel coords of each tile's top-left in the padded sheet
 const SRC_FLOOR = { x: 136, y: 328 };
-const SRC_CEILING = { x: 16, y: 328 };
-const SRC_WALL = { x: 208, y: 400 };
+const SRC_CEILING = { x: 136, y: 400 };
+const SRC_WALL = { x: 208, y: 304 };
 
 // tile IDs in the repacked 3×1 atlas
 const TILE_FLOOR = 0;
@@ -370,6 +370,7 @@ const MASK_OPTIONS: { value: MaskOverlay; label: string }[] = [
 export default function EotB() {
   const [maskOverlay, setMaskOverlay] = useState<MaskOverlay>("all");
   const [ceilingHeight, setCeilingHeight] = useState(3);
+  const [debugEdges, setDebugEdges] = useState(false);
 
   const dungeon = useMemo(
     () =>
@@ -473,6 +474,7 @@ export default function EotB() {
               fogNear={4}
               fogFar={28}
               tileSize={3}
+              debugEdges={debugEdges}
               style={{ width: "100%", height: "100%" }}
             />
           )}
@@ -491,6 +493,14 @@ export default function EotB() {
               onChange={(e) => setCeilingHeight(parseFloat(e.target.value))}
               className={styles.minimapSlider}
             />
+          </label>
+          <label className={styles.minimapLabel}>
+            <input
+              type="checkbox"
+              checked={debugEdges}
+              onChange={(e) => setDebugEdges(e.target.checked)}
+            />{" "}
+            Debug edges
           </label>
           <select
             className={styles.minimapSelect}

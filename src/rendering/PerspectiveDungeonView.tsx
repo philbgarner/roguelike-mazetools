@@ -232,6 +232,7 @@ type SceneProps = {
   fogFar?: number;
   fogColor?: string;
   fov?: number;
+  debugEdges?: boolean;
 };
 
 function DungeonScene({
@@ -253,6 +254,7 @@ function DungeonScene({
   fogNear,
   fogFar,
   fogColor,
+  debugEdges,
 }: SceneProps) {
   const fogColorObj = useMemo(
     () => (fogColor ? new THREE.Color(fogColor) : undefined),
@@ -332,6 +334,7 @@ function DungeonScene({
         fogNear={fogNear}
         fogFar={fogFar}
         fogColor={fogColorObj}
+        debugEdges={debugEdges}
       />
       <InstancedTileMesh
         instances={ceilings}
@@ -340,6 +343,7 @@ function DungeonScene({
         fogNear={fogNear}
         fogFar={fogFar}
         fogColor={fogColorObj}
+        debugEdges={debugEdges}
       />
       <InstancedTileMesh
         instances={walls}
@@ -348,6 +352,7 @@ function DungeonScene({
         fogNear={fogNear}
         fogFar={fogFar}
         fogColor={fogColorObj}
+        debugEdges={debugEdges}
       />
     </>
   );

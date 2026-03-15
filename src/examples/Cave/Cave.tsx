@@ -234,6 +234,7 @@ const MASK_OPTIONS: { value: MaskOverlay; label: string }[] = [
 export default function Cave() {
   const [maskOverlay, setMaskOverlay] = useState<MaskOverlay>("all");
   const [ceilingHeight, setCeilingHeight] = useState(1.5);
+  const [debugEdges, setDebugEdges] = useState(false);
 
   // Generate dungeon once
   const dungeon = useMemo(
@@ -335,6 +336,7 @@ export default function Cave() {
             fogNear={4}
             fogFar={28}
             tileSize={3}
+            debugEdges={debugEdges}
             style={{ width: "100%", height: "100%" }}
           />
         </div>
@@ -352,6 +354,14 @@ export default function Cave() {
               onChange={(e) => setCeilingHeight(parseFloat(e.target.value))}
               className={styles.minimapSlider}
             />
+          </label>
+          <label className={styles.minimapLabel}>
+            <input
+              type="checkbox"
+              checked={debugEdges}
+              onChange={(e) => setDebugEdges(e.target.checked)}
+            />
+            {" "}Debug edges
           </label>
           <select
             className={styles.minimapSelect}

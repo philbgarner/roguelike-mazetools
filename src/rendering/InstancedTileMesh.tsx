@@ -30,8 +30,10 @@ uniform vec2  uTileSize;   // (tileW/sheetW, tileH/sheetH)
 uniform float uColumns;    // tiles per row in the atlas
 
 varying vec2  vAtlasUv;
+varying vec2  vTileOrigin; // atlas UV of this tile's bottom-left corner
 varying float vFogDist;
 varying vec2  vWorldPos;
+varying vec2  vTileUv;
 
 void main() {
   float id  = floor(aTileId + 0.5);
@@ -40,7 +42,9 @@ void main() {
 
   // bottom-left corner of this tile in atlas UV space
   vec2 offset = vec2(col * uTileSize.x, 1.0 - (row + 1.0) * uTileSize.y);
-  vAtlasUv = offset + uv * uTileSize;
+  vAtlasUv    = offset + uv * uTileSize;
+  vTileOrigin = offset;
+  vTileUv     = uv; // [0,1]² local quad coords, used for debug edge overlay
 
   vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
   vWorldPos = worldPos.xz;
@@ -55,20 +59,24 @@ void main() {
 // How much the torch radius breathes (fraction of the fog range).
 const FLICKER_RADIUS = 0.03;
 // z-component of the bump tangent normal — larger = flatter bump effect.
-const BUMP_DEPTH = 0.05;
+const BUMP_DEPTH = 0.3;
 
 const fragmentShader = /* glsl */ `
 uniform sampler2D uAtlas;
+uniform vec2  uTileSize;      // (tileW/sheetW, tileH/sheetH)
 uniform vec3  uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
 uniform float uTime;
 uniform float uFlickerRadius; // fraction of fog range the radius breathes
 uniform vec2  uTexelSize;     // (1/sheetWidth, 1/sheetHeight)
+uniform float uDebugEdges;    // 1.0 = draw tile-edge debug border, 0.0 = off
 
 varying vec2  vAtlasUv;
+varying vec2  vTileOrigin;
 varying float vFogDist;
 varying vec2  vWorldPos;
+varying vec2  vTileUv;
 
 // Simple spatial hash: returns [0,1) for a given cell coord.
 float hash(vec2 p) {
@@ -76,14 +84,20 @@ float hash(vec2 p) {
 }
 
 void main() {
-  vec4 color = texture2D(uAtlas, vAtlasUv);
+  // Clamp to this tile's texel bounds so perspective-interpolated UVs that
+  // overshoot the quad edge never sample a neighbouring tile in the atlas.
+  vec2 uvMin = vTileOrigin + uTexelSize * 0.5;
+  vec2 uvMax = vTileOrigin + uTileSize  - uTexelSize * 0.5;
+  vec2 atlasUv = clamp(vAtlasUv, uvMin, uvMax);
+
+  vec4 color = texture2D(uAtlas, atlasUv);
   if (color.a < 0.01) discard;
 
   // Bump from intensity gradient: sample right+up neighbours, derive tangent normal.
   vec3 luma = vec3(0.299, 0.587, 0.114);
   float l0 = dot(color.rgb, luma);
-  float lR = dot(texture2D(uAtlas, vAtlasUv + vec2(uTexelSize.x, 0.0)).rgb, luma);
-  float lU = dot(texture2D(uAtlas, vAtlasUv + vec2(0.0, uTexelSize.y)).rgb, luma);
+  float lR = dot(texture2D(uAtlas, clamp(atlasUv + vec2(uTexelSize.x, 0.0), uvMin, uvMax)).rgb, luma);
+  float lU = dot(texture2D(uAtlas, clamp(atlasUv + vec2(0.0, uTexelSize.y), uvMin, uvMax)).rgb, luma);
   // brighter texels are "raised"; z controls bump strength (larger = flatter)
   vec3 bumpN = normalize(vec3(l0 - lR, l0 - lU, ${BUMP_DEPTH}));
   float bumpShade = clamp(dot(bumpN, normalize(vec3(0.5, 0.5, 1.0))), 0.0, 1.0);
@@ -126,6 +140,16 @@ void main() {
   }
 
   vec3 lit = color.rgb * tint * brightness * bumpShade;
+
+  // Debug edge: highlight the 1-pixel border of each tile quad.
+  // Uses screen-space derivatives so the border is always ~1px regardless of zoom.
+  if (uDebugEdges > 0.5) {
+    vec2 fw = fwidth(vTileUv);          // ~1 pixel in tile-UV space
+    vec2 edge = step(vTileUv, fw) + step(1.0 - fw, vTileUv);
+    float onEdge = clamp(edge.x + edge.y, 0.0, 1.0);
+    lit = mix(lit, vec3(1.0, 0.0, 1.0), onEdge * 0.85);
+  }
+
   gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
 }
 `;
@@ -141,6 +165,7 @@ type Props = {
   fogNear?: number;
   fogFar?: number;
   fogColor?: THREE.Color;
+  debugEdges?: boolean;
 };
 
 export function InstancedTileMesh({
@@ -150,6 +175,7 @@ export function InstancedTileMesh({
   fogNear = 4,
   fogFar = 10,
   fogColor,
+  debugEdges = false,
 }: Props) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
@@ -189,6 +215,7 @@ export function InstancedTileMesh({
               1 / atlas.sheetHeight,
             ),
           },
+          uDebugEdges: { value: debugEdges ? 1.0 : 0.0 },
         },
         side: THREE.FrontSide,
       }),
@@ -198,6 +225,10 @@ export function InstancedTileMesh({
   useFrame(({ clock }) => {
     material.uniforms.uTime.value = clock.getElapsedTime();
   });
+
+  useEffect(() => {
+    material.uniforms.uDebugEdges.value = debugEdges ? 1.0 : 0.0;
+  }, [debugEdges, material]);
 
   useEffect(() => {
     const mesh = meshRef.current;
