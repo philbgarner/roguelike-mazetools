@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { generateBspDungeon } from "../../bsp";
+import { generateCellularDungeon } from "../../cellular";
 import { buildTileAtlas } from "../../rendering/tileAtlas";
 import { PerspectiveDungeonView } from "../../rendering/PerspectiveDungeonView";
 import { useDungeonCamera } from "../../rendering/useDungeonCamera";
@@ -181,11 +181,10 @@ export default function Cave() {
   // Generate dungeon once
   const dungeon = useMemo(
     () =>
-      generateBspDungeon({
+      generateCellularDungeon({
         width: DUNGEON_W,
         height: DUNGEON_H,
         seed: DUNGEON_SEED,
-        corridorWidth: 2,
       }),
     [],
   );
@@ -197,14 +196,10 @@ export default function Cave() {
   );
 
   // Derive player spawn from start room centre
-  const { spawnX, spawnZ } = useMemo(() => {
-    const room = dungeon.rooms.get(dungeon.startRoomId);
-    if (!room) return { spawnX: DUNGEON_W / 2 + 0.5, spawnZ: DUNGEON_H / 2 + 0.5 };
-    return {
-      spawnX: room.rect.x + room.rect.w / 2,
-      spawnZ: room.rect.y + room.rect.h / 2, // rect.y = dungeon z
-    };
-  }, [dungeon]);
+  const { spawnX, spawnZ } = useMemo(() => ({
+    spawnX: dungeon.startPos.x + 0.5,
+    spawnZ: dungeon.startPos.y + 0.5,
+  }), [dungeon]);
 
   // Tile atlas (3 tiles wide, 1 tile tall)
   const atlas = useMemo(() => buildTileAtlas(SHEET_W, SHEET_H, TILE_PX, TILE_PX), []);
