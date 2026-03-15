@@ -37,6 +37,8 @@ export type BspDungeonOutputs = {
     solid: THREE.DataTexture;
     regionId: THREE.DataTexture;
     distanceToWall: THREE.DataTexture;
+    /** Hazard mask — 0 means no hazard; non-zero values are user-defined. */
+    hazards: THREE.DataTexture;
   };
 };
 
@@ -503,6 +505,7 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
   }, rng);
 
   const distanceToWall = computeDistanceToWall(solid, W, H);
+  const hazards = new Uint8Array(W * H); // all zeros — placed by content callback
 
   return {
     width: W,
@@ -512,6 +515,7 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
       solid: maskToDataTextureR8(solid, W, H, "bsp_dungeon_solid"),
       regionId: maskToDataTextureR8(regionId, W, H, "bsp_dungeon_region_id"),
       distanceToWall: maskToDataTextureR8(distanceToWall, W, H, "bsp_dungeon_distance_to_wall"),
+      hazards: maskToDataTextureR8(hazards, W, H, "bsp_dungeon_hazards"),
     },
   };
 }

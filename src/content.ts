@@ -59,6 +59,9 @@ export interface CellMasks {
   setSolidRaw(x: number, y: number, value: number): void;
   getRegionId(x: number, y: number): number;
   getDistanceToWall(x: number, y: number): number;
+  /** Hazard value at (x, y). 0 = no hazard; non-zero values are user-defined. */
+  getHazard(x: number, y: number): number;
+  setHazard(x: number, y: number, value: number): void;
 }
 
 // --------------------------------
@@ -159,6 +162,7 @@ export function generateContent(
   const solidData = dungeon.textures.solid.image.data as Uint8Array;
   const regionData = dungeon.textures.regionId.image.data as Uint8Array;
   const distData = dungeon.textures.distanceToWall.image.data as Uint8Array;
+  const hazardData = dungeon.textures.hazards.image.data as Uint8Array;
 
   const masks: CellMasks = {
     getSolid: (x, y) => {
@@ -184,6 +188,14 @@ export function generateContent(
     getDistanceToWall: (x, y) => {
       if (!inBounds(x, y, W, H)) return 0;
       return distData[y * W + x];
+    },
+    getHazard: (x, y) => {
+      if (!inBounds(x, y, W, H)) return 0;
+      return hazardData[y * W + x];
+    },
+    setHazard: (x, y, value) => {
+      if (!inBounds(x, y, W, H)) return;
+      hazardData[y * W + x] = value;
     },
   };
 
@@ -211,4 +223,5 @@ export function generateContent(
   }
 
   dungeon.textures.solid.needsUpdate = true;
+  dungeon.textures.hazards.needsUpdate = true;
 }
