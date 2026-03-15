@@ -16,7 +16,7 @@
  * The perspective view is a react-three-fiber Canvas rendered with instanced
  * quads (floors/ceilings/walls) textured from a tile atlas.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { generateCellularDungeon } from "../../cellular";
 import { buildTileAtlas } from "../../rendering/tileAtlas";
@@ -108,6 +108,15 @@ function mulberry(seed: number) {
 // Minimap renderer
 // ---------------------------------------------------------------------------
 
+type MaskOverlay = "all" | "solid" | "regionId" | "distanceToWall" | "hazards";
+
+// Map each non-zero regionId to a stable hue for coloring
+function regionHue(id: number): string {
+  // Spread hues by multiplying by a large prime
+  const hue = (id * 137) % 360;
+  return `hsl(${hue},70%,45%)`;
+}
+
 function drawMinimap(
   canvas: HTMLCanvasElement,
   solidData: Uint8Array,
@@ -116,6 +125,8 @@ function drawMinimap(
   playerX: number,
   playerZ: number,
   yaw: number,
+  overlay: MaskOverlay,
+  overlayData: Record<Exclude<MaskOverlay, "all">, Uint8Array>,
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -130,9 +141,47 @@ function drawMinimap(
 
   for (let cz = 0; cz < height; cz++) {
     for (let cx = 0; cx < width; cx++) {
-      const solid = solidData[cz * width + cx] > 0;
-      ctx.fillStyle = solid ? "#333" : "#888";
+      const idx = cz * width + cx;
+      const solid = solidData[idx] > 0;
+
+      if (overlay === "all") {
+        ctx.fillStyle = solid ? "#333" : "#888";
+      } else if (overlay === "solid") {
+        const v = overlayData.solid[idx];
+        const brightness = Math.round((v / 255) * 200 + 28);
+        ctx.fillStyle = `rgb(${brightness},${brightness},${brightness})`;
+      } else if (overlay === "regionId") {
+        const id = overlayData.regionId[idx];
+        ctx.fillStyle = id === 0 ? "#222" : regionHue(id);
+      } else if (overlay === "distanceToWall") {
+        const v = overlayData.distanceToWall[idx];
+        const g = Math.round((v / 255) * 220);
+        ctx.fillStyle = solid ? "#222" : `rgb(0,${g},${Math.round(g * 0.6)})`;
+      } else if (overlay === "hazards") {
+        const v = overlayData.hazards[idx];
+        if (v > 0) {
+          ctx.fillStyle = `rgb(${Math.round((v / 255) * 255)},40,40)`;
+        } else {
+          ctx.fillStyle = solid ? "#333" : "#888";
+        }
+      }
+
       ctx.fillRect(cx * cellW, cz * cellH, cellW, cellH);
+    }
+  }
+
+  // Overlay mask tint on top of base solid view (for non-"all", non-"solid" modes)
+  if (overlay !== "all" && overlay !== "solid") {
+    for (let cz = 0; cz < height; cz++) {
+      for (let cx = 0; cx < width; cx++) {
+        const idx = cz * width + cx;
+        const solid = solidData[idx] > 0;
+        // Already drawn the overlay color above; add a faint solid-wall darkening pass
+        if (solid && overlay !== "regionId") {
+          ctx.fillStyle = "rgba(0,0,0,0.45)";
+          ctx.fillRect(cx * cellW, cz * cellH, cellW, cellH);
+        }
+      }
     }
   }
 
@@ -174,7 +223,18 @@ const DUNGEON_SEED = 42;
 const DUNGEON_W = 60;
 const DUNGEON_H = 60;
 
+const MASK_OPTIONS: { value: MaskOverlay; label: string }[] = [
+  { value: "all", label: "All (default)" },
+  { value: "solid", label: "Solid" },
+  { value: "regionId", label: "Region ID" },
+  { value: "distanceToWall", label: "Distance to Wall" },
+  { value: "hazards", label: "Hazards" },
+];
+
 export default function Cave() {
+  const [maskOverlay, setMaskOverlay] = useState<MaskOverlay>("all");
+  const [ceilingHeight, setCeilingHeight] = useState(1.5);
+
   // Generate dungeon once
   const dungeon = useMemo(
     () =>
@@ -189,6 +249,17 @@ export default function Cave() {
   // Extract raw solid byte array from DataTexture (RedFormat → 1 byte/pixel)
   const solidData = useMemo(
     () => dungeon.textures.solid.image.data as Uint8Array,
+    [dungeon],
+  );
+
+  // All mask data arrays keyed by name
+  const overlayData = useMemo(
+    () => ({
+      solid: dungeon.textures.solid.image.data as Uint8Array,
+      regionId: dungeon.textures.regionId.image.data as Uint8Array,
+      distanceToWall: dungeon.textures.distanceToWall.image.data as Uint8Array,
+      hazards: dungeon.textures.hazards.image.data as Uint8Array,
+    }),
     [dungeon],
   );
 
@@ -229,8 +300,10 @@ export default function Cave() {
       camera.x,
       camera.z,
       camera.yaw,
+      maskOverlay,
+      overlayData,
     );
-  }, [solidData, camera]);
+  }, [solidData, camera, maskOverlay, overlayData]);
 
   return (
     <div className={styles.container}>
@@ -255,6 +328,7 @@ export default function Cave() {
             texture={texture}
             floorTile={TILE_FLOOR}
             ceilingTile={TILE_CEILING}
+            ceilingHeight={ceilingHeight}
             wallTile={TILE_WALL}
             renderRadius={18}
             fogNear={1}
@@ -265,6 +339,29 @@ export default function Cave() {
 
         {/* Minimap */}
         <div className={styles.miniMapView}>
+          <label className={styles.minimapLabel}>
+            Ceiling height: {ceilingHeight.toFixed(1)}
+            <input
+              type="range"
+              min={0.5}
+              max={4}
+              step={0.1}
+              value={ceilingHeight}
+              onChange={(e) => setCeilingHeight(parseFloat(e.target.value))}
+              className={styles.minimapSlider}
+            />
+          </label>
+          <select
+            className={styles.minimapSelect}
+            value={maskOverlay}
+            onChange={(e) => setMaskOverlay(e.target.value as MaskOverlay)}
+          >
+            {MASK_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
           <canvas
             ref={minimapRef}
             width={200}
