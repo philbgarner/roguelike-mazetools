@@ -33,6 +33,10 @@ export type BspDungeonOutputs = {
   width: number;
   height: number;
   seed: number;
+  /** Room ID (matches regionId texture values) chosen as the dungeon exit. Has exactly 1 corridor connection. */
+  endRoomId: number;
+  /** Room ID furthest from endRoomId — used as the player spawn room. */
+  startRoomId: number;
   textures: {
     solid: THREE.DataTexture;
     regionId: THREE.DataTexture;
@@ -337,29 +341,100 @@ function connectSiblings(
   H: number,
   opts: Required<Pick<BspDungeonOptions, "corridorWidth" | "keepOuterWalls">>,
   rng: RNG,
-): Point {
+  adjacency: Map<number, Set<number>>,
+): { rep: Point; roomId: number } {
   if (!node.left && !node.right) {
     if (!node.rep) node.rep = node.room ? rectCenter(node.room) : rectCenter(node.rect);
-    return node.rep;
+    return { rep: node.rep, roomId: node.roomId! };
   }
 
-  const repL = connectSiblings(node.left!, solid, W, H, opts, rng);
-  const repR = connectSiblings(node.right!, solid, W, H, opts, rng);
+  const L = connectSiblings(node.left!, solid, W, H, opts, rng, adjacency);
+  const R = connectSiblings(node.right!, solid, W, H, opts, rng, adjacency);
 
-  if (repL.x === repR.x || repL.y === repR.y) {
-    carveCorridor(solid, W, H, repL, repR, opts.corridorWidth, opts.keepOuterWalls);
+  // Record the room-to-room connection
+  if (L.roomId !== R.roomId) {
+    if (!adjacency.has(L.roomId)) adjacency.set(L.roomId, new Set());
+    if (!adjacency.has(R.roomId)) adjacency.set(R.roomId, new Set());
+    adjacency.get(L.roomId)!.add(R.roomId);
+    adjacency.get(R.roomId)!.add(L.roomId);
+  }
+
+  if (L.rep.x === R.rep.x || L.rep.y === R.rep.y) {
+    carveCorridor(solid, W, H, L.rep, R.rep, opts.corridorWidth, opts.keepOuterWalls);
   } else if (rng.chance(0.5)) {
-    const mid: Point = { x: repR.x, y: repL.y };
-    carveCorridor(solid, W, H, repL, mid, opts.corridorWidth, opts.keepOuterWalls);
-    carveCorridor(solid, W, H, mid, repR, opts.corridorWidth, opts.keepOuterWalls);
+    const mid: Point = { x: R.rep.x, y: L.rep.y };
+    carveCorridor(solid, W, H, L.rep, mid, opts.corridorWidth, opts.keepOuterWalls);
+    carveCorridor(solid, W, H, mid, R.rep, opts.corridorWidth, opts.keepOuterWalls);
   } else {
-    const mid: Point = { x: repL.x, y: repR.y };
-    carveCorridor(solid, W, H, repL, mid, opts.corridorWidth, opts.keepOuterWalls);
-    carveCorridor(solid, W, H, mid, repR, opts.corridorWidth, opts.keepOuterWalls);
+    const mid: Point = { x: L.rep.x, y: R.rep.y };
+    carveCorridor(solid, W, H, L.rep, mid, opts.corridorWidth, opts.keepOuterWalls);
+    carveCorridor(solid, W, H, mid, R.rep, opts.corridorWidth, opts.keepOuterWalls);
   }
 
-  node.rep = rng.chance(0.5) ? repL : repR;
-  return node.rep;
+  const useLeft = rng.chance(0.5);
+  node.rep = useLeft ? L.rep : R.rep;
+  return { rep: node.rep, roomId: useLeft ? L.roomId : R.roomId };
+}
+
+// -----------------------------
+// Start/end room selection
+// -----------------------------
+
+function pickStartEndRooms(
+  adjacency: Map<number, Set<number>>,
+): { startRoomId: number; endRoomId: number } {
+  const allRooms = Array.from(adjacency.keys());
+  if (allRooms.length === 0) return { startRoomId: 1, endRoomId: 1 };
+  if (allRooms.length === 1) return { startRoomId: allRooms[0], endRoomId: allRooms[0] };
+
+  // Find rooms with exactly 1 connection (dead ends) — candidates for end room
+  const deadEnds = allRooms.filter((id) => (adjacency.get(id)?.size ?? 0) === 1);
+  const candidates = deadEnds.length > 0 ? deadEnds : allRooms;
+
+  // BFS from each candidate to find the one that maximises the longest shortest path
+  // For efficiency, pick the first dead-end, BFS to find the furthest room, then
+  // BFS back from that furthest room to confirm — a two-pass approach.
+
+  function bfsFurthest(startId: number): { id: number; dist: number } {
+    const dist = new Map<number, number>();
+    dist.set(startId, 0);
+    const queue = [startId];
+    let furthestId = startId;
+    let furthestDist = 0;
+    let head = 0;
+    while (head < queue.length) {
+      const cur = queue[head++];
+      const d = dist.get(cur)!;
+      for (const nb of adjacency.get(cur) ?? []) {
+        if (!dist.has(nb)) {
+          dist.set(nb, d + 1);
+          queue.push(nb);
+          if (d + 1 > furthestDist) {
+            furthestDist = d + 1;
+            furthestId = nb;
+          }
+        }
+      }
+    }
+    return { id: furthestId, dist: furthestDist };
+  }
+
+  // Among dead-end candidates, pick the one that maximises its furthest BFS distance.
+  // That candidate (deepest dead-end) becomes endRoomId.
+  let endRoomId = candidates[0];
+  let bestDist = -1;
+  for (const cand of candidates) {
+    const { dist: d } = bfsFurthest(cand);
+    if (d > bestDist) {
+      bestDist = d;
+      endRoomId = cand;
+    }
+  }
+
+  // Start room is the room furthest from endRoomId
+  const { id: startRoomId } = bfsFurthest(endRoomId);
+
+  return { startRoomId, endRoomId };
 }
 
 // -----------------------------
@@ -499,10 +574,13 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
     keepOuterWalls: opts.keepOuterWalls,
   }, rng);
 
+  const adjacency = new Map<number, Set<number>>();
   connectSiblings(root, solid, W, H, {
     corridorWidth: opts.corridorWidth,
     keepOuterWalls: opts.keepOuterWalls,
-  }, rng);
+  }, rng, adjacency);
+
+  const { startRoomId, endRoomId } = pickStartEndRooms(adjacency);
 
   const distanceToWall = computeDistanceToWall(solid, W, H);
   const hazards = new Uint8Array(W * H); // all zeros — placed by content callback
@@ -511,6 +589,8 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
     width: W,
     height: H,
     seed: seedUsed,
+    endRoomId,
+    startRoomId,
     textures: {
       solid: maskToDataTextureR8(solid, W, H, "bsp_dungeon_solid"),
       regionId: maskToDataTextureR8(regionId, W, H, "bsp_dungeon_region_id"),
