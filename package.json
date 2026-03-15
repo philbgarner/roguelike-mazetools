@@ -20,6 +20,7 @@
     "howler": "^2.2.4",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-router-dom": "^7.13.1",
     "three": "^0.182.0",
     "ttf2woff2": "^8.0.1"
   },
