@@ -54,6 +54,8 @@ void main() {
 
 // How much the torch radius breathes (fraction of the fog range).
 const FLICKER_RADIUS = 0.03;
+// z-component of the bump tangent normal — larger = flatter bump effect.
+const BUMP_DEPTH = 0.05;
 
 const fragmentShader = /* glsl */ `
 uniform sampler2D uAtlas;
@@ -62,6 +64,7 @@ uniform float uFogNear;
 uniform float uFogFar;
 uniform float uTime;
 uniform float uFlickerRadius; // fraction of fog range the radius breathes
+uniform vec2  uTexelSize;     // (1/sheetWidth, 1/sheetHeight)
 
 varying vec2  vAtlasUv;
 varying float vFogDist;
@@ -75,6 +78,16 @@ float hash(vec2 p) {
 void main() {
   vec4 color = texture2D(uAtlas, vAtlasUv);
   if (color.a < 0.01) discard;
+
+  // Bump from intensity gradient: sample right+up neighbours, derive tangent normal.
+  vec3 luma = vec3(0.299, 0.587, 0.114);
+  float l0 = dot(color.rgb, luma);
+  float lR = dot(texture2D(uAtlas, vAtlasUv + vec2(uTexelSize.x, 0.0)).rgb, luma);
+  float lU = dot(texture2D(uAtlas, vAtlasUv + vec2(0.0, uTexelSize.y)).rgb, luma);
+  // brighter texels are "raised"; z controls bump strength (larger = flatter)
+  vec3 bumpN = normalize(vec3(l0 - lR, l0 - lU, ${BUMP_DEPTH}));
+  float bumpShade = clamp(dot(bumpN, normalize(vec3(0.5, 0.5, 1.0))), 0.0, 1.0);
+  bumpShade = 0.8 + 0.35 * bumpShade; // remap to [0.8, 1.15]
 
   // Layered sines at co-prime frequencies → irregular candlelight rhythm.
   // Quantised to 3 discrete levels so the flicker snaps rather than fades.
@@ -101,9 +114,9 @@ void main() {
   float brightness;
   vec3  tint;
   if (band < 1.0) {
-    brightness = 1.00 - turb; tint = vec3(1.00, 0.72, 0.28); // hot amber
+    brightness = 1.00 - turb; tint = vec3(1.00, 0.90, 0.68); // near-white, soft warm
   } else if (band < 2.0) {
-    brightness = 0.55; tint = vec3(1.00, 0.85, 0.45); // warm yellow
+    brightness = 0.55; tint = vec3(1.00, 0.94, 0.76); // near-white, faint warm
   } else if (band < 3.0) {
     brightness = 0.22; tint = vec3(0.60, 0.55, 0.80); // cool purple
   } else if (band < 4.0) {
@@ -112,7 +125,7 @@ void main() {
     brightness = 0.00; tint = vec3(1.0);               // darkness
   }
 
-  vec3 lit = color.rgb * tint * brightness;
+  vec3 lit = color.rgb * tint * brightness * bumpShade;
   gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
 }
 `;
@@ -170,6 +183,12 @@ export function InstancedTileMesh({
           uFogFar: { value: fogFar },
           uTime: { value: 0 },
           uFlickerRadius: { value: FLICKER_RADIUS },
+          uTexelSize: {
+            value: new THREE.Vector2(
+              1 / atlas.sheetWidth,
+              1 / atlas.sheetHeight,
+            ),
+          },
         },
         side: THREE.FrontSide,
       }),
