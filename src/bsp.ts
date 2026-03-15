@@ -7,6 +7,34 @@ import * as THREE from "three";
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; w: number; h: number };
 
+/** Minimum shape required by generateContent, aStar8, computeFov, and generateCellularDungeon. */
+export type DungeonOutputs = {
+  width: number;
+  height: number;
+  seed: number;
+  textures: {
+    solid: THREE.DataTexture;
+    regionId: THREE.DataTexture;
+    distanceToWall: THREE.DataTexture;
+    hazards: THREE.DataTexture;
+  };
+};
+
+export type RoomRect = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+export type RoomInfo = {
+  id: number;
+  /** Bounding rect of the room (carved area, not the BSP leaf). */
+  rect: RoomRect;
+  /** Room IDs that share a corridor with this room. */
+  connections: number[];
+};
+
 export type BspDungeonOptions = {
   width: number;
   height: number;
@@ -29,21 +57,17 @@ export type BspDungeonOptions = {
   keepOuterWalls?: boolean;
 };
 
-export type BspDungeonOutputs = {
-  width: number;
-  height: number;
-  seed: number;
+export type BspDungeonOutputs = DungeonOutputs & {
   /** Room ID (matches regionId texture values) chosen as the dungeon exit. Has exactly 1 corridor connection. */
   endRoomId: number;
   /** Room ID furthest from endRoomId — used as the player spawn room. */
   startRoomId: number;
-  textures: {
-    solid: THREE.DataTexture;
-    regionId: THREE.DataTexture;
-    distanceToWall: THREE.DataTexture;
-    /** Hazard mask — 0 means no hazard; non-zero values are user-defined. */
-    hazards: THREE.DataTexture;
-  };
+  /**
+   * Map from roomId → RoomInfo for every carved room.
+   * Rooms are identified by the same integer written into textures.regionId.
+   * startRoomId and endRoomId are guaranteed to be keys in this map.
+   */
+  rooms: Map<number, RoomInfo>;
 };
 
 // -----------------------------
@@ -377,6 +401,26 @@ function connectSiblings(
 }
 
 // -----------------------------
+// Room metadata
+// -----------------------------
+
+function buildRoomsMap(
+  root: BspNode,
+  adjacency: Map<number, Set<number>>,
+): Map<number, RoomInfo> {
+  const rooms = new Map<number, RoomInfo>();
+  forEachLeaf(root, (leaf) => {
+    if (leaf.roomId === undefined || !leaf.room) return;
+    rooms.set(leaf.roomId, {
+      id: leaf.roomId,
+      rect: { x: leaf.room.x, y: leaf.room.y, w: leaf.room.w, h: leaf.room.h },
+      connections: Array.from(adjacency.get(leaf.roomId) ?? []),
+    });
+  });
+  return rooms;
+}
+
+// -----------------------------
 // Start/end room selection
 // -----------------------------
 
@@ -581,6 +625,7 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
   }, rng, adjacency);
 
   const { startRoomId, endRoomId } = pickStartEndRooms(adjacency);
+  const rooms = buildRoomsMap(root, adjacency);
 
   const distanceToWall = computeDistanceToWall(solid, W, H);
   const hazards = new Uint8Array(W * H); // all zeros — placed by content callback
@@ -591,6 +636,7 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
     seed: seedUsed,
     endRoomId,
     startRoomId,
+    rooms,
     textures: {
       solid: maskToDataTextureR8(solid, W, H, "bsp_dungeon_solid"),
       regionId: maskToDataTextureR8(regionId, W, H, "bsp_dungeon_region_id"),

@@ -3,7 +3,7 @@
 // 8-directional A* pathfinding using octile distance heuristic.
 // Integer-scaled costs: orthogonal = 10, diagonal = 14 (≈ 10*sqrt(2)).
 
-import type { BspDungeonOutputs } from "./bsp";
+import type { DungeonOutputs } from "./bsp";
 import { MinHeap, octile } from "./bspHelpers";
 
 export type GridPos = { x: number; y: number };
@@ -44,7 +44,7 @@ const DIRS: [number, number, number][] = [
  * @returns           Path from start to goal (inclusive) and total cost, or null if unreachable.
  */
 export function aStar8(
-  dungeon: BspDungeonOutputs,
+  dungeon: DungeonOutputs,
   isWalkable: (x: number, y: number) => boolean,
   start: GridPos,
   goal: GridPos,

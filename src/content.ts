@@ -1,4 +1,4 @@
-import type { BspDungeonOutputs } from "./bsp";
+import type { DungeonOutputs } from "./bsp";
 
 // --------------------------------
 // RNG
@@ -155,7 +155,7 @@ function bresenhamLos(
 // --------------------------------
 
 export function generateContent(
-  dungeon: BspDungeonOutputs,
+  dungeon: DungeonOutputs,
   options: ContentOptions,
 ): void {
   const { width: W, height: H } = dungeon;
