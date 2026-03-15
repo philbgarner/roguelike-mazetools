@@ -24,6 +24,8 @@
  * renderRadius   How many cells from the camera to include (default 16).
  * ceilingHeight  World-space height of the ceiling (default 1).  Walls scale
  *                to fill floor→ceiling; camera eye sits at ceilingHeight/2.
+ * tileSize       World-space width (and depth) of each tile (default 1).
+ *                cameraX/Z are in cell units; world positions = cell * tileSize.
  */
 import { useMemo, useEffect } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
@@ -37,6 +39,8 @@ import type { TileAtlas } from "./tileAtlas";
 
 const _q = new THREE.Quaternion();
 
+const CAMERA_Y_FACTOR = 0.5;
+
 function faceMatrix(
   px: number,
   py: number,
@@ -45,10 +49,15 @@ function faceMatrix(
   ry: number,
   rz: number,
   scaleY = 1,
+  scaleX = 1,
 ): THREE.Matrix4 {
   const m = new THREE.Matrix4();
   _q.setFromEuler(new THREE.Euler(rx, ry, rz, "YXZ"));
-  m.compose(new THREE.Vector3(px, py, pz), _q, new THREE.Vector3(1, scaleY, 1));
+  m.compose(
+    new THREE.Vector3(px, py, pz),
+    _q,
+    new THREE.Vector3(scaleX, scaleY, 1),
+  );
   return m;
 }
 
@@ -75,6 +84,7 @@ function buildFaceInstances(
   ceilTile: number,
   wallTile: number,
   ceilingHeight: number,
+  tileSize: number,
 ): {
   floors: TileInstance[];
   ceilings: TileInstance[];
@@ -105,18 +115,27 @@ function buildFaceInstances(
       const dz = cz + 0.5 - camZ;
       if (dx * dx + dz * dz > r2) continue;
 
-      const wx = cx + 0.5;
-      const wz = cz + 0.5;
+      const wx = (cx + 0.5) * tileSize;
+      const wz = (cz + 0.5) * tileSize;
 
       const wallMidY = ceilingHeight / 2;
 
       // Floor & ceiling always
       floors.push({
-        matrix: faceMatrix(wx, 0, wz, -HALF_PI, 0, 0),
+        matrix: faceMatrix(wx, 0, wz, -HALF_PI, 0, 0, tileSize, tileSize),
         tileId: floorTile,
       });
       ceilings.push({
-        matrix: faceMatrix(wx, ceilingHeight, wz, HALF_PI, 0, 0),
+        matrix: faceMatrix(
+          wx,
+          ceilingHeight,
+          wz,
+          HALF_PI,
+          0,
+          0,
+          tileSize,
+          tileSize,
+        ),
         tileId: ceilTile,
       });
 
@@ -124,7 +143,16 @@ function buildFaceInstances(
       // North wall: between this cell (cz) and cell (cz-1). Face at z=cz, normal +Z.
       if (solid(cx, cz - 1))
         walls.push({
-          matrix: faceMatrix(wx, wallMidY, cz, 0, 0, 0, ceilingHeight),
+          matrix: faceMatrix(
+            wx,
+            wallMidY,
+            cz * tileSize,
+            0,
+            0,
+            0,
+            ceilingHeight,
+            tileSize,
+          ),
           tileId: wallTile,
         });
 
@@ -134,11 +162,12 @@ function buildFaceInstances(
           matrix: faceMatrix(
             wx,
             wallMidY,
-            cz + 1,
+            (cz + 1) * tileSize,
             0,
             Math.PI,
             0,
             ceilingHeight,
+            tileSize,
           ),
           tileId: wallTile,
         });
@@ -146,7 +175,16 @@ function buildFaceInstances(
       // West wall: at x=cx, normal +X.
       if (solid(cx - 1, cz))
         walls.push({
-          matrix: faceMatrix(cx, wallMidY, wz, 0, HALF_PI, 0, ceilingHeight),
+          matrix: faceMatrix(
+            cx * tileSize,
+            wallMidY,
+            wz,
+            0,
+            HALF_PI,
+            0,
+            ceilingHeight,
+            tileSize,
+          ),
           tileId: wallTile,
         });
 
@@ -154,13 +192,14 @@ function buildFaceInstances(
       if (solid(cx + 1, cz))
         walls.push({
           matrix: faceMatrix(
-            cx + 1,
+            (cx + 1) * tileSize,
             wallMidY,
             wz,
             0,
             -HALF_PI,
             0,
             ceilingHeight,
+            tileSize,
           ),
           tileId: wallTile,
         });
@@ -188,9 +227,11 @@ type SceneProps = {
   wallTile: number;
   renderRadius: number;
   ceilingHeight?: number;
+  tileSize?: number;
   fogNear?: number;
   fogFar?: number;
   fogColor?: string;
+  fov?: number;
 };
 
 function DungeonScene({
@@ -207,6 +248,8 @@ function DungeonScene({
   wallTile,
   renderRadius,
   ceilingHeight = 1.5,
+  tileSize = 1,
+  fov = 75,
   fogNear,
   fogFar,
   fogColor,
@@ -234,6 +277,7 @@ function DungeonScene({
         ceilingTile,
         wallTile,
         ceilingHeight,
+        tileSize,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -247,13 +291,20 @@ function DungeonScene({
       ceilingTile,
       wallTile,
       ceilingHeight,
+      tileSize,
     ],
   );
 
   // Update camera every render
   useEffect(() => {
-    camera.position.set(cameraX, ceilingHeight / 2, cameraZ);
-    (camera as THREE.PerspectiveCamera).fov = 75;
+    // Pull camera back to the rear of the cell (0.5 units opposite facing direction).
+    // Forward = (-sin(yaw), 0, -cos(yaw)), so back = (+sin(yaw), 0, +cos(yaw)).
+    camera.position.set(
+      (cameraX + 0.5 * Math.sin(yaw)) * tileSize,
+      ceilingHeight * CAMERA_Y_FACTOR,
+      (cameraZ + 0.5 * Math.cos(yaw)) * tileSize,
+    );
+    (camera as THREE.PerspectiveCamera).fov = fov;
     (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
   });
 
@@ -267,7 +318,7 @@ function DungeonScene({
       {/* Ambient + directional light so tiles aren't pitch-black */}
       <ambientLight intensity={0.6} />
       <pointLight
-        position={[cameraX, ceilingHeight / 2, cameraZ]}
+        position={[cameraX * tileSize, ceilingHeight / 2, cameraZ * tileSize]}
         intensity={4}
         distance={12}
         decay={2}
@@ -314,16 +365,18 @@ export type PerspectiveDungeonViewProps = SceneProps & {
 export function PerspectiveDungeonView({
   className,
   style,
+  fov,
   ...sceneProps
 }: PerspectiveDungeonViewProps) {
+  console.log("fov", fov);
   return (
     <Canvas
       className={className}
       style={style}
-      camera={{ fov: 75, near: 0.05, far: 64 }}
+      camera={{ fov: fov, near: 0.05, far: 64 }}
       gl={{ antialias: false }}
     >
-      <DungeonScene {...sceneProps} />
+      <DungeonScene {...sceneProps} fov={fov} />
     </Canvas>
   );
 }
