@@ -21,7 +21,9 @@
  * floorTile     Tile ID for floor faces.
  * ceilingTile   Tile ID for ceiling faces.
  * wallTile      Tile ID for wall faces.
- * renderRadius  How many cells from the camera to include (default 16).
+ * renderRadius   How many cells from the camera to include (default 16).
+ * ceilingHeight  World-space height of the ceiling (default 1).  Walls scale
+ *                to fill floor→ceiling; camera eye sits at ceilingHeight/2.
  */
 import { useMemo, useEffect } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
@@ -34,15 +36,19 @@ import type { TileAtlas } from "./tileAtlas";
 // ---------------------------------------------------------------------------
 
 const _q = new THREE.Quaternion();
-const _s = new THREE.Vector3(1, 1, 1);
 
 function faceMatrix(
-  px: number, py: number, pz: number,
-  rx: number, ry: number, rz: number,
+  px: number,
+  py: number,
+  pz: number,
+  rx: number,
+  ry: number,
+  rz: number,
+  scaleY = 1,
 ): THREE.Matrix4 {
   const m = new THREE.Matrix4();
   _q.setFromEuler(new THREE.Euler(rx, ry, rz, "YXZ"));
-  m.compose(new THREE.Vector3(px, py, pz), _q, _s);
+  m.compose(new THREE.Vector3(px, py, pz), _q, new THREE.Vector3(1, scaleY, 1));
   return m;
 }
 
@@ -68,6 +74,7 @@ function buildFaceInstances(
   floorTile: number,
   ceilTile: number,
   wallTile: number,
+  ceilingHeight: number,
 ): {
   floors: TileInstance[];
   ceilings: TileInstance[];
@@ -101,26 +108,62 @@ function buildFaceInstances(
       const wx = cx + 0.5;
       const wz = cz + 0.5;
 
+      const wallMidY = ceilingHeight / 2;
+
       // Floor & ceiling always
-      floors.push({ matrix: faceMatrix(wx, 0, wz, -HALF_PI, 0, 0), tileId: floorTile });
-      ceilings.push({ matrix: faceMatrix(wx, 1, wz, HALF_PI, 0, 0), tileId: ceilTile });
+      floors.push({
+        matrix: faceMatrix(wx, 0, wz, -HALF_PI, 0, 0),
+        tileId: floorTile,
+      });
+      ceilings.push({
+        matrix: faceMatrix(wx, ceilingHeight, wz, HALF_PI, 0, 0),
+        tileId: ceilTile,
+      });
 
       // Wall faces: emit only where neighbour is solid
       // North wall: between this cell (cz) and cell (cz-1). Face at z=cz, normal +Z.
       if (solid(cx, cz - 1))
-        walls.push({ matrix: faceMatrix(wx, 0.5, cz, 0, 0, 0), tileId: wallTile });
+        walls.push({
+          matrix: faceMatrix(wx, wallMidY, cz, 0, 0, 0, ceilingHeight),
+          tileId: wallTile,
+        });
 
       // South wall: at z=cz+1, normal -Z.
       if (solid(cx, cz + 1))
-        walls.push({ matrix: faceMatrix(wx, 0.5, cz + 1, 0, Math.PI, 0), tileId: wallTile });
+        walls.push({
+          matrix: faceMatrix(
+            wx,
+            wallMidY,
+            cz + 1,
+            0,
+            Math.PI,
+            0,
+            ceilingHeight,
+          ),
+          tileId: wallTile,
+        });
 
       // West wall: at x=cx, normal +X.
       if (solid(cx - 1, cz))
-        walls.push({ matrix: faceMatrix(cx, 0.5, wz, 0, HALF_PI, 0), tileId: wallTile });
+        walls.push({
+          matrix: faceMatrix(cx, wallMidY, wz, 0, HALF_PI, 0, ceilingHeight),
+          tileId: wallTile,
+        });
 
       // East wall: at x=cx+1, normal -X.
       if (solid(cx + 1, cz))
-        walls.push({ matrix: faceMatrix(cx + 1, 0.5, wz, 0, -HALF_PI, 0), tileId: wallTile });
+        walls.push({
+          matrix: faceMatrix(
+            cx + 1,
+            wallMidY,
+            wz,
+            0,
+            -HALF_PI,
+            0,
+            ceilingHeight,
+          ),
+          tileId: wallTile,
+        });
     }
   }
 
@@ -144,21 +187,32 @@ type SceneProps = {
   ceilingTile: number;
   wallTile: number;
   renderRadius: number;
+  ceilingHeight?: number;
   fogNear?: number;
   fogFar?: number;
   fogColor?: string;
 };
 
 function DungeonScene({
-  solidData, width, height,
-  cameraX, cameraZ, yaw,
-  atlas, texture,
-  floorTile, ceilingTile, wallTile,
+  solidData,
+  width,
+  height,
+  cameraX,
+  cameraZ,
+  yaw,
+  atlas,
+  texture,
+  floorTile,
+  ceilingTile,
+  wallTile,
   renderRadius,
-  fogNear, fogFar, fogColor,
+  ceilingHeight = 1.5,
+  fogNear,
+  fogFar,
+  fogColor,
 }: SceneProps) {
   const fogColorObj = useMemo(
-    () => fogColor ? new THREE.Color(fogColor) : undefined,
+    () => (fogColor ? new THREE.Color(fogColor) : undefined),
     [fogColor],
   );
   const { camera } = useThree();
@@ -168,19 +222,37 @@ function DungeonScene({
   const cellZ = Math.floor(cameraZ);
 
   const { floors, ceilings, walls } = useMemo(
-    () => buildFaceInstances(
-      solidData, width, height,
-      cellX + 0.5, cellZ + 0.5,
-      renderRadius,
-      floorTile, ceilingTile, wallTile,
-    ),
+    () =>
+      buildFaceInstances(
+        solidData,
+        width,
+        height,
+        cellX + 0.5,
+        cellZ + 0.5,
+        renderRadius,
+        floorTile,
+        ceilingTile,
+        wallTile,
+        ceilingHeight,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [solidData, width, height, cellX, cellZ, renderRadius, floorTile, ceilingTile, wallTile],
+    [
+      solidData,
+      width,
+      height,
+      cellX,
+      cellZ,
+      renderRadius,
+      floorTile,
+      ceilingTile,
+      wallTile,
+      ceilingHeight,
+    ],
   );
 
   // Update camera every render
   useEffect(() => {
-    camera.position.set(cameraX, 0.5, cameraZ);
+    camera.position.set(cameraX, ceilingHeight / 2, cameraZ);
     (camera as THREE.PerspectiveCamera).fov = 75;
     (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
   });
@@ -195,16 +267,37 @@ function DungeonScene({
       {/* Ambient + directional light so tiles aren't pitch-black */}
       <ambientLight intensity={0.6} />
       <pointLight
-        position={[cameraX, 0.5, cameraZ]}
+        position={[cameraX, ceilingHeight / 2, cameraZ]}
         intensity={4}
         distance={12}
         decay={2}
         color="#ffe8c0"
       />
 
-      <InstancedTileMesh instances={floors} atlas={atlas} texture={texture} fogNear={fogNear} fogFar={fogFar} fogColor={fogColorObj} />
-      <InstancedTileMesh instances={ceilings} atlas={atlas} texture={texture} fogNear={fogNear} fogFar={fogFar} fogColor={fogColorObj} />
-      <InstancedTileMesh instances={walls} atlas={atlas} texture={texture} fogNear={fogNear} fogFar={fogFar} fogColor={fogColorObj} />
+      <InstancedTileMesh
+        instances={floors}
+        atlas={atlas}
+        texture={texture}
+        fogNear={fogNear}
+        fogFar={fogFar}
+        fogColor={fogColorObj}
+      />
+      <InstancedTileMesh
+        instances={ceilings}
+        atlas={atlas}
+        texture={texture}
+        fogNear={fogNear}
+        fogFar={fogFar}
+        fogColor={fogColorObj}
+      />
+      <InstancedTileMesh
+        instances={walls}
+        atlas={atlas}
+        texture={texture}
+        fogNear={fogNear}
+        fogFar={fogFar}
+        fogColor={fogColorObj}
+      />
     </>
   );
 }

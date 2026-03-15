@@ -1,87 +1,87 @@
 .container {
-  width: 100vw;
-  height: 100vh;
-  display: grid;
-  grid-template-rows: 40px 1fr 56px;
-  grid-template-columns: 1fr;
-  margin: 0;
-  padding: 0;
-  background: #111;
-  color: #ccc;
-  font-family: monospace;
-  overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    display: grid;
+    grid-template-rows: 40px 1fr 56px;
+    grid-template-columns: 1fr;
+    margin: 0;
+    padding: 0;
+    background: #111;
+    color: #ccc;
+    font-family: monospace;
+    overflow: hidden;
 }
 
 /* ── Header ── */
 .uiHeaderBar {
-  grid-row: 1;
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 0 16px;
-  background: #1a1a1a;
-  border-bottom: 1px solid #333;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 0 16px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #333;
 }
 
 .title {
-  font-size: 18px;
-  font-weight: bold;
-  letter-spacing: 4px;
-  color: #f80;
-  text-shadow: 0 0 8px #f804;
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 4px;
+    color: #f80;
+    text-shadow: 0 0 8px #f804;
 }
 
 .seed {
-  font-size: 11px;
-  color: #666;
+    font-size: 11px;
+    color: #666;
 }
 
 /* ── Main area ── */
 .mainArea {
-  grid-row: 2;
-  display: flex;
-  flex-direction: row;
-  overflow: hidden;
+    grid-row: 2;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
 }
 
 .perspectiveView {
-  flex: 1;
-  outline: none;
-  cursor: crosshair;
+    flex: 1;
+    outline: none;
+    cursor: crosshair;
 }
 
 .miniMapView {
-  width: 200px;
-  min-width: 200px;
-  background: #111;
-  border-left: 1px solid #333;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 8px;
-  box-sizing: border-box;
+    width: 400px;
+    min-width: 400px;
+    background: #111;
+    border-left: 1px solid #333;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 8px;
+    box-sizing: border-box;
 }
 
 .minimapCanvas {
-  width: 100%;
-  height: auto;
-  image-rendering: pixelated;
+    width: 100%;
+    height: auto;
+    image-rendering: pixelated;
 }
 
 /* ── Status panel ── */
 .statusPanel {
-  grid-row: 3;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  background: #1a1a1a;
-  border-top: 1px solid #333;
-  font-size: 12px;
-  color: #aaa;
+    grid-row: 3;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: #1a1a1a;
+    border-top: 1px solid #333;
+    font-size: 12px;
+    color: #aaa;
 }
 
 .controls {
-  color: #666;
-  font-size: 11px;
+    color: #666;
+    font-size: 11px;
 }

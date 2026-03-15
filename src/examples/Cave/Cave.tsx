@@ -151,10 +151,7 @@ function drawMinimap(
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(px, pz);
-  ctx.lineTo(
-    px - Math.sin(yaw) * arrowLen,
-    pz - Math.cos(yaw) * arrowLen,
-  );
+  ctx.lineTo(px - Math.sin(yaw) * arrowLen, pz - Math.cos(yaw) * arrowLen);
   ctx.stroke();
 }
 
@@ -196,13 +193,19 @@ export default function Cave() {
   );
 
   // Derive player spawn from start room centre
-  const { spawnX, spawnZ } = useMemo(() => ({
-    spawnX: dungeon.startPos.x + 0.5,
-    spawnZ: dungeon.startPos.y + 0.5,
-  }), [dungeon]);
+  const { spawnX, spawnZ } = useMemo(
+    () => ({
+      spawnX: dungeon.startPos.x + 0.5,
+      spawnZ: dungeon.startPos.y + 0.5,
+    }),
+    [dungeon],
+  );
 
   // Tile atlas (3 tiles wide, 1 tile tall)
-  const atlas = useMemo(() => buildTileAtlas(SHEET_W, SHEET_H, TILE_PX, TILE_PX), []);
+  const atlas = useMemo(
+    () => buildTileAtlas(SHEET_W, SHEET_H, TILE_PX, TILE_PX),
+    [],
+  );
   const texture = useMemo(() => buildPlaceholderTexture(), []);
 
   // Camera
@@ -240,11 +243,7 @@ export default function Cave() {
       {/* ── Main area ── */}
       <div className={styles.mainArea}>
         {/* Perspective 3-D view */}
-        <div
-          ref={containerRef}
-          className={styles.perspectiveView}
-          tabIndex={0}
-        >
+        <div ref={containerRef} className={styles.perspectiveView} tabIndex={0}>
           <PerspectiveDungeonView
             solidData={solidData}
             width={DUNGEON_W}
@@ -258,6 +257,8 @@ export default function Cave() {
             ceilingTile={TILE_CEILING}
             wallTile={TILE_WALL}
             renderRadius={18}
+            fogNear={1}
+            fogFar={4}
             style={{ width: "100%", height: "100%" }}
           />
         </div>
@@ -276,11 +277,12 @@ export default function Cave() {
       {/* ── Status panel ── */}
       <div className={styles.statusPanel}>
         <span>
-          ({camera.x.toFixed(1)}, {camera.z.toFixed(1)})&nbsp;&nbsp;
-          Facing: {cardinalDir(camera.yaw)}
+          ({camera.x.toFixed(1)}, {camera.z.toFixed(1)})&nbsp;&nbsp; Facing:{" "}
+          {cardinalDir(camera.yaw)}
         </span>
         <span className={styles.controls}>
-          WASD / Arrows — move &nbsp;|&nbsp; Q/E / ←/→ — turn &nbsp;|&nbsp; drag — look
+          WASD / Arrows — move &nbsp;|&nbsp; Q/E / ←/→ — turn &nbsp;|&nbsp; drag
+          — look
         </span>
       </div>
     </div>
