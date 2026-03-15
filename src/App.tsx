@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Cave from "./examples/Cave/Cave";
 
+import "./App.css";
+
 export default function App() {
   return (
     <BrowserRouter>
