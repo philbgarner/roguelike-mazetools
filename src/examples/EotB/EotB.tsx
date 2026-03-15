@@ -468,10 +468,10 @@ export default function EotB() {
               ceilingTile={TILE_CEILING}
               ceilingHeight={ceilingHeight}
               wallTile={TILE_WALL}
-              renderRadius={18}
+              renderRadius={28}
               fov={60}
-              fogNear={15}
-              fogFar={21}
+              fogNear={4}
+              fogFar={28}
               tileSize={3}
               style={{ width: "100%", height: "100%" }}
             />
