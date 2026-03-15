@@ -28,7 +28,8 @@ attribute float aTileId;
 uniform vec2  uTileSize;   // (tileW/sheetW, tileH/sheetH)
 uniform float uColumns;    // tiles per row in the atlas
 
-varying vec2 vAtlasUv;
+varying vec2  vAtlasUv;
+varying float vFogDist;
 
 void main() {
   float id  = floor(aTileId + 0.5);
@@ -39,18 +40,28 @@ void main() {
   vec2 offset = vec2(col * uTileSize.x, 1.0 - (row + 1.0) * uTileSize.y);
   vAtlasUv = offset + uv * uTileSize;
 
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  vec4 eyePos = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  vFogDist = length(eyePos.xyz);
+
+  gl_Position = projectionMatrix * eyePos;
 }
 `;
 
 const fragmentShader = /* glsl */ `
 uniform sampler2D uAtlas;
-varying vec2 vAtlasUv;
+uniform vec3  uFogColor;
+uniform float uFogNear;
+uniform float uFogFar;
+
+varying vec2  vAtlasUv;
+varying float vFogDist;
 
 void main() {
   vec4 color = texture2D(uAtlas, vAtlasUv);
   if (color.a < 0.01) discard;
-  gl_FragColor = color;
+
+  float fogFactor = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+  gl_FragColor = vec4(mix(color.rgb, uFogColor, fogFactor), color.a);
 }
 `;
 
@@ -62,9 +73,12 @@ type Props = {
   instances: TileInstance[];
   atlas: TileAtlas;
   texture: THREE.Texture;
+  fogNear?: number;
+  fogFar?: number;
+  fogColor?: THREE.Color;
 };
 
-export function InstancedTileMesh({ instances, atlas, texture }: Props) {
+export function InstancedTileMesh({ instances, atlas, texture, fogNear = 4, fogFar = 10, fogColor }: Props) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   // Geometry is created once; the aTileId attribute is pre-allocated to
@@ -92,10 +106,13 @@ export function InstancedTileMesh({ instances, atlas, texture }: Props) {
             ),
           },
           uColumns: { value: atlas.columns },
+          uFogColor: { value: fogColor ?? new THREE.Color(0, 0, 0) },
+          uFogNear:  { value: fogNear },
+          uFogFar:   { value: fogFar },
         },
         side: THREE.FrontSide,
       }),
-    [atlas, texture],
+    [atlas, texture, fogNear, fogFar, fogColor],
   );
 
   useEffect(() => {

@@ -144,6 +144,9 @@ type SceneProps = {
   ceilingTile: number;
   wallTile: number;
   renderRadius: number;
+  fogNear?: number;
+  fogFar?: number;
+  fogColor?: string;
 };
 
 function DungeonScene({
@@ -152,7 +155,12 @@ function DungeonScene({
   atlas, texture,
   floorTile, ceilingTile, wallTile,
   renderRadius,
+  fogNear, fogFar, fogColor,
 }: SceneProps) {
+  const fogColorObj = useMemo(
+    () => fogColor ? new THREE.Color(fogColor) : undefined,
+    [fogColor],
+  );
   const { camera } = useThree();
 
   // Snap to integer cell to avoid rebuilding every sub-cell movement
@@ -193,9 +201,9 @@ function DungeonScene({
         color="#ffe8c0"
       />
 
-      <InstancedTileMesh instances={floors} atlas={atlas} texture={texture} />
-      <InstancedTileMesh instances={ceilings} atlas={atlas} texture={texture} />
-      <InstancedTileMesh instances={walls} atlas={atlas} texture={texture} />
+      <InstancedTileMesh instances={floors} atlas={atlas} texture={texture} fogNear={fogNear} fogFar={fogFar} fogColor={fogColorObj} />
+      <InstancedTileMesh instances={ceilings} atlas={atlas} texture={texture} fogNear={fogNear} fogFar={fogFar} fogColor={fogColorObj} />
+      <InstancedTileMesh instances={walls} atlas={atlas} texture={texture} fogNear={fogNear} fogFar={fogFar} fogColor={fogColorObj} />
     </>
   );
 }
