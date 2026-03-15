@@ -331,8 +331,10 @@ export default function Cave() {
             ceilingHeight={ceilingHeight}
             wallTile={TILE_WALL}
             renderRadius={18}
-            fogNear={1}
-            fogFar={4}
+            fov={60}
+            fogNear={15}
+            fogFar={21}
+            tileSize={3}
             style={{ width: "100%", height: "100%" }}
           />
         </div>
