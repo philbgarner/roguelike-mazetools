@@ -1,6 +1,43 @@
 import type { DungeonOutputs } from "./bsp";
 
 // --------------------------------
+// Placements
+// --------------------------------
+
+export interface ObjectPlacement {
+  /** Grid cell (2-D grid X). Renderer centres object at (x+0.5) * tileSize. */
+  x: number;
+  /** Grid cell (2-D grid Y → world Z). Renderer centres object at (z+0.5) * tileSize. */
+  z: number;
+  /** Factory key resolved by the renderer's ObjectRegistry. */
+  type: string;
+  /** Fine-grained world-space offset from cell centre (in cell units). */
+  offsetX?: number;
+  offsetZ?: number;
+  offsetY?: number;
+  /** Yaw rotation in radians. */
+  yaw?: number;
+  /** Uniform scale multiplier. */
+  scale?: number;
+  /** Arbitrary metadata for game logic. */
+  meta?: Record<string, unknown>;
+}
+
+export interface MobilePlacement {
+  x: number;
+  z: number;
+  type: string;
+  /** Tile index into the SpriteAtlas texture. */
+  tileId: number;
+  meta?: Record<string, unknown>;
+}
+
+export interface ContentOutputs {
+  objects: ObjectPlacement[];
+  mobiles: MobilePlacement[];
+}
+
+// --------------------------------
 // RNG
 // --------------------------------
 
@@ -87,12 +124,18 @@ export interface ContentLogic {
 // Callback
 // --------------------------------
 
+export interface ContentEmit {
+  object(placement: ObjectPlacement): void;
+  mobile(placement: MobilePlacement): void;
+}
+
 export interface ContentCallbackArgs {
   x: number;
   y: number;
   masks: CellMasks;
   logic: ContentLogic;
   rng: ContentRng;
+  emit: ContentEmit;
 }
 
 export type ContentCallback = (args: ContentCallbackArgs) => void;
@@ -157,7 +200,7 @@ function bresenhamLos(
 export function generateContent(
   dungeon: DungeonOutputs,
   options: ContentOptions,
-): void {
+): ContentOutputs {
   const { width: W, height: H } = dungeon;
   const solidData = dungeon.textures.solid.image.data as Uint8Array;
   const regionData = dungeon.textures.regionId.image.data as Uint8Array;
@@ -211,8 +254,15 @@ export function generateContent(
 
   const rng = makeContentRng(options.seed);
 
+  const objects: ObjectPlacement[] = [];
+  const mobiles: MobilePlacement[] = [];
+  const emit: ContentEmit = {
+    object: (p) => objects.push(p),
+    mobile: (p) => mobiles.push(p),
+  };
+
   // Reuse a single args object to avoid per-cell allocation.
-  const args: ContentCallbackArgs = { x: 0, y: 0, masks, logic, rng };
+  const args: ContentCallbackArgs = { x: 0, y: 0, masks, logic, rng, emit };
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -224,4 +274,6 @@ export function generateContent(
 
   dungeon.textures.solid.needsUpdate = true;
   dungeon.textures.hazards.needsUpdate = true;
+
+  return { objects, mobiles };
 }

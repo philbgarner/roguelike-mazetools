@@ -27,11 +27,164 @@
  * tileSize       World-space width (and depth) of each tile (default 1).
  *                cameraX/Z are in cell units; world positions = cell * tileSize.
  */
-import { useMemo, useEffect } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { useMemo, useEffect, useRef } from "react";
+import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { InstancedTileMesh, type TileInstance } from "./InstancedTileMesh";
 import type { TileAtlas } from "./tileAtlas";
+import type { ObjectPlacement, MobilePlacement } from "../content";
+
+// ---------------------------------------------------------------------------
+// Object registry
+// ---------------------------------------------------------------------------
+
+export type ObjectFactory = () => THREE.Object3D;
+export type ObjectRegistry = Record<string, ObjectFactory>;
+
+// ---------------------------------------------------------------------------
+// Sprite atlas for mobiles
+// ---------------------------------------------------------------------------
+
+export type SpriteAtlas = {
+  texture: THREE.Texture;
+  columns: number;
+  rows: number;
+};
+
+// ---------------------------------------------------------------------------
+// SceneObjects — renders placed objects via factory registry
+// ---------------------------------------------------------------------------
+
+function SceneObjects({
+  registry,
+  placements,
+  tileSize = 1,
+}: {
+  registry: ObjectRegistry;
+  placements: ObjectPlacement[];
+  tileSize?: number;
+}) {
+  const objects = useMemo(() => {
+    return placements.map((p) => {
+      const factory = registry[p.type];
+      if (!factory) return null;
+      const obj = factory();
+      const wx = (p.x + 0.5 + (p.offsetX ?? 0)) * tileSize;
+      const wy = p.offsetY ?? 0;
+      const wz = (p.z + 0.5 + (p.offsetZ ?? 0)) * tileSize;
+      obj.position.set(wx, wy, wz);
+      obj.rotation.set(0, p.yaw ?? 0, 0);
+      if (p.scale !== undefined) obj.scale.setScalar(p.scale);
+      return obj;
+    });
+  }, [registry, placements, tileSize]);
+
+  return (
+    <>
+      {objects.map((obj, i) => (obj ? <primitive key={i} object={obj} /> : null))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SceneMobiles — renders billboard sprites via InstancedMesh
+// ---------------------------------------------------------------------------
+
+const MOBILE_VERT = /* glsl */ `
+attribute float aTileId;
+varying vec2 vUv;
+varying float vTileId;
+
+void main() {
+  vUv = uv;
+  vTileId = aTileId;
+  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+}
+`;
+
+const MOBILE_FRAG = /* glsl */ `
+uniform sampler2D uAtlas;
+uniform float uColumns;
+uniform float uRows;
+varying vec2 vUv;
+varying float vTileId;
+
+void main() {
+  float col = mod(vTileId, uColumns);
+  float row = floor(vTileId / uColumns);
+  vec2 uvMin = vec2(col / uColumns, 1.0 - (row + 1.0) / uRows);
+  vec2 uvSize = vec2(1.0 / uColumns, 1.0 / uRows);
+  vec2 atlasUv = uvMin + vUv * uvSize;
+  vec4 color = texture2D(uAtlas, atlasUv);
+  if (color.a < 0.5) discard;
+  gl_FragColor = color;
+}
+`;
+
+// Reusable temporaries to avoid per-frame allocation.
+const _mbMat4 = new THREE.Matrix4();
+const _mbPos = new THREE.Vector3();
+
+function SceneMobiles({
+  placements,
+  atlas,
+  tileSize = 1,
+  ceilingHeight = 1.5,
+}: {
+  placements: MobilePlacement[];
+  atlas: SpriteAtlas;
+  tileSize?: number;
+  ceilingHeight?: number;
+}) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const count = placements.length;
+
+  const { geo, mat } = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(1, 1);
+
+    const tileIds = new Float32Array(count);
+    placements.forEach((p, i) => {
+      tileIds[i] = p.tileId;
+    });
+    geo.setAttribute("aTileId", new THREE.InstancedBufferAttribute(tileIds, 1));
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uAtlas: { value: atlas.texture },
+        uColumns: { value: atlas.columns },
+        uRows: { value: atlas.rows },
+      },
+      vertexShader: MOBILE_VERT,
+      fragmentShader: MOBILE_FRAG,
+      transparent: true,
+      alphaTest: 0.5,
+      side: THREE.DoubleSide,
+    });
+
+    return { geo, mat };
+  }, [placements, atlas, count]);
+
+  useFrame(({ camera }) => {
+    if (!meshRef.current || count === 0) return;
+    const camPos = camera.position;
+
+    placements.forEach((p, i) => {
+      const wx = (p.x + 0.5) * tileSize;
+      const wz = (p.z + 0.5) * tileSize;
+      const wy = ceilingHeight / 2;
+      _mbPos.set(wx, wy, wz);
+      const angle = Math.atan2(camPos.x - wx, camPos.z - wz);
+      _mbMat4.makeRotationY(angle);
+      _mbMat4.setPosition(_mbPos);
+      meshRef.current!.setMatrixAt(i, _mbMat4);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  if (count === 0) return null;
+
+  return <instancedMesh ref={meshRef} args={[geo, mat, count]} />;
+}
 
 // ---------------------------------------------------------------------------
 // Face geometry helpers
@@ -233,6 +386,12 @@ type SceneProps = {
   fogColor?: string;
   fov?: number;
   debugEdges?: boolean;
+  /** Static placed objects resolved via objectRegistry. */
+  objects?: ObjectPlacement[];
+  objectRegistry?: ObjectRegistry;
+  /** Billboard sprite mobiles. */
+  mobiles?: MobilePlacement[];
+  spriteAtlas?: SpriteAtlas;
 };
 
 function DungeonScene({
@@ -255,6 +414,10 @@ function DungeonScene({
   fogFar,
   fogColor,
   debugEdges,
+  objects,
+  objectRegistry,
+  mobiles,
+  spriteAtlas,
 }: SceneProps) {
   const fogColorObj = useMemo(
     () => (fogColor ? new THREE.Color(fogColor) : undefined),
@@ -354,6 +517,23 @@ function DungeonScene({
         fogColor={fogColorObj}
         debugEdges={debugEdges}
       />
+
+      {objects && objects.length > 0 && objectRegistry && (
+        <SceneObjects
+          registry={objectRegistry}
+          placements={objects}
+          tileSize={tileSize}
+        />
+      )}
+
+      {mobiles && mobiles.length > 0 && spriteAtlas && (
+        <SceneMobiles
+          placements={mobiles}
+          atlas={spriteAtlas}
+          tileSize={tileSize}
+          ceilingHeight={ceilingHeight}
+        />
+      )}
     </>
   );
 }
