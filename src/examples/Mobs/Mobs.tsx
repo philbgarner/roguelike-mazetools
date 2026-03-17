@@ -29,7 +29,11 @@ import {
   createMonstersFromMobiles,
   type MonsterTemplate,
 } from "../../turn/createActors";
-import type { MonsterActor, PlayerActor, TurnAction } from "../../turn/turnTypes";
+import type {
+  MonsterActor,
+  PlayerActor,
+  TurnAction,
+} from "../../turn/turnTypes";
 import type { TurnEvent, XpGainEvent } from "../../turn/turnEvents";
 import type { MobilePlacement } from "../../content";
 import styles from "./Mobs.module.css";
@@ -45,21 +49,64 @@ const CEILING_H = 3;
 const LERP_MS = 150;
 
 const TEMPLATES: Record<string, MonsterTemplate> = {
-  goblin: { name: "Goblin",    glyph: "g", danger: 1, hp: 6,  attack: 3, defense: 0, xp: 10, speed: 8 },
-  orc:    { name: "Orc",       glyph: "o", danger: 3, hp: 14, attack: 6, defense: 1, xp: 25, speed: 6 },
-  troll:  { name: "Troll",     glyph: "T", danger: 6, hp: 30, attack: 9, defense: 2, xp: 60, speed: 5 },
-  rat:    { name: "Giant Rat", glyph: "r", danger: 0, hp: 4,  attack: 2, defense: 0, xp: 5,  speed: 9 },
+  goblin: {
+    name: "Goblin",
+    glyph: "g",
+    danger: 1,
+    hp: 6,
+    attack: 3,
+    defense: 0,
+    xp: 10,
+    speed: 8,
+  },
+  minotaur: {
+    name: "Minotaur",
+    glyph: "m",
+    danger: 3,
+    hp: 14,
+    attack: 6,
+    defense: 1,
+    xp: 25,
+    speed: 6,
+  },
+  troll: {
+    name: "Troll",
+    glyph: "T",
+    danger: 6,
+    hp: 30,
+    attack: 9,
+    defense: 2,
+    xp: 60,
+    speed: 5,
+  },
+  rat: {
+    name: "Giant Rat",
+    glyph: "r",
+    danger: 0,
+    hp: 4,
+    attack: 2,
+    defense: 0,
+    xp: 5,
+    speed: 9,
+  },
 };
 
-const MOB_TYPES = ["goblin", "orc", "rat", "goblin", "goblin", "rat", "orc"];
+const MOB_TYPES = [
+  "goblin",
+  "minotaur",
+  "troll",
+  "goblin",
+  "rat",
+  "troll",
+  "rat",
+];
 
-// Sprite atlas: 4 cols (goblin/orc/troll/rat) × 3 rows (idle/searching/chasing)
-const GLYPH_COL: Record<string, number> = { g: 0, o: 1, T: 2, r: 3 };
-const ALERT_ROW: Record<string, number> = { idle: 0, searching: 1, chasing: 2 };
+// Sprite atlas: 4 cols (goblin/minotaur/troll/rat) × 1 row
+const GLYPH_COL: Record<string, number> = { g: 0, m: 1, T: 2, r: 3 };
 const SPRITE_COLS = 4;
 
-function mobTileId(glyph: string, alertState: string): number {
-  return (GLYPH_COL[glyph] ?? 0) + (ALERT_ROW[alertState] ?? 0) * SPRITE_COLS;
+function mobTileId(glyph: string): number {
+  return GLYPH_COL[glyph] ?? 0;
 }
 
 const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -102,45 +149,58 @@ function buildDungeonTileTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function buildMonsterSpriteAtlas(): SpriteAtlas {
-  const TILE = 32;
-  const ROWS = 3;
+// Sprite positions in sprites.png (each sprite is 16×16 px)
+const SPRITE_SRC: Array<{ x: number; y: number }> = [
+  { x: 80, y: 416 },  // goblin (col 0)
+  { x: 272, y: 448 }, // minotaur (col 1)
+  { x: 80, y: 448 },  // troll (col 2)
+  { x: 144, y: 368 }, // rat (col 3)
+];
+const SRC_TILE = 16;
+const DST_TILE = 64; // scale up for 3-D quality
+
+async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = reject;
+    el.src = url;
+  });
+
   const canvas = document.createElement("canvas");
-  canvas.width = SPRITE_COLS * TILE;
-  canvas.height = ROWS * TILE;
+  canvas.width = SPRITE_COLS * DST_TILE;
+  canvas.height = DST_TILE;
   const ctx = canvas.getContext("2d")!;
 
-  const glyphs = ["g", "o", "T", "r"];
-  const bgColors = [
-    ["#1a2e1a", "#2e1a1a", "#2a180a", "#1e1e1e"],
-    ["#2a2008", "#2a2008", "#2a2008", "#2a2008"],
-    ["#2e0808", "#2e0808", "#2e0808", "#2e0808"],
-  ];
-  const fgColors = [
-    ["#5aaa5a", "#aa5a5a", "#aa8050", "#9a9a9a"],
-    ["#ffaa40", "#ffaa40", "#ffaa40", "#ffaa40"],
-    ["#ff5050", "#ff5050", "#ff5050", "#ff5050"],
-  ];
+  // Extract each sprite from the sheet, remove cream background, place in atlas
+  const tmp = document.createElement("canvas");
+  tmp.width = SRC_TILE;
+  tmp.height = SRC_TILE;
+  const tCtx = tmp.getContext("2d")!;
 
-  for (let row = 0; row < ROWS; row++) {
-    for (let col = 0; col < SPRITE_COLS; col++) {
-      const x = col * TILE;
-      const y = row * TILE;
-      ctx.fillStyle = bgColors[row][col];
-      ctx.fillRect(x, y, TILE, TILE);
-      ctx.font = `bold ${TILE - 8}px monospace`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = fgColors[row][col];
-      ctx.fillText(glyphs[col], x + TILE / 2, y + TILE / 2);
+  for (let col = 0; col < SPRITE_COLS; col++) {
+    const { x, y } = SPRITE_SRC[col];
+    tCtx.clearRect(0, 0, SRC_TILE, SRC_TILE);
+    tCtx.drawImage(img, x, y, SRC_TILE, SRC_TILE, 0, 0, SRC_TILE, SRC_TILE);
+
+    // Remove near-white / cream background pixels
+    const px = tCtx.getImageData(0, 0, SRC_TILE, SRC_TILE);
+    for (let i = 0; i < px.data.length; i += 4) {
+      const r = px.data[i], g = px.data[i + 1], b = px.data[i + 2];
+      if (r > 210 && g > 200 && b > 185) px.data[i + 3] = 0;
     }
+    tCtx.putImageData(px, 0, 0);
+
+    // Scale up to DST_TILE and blit into atlas row
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tmp, 0, 0, SRC_TILE, SRC_TILE, col * DST_TILE, 0, DST_TILE, DST_TILE);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
   texture.generateMipmaps = false;
-  return { texture, columns: SPRITE_COLS, rows: ROWS };
+  return { texture, columns: SPRITE_COLS, rows: 1 };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,8 +240,11 @@ function drawMinimap(
     if (actor.kind !== "monster" || !(actor as MonsterActor).alive) continue;
     const m = actor as MonsterActor;
     ctx.fillStyle =
-      m.alertState === "chasing"   ? "#f44" :
-      m.alertState === "searching" ? "#f80" : "#844";
+      m.alertState === "chasing"
+        ? "#f44"
+        : m.alertState === "searching"
+          ? "#f80"
+          : "#844";
     const px = (m.x + 0.5) * cellW;
     const pz = (m.y + 0.5) * cellH;
     ctx.beginPath();
@@ -218,7 +281,7 @@ function resolveBump(
 ): TurnSystemState {
   const attacker = state.actors[attackerId] as PlayerActor | MonsterActor;
   const target = Object.values(state.actors).find(
-    a => a.alive && a.x === targetX && a.y === targetY && a.id !== attackerId,
+    (a) => a.alive && a.x === targetX && a.y === targetY && a.id !== attackerId,
   ) as PlayerActor | MonsterActor | undefined;
 
   if (!target) return state;
@@ -227,16 +290,33 @@ function resolveBump(
   const newHp = Math.max(0, target.hp - dmg);
   const died = newHp <= 0;
 
-  onEvent({ kind: "damage", actorId: target.id, amount: dmg, x: target.x, y: target.y });
+  onEvent({
+    kind: "damage",
+    actorId: target.id,
+    amount: dmg,
+    x: target.x,
+    y: target.y,
+  });
   const newActors = {
     ...state.actors,
     [target.id]: { ...target, hp: newHp, alive: !died },
   };
 
   if (died) {
-    onEvent({ kind: "death", actorId: target.id, sourceId: attackerId, x: target.x, y: target.y });
+    onEvent({
+      kind: "death",
+      actorId: target.id,
+      sourceId: attackerId,
+      x: target.x,
+      y: target.y,
+    });
     if (attackerId === state.playerId && target.kind === "monster") {
-      onEvent({ kind: "xpGain", amount: (target as MonsterActor).xp, x: target.x, y: target.y });
+      onEvent({
+        kind: "xpGain",
+        amount: (target as MonsterActor).xp,
+        x: target.x,
+        y: target.y,
+      });
     }
   }
 
@@ -254,7 +334,8 @@ function buildDeps(
   onEvent: (e: TurnEvent) => void,
 ): TurnSystemDeps {
   const isWalkable = (x: number, y: number) => {
-    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return false;
+    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height)
+      return false;
     return solidData[y * dungeon.width + x] === 0;
   };
   return {
@@ -267,17 +348,26 @@ function buildDeps(
     },
     applyAction: (state, actorId, action, deps) => {
       if (action.kind === "wait" || action.kind === "interact") return state;
-      if (action.kind !== "move" || action.dx == null || action.dy == null) return state;
+      if (action.kind !== "move" || action.dx == null || action.dy == null)
+        return state;
       const actor = state.actors[actorId];
       if (!actor) return state;
       const nx = actor.x + action.dx;
       const ny = actor.y + action.dy;
       const blocker = Object.values(state.actors).find(
-        a => a.id !== actorId && a.alive && a.blocksMovement && a.x === nx && a.y === ny,
+        (a) =>
+          a.id !== actorId &&
+          a.alive &&
+          a.blocksMovement &&
+          a.x === nx &&
+          a.y === ny,
       );
       if (blocker) return resolveBump(state, actorId, nx, ny, onEvent);
       if (!deps.isWalkable(nx, ny)) return state;
-      return { ...state, actors: { ...state.actors, [actorId]: { ...actor, x: nx, y: ny } } };
+      return {
+        ...state,
+        actors: { ...state.actors, [actorId]: { ...actor, x: nx, y: ny } },
+      };
     },
     onEvent,
   };
@@ -296,10 +386,16 @@ type GameState = {
 };
 
 function initGame(seed: number): GameState {
-  const dungeon = generateBspDungeon({ width: DW, height: DH, seed, keepOuterWalls: true });
+  const dungeon = generateBspDungeon({
+    width: DW,
+    height: DH,
+    seed,
+    keepOuterWalls: true,
+  });
   const solidData = dungeon.textures.solid.image.data as Uint8Array;
 
-  const mobiles: Array<{ x: number; z: number; type: string; tileId: number }> = [];
+  const mobiles: Array<{ x: number; z: number; type: string; tileId: number }> =
+    [];
   let mobIdx = 0;
   for (const [roomId, room] of dungeon.rooms) {
     if (roomId === dungeon.startRoomId || mobIdx >= MOB_TYPES.length) continue;
@@ -341,7 +437,9 @@ type LogEntry = { text: string; kind: LogKind };
 // ---------------------------------------------------------------------------
 
 export default function Mobs() {
-  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 0x7fffffff));
+  const [seed, setSeed] = useState(() =>
+    Math.floor(Math.random() * 0x7fffffff),
+  );
   const gameRef = useRef<GameState | null>(null);
   const [turnState, setTurnState] = useState<TurnSystemState | null>(null);
 
@@ -356,21 +454,32 @@ export default function Mobs() {
   // Camera — logical (grid-aligned) target and lerp animation
   const logicalRef = useRef({ x: 1.5, z: 1.5, yaw: 0 });
   const animRef = useRef({
-    fromX: 1.5, fromZ: 1.5, fromYaw: 0,
-    toX: 1.5, toZ: 1.5, toYaw: 0,
-    startTime: 0, animating: false,
+    fromX: 1.5,
+    fromZ: 1.5,
+    fromYaw: 0,
+    toX: 1.5,
+    toZ: 1.5,
+    toYaw: 0,
+    startTime: 0,
+    animating: false,
   });
   const [camera, setCamera] = useState({ x: 1.5, z: 1.5, yaw: 0 });
 
   // Static assets — created once
-  const atlas = useMemo(() => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX), []);
+  const atlas = useMemo(
+    () => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX),
+    [],
+  );
   const dungeonTexture = useMemo(() => buildDungeonTileTexture(), []);
-  const spriteAtlas = useMemo(() => buildMonsterSpriteAtlas(), []);
+  const [spriteAtlas, setSpriteAtlas] = useState<SpriteAtlas | null>(null);
+  useEffect(() => {
+    loadMonsterSpriteAtlas("/examples/mobs/sprites.png").then(setSpriteAtlas);
+  }, []);
 
   const minimapRef = useRef<HTMLCanvasElement>(null);
 
   const pushLog = useCallback((entry: LogEntry) => {
-    setLog(prev => [...prev.slice(-49), entry]);
+    setLog((prev) => [...prev.slice(-49), entry]);
   }, []);
 
   // Init / reinit on seed change
@@ -380,7 +489,9 @@ export default function Mobs() {
     setTurnState(game.turnState);
     setGameOver(false);
     setPlayerXp(0);
-    const player = game.turnState.actors[game.turnState.playerId] as PlayerActor;
+    const player = game.turnState.actors[
+      game.turnState.playerId
+    ] as PlayerActor;
     setPlayerHp(player.hp);
     setPlayerMaxHp(player.maxHp);
     setAlertCount(0);
@@ -390,9 +501,14 @@ export default function Mobs() {
     const cz = game.spawnZ + 0.5;
     logicalRef.current = { x: cx, z: cz, yaw: 0 };
     animRef.current = {
-      fromX: cx, fromZ: cz, fromYaw: 0,
-      toX: cx, toZ: cz, toYaw: 0,
-      startTime: 0, animating: false,
+      fromX: cx,
+      fromZ: cz,
+      fromYaw: 0,
+      toX: cx,
+      toZ: cz,
+      toYaw: 0,
+      startTime: 0,
+      animating: false,
     };
     setCamera({ x: cx, z: cz, yaw: 0 });
   }, [seed]);
@@ -434,69 +550,91 @@ export default function Mobs() {
   }, [turnState, camera]);
 
   // Commit a player turn action
-  const applyTurn = useCallback((action: TurnAction) => {
-    const game = gameRef.current;
-    if (!game || gameOver || !game.turnState.awaitingPlayerInput) return;
+  const applyTurn = useCallback(
+    (action: TurnAction) => {
+      const game = gameRef.current;
+      if (!game || gameOver || !game.turnState.awaitingPlayerInput) return;
 
-    const prevPlayer = game.turnState.actors[game.turnState.playerId] as PlayerActor;
-    const prevX = prevPlayer.x;
-    const prevZ = prevPlayer.y;
+      const prevPlayer = game.turnState.actors[
+        game.turnState.playerId
+      ] as PlayerActor;
+      const prevX = prevPlayer.x;
+      const prevZ = prevPlayer.y;
 
-    const evts: TurnEvent[] = [];
-    const deps = buildDeps(game.dungeon, game.solidData, game.turnState.actors, e => evts.push(e));
-    const newState = commitPlayerAction(game.turnState, deps, action);
-    game.turnState = newState;
-    setTurnState(newState);
+      const evts: TurnEvent[] = [];
+      const deps = buildDeps(
+        game.dungeon,
+        game.solidData,
+        game.turnState.actors,
+        (e) => evts.push(e),
+      );
+      const newState = commitPlayerAction(game.turnState, deps, action);
+      game.turnState = newState;
+      setTurnState(newState);
 
-    for (const evt of evts) {
-      if (evt.kind === "damage") {
-        const who =
-          evt.actorId === newState.playerId ? "You" :
-          (newState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId;
-        pushLog({ text: `${who} takes ${evt.amount} dmg`, kind: "damage" });
-      } else if (evt.kind === "death") {
-        const who =
-          evt.actorId === newState.playerId ? "You" :
-          (newState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId;
-        pushLog({ text: `${who} died!`, kind: "death" });
-        if (evt.actorId === newState.playerId) setGameOver(true);
-      } else if (evt.kind === "xpGain") {
-        const xpEvt = evt as XpGainEvent;
-        setPlayerXp(prev => prev + xpEvt.amount);
-        pushLog({ text: `+${xpEvt.amount} XP`, kind: "xp" });
+      for (const evt of evts) {
+        if (evt.kind === "damage") {
+          const who =
+            evt.actorId === newState.playerId
+              ? "You"
+              : ((newState.actors[evt.actorId] as MonsterActor | undefined)
+                  ?.name ?? evt.actorId);
+          pushLog({ text: `${who} takes ${evt.amount} dmg`, kind: "damage" });
+        } else if (evt.kind === "death") {
+          const who =
+            evt.actorId === newState.playerId
+              ? "You"
+              : ((newState.actors[evt.actorId] as MonsterActor | undefined)
+                  ?.name ?? evt.actorId);
+          pushLog({ text: `${who} died!`, kind: "death" });
+          if (evt.actorId === newState.playerId) setGameOver(true);
+        } else if (evt.kind === "xpGain") {
+          const xpEvt = evt as XpGainEvent;
+          setPlayerXp((prev) => prev + xpEvt.amount);
+          pushLog({ text: `+${xpEvt.amount} XP`, kind: "xp" });
+        }
       }
-    }
 
-    const newPlayer = newState.actors[newState.playerId] as PlayerActor;
-    setPlayerHp(newPlayer.hp);
+      const newPlayer = newState.actors[newState.playerId] as PlayerActor;
+      setPlayerHp(newPlayer.hp);
 
-    const alerted = Object.values(newState.actors).filter(
-      a => a.kind === "monster" && a.alive && (a as MonsterActor).alertState !== "idle",
-    ).length;
-    setAlertCount(alerted);
+      const alerted = Object.values(newState.actors).filter(
+        (a) =>
+          a.kind === "monster" &&
+          a.alive &&
+          (a as MonsterActor).alertState !== "idle",
+      ).length;
+      setAlertCount(alerted);
 
-    if (!newPlayer.alive) {
-      setGameOver(true);
-      pushLog({ text: "You died. Press R for a new dungeon.", kind: "death" });
-    }
+      if (!newPlayer.alive) {
+        setGameOver(true);
+        pushLog({
+          text: "You died. Press R for a new dungeon.",
+          kind: "death",
+        });
+      }
 
-    // Animate camera to new player position if they actually moved
-    if (newPlayer.x !== prevX || newPlayer.y !== prevZ) {
-      const { yaw } = logicalRef.current;
-      const toX = newPlayer.x + 0.5;
-      const toZ = newPlayer.y + 0.5;
-      animRef.current = {
-        fromX: logicalRef.current.x,
-        fromZ: logicalRef.current.z,
-        fromYaw: yaw,
-        toX, toZ, toYaw: yaw,
-        startTime: performance.now(),
-        animating: true,
-      };
-      logicalRef.current.x = toX;
-      logicalRef.current.z = toZ;
-    }
-  }, [gameOver, pushLog]);
+      // Animate camera to new player position if they actually moved
+      if (newPlayer.x !== prevX || newPlayer.y !== prevZ) {
+        const { yaw } = logicalRef.current;
+        const toX = newPlayer.x + 0.5;
+        const toZ = newPlayer.y + 0.5;
+        animRef.current = {
+          fromX: logicalRef.current.x,
+          fromZ: logicalRef.current.z,
+          fromYaw: yaw,
+          toX,
+          toZ,
+          toYaw: yaw,
+          startTime: performance.now(),
+          animating: true,
+        };
+        logicalRef.current.x = toX;
+        logicalRef.current.z = toZ;
+      }
+    },
+    [gameOver, pushLog],
+  );
 
   // Keyboard handler
   useEffect(() => {
@@ -509,11 +647,13 @@ export default function Mobs() {
       const fdz = Math.round(-Math.cos(yaw));
 
       switch (e.code) {
-        case "KeyW": case "ArrowUp":
+        case "KeyW":
+        case "ArrowUp":
           e.preventDefault();
           applyTurn({ kind: "move", dx: fdx, dy: fdz });
           break;
-        case "KeyS": case "ArrowDown":
+        case "KeyS":
+        case "ArrowDown":
           e.preventDefault();
           applyTurn({ kind: "move", dx: -fdx, dy: -fdz });
           break;
@@ -521,9 +661,14 @@ export default function Mobs() {
           e.preventDefault();
           const toYaw = yaw + Math.PI / 2;
           animRef.current = {
-            fromX: x, fromZ: z, fromYaw: yaw,
-            toX: x, toZ: z, toYaw,
-            startTime: performance.now(), animating: true,
+            fromX: x,
+            fromZ: z,
+            fromYaw: yaw,
+            toX: x,
+            toZ: z,
+            toYaw,
+            startTime: performance.now(),
+            animating: true,
           };
           logicalRef.current.yaw = toYaw;
           break;
@@ -532,14 +677,20 @@ export default function Mobs() {
           e.preventDefault();
           const toYaw = yaw - Math.PI / 2;
           animRef.current = {
-            fromX: x, fromZ: z, fromYaw: yaw,
-            toX: x, toZ: z, toYaw,
-            startTime: performance.now(), animating: true,
+            fromX: x,
+            fromZ: z,
+            fromYaw: yaw,
+            toX: x,
+            toZ: z,
+            toYaw,
+            startTime: performance.now(),
+            animating: true,
           };
           logicalRef.current.yaw = toYaw;
           break;
         }
-        case "Space": case "Period":
+        case "Space":
+        case "Period":
           e.preventDefault();
           applyTurn({ kind: "wait" });
           break;
@@ -561,14 +712,14 @@ export default function Mobs() {
   const mobiles: MobilePlacement[] = useMemo(() => {
     if (!turnState) return [];
     return Object.values(turnState.actors)
-      .filter(a => a.kind === "monster" && (a as MonsterActor).alive)
-      .map(a => {
+      .filter((a) => a.kind === "monster" && (a as MonsterActor).alive)
+      .map((a) => {
         const m = a as MonsterActor;
         return {
           x: m.x,
           z: m.y,
           type: "monster",
-          tileId: mobTileId(m.glyph, m.alertState),
+          tileId: mobTileId(m.glyph),
         };
       });
   }, [turnState]);
@@ -580,10 +731,14 @@ export default function Mobs() {
       {/* ── Header ── */}
       <div className={styles.header}>
         <span className={styles.title}>MOBS</span>
-        <span className={styles.hp}>HP {playerHp}/{playerMaxHp}</span>
+        <span className={styles.hp}>
+          HP {playerHp}/{playerMaxHp}
+        </span>
         <span className={styles.xp}>XP {playerXp}</span>
         {alertCount > 0 && (
-          <span className={styles.alert}>{alertCount} monster{alertCount !== 1 ? "s" : ""} alerted</span>
+          <span className={styles.alert}>
+            {alertCount} monster{alertCount !== 1 ? "s" : ""} alerted
+          </span>
         )}
         {gameOver && <span className={styles.dead}>DEAD — press R</span>}
       </div>
@@ -612,7 +767,7 @@ export default function Mobs() {
               ceilingHeight={CEILING_H}
               tileSize={TILE_SIZE}
               mobiles={mobiles}
-              spriteAtlas={spriteAtlas}
+              spriteAtlas={spriteAtlas ?? undefined}
               style={{ width: "100%", height: "100%" }}
             />
           )}
@@ -631,10 +786,13 @@ export default function Mobs() {
               <div
                 key={i}
                 className={
-                  entry.kind === "damage" ? styles.logDamage :
-                  entry.kind === "death"  ? styles.logDeath :
-                  entry.kind === "xp"     ? styles.logXp :
-                  styles.logEntry
+                  entry.kind === "damage"
+                    ? styles.logDamage
+                    : entry.kind === "death"
+                      ? styles.logDeath
+                      : entry.kind === "xp"
+                        ? styles.logXp
+                        : styles.logEntry
                 }
               >
                 {entry.text}
@@ -648,7 +806,8 @@ export default function Mobs() {
       <div className={styles.statusPanel}>
         <span>Facing: {cardinalDir(camera.yaw)}</span>
         <span className={styles.controls}>
-          W/S — move &nbsp;·&nbsp; A/D — turn 90° &nbsp;·&nbsp; Space — wait &nbsp;·&nbsp; R — new dungeon
+          W/S — move &nbsp;·&nbsp; A/D — turn 90° &nbsp;·&nbsp; Space — wait
+          &nbsp;·&nbsp; R — new dungeon
         </span>
       </div>
     </div>
