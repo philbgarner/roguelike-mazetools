@@ -1,13 +1,20 @@
 /**
- * Mobs — turn-based dungeon example with monster AI.
+ * Mobs — turn-based dungeon with 3-D first-person view and billboard monsters.
  *
  * Controls:
- *   WASD / Arrow keys — move / bump-attack
- *   . or Space        — wait a turn
- *   R                 — regenerate dungeon
+ *   W / ArrowUp    — step forward (commits player turn)
+ *   S / ArrowDown  — step backward (commits player turn)
+ *   A              — turn left 90° (free, no turn cost)
+ *   D              — turn right 90° (free, no turn cost)
+ *   Space / .      — wait a turn
+ *   R              — regenerate dungeon
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 import { generateBspDungeon, type BspDungeonOutputs } from "../../bsp";
+import { buildTileAtlas } from "../../rendering/tileAtlas";
+import { PerspectiveDungeonView } from "../../rendering/PerspectiveDungeonView";
+import type { SpriteAtlas } from "../../rendering/PerspectiveDungeonView";
 import {
   createTurnSystemState,
   commitPlayerAction,
@@ -24,14 +31,18 @@ import {
 } from "../../turn/createActors";
 import type { MonsterActor, PlayerActor, TurnAction } from "../../turn/turnTypes";
 import type { TurnEvent, XpGainEvent } from "../../turn/turnEvents";
+import type { MobilePlacement } from "../../content";
 import styles from "./Mobs.module.css";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const CELL = 10; // pixels per cell
 const DW = 60;
 const DH = 40;
+const TILE_PX = 16;
+const TILE_SIZE = 3;
+const CEILING_H = 3;
+const LERP_MS = 150;
 
 const TEMPLATES: Record<string, MonsterTemplate> = {
   goblin: { name: "Goblin",    glyph: "g", danger: 1, hp: 6,  attack: 3, defense: 0, xp: 10, speed: 8 },
@@ -42,27 +53,160 @@ const TEMPLATES: Record<string, MonsterTemplate> = {
 
 const MOB_TYPES = ["goblin", "orc", "rat", "goblin", "goblin", "rat", "orc"];
 
-// ---------------------------------------------------------------------------
-// Dungeon helpers
-// ---------------------------------------------------------------------------
+// Sprite atlas: 4 cols (goblin/orc/troll/rat) × 3 rows (idle/searching/chasing)
+const GLYPH_COL: Record<string, number> = { g: 0, o: 1, T: 2, r: 3 };
+const ALERT_ROW: Record<string, number> = { idle: 0, searching: 1, chasing: 2 };
+const SPRITE_COLS = 4;
 
-function isSolid(dungeon: BspDungeonOutputs, x: number, y: number): boolean {
-  if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return true;
-  const data = dungeon.textures.solid.image.data as Uint8Array;
-  return data[(y * dungeon.width + x) * 4] !== 0;
+function mobTileId(glyph: string, alertState: string): number {
+  return (GLYPH_COL[glyph] ?? 0) + (ALERT_ROW[alertState] ?? 0) * SPRITE_COLS;
 }
 
-function roomCenter(dungeon: BspDungeonOutputs, roomId: number): { x: number; y: number } {
-  const room = dungeon.rooms.get(roomId);
-  if (!room) return { x: Math.floor(dungeon.width / 2), y: Math.floor(dungeon.height / 2) };
-  return {
-    x: Math.floor(room.rect.x + room.rect.w / 2),
-    y: Math.floor(room.rect.y + room.rect.h / 2),
-  };
+const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+function cardinalDir(yaw: number): string {
+  const norm = ((yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const idx = Math.round((norm / (Math.PI * 2)) * 8) % 8;
+  return DIRS[idx];
 }
 
 // ---------------------------------------------------------------------------
-// Combat (bump-to-attack)
+// Procedural textures
+// ---------------------------------------------------------------------------
+
+function buildDungeonTileTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = TILE_PX * 3;
+  canvas.height = TILE_PX;
+  const ctx = canvas.getContext("2d")!;
+
+  // Floor — dark stone
+  ctx.fillStyle = "#2a2215";
+  ctx.fillRect(0, 0, TILE_PX, TILE_PX);
+
+  // Ceiling — darker, slightly blue
+  ctx.fillStyle = "#181820";
+  ctx.fillRect(TILE_PX, 0, TILE_PX, TILE_PX);
+
+  // Wall — aged stone with cracks
+  ctx.fillStyle = "#3c3535";
+  ctx.fillRect(TILE_PX * 2, 0, TILE_PX, TILE_PX);
+  ctx.fillStyle = "#2e2828";
+  ctx.fillRect(TILE_PX * 2 + 0, 3, 2, 6);
+  ctx.fillRect(TILE_PX * 2 + 5, 1, 1, 5);
+  ctx.fillRect(TILE_PX * 2 + 11, 7, 2, 5);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  return tex;
+}
+
+function buildMonsterSpriteAtlas(): SpriteAtlas {
+  const TILE = 32;
+  const ROWS = 3;
+  const canvas = document.createElement("canvas");
+  canvas.width = SPRITE_COLS * TILE;
+  canvas.height = ROWS * TILE;
+  const ctx = canvas.getContext("2d")!;
+
+  const glyphs = ["g", "o", "T", "r"];
+  const bgColors = [
+    ["#1a2e1a", "#2e1a1a", "#2a180a", "#1e1e1e"],
+    ["#2a2008", "#2a2008", "#2a2008", "#2a2008"],
+    ["#2e0808", "#2e0808", "#2e0808", "#2e0808"],
+  ];
+  const fgColors = [
+    ["#5aaa5a", "#aa5a5a", "#aa8050", "#9a9a9a"],
+    ["#ffaa40", "#ffaa40", "#ffaa40", "#ffaa40"],
+    ["#ff5050", "#ff5050", "#ff5050", "#ff5050"],
+  ];
+
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < SPRITE_COLS; col++) {
+      const x = col * TILE;
+      const y = row * TILE;
+      ctx.fillStyle = bgColors[row][col];
+      ctx.fillRect(x, y, TILE, TILE);
+      ctx.font = `bold ${TILE - 8}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = fgColors[row][col];
+      ctx.fillText(glyphs[col], x + TILE / 2, y + TILE / 2);
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  return { texture, columns: SPRITE_COLS, rows: ROWS };
+}
+
+// ---------------------------------------------------------------------------
+// Minimap
+// ---------------------------------------------------------------------------
+
+function drawMinimap(
+  canvas: HTMLCanvasElement,
+  solidData: Uint8Array,
+  width: number,
+  height: number,
+  playerX: number,
+  playerZ: number,
+  yaw: number,
+  actors: TurnSystemState["actors"],
+) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const cellW = cw / width;
+  const cellH = ch / height;
+
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, cw, ch);
+
+  for (let cz = 0; cz < height; cz++) {
+    for (let cx = 0; cx < width; cx++) {
+      const solid = solidData[cz * width + cx] > 0;
+      ctx.fillStyle = solid ? "#222" : "#555";
+      ctx.fillRect(cx * cellW, cz * cellH, cellW, cellH);
+    }
+  }
+
+  // Monsters
+  for (const actor of Object.values(actors)) {
+    if (actor.kind !== "monster" || !(actor as MonsterActor).alive) continue;
+    const m = actor as MonsterActor;
+    ctx.fillStyle =
+      m.alertState === "chasing"   ? "#f44" :
+      m.alertState === "searching" ? "#f80" : "#844";
+    const px = (m.x + 0.5) * cellW;
+    const pz = (m.y + 0.5) * cellH;
+    ctx.beginPath();
+    ctx.arc(px, pz, Math.max(cellW * 0.5, 2), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Player arrow
+  const px = playerX * cellW;
+  const pz = playerZ * cellH;
+  const arrowLen = Math.max(cellW * 2.5, 6);
+  ctx.fillStyle = "#f80";
+  ctx.beginPath();
+  ctx.arc(px, pz, Math.max(cellW * 0.7, 3), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#ff0";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(px, pz);
+  ctx.lineTo(px - Math.sin(yaw) * arrowLen, pz - Math.cos(yaw) * arrowLen);
+  ctx.stroke();
+}
+
+// ---------------------------------------------------------------------------
+// Combat
 // ---------------------------------------------------------------------------
 
 function resolveBump(
@@ -84,7 +228,6 @@ function resolveBump(
   const died = newHp <= 0;
 
   onEvent({ kind: "damage", actorId: target.id, amount: dmg, x: target.x, y: target.y });
-
   const newActors = {
     ...state.actors,
     [target.id]: { ...target, hp: newHp, alive: !died },
@@ -101,15 +244,19 @@ function resolveBump(
 }
 
 // ---------------------------------------------------------------------------
-// TurnSystemDeps builder
+// TurnSystemDeps
 // ---------------------------------------------------------------------------
 
 function buildDeps(
   dungeon: BspDungeonOutputs,
-  isWalkable: (x: number, y: number) => boolean,
+  solidData: Uint8Array,
   actors: TurnSystemState["actors"],
   onEvent: (e: TurnEvent) => void,
 ): TurnSystemDeps {
+  const isWalkable = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return false;
+    return solidData[y * dungeon.width + x] === 0;
+  };
   return {
     isWalkable,
     monsterDecide: (state, monsterId) =>
@@ -137,20 +284,21 @@ function buildDeps(
 }
 
 // ---------------------------------------------------------------------------
-// Dungeon initialisation
+// Game state
 // ---------------------------------------------------------------------------
 
 type GameState = {
   dungeon: BspDungeonOutputs;
-  isWalkable: (x: number, y: number) => boolean;
+  solidData: Uint8Array;
   turnState: TurnSystemState;
+  spawnX: number;
+  spawnZ: number;
 };
 
 function initGame(seed: number): GameState {
   const dungeon = generateBspDungeon({ width: DW, height: DH, seed, keepOuterWalls: true });
-  const isWalkable = (x: number, y: number) => !isSolid(dungeon, x, y);
+  const solidData = dungeon.textures.solid.image.data as Uint8Array;
 
-  // Spawn one monster per room (skip start room)
   const mobiles: Array<{ x: number; z: number; type: string; tileId: number }> = [];
   let mobIdx = 0;
   for (const [roomId, room] of dungeon.rooms) {
@@ -163,66 +311,22 @@ function initGame(seed: number): GameState {
     });
   }
 
-  const playerPos = roomCenter(dungeon, dungeon.startRoomId);
-  const player = createPlayerActor(playerPos.x, playerPos.y);
-  const monsters = createMonstersFromMobiles(mobiles, TEMPLATES);
+  const startRoom = dungeon.rooms.get(dungeon.startRoomId);
+  const spawnX = startRoom
+    ? Math.floor(startRoom.rect.x + startRoom.rect.w / 2)
+    : Math.floor(DW / 2);
+  const spawnZ = startRoom
+    ? Math.floor(startRoom.rect.y + startRoom.rect.h / 2)
+    : Math.floor(DH / 2);
 
+  const player = createPlayerActor(spawnX, spawnZ);
+  const monsters = createMonstersFromMobiles(mobiles, TEMPLATES);
   let turnState = createTurnSystemState(player, monsters);
-  // Advance to first player turn
-  const deps = buildDeps(dungeon, isWalkable, turnState.actors, () => {});
+
+  const deps = buildDeps(dungeon, solidData, turnState.actors, () => {});
   turnState = tickUntilPlayer(turnState, deps);
 
-  return { dungeon, isWalkable, turnState };
-}
-
-// ---------------------------------------------------------------------------
-// Canvas rendering
-// ---------------------------------------------------------------------------
-
-function renderGame(
-  canvas: HTMLCanvasElement,
-  dungeon: BspDungeonOutputs,
-  state: TurnSystemState,
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const { width: W, height: H } = dungeon;
-  const solid = dungeon.textures.solid.image.data as Uint8Array;
-
-  // Dungeon tiles
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      ctx.fillStyle = solid[(y * W + x) * 4] !== 0 ? "#161616" : "#2a2a2a";
-      ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
-    }
-  }
-
-  // Actors
-  ctx.font = `${CELL - 1}px monospace`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  for (const actor of Object.values(state.actors)) {
-    const px = actor.x * CELL + CELL / 2;
-    const py = actor.y * CELL + CELL / 2;
-
-    if (actor.kind === "player") {
-      ctx.fillStyle = "#ffe066";
-      ctx.fillText("@", px, py);
-    } else {
-      const m = actor as MonsterActor;
-      if (!m.alive) {
-        ctx.fillStyle = "#383838";
-        ctx.fillText("%", px, py);
-      } else {
-        ctx.fillStyle =
-          m.alertState === "chasing"   ? "#ff4040" :
-          m.alertState === "searching" ? "#ff9040" :
-                                         "#b04040";
-        ctx.fillText(m.glyph, px, py);
-      }
-    }
-  }
+  return { dungeon, solidData, turnState, spawnX, spawnZ };
 }
 
 // ---------------------------------------------------------------------------
@@ -232,22 +336,14 @@ function renderGame(
 type LogKind = "info" | "damage" | "death" | "xp";
 type LogEntry = { text: string; kind: LogKind };
 
-const logClass: Record<LogKind, string> = {
-  info:   styles.logEntry,
-  damage: styles.logDamage,
-  death:  styles.logDeath,
-  xp:     styles.logXp,
-};
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function Mobs() {
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 0x7fffffff));
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameState | null>(null);
-  const pendingEvents = useRef<TurnEvent[]>([]);
+  const [turnState, setTurnState] = useState<TurnSystemState | null>(null);
 
   const [playerHp, setPlayerHp] = useState(20);
   const [playerMaxHp, setPlayerMaxHp] = useState(20);
@@ -255,17 +351,33 @@ export default function Mobs() {
   const [alertCount, setAlertCount] = useState(0);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [gameOver, setGameOver] = useState(false);
-  const logContainerRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+
+  // Camera — logical (grid-aligned) target and lerp animation
+  const logicalRef = useRef({ x: 1.5, z: 1.5, yaw: 0 });
+  const animRef = useRef({
+    fromX: 1.5, fromZ: 1.5, fromYaw: 0,
+    toX: 1.5, toZ: 1.5, toYaw: 0,
+    startTime: 0, animating: false,
+  });
+  const [camera, setCamera] = useState({ x: 1.5, z: 1.5, yaw: 0 });
+
+  // Static assets — created once
+  const atlas = useMemo(() => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX), []);
+  const dungeonTexture = useMemo(() => buildDungeonTileTexture(), []);
+  const spriteAtlas = useMemo(() => buildMonsterSpriteAtlas(), []);
+
+  const minimapRef = useRef<HTMLCanvasElement>(null);
 
   const pushLog = useCallback((entry: LogEntry) => {
     setLog(prev => [...prev.slice(-49), entry]);
   }, []);
 
-  // Init dungeon on seed change
+  // Init / reinit on seed change
   useEffect(() => {
-    pendingEvents.current = [];
     const game = initGame(seed);
     gameRef.current = game;
+    setTurnState(game.turnState);
     setGameOver(false);
     setPlayerXp(0);
     const player = game.turnState.actors[game.turnState.playerId] as PlayerActor;
@@ -273,35 +385,81 @@ export default function Mobs() {
     setPlayerMaxHp(player.maxHp);
     setAlertCount(0);
     setLog([{ text: "New dungeon. Hunt the monsters!", kind: "info" }]);
-    if (canvasRef.current) renderGame(canvasRef.current, game.dungeon, game.turnState);
+
+    const cx = game.spawnX + 0.5;
+    const cz = game.spawnZ + 0.5;
+    logicalRef.current = { x: cx, z: cz, yaw: 0 };
+    animRef.current = {
+      fromX: cx, fromZ: cz, fromYaw: 0,
+      toX: cx, toZ: cz, toYaw: 0,
+      startTime: 0, animating: false,
+    };
+    setCamera({ x: cx, z: cz, yaw: 0 });
   }, [seed]);
 
-  // Scroll log to bottom
+  // Smooth-lerp animation loop
   useEffect(() => {
-    if (logContainerRef.current) logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
-  }, [log]);
+    let rafId: number;
+    const tick = (now: number) => {
+      rafId = requestAnimationFrame(tick);
+      const anim = animRef.current;
+      if (!anim.animating) return;
+      const raw = (now - anim.startTime) / LERP_MS;
+      const t = Math.min(raw, 1);
+      const s = t * t * (3 - 2 * t); // smoothstep
+      const x = anim.fromX + (anim.toX - anim.fromX) * s;
+      const z = anim.fromZ + (anim.toZ - anim.fromZ) * s;
+      const yaw = anim.fromYaw + (anim.toYaw - anim.fromYaw) * s;
+      setCamera({ x, z, yaw });
+      if (t >= 1) animRef.current.animating = false;
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
 
+  // Minimap update
+  useEffect(() => {
+    if (!minimapRef.current || !gameRef.current || !turnState) return;
+    const { solidData, dungeon } = gameRef.current;
+    drawMinimap(
+      minimapRef.current,
+      solidData,
+      dungeon.width,
+      dungeon.height,
+      logicalRef.current.x,
+      logicalRef.current.z,
+      logicalRef.current.yaw,
+      turnState.actors,
+    );
+  }, [turnState, camera]);
+
+  // Commit a player turn action
   const applyTurn = useCallback((action: TurnAction) => {
     const game = gameRef.current;
     if (!game || gameOver || !game.turnState.awaitingPlayerInput) return;
 
-    const evts: TurnEvent[] = [];
-    const deps = buildDeps(game.dungeon, game.isWalkable, game.turnState.actors, e => evts.push(e));
+    const prevPlayer = game.turnState.actors[game.turnState.playerId] as PlayerActor;
+    const prevX = prevPlayer.x;
+    const prevZ = prevPlayer.y;
 
+    const evts: TurnEvent[] = [];
+    const deps = buildDeps(game.dungeon, game.solidData, game.turnState.actors, e => evts.push(e));
     const newState = commitPlayerAction(game.turnState, deps, action);
     game.turnState = newState;
+    setTurnState(newState);
 
-    // Flush events into log
     for (const evt of evts) {
       if (evt.kind === "damage") {
-        const who = evt.actorId === newState.playerId ? "You" :
-          (game.turnState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId;
+        const who =
+          evt.actorId === newState.playerId ? "You" :
+          (newState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId;
         pushLog({ text: `${who} takes ${evt.amount} dmg`, kind: "damage" });
       } else if (evt.kind === "death") {
-        const who = evt.actorId === newState.playerId ? "You" :
-          (game.turnState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId;
+        const who =
+          evt.actorId === newState.playerId ? "You" :
+          (newState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId;
         pushLog({ text: `${who} died!`, kind: "death" });
-        if (evt.kind === "death" && evt.actorId === newState.playerId) setGameOver(true);
+        if (evt.actorId === newState.playerId) setGameOver(true);
       } else if (evt.kind === "xpGain") {
         const xpEvt = evt as XpGainEvent;
         setPlayerXp(prev => prev + xpEvt.amount);
@@ -309,74 +467,190 @@ export default function Mobs() {
       }
     }
 
-    const player = newState.actors[newState.playerId] as PlayerActor;
-    setPlayerHp(player.hp);
+    const newPlayer = newState.actors[newState.playerId] as PlayerActor;
+    setPlayerHp(newPlayer.hp);
 
     const alerted = Object.values(newState.actors).filter(
       a => a.kind === "monster" && a.alive && (a as MonsterActor).alertState !== "idle",
     ).length;
     setAlertCount(alerted);
 
-    if (canvasRef.current) renderGame(canvasRef.current, game.dungeon, newState);
-
-    if (!player.alive) {
+    if (!newPlayer.alive) {
       setGameOver(true);
       pushLog({ text: "You died. Press R for a new dungeon.", kind: "death" });
+    }
+
+    // Animate camera to new player position if they actually moved
+    if (newPlayer.x !== prevX || newPlayer.y !== prevZ) {
+      const { yaw } = logicalRef.current;
+      const toX = newPlayer.x + 0.5;
+      const toZ = newPlayer.y + 0.5;
+      animRef.current = {
+        fromX: logicalRef.current.x,
+        fromZ: logicalRef.current.z,
+        fromYaw: yaw,
+        toX, toZ, toYaw: yaw,
+        startTime: performance.now(),
+        animating: true,
+      };
+      logicalRef.current.x = toX;
+      logicalRef.current.z = toZ;
     }
   }, [gameOver, pushLog]);
 
   // Keyboard handler
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
+    const onKey = (e: KeyboardEvent) => {
       if (e.repeat) return;
-      switch (e.key) {
-        case "ArrowUp":    case "w": case "W": e.preventDefault(); applyTurn({ kind: "move", dx: 0,  dy: -1 }); break;
-        case "ArrowDown":  case "s": case "S": e.preventDefault(); applyTurn({ kind: "move", dx: 0,  dy:  1 }); break;
-        case "ArrowLeft":  case "a": case "A": e.preventDefault(); applyTurn({ kind: "move", dx: -1, dy:  0 }); break;
-        case "ArrowRight": case "d": case "D": e.preventDefault(); applyTurn({ kind: "move", dx:  1, dy:  0 }); break;
-        case ".": case " ": e.preventDefault(); applyTurn({ kind: "wait" }); break;
-        case "r": case "R": setSeed(Math.floor(Math.random() * 0x7fffffff)); break;
+      if (animRef.current.animating) return;
+
+      const { x, z, yaw } = logicalRef.current;
+      const fdx = Math.round(-Math.sin(yaw));
+      const fdz = Math.round(-Math.cos(yaw));
+
+      switch (e.code) {
+        case "KeyW": case "ArrowUp":
+          e.preventDefault();
+          applyTurn({ kind: "move", dx: fdx, dy: fdz });
+          break;
+        case "KeyS": case "ArrowDown":
+          e.preventDefault();
+          applyTurn({ kind: "move", dx: -fdx, dy: -fdz });
+          break;
+        case "KeyA": {
+          e.preventDefault();
+          const toYaw = yaw + Math.PI / 2;
+          animRef.current = {
+            fromX: x, fromZ: z, fromYaw: yaw,
+            toX: x, toZ: z, toYaw,
+            startTime: performance.now(), animating: true,
+          };
+          logicalRef.current.yaw = toYaw;
+          break;
+        }
+        case "KeyD": {
+          e.preventDefault();
+          const toYaw = yaw - Math.PI / 2;
+          animRef.current = {
+            fromX: x, fromZ: z, fromYaw: yaw,
+            toX: x, toZ: z, toYaw,
+            startTime: performance.now(), animating: true,
+          };
+          logicalRef.current.yaw = toYaw;
+          break;
+        }
+        case "Space": case "Period":
+          e.preventDefault();
+          applyTurn({ kind: "wait" });
+          break;
+        case "KeyR":
+          setSeed(Math.floor(Math.random() * 0x7fffffff));
+          break;
       }
-    }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [applyTurn]);
 
+  // Scroll log to bottom
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log]);
+
+  // Billboard mobiles derived from turn state
+  const mobiles: MobilePlacement[] = useMemo(() => {
+    if (!turnState) return [];
+    return Object.values(turnState.actors)
+      .filter(a => a.kind === "monster" && (a as MonsterActor).alive)
+      .map(a => {
+        const m = a as MonsterActor;
+        return {
+          x: m.x,
+          z: m.y,
+          type: "monster",
+          tileId: mobTileId(m.glyph, m.alertState),
+        };
+      });
+  }, [turnState]);
+
+  const game = gameRef.current;
+
   return (
-    <div className={styles.root}>
-      <p className={styles.title}>Mobs — Turn-based dungeon</p>
-
-      <canvas
-        ref={canvasRef}
-        className={styles.canvas}
-        width={DW * CELL}
-        height={DH * CELL}
-      />
-
-      <div className={styles.hud}>
+    <div className={styles.container}>
+      {/* ── Header ── */}
+      <div className={styles.header}>
+        <span className={styles.title}>MOBS</span>
         <span className={styles.hp}>HP {playerHp}/{playerMaxHp}</span>
         <span className={styles.xp}>XP {playerXp}</span>
         {alertCount > 0 && (
-          <span className={styles.alert}>{alertCount} monster{alertCount !== 1 ? "s" : ""} alert!</span>
+          <span className={styles.alert}>{alertCount} monster{alertCount !== 1 ? "s" : ""} alerted</span>
         )}
-        {gameOver && <span style={{ color: "#f44" }}>DEAD — press R</span>}
+        {gameOver && <span className={styles.dead}>DEAD — press R</span>}
       </div>
 
-      <div ref={logContainerRef} className={styles.log}>
-        {log.map((entry, i) => (
-          <div key={i} className={logClass[entry.kind]}>{entry.text}</div>
-        ))}
+      {/* ── Main area ── */}
+      <div className={styles.mainArea}>
+        {/* First-person 3-D view */}
+        <div className={styles.perspectiveView} tabIndex={0}>
+          {game && (
+            <PerspectiveDungeonView
+              solidData={game.solidData}
+              width={DW}
+              height={DH}
+              cameraX={camera.x}
+              cameraZ={camera.z}
+              yaw={camera.yaw}
+              atlas={atlas}
+              texture={dungeonTexture}
+              floorTile={0}
+              ceilingTile={1}
+              wallTile={2}
+              renderRadius={20}
+              fov={60}
+              fogNear={4}
+              fogFar={20}
+              ceilingHeight={CEILING_H}
+              tileSize={TILE_SIZE}
+              mobiles={mobiles}
+              spriteAtlas={spriteAtlas}
+              style={{ width: "100%", height: "100%" }}
+            />
+          )}
+        </div>
+
+        {/* Sidebar: minimap + combat log */}
+        <div className={styles.sidebar}>
+          <canvas
+            ref={minimapRef}
+            width={240}
+            height={160}
+            className={styles.minimapCanvas}
+          />
+          <div ref={logRef} className={styles.log}>
+            {log.map((entry, i) => (
+              <div
+                key={i}
+                className={
+                  entry.kind === "damage" ? styles.logDamage :
+                  entry.kind === "death"  ? styles.logDeath :
+                  entry.kind === "xp"     ? styles.logXp :
+                  styles.logEntry
+                }
+              >
+                {entry.text}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <p className={styles.keys}>
-        WASD/Arrows move &amp; attack &nbsp;·&nbsp; Space/. wait &nbsp;·&nbsp; R new dungeon
-      </p>
-      <p className={styles.keys}>
-        <span style={{ color: "#ffe066" }}>@</span> you &nbsp;·&nbsp;
-        <span style={{ color: "#b04040" }}>g r o T</span> monster (idle) &nbsp;·&nbsp;
-        <span style={{ color: "#ff4040" }}>!</span> chasing &nbsp;·&nbsp;
-        <span style={{ color: "#383838" }}>%</span> dead
-      </p>
+      {/* ── Status panel ── */}
+      <div className={styles.statusPanel}>
+        <span>Facing: {cardinalDir(camera.yaw)}</span>
+        <span className={styles.controls}>
+          W/S — move &nbsp;·&nbsp; A/D — turn 90° &nbsp;·&nbsp; Space — wait &nbsp;·&nbsp; R — new dungeon
+        </span>
+      </div>
     </div>
   );
 }
