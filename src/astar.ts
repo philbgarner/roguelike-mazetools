@@ -19,6 +19,8 @@ export type AStar8Options = {
    * but not forbid specific cells.
    */
   cellCost?: (x: number, y: number) => number;
+  /** When true, restrict movement to 4 cardinal directions only (no diagonals). */
+  fourDir?: boolean;
 };
 
 // 8-directional offsets: [dx, dy, cost]
@@ -98,6 +100,8 @@ export function aStar8(
     const curG = gScore[idx];
 
     for (const [dx, dy, moveCost] of DIRS) {
+      if (opts.fourDir && dx !== 0 && dy !== 0) continue;
+
       const nx = cx + dx;
       const ny = cy + dy;
 

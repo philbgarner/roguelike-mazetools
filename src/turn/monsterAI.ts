@@ -56,8 +56,9 @@ function _pathTo(
   dungeon: DungeonOutputs,
   isWalkable: (x: number, y: number) => boolean,
   maxSteps?: number,
+  fourDir?: boolean,
 ): GridPos[] | null {
-  const result = aStar8(dungeon, isWalkable, { x: sx, y: sy }, { x: gx, y: gy });
+  const result = aStar8(dungeon, isWalkable, { x: sx, y: sy }, { x: gx, y: gy }, { fourDir });
   if (!result || result.path.length < 2) return null;
   return maxSteps != null ? result.path.slice(0, maxSteps) : result.path;
 }
@@ -140,6 +141,7 @@ export function decideChasePlayer(
   dungeon: DungeonOutputs,
   isWalkable: (x: number, y: number) => boolean,
   playerVisRadius = 8,
+  fourDir = false,
 ): DecideResult {
   const monster = state.actors[monsterId] as MonsterActor | undefined;
   const player = state.actors[state.playerId];
@@ -162,7 +164,7 @@ export function decideChasePlayer(
   }
 
   if (transition.newAlertState === "chasing") {
-    const path = _pathTo(monster.x, monster.y, player.x, player.y, dungeon, isWalkable);
+    const path = _pathTo(monster.x, monster.y, player.x, player.y, dungeon, isWalkable, undefined, fourDir);
     if (!path) return { action: { kind: "wait" }, monsterPatch: patch };
     const next = path[1];
     return {
@@ -176,7 +178,7 @@ export function decideChasePlayer(
   if (!target) return { action: { kind: "wait" }, monsterPatch: patch };
   if (monster.x === target.x && monster.y === target.y) return { action: { kind: "wait" }, monsterPatch: patch };
 
-  const path = _pathTo(monster.x, monster.y, target.x, target.y, dungeon, isWalkable);
+  const path = _pathTo(monster.x, monster.y, target.x, target.y, dungeon, isWalkable, undefined, fourDir);
   if (!path) return { action: { kind: "wait" }, monsterPatch: patch };
   const next = path[1];
   return {

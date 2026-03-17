@@ -48,6 +48,35 @@ const TILE_SIZE = 3;
 const CEILING_H = 3;
 const LERP_MS = 150;
 
+// Tile source coords in the EotB padded tileset
+const SRC_FLOOR = { x: 136, y: 328 };
+const SRC_CEILING = { x: 136, y: 400 };
+const SRC_WALL = { x: 208, y: 304 };
+
+function loadRepackedAtlasTexture(
+  sources: Array<{ x: number; y: number }>,
+): Promise<THREE.CanvasTexture> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = TILE_PX * sources.length;
+      canvas.height = TILE_PX;
+      const ctx = canvas.getContext("2d")!;
+      sources.forEach(({ x, y }, i) => {
+        ctx.drawImage(img, x, y, TILE_PX, TILE_PX, i * TILE_PX, 0, TILE_PX, TILE_PX);
+      });
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      tex.generateMipmaps = false;
+      resolve(tex);
+    };
+    img.onerror = reject;
+    img.src = "/examples/eotb/tileset.png";
+  });
+}
+
 const TEMPLATES: Record<string, MonsterTemplate> = {
   goblin: {
     name: "Goblin",
@@ -116,38 +145,6 @@ function cardinalDir(yaw: number): string {
   return DIRS[idx];
 }
 
-// ---------------------------------------------------------------------------
-// Procedural textures
-// ---------------------------------------------------------------------------
-
-function buildDungeonTileTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = TILE_PX * 3;
-  canvas.height = TILE_PX;
-  const ctx = canvas.getContext("2d")!;
-
-  // Floor — dark stone
-  ctx.fillStyle = "#2a2215";
-  ctx.fillRect(0, 0, TILE_PX, TILE_PX);
-
-  // Ceiling — darker, slightly blue
-  ctx.fillStyle = "#181820";
-  ctx.fillRect(TILE_PX, 0, TILE_PX, TILE_PX);
-
-  // Wall — aged stone with cracks
-  ctx.fillStyle = "#3c3535";
-  ctx.fillRect(TILE_PX * 2, 0, TILE_PX, TILE_PX);
-  ctx.fillStyle = "#2e2828";
-  ctx.fillRect(TILE_PX * 2 + 0, 3, 2, 6);
-  ctx.fillRect(TILE_PX * 2 + 5, 1, 1, 5);
-  ctx.fillRect(TILE_PX * 2 + 11, 7, 2, 5);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-  return tex;
-}
 
 // Sprite positions in sprites.png (each sprite is 16×16 px)
 const SPRITE_SRC: Array<{ x: number; y: number }> = [
@@ -163,16 +160,18 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
-    el.onerror = reject;
+    el.onerror = (e) => { console.error("Failed to load sprite sheet:", url, e); reject(e); };
     el.src = url;
   });
+
+  console.log("Sprite sheet loaded:", img.naturalWidth, "×", img.naturalHeight);
 
   const canvas = document.createElement("canvas");
   canvas.width = SPRITE_COLS * DST_TILE;
   canvas.height = DST_TILE;
   const ctx = canvas.getContext("2d")!;
 
-  // Extract each sprite from the sheet, remove cream background, place in atlas
+  // Extract each sprite from the sheet, remove background, place in atlas
   const tmp = document.createElement("canvas");
   tmp.width = SRC_TILE;
   tmp.height = SRC_TILE;
@@ -183,15 +182,24 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
     tCtx.clearRect(0, 0, SRC_TILE, SRC_TILE);
     tCtx.drawImage(img, x, y, SRC_TILE, SRC_TILE, 0, 0, SRC_TILE, SRC_TILE);
 
-    // Remove near-white / cream background pixels
     const px = tCtx.getImageData(0, 0, SRC_TILE, SRC_TILE);
+    // Sample the top-left corner pixel as background color
+    const bgR = px.data[0], bgG = px.data[1], bgB = px.data[2];
+    console.log(`Sprite col=${col} bg color: rgb(${bgR},${bgG},${bgB})`);
+    const TOLERANCE = 30;
     for (let i = 0; i < px.data.length; i += 4) {
       const r = px.data[i], g = px.data[i + 1], b = px.data[i + 2];
-      if (r > 210 && g > 200 && b > 185) px.data[i + 3] = 0;
+      if (
+        Math.abs(r - bgR) < TOLERANCE &&
+        Math.abs(g - bgG) < TOLERANCE &&
+        Math.abs(b - bgB) < TOLERANCE
+      ) {
+        px.data[i + 3] = 0;
+      }
     }
     tCtx.putImageData(px, 0, 0);
 
-    // Scale up to DST_TILE and blit into atlas row
+    // Scale up to DST_TILE and blit into atlas
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(tmp, 0, 0, SRC_TILE, SRC_TILE, col * DST_TILE, 0, DST_TILE, DST_TILE);
   }
@@ -341,7 +349,7 @@ function buildDeps(
   return {
     isWalkable,
     monsterDecide: (state, monsterId) =>
-      decideChasePlayer(state, monsterId, dungeon, isWalkable),
+      decideChasePlayer(state, monsterId, dungeon, isWalkable, 8, true),
     computeCost: (actorId, action: TurnAction) => {
       const actor = actors[actorId];
       return { time: actionDelay(actor?.speed ?? 10, action) };
@@ -470,10 +478,15 @@ export default function Mobs() {
     () => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX),
     [],
   );
-  const dungeonTexture = useMemo(() => buildDungeonTileTexture(), []);
+  const [dungeonTexture, setDungeonTexture] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    loadRepackedAtlasTexture([SRC_FLOOR, SRC_CEILING, SRC_WALL]).then(setDungeonTexture);
+  }, []);
   const [spriteAtlas, setSpriteAtlas] = useState<SpriteAtlas | null>(null);
   useEffect(() => {
-    loadMonsterSpriteAtlas("/examples/mobs/sprites.png").then(setSpriteAtlas);
+    loadMonsterSpriteAtlas("/examples/mobs/sprites.png")
+      .then(setSpriteAtlas)
+      .catch((e) => console.error("Sprite atlas load failed:", e));
   }, []);
 
   const minimapRef = useRef<HTMLCanvasElement>(null);
@@ -747,7 +760,7 @@ export default function Mobs() {
       <div className={styles.mainArea}>
         {/* First-person 3-D view */}
         <div className={styles.perspectiveView} tabIndex={0}>
-          {game && (
+          {game && dungeonTexture && (
             <PerspectiveDungeonView
               solidData={game.solidData}
               width={DW}

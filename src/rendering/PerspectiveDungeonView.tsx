@@ -94,11 +94,17 @@ const MOBILE_VERT = /* glsl */ `
 attribute float aTileId;
 varying vec2 vUv;
 varying float vTileId;
+varying float vFogDist;
+varying vec2 vWorldPos;
 
 void main() {
   vUv = uv;
   vTileId = aTileId;
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
+  vWorldPos = worldPos.xz;
+  vec4 eyePos = viewMatrix * worldPos;
+  vFogDist = length(eyePos.xyz);
+  gl_Position = projectionMatrix * eyePos;
 }
 `;
 
@@ -106,8 +112,18 @@ const MOBILE_FRAG = /* glsl */ `
 uniform sampler2D uAtlas;
 uniform float uColumns;
 uniform float uRows;
-varying vec2 vUv;
+uniform vec3  uFogColor;
+uniform float uFogNear;
+uniform float uFogFar;
+uniform float uTime;
+varying vec2  vUv;
 varying float vTileId;
+varying float vFogDist;
+varying vec2  vWorldPos;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
 
 void main() {
   float col = mod(vTileId, uColumns);
@@ -117,24 +133,63 @@ void main() {
   vec2 atlasUv = uvMin + vUv * uvSize;
   vec4 color = texture2D(uAtlas, atlasUv);
   if (color.a < 0.5) discard;
-  gl_FragColor = color;
-}
-`;
+
+  float raw = sin(uTime * 7.0)  * 0.45
+            + sin(uTime * 13.7) * 0.35
+            + sin(uTime * 3.1)  * 0.20;
+  float flicker = (floor(raw * 1.5 + 0.5)) / 6.0;
+
+  float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+  float flickeredDist = clamp(dist + flicker * 0.03, 0.0, 1.0);
+  float curved = pow(flickeredDist, 0.75);
+  float band = floor(curved * 5.0);
+
+  float timeSlot = floor(uTime * 1.5);
+  vec2 cell = floor(vWorldPos * 0.5);
+  float spatialNoise = hash(cell + vec2(timeSlot * 7.3, timeSlot * 3.1));
+  float turb = (floor(spatialNoise * 3.0) / 3.0) * 0.18;
+
+  float brightness;
+  vec3  tint;
+  if (band < 1.0) {
+    brightness = 1.00 - turb; tint = vec3(1.00, 0.90, 0.68);
+  } else if (band < 2.0) {
+    brightness = 0.55; tint = vec3(1.00, 0.94, 0.76);
+  } else if (band < 3.0) {
+    brightness = 0.22; tint = vec3(0.60, 0.55, 0.80);
+  } else if (band < 4.0) {
+    brightness = 0.10; tint = vec3(0.30, 0.25, 0.60);
+  } else {
+    brightness = 0.00; tint = vec3(1.0);
+  }
+
+  vec3 lit = color.rgb * tint * brightness;
+  gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
+}`;
 
 // Reusable temporaries to avoid per-frame allocation.
 const _mbMat4 = new THREE.Matrix4();
 const _mbPos = new THREE.Vector3();
+const _mbQuat = new THREE.Quaternion();
+const _mbScale = new THREE.Vector3();
+const _mbEuler = new THREE.Euler();
 
 function SceneMobiles({
   placements,
   atlas,
   tileSize = 1,
   ceilingHeight = 1.5,
+  fogNear = 4,
+  fogFar = 10,
+  fogColor,
 }: {
   placements: MobilePlacement[];
   atlas: SpriteAtlas;
   tileSize?: number;
   ceilingHeight?: number;
+  fogNear?: number;
+  fogFar?: number;
+  fogColor?: THREE.Color;
 }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const count = placements.length;
@@ -153,6 +208,10 @@ function SceneMobiles({
         uAtlas: { value: atlas.texture },
         uColumns: { value: atlas.columns },
         uRows: { value: atlas.rows },
+        uFogColor: { value: fogColor ?? new THREE.Color(0, 0, 0) },
+        uFogNear: { value: fogNear },
+        uFogFar: { value: fogFar },
+        uTime: { value: 0 },
       },
       vertexShader: MOBILE_VERT,
       fragmentShader: MOBILE_FRAG,
@@ -162,20 +221,23 @@ function SceneMobiles({
     });
 
     return { geo, mat };
-  }, [placements, atlas, count]);
+  }, [placements, atlas, count, fogNear, fogFar, fogColor]);
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera, clock }) => {
     if (!meshRef.current || count === 0) return;
+    mat.uniforms.uTime.value = clock.getElapsedTime();
     const camPos = camera.position;
 
+    _mbScale.set(tileSize, ceilingHeight, 1);
     placements.forEach((p, i) => {
       const wx = (p.x + 0.5) * tileSize;
       const wz = (p.z + 0.5) * tileSize;
       const wy = ceilingHeight / 2;
       _mbPos.set(wx, wy, wz);
       const angle = Math.atan2(camPos.x - wx, camPos.z - wz);
-      _mbMat4.makeRotationY(angle);
-      _mbMat4.setPosition(_mbPos);
+      _mbEuler.set(0, angle, 0);
+      _mbQuat.setFromEuler(_mbEuler);
+      _mbMat4.compose(_mbPos, _mbQuat, _mbScale);
       meshRef.current!.setMatrixAt(i, _mbMat4);
     });
     meshRef.current.instanceMatrix.needsUpdate = true;
@@ -532,6 +594,9 @@ function DungeonScene({
           atlas={spriteAtlas}
           tileSize={tileSize}
           ceilingHeight={ceilingHeight}
+          fogNear={fogNear}
+          fogFar={fogFar}
+          fogColor={fogColorObj}
         />
       )}
     </>
