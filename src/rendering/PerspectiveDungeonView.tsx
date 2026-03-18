@@ -27,7 +27,7 @@
  * tileSize       World-space width (and depth) of each tile (default 1).
  *                cameraX/Z are in cell units; world positions = cell * tileSize.
  */
-import { useMemo, useEffect, useRef } from "react";
+import { useMemo, useEffect, useRef, type ReactNode } from "react";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { InstancedTileMesh, type TileInstance } from "./InstancedTileMesh";
@@ -92,14 +92,17 @@ function SceneObjects({
 
 const MOBILE_VERT = /* glsl */ `
 attribute float aTileId;
+attribute float aTintRed;
 varying vec2 vUv;
 varying float vTileId;
 varying float vFogDist;
 varying vec2 vWorldPos;
+varying float vTintRed;
 
 void main() {
   vUv = uv;
   vTileId = aTileId;
+  vTintRed = aTintRed;
   vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
   vWorldPos = worldPos.xz;
   vec4 eyePos = viewMatrix * worldPos;
@@ -120,6 +123,7 @@ varying vec2  vUv;
 varying float vTileId;
 varying float vFogDist;
 varying vec2  vWorldPos;
+varying float vTintRed;
 
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -164,6 +168,7 @@ void main() {
   }
 
   vec3 lit = color.rgb * tint * brightness;
+  lit = mix(lit, vec3(brightness, 0.0, 0.0), vTintRed * 0.85);
   gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
 }`;
 
@@ -182,6 +187,7 @@ function SceneMobiles({
   fogNear = 4,
   fogFar = 10,
   fogColor,
+  flash,
 }: {
   placements: MobilePlacement[];
   atlas: SpriteAtlas;
@@ -190,8 +196,10 @@ function SceneMobiles({
   fogNear?: number;
   fogFar?: number;
   fogColor?: THREE.Color;
+  flash?: boolean[];
 }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const tintRedRef = useRef<THREE.InstancedBufferAttribute | null>(null);
   const count = placements.length;
 
   const { geo, mat } = useMemo(() => {
@@ -202,6 +210,11 @@ function SceneMobiles({
       tileIds[i] = p.tileId;
     });
     geo.setAttribute("aTileId", new THREE.InstancedBufferAttribute(tileIds, 1));
+
+    const tintRed = new Float32Array(count);
+    const tintRedAttr = new THREE.InstancedBufferAttribute(tintRed, 1);
+    geo.setAttribute("aTintRed", tintRedAttr);
+    tintRedRef.current = tintRedAttr;
 
     const mat = new THREE.ShaderMaterial({
       uniforms: {
@@ -226,6 +239,18 @@ function SceneMobiles({
   useFrame(({ camera, clock }) => {
     if (!meshRef.current || count === 0) return;
     mat.uniforms.uTime.value = clock.getElapsedTime();
+
+    // Update per-instance flash tint
+    if (tintRedRef.current && flash) {
+      const arr = tintRedRef.current.array as Float32Array;
+      let changed = false;
+      for (let i = 0; i < count; i++) {
+        const v = flash[i] ? 1.0 : 0.0;
+        if (arr[i] !== v) { arr[i] = v; changed = true; }
+      }
+      if (changed) tintRedRef.current.needsUpdate = true;
+    }
+
     const camPos = camera.position;
 
     _mbScale.set(tileSize, ceilingHeight, 1);
@@ -454,6 +479,8 @@ type SceneProps = {
   /** Billboard sprite mobiles. */
   mobiles?: MobilePlacement[];
   spriteAtlas?: SpriteAtlas;
+  /** Per-mobile flash state (parallel array to mobiles). */
+  mobileFlash?: boolean[];
 };
 
 function DungeonScene({
@@ -480,6 +507,7 @@ function DungeonScene({
   objectRegistry,
   mobiles,
   spriteAtlas,
+  mobileFlash,
 }: SceneProps) {
   const fogColorObj = useMemo(
     () => (fogColor ? new THREE.Color(fogColor) : undefined),
@@ -597,6 +625,7 @@ function DungeonScene({
           fogNear={fogNear}
           fogFar={fogFar}
           fogColor={fogColorObj}
+          flash={mobileFlash}
         />
       )}
     </>
@@ -610,15 +639,16 @@ function DungeonScene({
 export type PerspectiveDungeonViewProps = SceneProps & {
   className?: string;
   style?: React.CSSProperties;
+  children?: ReactNode;
 };
 
 export function PerspectiveDungeonView({
   className,
   style,
   fov,
+  children,
   ...sceneProps
 }: PerspectiveDungeonViewProps) {
-  console.log("fov", fov);
   return (
     <Canvas
       className={className}
@@ -627,6 +657,7 @@ export function PerspectiveDungeonView({
       gl={{ antialias: false }}
     >
       <DungeonScene {...sceneProps} fov={fov} />
+      {children}
     </Canvas>
   );
 }

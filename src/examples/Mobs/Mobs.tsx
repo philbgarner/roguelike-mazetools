@@ -9,7 +9,15 @@
  *   Space / .      — wait a turn
  *   R              — regenerate dungeon
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import { generateBspDungeon, type BspDungeonOutputs } from "../../bsp";
 import { buildTileAtlas } from "../../rendering/tileAtlas";
@@ -64,7 +72,17 @@ function loadRepackedAtlasTexture(
       canvas.height = TILE_PX;
       const ctx = canvas.getContext("2d")!;
       sources.forEach(({ x, y }, i) => {
-        ctx.drawImage(img, x, y, TILE_PX, TILE_PX, i * TILE_PX, 0, TILE_PX, TILE_PX);
+        ctx.drawImage(
+          img,
+          x,
+          y,
+          TILE_PX,
+          TILE_PX,
+          i * TILE_PX,
+          0,
+          TILE_PX,
+          TILE_PX,
+        );
       });
       const tex = new THREE.CanvasTexture(canvas);
       tex.magFilter = THREE.NearestFilter;
@@ -145,12 +163,11 @@ function cardinalDir(yaw: number): string {
   return DIRS[idx];
 }
 
-
 // Sprite positions in sprites.png (each sprite is 16×16 px)
 const SPRITE_SRC: Array<{ x: number; y: number }> = [
-  { x: 80, y: 416 },  // goblin (col 0)
+  { x: 80, y: 416 }, // goblin (col 0)
   { x: 272, y: 448 }, // minotaur (col 1)
-  { x: 80, y: 448 },  // troll (col 2)
+  { x: 80, y: 448 }, // troll (col 2)
   { x: 144, y: 368 }, // rat (col 3)
 ];
 const SRC_TILE = 16;
@@ -160,7 +177,10 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
-    el.onerror = (e) => { console.error("Failed to load sprite sheet:", url, e); reject(e); };
+    el.onerror = (e) => {
+      console.error("Failed to load sprite sheet:", url, e);
+      reject(e);
+    };
     el.src = url;
   });
 
@@ -184,11 +204,15 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
 
     const px = tCtx.getImageData(0, 0, SRC_TILE, SRC_TILE);
     // Sample the top-left corner pixel as background color
-    const bgR = px.data[0], bgG = px.data[1], bgB = px.data[2];
+    const bgR = px.data[0],
+      bgG = px.data[1],
+      bgB = px.data[2];
     console.log(`Sprite col=${col} bg color: rgb(${bgR},${bgG},${bgB})`);
     const TOLERANCE = 30;
     for (let i = 0; i < px.data.length; i += 4) {
-      const r = px.data[i], g = px.data[i + 1], b = px.data[i + 2];
+      const r = px.data[i],
+        g = px.data[i + 1],
+        b = px.data[i + 2];
       if (
         Math.abs(r - bgR) < TOLERANCE &&
         Math.abs(g - bgG) < TOLERANCE &&
@@ -201,7 +225,17 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
 
     // Scale up to DST_TILE and blit into atlas
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(tmp, 0, 0, SRC_TILE, SRC_TILE, col * DST_TILE, 0, DST_TILE, DST_TILE);
+    ctx.drawImage(
+      tmp,
+      0,
+      0,
+      SRC_TILE,
+      SRC_TILE,
+      col * DST_TILE,
+      0,
+      DST_TILE,
+      DST_TILE,
+    );
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -441,6 +475,59 @@ type LogKind = "info" | "damage" | "death" | "xp";
 type LogEntry = { text: string; kind: LogKind };
 
 // ---------------------------------------------------------------------------
+// Floating damage numbers
+// ---------------------------------------------------------------------------
+
+type FloatNum = {
+  id: number;
+  wx: number;
+  wy: number;
+  wz: number;
+  value: number;
+};
+
+// Inject keyframe animation once
+if (
+  typeof document !== "undefined" &&
+  !document.getElementById("mobs-float-style")
+) {
+  const s = document.createElement("style");
+  s.id = "mobs-float-style";
+  s.textContent = `@keyframes mobsFloatUp { 0% { opacity:1; transform:translateY(0); } 100% { opacity:0; transform:translateY(-56px); } }`;
+  document.head.appendChild(s);
+}
+
+function FloatingDamageNumbers({ nums }: { nums: FloatNum[] }): ReactNode {
+  return (
+    <>
+      {nums.map((n) => (
+        <Html
+          key={n.id}
+          position={[n.wx, n.wy, n.wz]}
+          center
+          style={{ pointerEvents: "none" }}
+        >
+          <div
+            style={{
+              color: "#ff3333",
+              fontFamily: "monospace",
+              fontSize: "22px",
+              fontWeight: "bold",
+              textShadow: "0 0 4px #000, 1px 1px 0 #000, -1px -1px 0 #000",
+              animation: "mobsFloatUp 1.1s ease-out forwards",
+              whiteSpace: "nowrap",
+              userSelect: "none",
+            }}
+          >
+            {n.value}
+          </div>
+        </Html>
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -459,6 +546,14 @@ export default function Mobs() {
   const [gameOver, setGameOver] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
+  // Flash state: actorId → expiry timestamp
+  const flashExpiryRef = useRef<Map<string, number>>(new Map());
+  const [flashTick, setFlashTick] = useState(0);
+
+  // Floating damage numbers
+  const [floatNums, setFloatNums] = useState<FloatNum[]>([]);
+  const floatIdRef = useRef(0);
+
   // Camera — logical (grid-aligned) target and lerp animation
   const logicalRef = useRef({ x: 1.5, z: 1.5, yaw: 0 });
   const animRef = useRef({
@@ -473,14 +568,29 @@ export default function Mobs() {
   });
   const [camera, setCamera] = useState({ x: 1.5, z: 1.5, yaw: 0 });
 
+  // Bump animation (attack lunge / hit recoil)
+  const bumpRef = useRef({
+    bumping: false,
+    startTime: 0,
+    duration: 130,
+    dx: 0,
+    dz: 0,
+    mag: 0,
+    shake: false,
+  });
+
   // Static assets — created once
   const atlas = useMemo(
     () => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX),
     [],
   );
-  const [dungeonTexture, setDungeonTexture] = useState<THREE.Texture | null>(null);
+  const [dungeonTexture, setDungeonTexture] = useState<THREE.Texture | null>(
+    null,
+  );
   useEffect(() => {
-    loadRepackedAtlasTexture([SRC_FLOOR, SRC_CEILING, SRC_WALL]).then(setDungeonTexture);
+    loadRepackedAtlasTexture([SRC_FLOOR, SRC_CEILING, SRC_WALL]).then(
+      setDungeonTexture,
+    );
   }, []);
   const [spriteAtlas, setSpriteAtlas] = useState<SpriteAtlas | null>(null);
   useEffect(() => {
@@ -526,21 +636,50 @@ export default function Mobs() {
     setCamera({ x: cx, z: cz, yaw: 0 });
   }, [seed]);
 
-  // Smooth-lerp animation loop
+  // Smooth-lerp + bump animation loop
   useEffect(() => {
     let rafId: number;
     const tick = (now: number) => {
       rafId = requestAnimationFrame(tick);
       const anim = animRef.current;
-      if (!anim.animating) return;
-      const raw = (now - anim.startTime) / LERP_MS;
-      const t = Math.min(raw, 1);
-      const s = t * t * (3 - 2 * t); // smoothstep
-      const x = anim.fromX + (anim.toX - anim.fromX) * s;
-      const z = anim.fromZ + (anim.toZ - anim.fromZ) * s;
-      const yaw = anim.fromYaw + (anim.toYaw - anim.fromYaw) * s;
-      setCamera({ x, z, yaw });
-      if (t >= 1) animRef.current.animating = false;
+      const bump = bumpRef.current;
+      if (!anim.animating && !bump.bumping) return;
+
+      // Main lerp
+      let x = anim.toX,
+        z = anim.toZ,
+        yaw = anim.toYaw;
+      if (anim.animating) {
+        const raw = (now - anim.startTime) / LERP_MS;
+        const t = Math.min(raw, 1);
+        const s = t * t * (3 - 2 * t); // smoothstep
+        x = anim.fromX + (anim.toX - anim.fromX) * s;
+        z = anim.fromZ + (anim.toZ - anim.fromZ) * s;
+        yaw = anim.fromYaw + (anim.toYaw - anim.fromYaw) * s;
+        if (t >= 1) anim.animating = false;
+      }
+
+      // Bump / shake offset
+      let bx = 0,
+        bz = 0;
+      if (bump.bumping) {
+        const bt = Math.min((now - bump.startTime) / bump.duration, 1);
+        if (bump.shake) {
+          // Side-to-side shake that decays
+          const sign = Math.floor(now / 25) % 2 === 0 ? 1 : -1;
+          const decay = 1 - bt;
+          bx = bump.dx * bump.mag * decay * sign;
+          bz = bump.dz * bump.mag * decay * sign;
+        } else {
+          // Triangle wave: lunge forward then back
+          const fac = bt < 0.5 ? bt * 2 : (1 - bt) * 2;
+          bx = bump.dx * bump.mag * fac;
+          bz = bump.dz * bump.mag * fac;
+        }
+        if (bt >= 1) bump.bumping = false;
+      }
+
+      setCamera({ x: x + bx, z: z + bz, yaw });
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
@@ -585,6 +724,7 @@ export default function Mobs() {
       game.turnState = newState;
       setTurnState(newState);
 
+      let playerTookDamage = false;
       for (const evt of evts) {
         if (evt.kind === "damage") {
           const who =
@@ -593,6 +733,34 @@ export default function Mobs() {
               : ((newState.actors[evt.actorId] as MonsterActor | undefined)
                   ?.name ?? evt.actorId);
           pushLog({ text: `${who} takes ${evt.amount} dmg`, kind: "damage" });
+
+          if (evt.actorId === newState.playerId) {
+            playerTookDamage = true;
+          } else {
+            // Flash the monster red
+            flashExpiryRef.current.set(evt.actorId, performance.now() + 220);
+            setFlashTick((t) => t + 1);
+            setTimeout(() => setFlashTick((t) => t + 1), 230);
+
+            // Floating damage number at monster head
+            const monster = newState.actors[evt.actorId] as
+              | MonsterActor
+              | undefined;
+            if (monster) {
+              const id = ++floatIdRef.current;
+              const wx = (monster.x + 0.5) * TILE_SIZE;
+              const wy = CEILING_H * 0.9;
+              const wz = (monster.y + 0.5) * TILE_SIZE;
+              setFloatNums((prev) => [
+                ...prev,
+                { id, wx, wy, wz, value: evt.amount },
+              ]);
+              setTimeout(
+                () => setFloatNums((prev) => prev.filter((f) => f.id !== id)),
+                1150,
+              );
+            }
+          }
         } else if (evt.kind === "death") {
           const who =
             evt.actorId === newState.playerId
@@ -627,6 +795,37 @@ export default function Mobs() {
         });
       }
 
+      // Bump animations
+      if (action.kind === "move" && action.dx != null && action.dy != null) {
+        const attackHit = evts.some(
+          (e) => e.kind === "damage" && e.actorId !== newState.playerId,
+        );
+        if (attackHit) {
+          // Lunge forward toward monster (dx/dz are ±1 unit cell direction)
+          bumpRef.current = {
+            bumping: true,
+            startTime: performance.now(),
+            duration: 130,
+            dx: action.dx,
+            dz: action.dy ?? 0,
+            mag: 0.35,
+            shake: false,
+          };
+        }
+      }
+      if (playerTookDamage) {
+        // Horizontal shake on hit
+        bumpRef.current = {
+          bumping: true,
+          startTime: performance.now(),
+          duration: 250,
+          dx: 1,
+          dz: 0,
+          mag: 0.05,
+          shake: true,
+        };
+      }
+
       // Animate camera to new player position if they actually moved
       if (newPlayer.x !== prevX || newPlayer.y !== prevZ) {
         const { yaw } = logicalRef.current;
@@ -652,7 +851,6 @@ export default function Mobs() {
   // Keyboard handler
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.repeat) return;
       if (animRef.current.animating) return;
 
       const { x, z, yaw } = logicalRef.current;
@@ -721,21 +919,25 @@ export default function Mobs() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
-  // Billboard mobiles derived from turn state
-  const mobiles: MobilePlacement[] = useMemo(() => {
-    if (!turnState) return [];
-    return Object.values(turnState.actors)
-      .filter((a) => a.kind === "monster" && (a as MonsterActor).alive)
-      .map((a) => {
-        const m = a as MonsterActor;
-        return {
-          x: m.x,
-          z: m.y,
-          type: "monster",
-          tileId: mobTileId(m.glyph),
-        };
-      });
-  }, [turnState]);
+  // Billboard mobiles and per-mobile flash derived from turn state
+  const { mobiles, mobileFlash } = useMemo(() => {
+    if (!turnState) return { mobiles: [], mobileFlash: [] };
+    const now = performance.now();
+    const flashMap = flashExpiryRef.current;
+    const alive = Object.values(turnState.actors).filter(
+      (a) => a.kind === "monster" && (a as MonsterActor).alive,
+    ) as MonsterActor[];
+    return {
+      mobiles: alive.map((m) => ({
+        x: m.x,
+        z: m.y,
+        type: "monster",
+        tileId: mobTileId(m.glyph),
+      })),
+      mobileFlash: alive.map((m) => (flashMap.get(m.id) ?? 0) > now),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState, flashTick]);
 
   const game = gameRef.current;
 
@@ -780,9 +982,12 @@ export default function Mobs() {
               ceilingHeight={CEILING_H}
               tileSize={TILE_SIZE}
               mobiles={mobiles}
+              mobileFlash={mobileFlash}
               spriteAtlas={spriteAtlas ?? undefined}
               style={{ width: "100%", height: "100%" }}
-            />
+            >
+              <FloatingDamageNumbers nums={floatNums} />
+            </PerspectiveDungeonView>
           )}
         </div>
 
