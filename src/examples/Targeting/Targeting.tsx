@@ -50,6 +50,7 @@ import type { MobilePlacement } from "../../content";
 import { tilesInRadius, tilesInCone, tilesInLine } from "../../spatial";
 import type { GridPos } from "../../astar";
 import { tickEffects, type ActiveEffect } from "../../effects";
+import { useNavigate } from "react-router-dom";
 import styles from "./Targeting.module.css";
 
 // ---------------------------------------------------------------------------
@@ -475,6 +476,7 @@ type WorldEffect = {
 // ---------------------------------------------------------------------------
 
 export default function Targeting() {
+  const navigate = useNavigate();
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 0x7fffffff));
   const gameRef = useRef<GameState | null>(null);
   const [turnState, setTurnState] = useState<TurnSystemState | null>(null);
@@ -919,6 +921,7 @@ export default function Targeting() {
           <span className={styles.alert}>{worldEffects.length} active effect{worldEffects.length !== 1 ? "s" : ""}</span>
         )}
         {gameOver && <span className={styles.dead}>DEAD — press R</span>}
+        <button className={styles.backBtn} onClick={() => navigate("/")}>← Menu</button>
       </div>
 
       {/* Main area */}

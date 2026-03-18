@@ -1,120 +1,139 @@
 .container {
-    width: 100vw;
-    height: 100vh;
-    display: grid;
-    grid-template-rows: 40px 1fr 56px;
-    grid-template-columns: 1fr;
-    margin: 0;
-    padding: 0;
-    background: #111;
-    color: #ccc;
-    font-family: monospace;
-    overflow: hidden;
+   width: 100vw;
+   height: 100vh;
+   display: grid;
+   grid-template-rows: 40px 1fr 56px;
+   grid-template-columns: 1fr;
+   margin: 0;
+   padding: 0;
+   background: #080c12;
+   color: #b8c8d8;
+   font-family: monospace;
+   overflow: hidden;
 }
 
 /* ── Header ── */
 .uiHeaderBar {
-    grid-row: 1;
-    display: flex;
-    align-items: center;
-    gap: 24px;
-    padding: 0 16px;
-    background: #1a1a1a;
-    border-bottom: 1px solid #333;
+   grid-row: 1;
+   display: flex;
+   align-items: center;
+   gap: 24px;
+   padding: 0 16px;
+   background: #0d1520;
+   border-bottom: 1px solid #1e2d3d;
 }
 
 .title {
-    font-size: 18px;
-    font-weight: bold;
-    letter-spacing: 4px;
-    color: #f80;
-    text-shadow: 0 0 8px #f804;
+   font-size: 18px;
+   font-weight: bold;
+   letter-spacing: 4px;
+   color: #c8a87a;
+   text-shadow: 0 0 10px rgba(200, 168, 122, 0.4);
 }
 
 .seed {
-    font-size: 11px;
-    color: #666;
+   font-size: 11px;
+   color: #3a5060;
 }
 
 /* ── Main area ── */
 .mainArea {
-    grid-row: 2;
-    display: flex;
-    flex-direction: row;
-    overflow: hidden;
+   grid-row: 2;
+   display: flex;
+   flex-direction: row;
+   overflow: hidden;
 }
 
 .perspectiveView {
-    flex: 1;
-    outline: none;
-    cursor: default;
+   flex: 1;
+   outline: none;
+   cursor: default;
 }
 
 .miniMapView {
-    width: 400px;
-    min-width: 400px;
-    background: #111;
-    border-left: 1px solid #333;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
-    padding: 8px;
-    gap: 6px;
-    box-sizing: border-box;
+   width: 400px;
+   min-width: 400px;
+   background: #080c12;
+   border-left: 1px solid #1e2d3d;
+   display: flex;
+   flex-direction: column;
+   align-items: stretch;
+   justify-content: flex-start;
+   padding: 8px;
+   gap: 6px;
+   box-sizing: border-box;
 }
 
 .minimapSelect {
-    background: #1e1e1e;
-    color: #ccc;
-    border: 1px solid #444;
-    border-radius: 3px;
-    padding: 3px 6px;
-    font-family: monospace;
-    font-size: 11px;
-    cursor: pointer;
-    outline: none;
+   background: #0d1520;
+   color: #b8c8d8;
+   border: 1px solid #2a3d50;
+   border-radius: 3px;
+   padding: 3px 6px;
+   font-family: monospace;
+   font-size: 11px;
+   cursor: pointer;
+   outline: none;
 }
 
 .minimapSelect:hover {
-    border-color: #f80;
+   border-color: #5a9fd4;
 }
 
 .minimapLabel {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    font-family: monospace;
-    font-size: 11px;
-    color: #aaa;
+   display: flex;
+   flex-direction: column;
+   gap: 3px;
+   font-family: monospace;
+   font-size: 11px;
+   color: #6a8a9a;
 }
 
 .minimapSlider {
-    width: 100%;
-    accent-color: #f80;
-    cursor: pointer;
+   width: 100%;
+   accent-color: #5a9fd4;
+   cursor: pointer;
 }
 
 .minimapCanvas {
-    width: 100%;
-    height: auto;
-    image-rendering: pixelated;
+   width: 100%;
+   height: auto;
+   image-rendering: pixelated;
 }
 
 /* ── Status panel ── */
 .statusPanel {
-    grid-row: 3;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
-    background: #1a1a1a;
-    border-top: 1px solid #333;
-    font-size: 12px;
-    color: #aaa;
+   grid-row: 3;
+   display: flex;
+   align-items: center;
+   justify-content: space-between;
+   padding: 0 16px;
+   background: #0d1520;
+   border-top: 1px solid #1e2d3d;
+   font-size: 12px;
+   color: #6a8a9a;
 }
 
 .controls {
-    color: #666;
-    font-size: 11px;
+   color: #3a5060;
+   font-size: 11px;
+}
+
+.backBtn {
+   margin-left: auto;
+   background: transparent;
+   border: 1px solid #2a3d50;
+   border-radius: 4px;
+   color: #6a8a9a;
+   font-family: monospace;
+   font-size: 11px;
+   padding: 3px 10px;
+   cursor: pointer;
+   letter-spacing: 0.05em;
+   transition: border-color 0.15s, color 0.15s;
+}
+
+.backBtn:hover {
+   border-color: #5a9fd4;
+   color: #b8c8d8;
 }

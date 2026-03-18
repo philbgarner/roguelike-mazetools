@@ -1,0 +1,189 @@
+.root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #dde4ec;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.layout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  height: 100%;
+  padding: 0 48px;
+  box-sizing: border-box;
+}
+
+/* Left */
+
+.leftPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  min-width: 280px;
+}
+
+.titleBlock {
+  line-height: 1;
+}
+
+.titleEyebrow {
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(160, 190, 210, 0.65);
+  margin-bottom: 6px;
+}
+
+.titleMain {
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #f0ebe0;
+  text-shadow: 0 0 40px rgba(60, 120, 180, 0.55);
+}
+
+.menuList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(200, 220, 240, 0.04);
+  border: 1px solid rgba(200, 220, 240, 0.08);
+  border-radius: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  color: rgba(190, 205, 220, 0.7);
+  text-align: left;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.menuItem.active {
+  background: rgba(50, 110, 170, 0.2);
+  border: 1px solid rgba(80, 150, 210, 0.45);
+  color: #f0ebe0;
+  box-shadow: 0 0 20px rgba(50, 110, 180, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.menuItemIcon {
+  font-size: 20px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.menuItemText {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 2px;
+}
+
+.menuItemLabel {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.menuItemSub {
+  font-size: 11px;
+  color: rgba(160, 185, 205, 0.6);
+  letter-spacing: 0.04em;
+}
+
+.menuItemArrow {
+  font-size: 11px;
+  color: rgba(120, 185, 230, 0.9);
+  margin-left: 4px;
+}
+
+.hint {
+  font-size: 11px;
+  color: rgba(140, 175, 205, 0.35);
+  letter-spacing: 0.08em;
+}
+
+/* Right */
+
+.rightPanel {
+  flex: 1;
+  max-width: 380px;
+}
+
+.descCard {
+  background: rgba(200, 220, 240, 0.04);
+  border: 1px solid rgba(200, 220, 240, 0.1);
+  border-radius: 18px;
+  padding: 36px 32px;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.descIcon {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.descTitle {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #f0ebe0;
+}
+
+.descSubtitle {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(140, 185, 215, 0.7);
+}
+
+.descDivider {
+  height: 1px;
+  background: linear-gradient(to right, rgba(80, 150, 210, 0.45), transparent);
+  margin: 4px 0;
+}
+
+.descBody {
+  font-size: 14px;
+  line-height: 1.7;
+  color: rgba(195, 210, 225, 0.8);
+}
+
+.launchBtn {
+  margin-top: 8px;
+  align-self: flex-start;
+  background: rgba(50, 110, 170, 0.28);
+  border: 1px solid rgba(80, 150, 210, 0.5);
+  border-radius: 8px;
+  color: #f0ebe0;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 22px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}

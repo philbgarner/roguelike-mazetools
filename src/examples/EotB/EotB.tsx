@@ -24,6 +24,7 @@ import * as THREE from "three";
 import { generateBspDungeon } from "../../bsp";
 import { buildTileAtlas } from "../../rendering/tileAtlas";
 import { PerspectiveDungeonView } from "../../rendering/PerspectiveDungeonView";
+import { useNavigate } from "react-router-dom";
 import styles from "./EotB.module.css";
 
 // ---------------------------------------------------------------------------
@@ -368,6 +369,7 @@ const MASK_OPTIONS: { value: MaskOverlay; label: string }[] = [
 ];
 
 export default function EotB() {
+  const navigate = useNavigate();
   const [maskOverlay, setMaskOverlay] = useState<MaskOverlay>("all");
   const [ceilingHeight, setCeilingHeight] = useState(3);
   const [debugEdges, setDebugEdges] = useState(false);
@@ -449,6 +451,7 @@ export default function EotB() {
       <div className={styles.uiHeaderBar}>
         <span className={styles.title}>Dungeon Crawler Example</span>
         <span className={styles.seed}>seed: {DUNGEON_SEED}</span>
+        <button className={styles.backBtn} onClick={() => navigate("/")}>← Menu</button>
       </div>
 
       {/* ── Main area ── */}

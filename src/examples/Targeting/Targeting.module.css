@@ -3,8 +3,8 @@
   height: 100vh;
   display: grid;
   grid-template-rows: 40px 1fr auto 48px;
-  background: #111;
-  color: #ccc;
+  background: #080c12;
+  color: #b8c8d8;
   font-family: monospace;
   overflow: hidden;
 }
@@ -16,22 +16,22 @@
   align-items: center;
   gap: 20px;
   padding: 0 16px;
-  background: #1a1a1a;
-  border-bottom: 1px solid #333;
+  background: #0d1520;
+  border-bottom: 1px solid #1e2d3d;
 }
 
 .title {
   font-size: 16px;
   font-weight: bold;
   letter-spacing: 4px;
-  color: #f80;
-  text-shadow: 0 0 8px #f804;
+  color: #c8a87a;
+  text-shadow: 0 0 10px rgba(200, 168, 122, 0.4);
 }
 
-.hp     { color: #e55; font-size: 12px; }
-.xp     { color: #8b8; font-size: 12px; }
-.alert  { color: #fa0; font-size: 12px; }
-.dead   { color: #f44; font-size: 12px; font-weight: bold; }
+.hp    { color: #c07070; font-size: 12px; }
+.xp    { color: #6aa8c0; font-size: 12px; }
+.alert { color: #c8a87a; font-size: 12px; }
+.dead  { color: #b05050; font-size: 12px; font-weight: bold; }
 
 /* ── Main area ── */
 .mainArea {
@@ -51,8 +51,8 @@
 .sidebar {
   width: 260px;
   min-width: 260px;
-  background: #111;
-  border-left: 1px solid #333;
+  background: #080c12;
+  border-left: 1px solid #1e2d3d;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -66,25 +66,25 @@
   width: 100%;
   height: auto;
   image-rendering: pixelated;
-  border: 1px solid #333;
+  border: 1px solid #1e2d3d;
 }
 
 .log {
   flex: 1;
   overflow-y: auto;
-  background: #0a0a0a;
-  border: 1px solid #222;
+  background: #060a0f;
+  border: 1px solid #141e28;
   padding: 6px 8px;
   font-size: 0.75rem;
   line-height: 1.5;
-  color: #888;
+  color: #4a6a7a;
 }
 
-.logEntry  { color: #aaa; }
-.logDamage { color: #e55; }
-.logDeath  { color: #f80; }
-.logXp     { color: #8cf; }
-.logSpell  { color: #fc8; }
+.logEntry  { color: #7a9aaa; }
+.logDamage { color: #c07070; }
+.logDeath  { color: #c8a87a; }
+.logXp     { color: #6aa8c0; }
+.logSpell  { color: #a0c4dc; }
 
 /* ── Spell bar ── */
 .spellBar {
@@ -93,15 +93,15 @@
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: #161616;
-  border-top: 1px solid #333;
+  background: #0a1018;
+  border-top: 1px solid #1e2d3d;
   flex-wrap: wrap;
 }
 
 .spellBtn {
-  background: #222;
-  border: 1px solid #444;
-  color: #999;
+  background: #0d1520;
+  border: 1px solid #2a3d50;
+  color: #6a8a9a;
   padding: 4px 12px;
   cursor: pointer;
   font-family: monospace;
@@ -110,14 +110,14 @@
 }
 
 .spellBtn:hover {
-  border-color: #666;
-  color: #ccc;
+  border-color: #5a9fd4;
+  color: #b8c8d8;
 }
 
 .spellBtnActive {
-  background: #332200;
-  border: 1px solid #aa6600;
-  color: #ffdd88;
+  background: #0d1e30;
+  border: 1px solid #3a78b0;
+  color: #a0d0f0;
   padding: 4px 12px;
   cursor: pointer;
   font-family: monospace;
@@ -126,7 +126,7 @@
 }
 
 .spellHint {
-  color: #666;
+  color: #3a5060;
   font-size: 11px;
   margin-left: 4px;
 }
@@ -138,15 +138,34 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  background: #1a1a1a;
-  border-top: 1px solid #333;
+  background: #0d1520;
+  border-top: 1px solid #1e2d3d;
   font-size: 12px;
-  color: #aaa;
+  color: #6a8a9a;
 }
 
 .controls {
-  color: #666;
+  color: #3a5060;
   font-size: 11px;
+}
+
+.backBtn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  color: #6a8a9a;
+  font-family: monospace;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.backBtn:hover {
+  border-color: #5a9fd4;
+  color: #b8c8d8;
 }
 
 /* ── Crosshair ── */
@@ -163,7 +182,7 @@
   position: absolute;
   width: 22px;
   height: 2px;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(180, 210, 235, 0.65);
   top: -1px;
   left: -11px;
 }
@@ -172,7 +191,7 @@
   position: absolute;
   width: 2px;
   height: 22px;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(180, 210, 235, 0.65);
   top: -11px;
   left: -1px;
 }
@@ -181,7 +200,7 @@
   position: absolute;
   width: 4px;
   height: 4px;
-  background: rgba(255, 200, 0, 0.9);
+  background: rgba(200, 168, 122, 0.9);
   border-radius: 50%;
   top: -2px;
   left: -2px;

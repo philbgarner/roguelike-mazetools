@@ -22,6 +22,7 @@ import { generateCellularDungeon } from "../../cellular";
 import { buildTileAtlas } from "../../rendering/tileAtlas";
 import { PerspectiveDungeonView } from "../../rendering/PerspectiveDungeonView";
 import { useDungeonCamera } from "../../rendering/useDungeonCamera";
+import { useNavigate } from "react-router-dom";
 import styles from "./Cave.module.css";
 
 // ---------------------------------------------------------------------------
@@ -232,6 +233,7 @@ const MASK_OPTIONS: { value: MaskOverlay; label: string }[] = [
 ];
 
 export default function Cave() {
+  const navigate = useNavigate();
   const [maskOverlay, setMaskOverlay] = useState<MaskOverlay>("all");
   const [ceilingHeight, setCeilingHeight] = useState(1.5);
   const [debugEdges, setDebugEdges] = useState(false);
@@ -312,6 +314,7 @@ export default function Cave() {
       <div className={styles.uiHeaderBar}>
         <span className={styles.title}>CAVE</span>
         <span className={styles.seed}>seed: {DUNGEON_SEED}</span>
+        <button className={styles.backBtn} onClick={() => navigate("/")}>← Menu</button>
       </div>
 
       {/* ── Main area ── */}

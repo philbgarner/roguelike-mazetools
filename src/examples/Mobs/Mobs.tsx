@@ -44,6 +44,7 @@ import type {
 } from "../../turn/turnTypes";
 import type { TurnEvent, XpGainEvent } from "../../turn/turnEvents";
 import type { MobilePlacement } from "../../content";
+import { useNavigate } from "react-router-dom";
 import styles from "./Mobs.module.css";
 
 // ---------------------------------------------------------------------------
@@ -532,6 +533,7 @@ function FloatingDamageNumbers({ nums }: { nums: FloatNum[] }): ReactNode {
 // ---------------------------------------------------------------------------
 
 export default function Mobs() {
+  const navigate = useNavigate();
   const [seed, setSeed] = useState(() =>
     Math.floor(Math.random() * 0x7fffffff),
   );
@@ -956,6 +958,7 @@ export default function Mobs() {
           </span>
         )}
         {gameOver && <span className={styles.dead}>DEAD — press R</span>}
+        <button className={styles.backBtn} onClick={() => navigate("/")}>← Menu</button>
       </div>
 
       {/* ── Main area ── */}
