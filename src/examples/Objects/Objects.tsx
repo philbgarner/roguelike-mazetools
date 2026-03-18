@@ -21,9 +21,14 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { generateBspDungeon } from "../../bsp";
 import { buildTileAtlas } from "../../rendering/tileAtlas";
-import { PerspectiveDungeonView } from "../../rendering/PerspectiveDungeonView";
+import {
+  PerspectiveDungeonView,
+  type ObjectRegistry,
+} from "../../rendering/PerspectiveDungeonView";
+import type { ObjectPlacement } from "../../content";
 import styles from "./Objects.module.css";
 
 // ---------------------------------------------------------------------------
@@ -116,6 +121,7 @@ function drawMinimap(
   yaw: number,
   overlay: MaskOverlay,
   overlayData: Record<Exclude<MaskOverlay, "all">, Uint8Array>,
+  objectPositions?: Array<{ x: number; z: number }>,
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -187,6 +193,18 @@ function drawMinimap(
   ctx.moveTo(px, pz);
   ctx.lineTo(px - Math.sin(yaw) * arrowLen, pz - Math.cos(yaw) * arrowLen);
   ctx.stroke();
+
+  // Yellow dots for object placements
+  if (objectPositions) {
+    ctx.fillStyle = "#ff0";
+    for (const { x, z } of objectPositions) {
+      const ox = (x + 0.5) * cellW;
+      const oz = (z + 0.5) * cellH;
+      ctx.beginPath();
+      ctx.arc(ox, oz, Math.max(cellW * 0.5, 2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -421,6 +439,92 @@ export default function Objects() {
     );
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // FBX chest model loading
+  // ---------------------------------------------------------------------------
+  const [chestProto, setChestProto] = useState<THREE.Group | null>(null);
+  useEffect(() => {
+    const CHEST_SCALE = 0.015;
+    const loader = new FBXLoader();
+    loader.load(
+      "/examples/objects/chest-1.fbx",
+      (fbx) => {
+        // Replace all mesh materials with a simple lit material so the chest
+        // is always visible regardless of embedded FBX texture paths.
+        const chestMat = new THREE.MeshLambertMaterial({ color: 0x8b5e3c });
+        fbx.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            (child as THREE.Mesh).material = chestMat;
+          }
+        });
+
+        // Apply scale so bounding box reflects actual world-space size.
+        fbx.scale.setScalar(CHEST_SCALE);
+        fbx.updateMatrixWorld(true);
+
+        const box = new THREE.Box3().setFromObject(fbx);
+        const size = box.getSize(new THREE.Vector3());
+        const yLift = -box.min.y; // shift up so the model's bottom sits at y=0
+
+        console.log("[Objects] chest-1.fbx loaded", {
+          worldSize: size.toArray().map((v) => +v.toFixed(3)),
+          yLift: +yLift.toFixed(3),
+        });
+
+        fbx.position.y = yLift;
+
+        // Wrap in a neutral container; SceneObjects will position the container.
+        const container = new THREE.Group();
+        container.add(fbx);
+        setChestProto(container);
+      },
+      undefined,
+      (err) => console.error("Failed to load chest-1.fbx", err),
+    );
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Object registry & placements — chests in end room + a few other rooms
+  // ---------------------------------------------------------------------------
+  const objectRegistry = useMemo<ObjectRegistry>(() => {
+    if (!chestProto) return {} as ObjectRegistry;
+    return {
+      chest: () => chestProto.clone(true),
+    };
+  }, [chestProto]);
+
+  const chestPlacements = useMemo<ObjectPlacement[]>(() => {
+    const placements: ObjectPlacement[] = [];
+    const rooms = dungeon.rooms;
+
+    function roomCentre(id: number): { x: number; z: number } | null {
+      const r = rooms.get(id);
+      if (!r) return null;
+      return {
+        x: r.rect.x + Math.floor(r.rect.w / 2),
+        z: r.rect.y + Math.floor(r.rect.h / 2),
+      };
+    }
+
+    // End room is guaranteed to have a chest
+    const endCentre = roomCentre(dungeon.endRoomId);
+    if (endCentre) placements.push({ type: "chest", ...endCentre });
+
+    // Add chests in up to 3 other rooms (skip start and end rooms)
+    let count = 0;
+    for (const [id] of rooms) {
+      if (count >= 3) break;
+      if (id === dungeon.endRoomId || id === dungeon.startRoomId) continue;
+      const centre = roomCentre(id);
+      if (centre) {
+        placements.push({ type: "chest", ...centre });
+        count++;
+      }
+    }
+
+    return placements;
+  }, [dungeon]);
+
   const { camera, containerRef } = useObjectsCamera(
     solidData,
     DUNGEON_W,
@@ -442,14 +546,15 @@ export default function Objects() {
       camera.yaw,
       maskOverlay,
       overlayData,
+      chestPlacements,
     );
-  }, [solidData, camera, maskOverlay, overlayData]);
+  }, [solidData, camera, maskOverlay, overlayData, chestPlacements]);
 
   return (
     <div className={styles.container}>
       {/* ── Header ── */}
       <div className={styles.uiHeaderBar}>
-        <span className={styles.title}>Dungeon Crawler Example</span>
+        <span className={styles.title}>Object Spawning</span>
         <span className={styles.seed}>seed: {DUNGEON_SEED}</span>
       </div>
 
@@ -477,6 +582,8 @@ export default function Objects() {
               fogFar={28}
               tileSize={3}
               debugEdges={debugEdges}
+              objects={chestPlacements}
+              objectRegistry={objectRegistry}
               style={{ width: "100%", height: "100%" }}
             />
           )}
