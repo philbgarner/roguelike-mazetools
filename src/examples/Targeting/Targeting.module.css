@@ -2,7 +2,7 @@
   width: 100vw;
   height: 100vh;
   display: grid;
-  grid-template-rows: 40px 1fr 48px;
+  grid-template-rows: 40px 1fr auto 48px;
   background: #111;
   color: #ccc;
   font-family: monospace;
@@ -45,6 +45,7 @@
   flex: 1;
   outline: none;
   cursor: default;
+  position: relative;
 }
 
 .sidebar {
@@ -83,10 +84,56 @@
 .logDamage { color: #e55; }
 .logDeath  { color: #f80; }
 .logXp     { color: #8cf; }
+.logSpell  { color: #fc8; }
+
+/* ── Spell bar ── */
+.spellBar {
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #161616;
+  border-top: 1px solid #333;
+  flex-wrap: wrap;
+}
+
+.spellBtn {
+  background: #222;
+  border: 1px solid #444;
+  color: #999;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.spellBtn:hover {
+  border-color: #666;
+  color: #ccc;
+}
+
+.spellBtnActive {
+  background: #332200;
+  border: 1px solid #aa6600;
+  color: #ffdd88;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.spellHint {
+  color: #666;
+  font-size: 11px;
+  margin-left: 4px;
+}
 
 /* ── Status panel ── */
 .statusPanel {
-  grid-row: 3;
+  grid-row: 4;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -100,4 +147,42 @@
 .controls {
   color: #666;
   font-size: 11px;
+}
+
+/* ── Crosshair ── */
+.crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.crosshairH {
+  position: absolute;
+  width: 22px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.7);
+  top: -1px;
+  left: -11px;
+}
+
+.crosshairV {
+  position: absolute;
+  width: 2px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.7);
+  top: -11px;
+  left: -1px;
+}
+
+.crosshairDot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: rgba(255, 200, 0, 0.9);
+  border-radius: 50%;
+  top: -2px;
+  left: -2px;
 }

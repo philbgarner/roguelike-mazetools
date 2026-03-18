@@ -401,6 +401,8 @@ function buildFaceInstances(
       floors.push({
         matrix: faceMatrix(wx, 0, wz, -HALF_PI, 0, 0, tileSize, tileSize),
         tileId: floorTile,
+        cellX: cx,
+        cellZ: cz,
       });
       ceilings.push({
         matrix: faceMatrix(
@@ -518,6 +520,8 @@ type SceneProps = {
   spriteAtlas?: SpriteAtlas;
   /** Per-mobile flash state (parallel array to mobiles). */
   mobileFlash?: boolean[];
+  /** Per-cell highlight mask: 0=none, 1=targeting preview, 2=fire, 3=lightning. */
+  highlightMask?: Uint8Array;
 };
 
 function DungeonScene({
@@ -545,6 +549,7 @@ function DungeonScene({
   mobiles,
   spriteAtlas,
   mobileFlash,
+  highlightMask,
 }: SceneProps) {
   const fogColorObj = useMemo(
     () => (fogColor ? new THREE.Color(fogColor) : undefined),
@@ -625,6 +630,8 @@ function DungeonScene({
         fogFar={fogFar}
         fogColor={fogColorObj}
         debugEdges={debugEdges}
+        highlightData={highlightMask}
+        gridWidth={width}
       />
       <InstancedTileMesh
         instances={ceilings}

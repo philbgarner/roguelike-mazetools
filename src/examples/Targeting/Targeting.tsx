@@ -1,11 +1,14 @@
 /**
- * Mobs — turn-based dungeon with 3-D first-person view and billboard monsters.
+ * Targeting — turn-based dungeon with AoE spell targeting.
  *
  * Controls:
- *   W / ArrowUp    — step forward (commits player turn)
- *   S / ArrowDown  — step backward (commits player turn)
- *   A              — turn left 90° (free, no turn cost)
- *   D              — turn right 90° (free, no turn cost)
+ *   W / ArrowUp    — step forward
+ *   S / ArrowDown  — step backward
+ *   A              — turn left 90°
+ *   D              — turn right 90°
+ *   1-4            — select spell
+ *   F / Enter      — cast selected spell
+ *   Escape         — cancel spell
  *   Space / .      — wait a turn
  *   R              — regenerate dungeon
  */
@@ -44,7 +47,10 @@ import type {
 } from "../../turn/turnTypes";
 import type { TurnEvent, XpGainEvent } from "../../turn/turnEvents";
 import type { MobilePlacement } from "../../content";
-import styles from "./Mobs.module.css";
+import { tilesInRadius, tilesInCone, tilesInLine } from "../../spatial";
+import type { GridPos } from "../../astar";
+import { tickEffects, type ActiveEffect } from "../../effects";
+import styles from "./Targeting.module.css";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,7 +62,6 @@ const TILE_SIZE = 3;
 const CEILING_H = 3;
 const LERP_MS = 150;
 
-// Tile source coords in the EotB padded tileset
 const SRC_FLOOR = { x: 136, y: 328 };
 const SRC_CEILING = { x: 136, y: 400 };
 const SRC_WALL = { x: 208, y: 304 };
@@ -72,17 +77,7 @@ function loadRepackedAtlasTexture(
       canvas.height = TILE_PX;
       const ctx = canvas.getContext("2d")!;
       sources.forEach(({ x, y }, i) => {
-        ctx.drawImage(
-          img,
-          x,
-          y,
-          TILE_PX,
-          TILE_PX,
-          i * TILE_PX,
-          0,
-          TILE_PX,
-          TILE_PX,
-        );
+        ctx.drawImage(img, x, y, TILE_PX, TILE_PX, i * TILE_PX, 0, TILE_PX, TILE_PX);
       });
       const tex = new THREE.CanvasTexture(canvas);
       tex.magFilter = THREE.NearestFilter;
@@ -95,60 +90,19 @@ function loadRepackedAtlasTexture(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Monster templates
+// ---------------------------------------------------------------------------
+
 const TEMPLATES: Record<string, MonsterTemplate> = {
-  goblin: {
-    name: "Goblin",
-    glyph: "g",
-    danger: 1,
-    hp: 6,
-    attack: 3,
-    defense: 0,
-    xp: 10,
-    speed: 8,
-  },
-  minotaur: {
-    name: "Minotaur",
-    glyph: "m",
-    danger: 3,
-    hp: 14,
-    attack: 6,
-    defense: 1,
-    xp: 25,
-    speed: 6,
-  },
-  troll: {
-    name: "Troll",
-    glyph: "T",
-    danger: 6,
-    hp: 30,
-    attack: 9,
-    defense: 2,
-    xp: 60,
-    speed: 5,
-  },
-  rat: {
-    name: "Giant Rat",
-    glyph: "r",
-    danger: 0,
-    hp: 4,
-    attack: 2,
-    defense: 0,
-    xp: 5,
-    speed: 9,
-  },
+  goblin:   { name: "Goblin",    glyph: "g", danger: 1, hp: 6,  attack: 3, defense: 0, xp: 10,  speed: 8 },
+  minotaur: { name: "Minotaur",  glyph: "m", danger: 3, hp: 14, attack: 6, defense: 1, xp: 25,  speed: 6 },
+  troll:    { name: "Troll",     glyph: "T", danger: 6, hp: 30, attack: 9, defense: 2, xp: 60,  speed: 5 },
+  rat:      { name: "Giant Rat", glyph: "r", danger: 0, hp: 4,  attack: 2, defense: 0, xp: 5,   speed: 9 },
 };
 
-const MOB_TYPES = [
-  "goblin",
-  "minotaur",
-  "troll",
-  "goblin",
-  "rat",
-  "troll",
-  "rat",
-];
+const MOB_TYPES = ["goblin", "minotaur", "troll", "goblin", "rat", "troll", "rat"];
 
-// Sprite atlas: 4 cols (goblin/minotaur/troll/rat) × 1 row
 const GLYPH_COL: Record<string, number> = { g: 0, m: 1, T: 2, r: 3 };
 const SPRITE_COLS = 4;
 
@@ -163,35 +117,28 @@ function cardinalDir(yaw: number): string {
   return DIRS[idx];
 }
 
-// Sprite positions in sprites.png (each sprite is 16×16 px)
 const SPRITE_SRC: Array<{ x: number; y: number }> = [
-  { x: 80, y: 416 }, // goblin (col 0)
-  { x: 272, y: 448 }, // minotaur (col 1)
-  { x: 80, y: 448 }, // troll (col 2)
-  { x: 144, y: 368 }, // rat (col 3)
+  { x: 80,  y: 416 },
+  { x: 272, y: 448 },
+  { x: 80,  y: 448 },
+  { x: 144, y: 368 },
 ];
 const SRC_TILE = 16;
-const DST_TILE = 64; // scale up for 3-D quality
+const DST_TILE = 64;
 
 async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
-    el.onerror = (e) => {
-      console.error("Failed to load sprite sheet:", url, e);
-      reject(e);
-    };
+    el.onerror = (e) => { console.error("Failed to load sprite sheet:", url, e); reject(e); };
     el.src = url;
   });
-
-  console.log("Sprite sheet loaded:", img.naturalWidth, "×", img.naturalHeight);
 
   const canvas = document.createElement("canvas");
   canvas.width = SPRITE_COLS * DST_TILE;
   canvas.height = DST_TILE;
   const ctx = canvas.getContext("2d")!;
 
-  // Extract each sprite from the sheet, remove background, place in atlas
   const tmp = document.createElement("canvas");
   tmp.width = SRC_TILE;
   tmp.height = SRC_TILE;
@@ -201,41 +148,18 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
     const { x, y } = SPRITE_SRC[col];
     tCtx.clearRect(0, 0, SRC_TILE, SRC_TILE);
     tCtx.drawImage(img, x, y, SRC_TILE, SRC_TILE, 0, 0, SRC_TILE, SRC_TILE);
-
     const px = tCtx.getImageData(0, 0, SRC_TILE, SRC_TILE);
-    // Sample the top-left corner pixel as background color
-    const bgR = px.data[0],
-      bgG = px.data[1],
-      bgB = px.data[2];
-    console.log(`Sprite col=${col} bg color: rgb(${bgR},${bgG},${bgB})`);
+    const bgR = px.data[0], bgG = px.data[1], bgB = px.data[2];
     const TOLERANCE = 30;
     for (let i = 0; i < px.data.length; i += 4) {
-      const r = px.data[i],
-        g = px.data[i + 1],
-        b = px.data[i + 2];
-      if (
-        Math.abs(r - bgR) < TOLERANCE &&
-        Math.abs(g - bgG) < TOLERANCE &&
-        Math.abs(b - bgB) < TOLERANCE
-      ) {
+      const r = px.data[i], g = px.data[i + 1], b = px.data[i + 2];
+      if (Math.abs(r - bgR) < TOLERANCE && Math.abs(g - bgG) < TOLERANCE && Math.abs(b - bgB) < TOLERANCE) {
         px.data[i + 3] = 0;
       }
     }
     tCtx.putImageData(px, 0, 0);
-
-    // Scale up to DST_TILE and blit into atlas
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
-      tmp,
-      0,
-      0,
-      SRC_TILE,
-      SRC_TILE,
-      col * DST_TILE,
-      0,
-      DST_TILE,
-      DST_TILE,
-    );
+    ctx.drawImage(tmp, 0, 0, SRC_TILE, SRC_TILE, col * DST_TILE, 0, DST_TILE, DST_TILE);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -277,16 +201,10 @@ function drawMinimap(
     }
   }
 
-  // Monsters
   for (const actor of Object.values(actors)) {
     if (actor.kind !== "monster" || !(actor as MonsterActor).alive) continue;
     const m = actor as MonsterActor;
-    ctx.fillStyle =
-      m.alertState === "chasing"
-        ? "#f44"
-        : m.alertState === "searching"
-          ? "#f80"
-          : "#844";
+    ctx.fillStyle = m.alertState === "chasing" ? "#f44" : m.alertState === "searching" ? "#f80" : "#844";
     const px = (m.x + 0.5) * cellW;
     const pz = (m.y + 0.5) * cellH;
     ctx.beginPath();
@@ -294,7 +212,6 @@ function drawMinimap(
     ctx.fill();
   }
 
-  // Player arrow
   const px = playerX * cellW;
   const pz = playerZ * cellH;
   const arrowLen = Math.max(cellW * 2.5, 6);
@@ -332,33 +249,13 @@ function resolveBump(
   const newHp = Math.max(0, target.hp - dmg);
   const died = newHp <= 0;
 
-  onEvent({
-    kind: "damage",
-    actorId: target.id,
-    amount: dmg,
-    x: target.x,
-    y: target.y,
-  });
-  const newActors = {
-    ...state.actors,
-    [target.id]: { ...target, hp: newHp, alive: !died },
-  };
+  onEvent({ kind: "damage", actorId: target.id, amount: dmg, x: target.x, y: target.y });
+  const newActors = { ...state.actors, [target.id]: { ...target, hp: newHp, alive: !died } };
 
   if (died) {
-    onEvent({
-      kind: "death",
-      actorId: target.id,
-      sourceId: attackerId,
-      x: target.x,
-      y: target.y,
-    });
+    onEvent({ kind: "death", actorId: target.id, sourceId: attackerId, x: target.x, y: target.y });
     if (attackerId === state.playerId && target.kind === "monster") {
-      onEvent({
-        kind: "xpGain",
-        amount: (target as MonsterActor).xp,
-        x: target.x,
-        y: target.y,
-      });
+      onEvent({ kind: "xpGain", amount: (target as MonsterActor).xp, x: target.x, y: target.y });
     }
   }
 
@@ -376,8 +273,7 @@ function buildDeps(
   onEvent: (e: TurnEvent) => void,
 ): TurnSystemDeps {
   const isWalkable = (x: number, y: number) => {
-    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height)
-      return false;
+    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return false;
     return solidData[y * dungeon.width + x] === 0;
   };
   return {
@@ -390,26 +286,17 @@ function buildDeps(
     },
     applyAction: (state, actorId, action, deps) => {
       if (action.kind === "wait" || action.kind === "interact") return state;
-      if (action.kind !== "move" || action.dx == null || action.dy == null)
-        return state;
+      if (action.kind !== "move" || action.dx == null || action.dy == null) return state;
       const actor = state.actors[actorId];
       if (!actor) return state;
       const nx = actor.x + action.dx;
       const ny = actor.y + action.dy;
       const blocker = Object.values(state.actors).find(
-        (a) =>
-          a.id !== actorId &&
-          a.alive &&
-          a.blocksMovement &&
-          a.x === nx &&
-          a.y === ny,
+        (a) => a.id !== actorId && a.alive && a.blocksMovement && a.x === nx && a.y === ny,
       );
       if (blocker) return resolveBump(state, actorId, nx, ny, onEvent);
       if (!deps.isWalkable(nx, ny)) return state;
-      return {
-        ...state,
-        actors: { ...state.actors, [actorId]: { ...actor, x: nx, y: ny } },
-      };
+      return { ...state, actors: { ...state.actors, [actorId]: { ...actor, x: nx, y: ny } } };
     },
     onEvent,
   };
@@ -428,16 +315,10 @@ type GameState = {
 };
 
 function initGame(seed: number): GameState {
-  const dungeon = generateBspDungeon({
-    width: DW,
-    height: DH,
-    seed,
-    keepOuterWalls: true,
-  });
+  const dungeon = generateBspDungeon({ width: DW, height: DH, seed, keepOuterWalls: true });
   const solidData = dungeon.textures.solid.image.data as Uint8Array;
 
-  const mobiles: Array<{ x: number; z: number; type: string; tileId: number }> =
-    [];
+  const mobiles: Array<{ x: number; z: number; type: string; tileId: number }> = [];
   let mobIdx = 0;
   for (const [roomId, room] of dungeon.rooms) {
     if (roomId === dungeon.startRoomId || mobIdx >= MOB_TYPES.length) continue;
@@ -450,12 +331,8 @@ function initGame(seed: number): GameState {
   }
 
   const startRoom = dungeon.rooms.get(dungeon.startRoomId);
-  const spawnX = startRoom
-    ? Math.floor(startRoom.rect.x + startRoom.rect.w / 2)
-    : Math.floor(DW / 2);
-  const spawnZ = startRoom
-    ? Math.floor(startRoom.rect.y + startRoom.rect.h / 2)
-    : Math.floor(DH / 2);
+  const spawnX = startRoom ? Math.floor(startRoom.rect.x + startRoom.rect.w / 2) : Math.floor(DW / 2);
+  const spawnZ = startRoom ? Math.floor(startRoom.rect.y + startRoom.rect.h / 2) : Math.floor(DH / 2);
 
   const player = createPlayerActor(spawnX, spawnZ);
   const monsters = createMonstersFromMobiles(mobiles, TEMPLATES);
@@ -471,7 +348,7 @@ function initGame(seed: number): GameState {
 // Log types
 // ---------------------------------------------------------------------------
 
-type LogKind = "info" | "damage" | "death" | "xp";
+type LogKind = "info" | "damage" | "death" | "xp" | "spell";
 type LogEntry = { text: string; kind: LogKind };
 
 // ---------------------------------------------------------------------------
@@ -484,13 +361,10 @@ type FloatNum = {
   wy: number;
   wz: number;
   value: number;
+  color?: string;
 };
 
-// Inject keyframe animation once
-if (
-  typeof document !== "undefined" &&
-  !document.getElementById("mobs-float-style")
-) {
+if (typeof document !== "undefined" && !document.getElementById("mobs-float-style")) {
   const s = document.createElement("style");
   s.id = "mobs-float-style";
   s.textContent = `@keyframes mobsFloatUp { 0% { opacity:1; transform:translateY(0); } 100% { opacity:0; transform:translateY(-56px); } }`;
@@ -501,24 +375,17 @@ function FloatingDamageNumbers({ nums }: { nums: FloatNum[] }): ReactNode {
   return (
     <>
       {nums.map((n) => (
-        <Html
-          key={n.id}
-          position={[n.wx, n.wy, n.wz]}
-          center
-          style={{ pointerEvents: "none" }}
-        >
-          <div
-            style={{
-              color: "#ff3333",
-              fontFamily: "monospace",
-              fontSize: "22px",
-              fontWeight: "bold",
-              textShadow: "0 0 4px #000, 1px 1px 0 #000, -1px -1px 0 #000",
-              animation: "mobsFloatUp 1.1s ease-out forwards",
-              whiteSpace: "nowrap",
-              userSelect: "none",
-            }}
-          >
+        <Html key={n.id} position={[n.wx, n.wy, n.wz]} center style={{ pointerEvents: "none" }}>
+          <div style={{
+            color: n.color ?? "#ff3333",
+            fontFamily: "monospace",
+            fontSize: "22px",
+            fontWeight: "bold",
+            textShadow: "0 0 4px #000, 1px 1px 0 #000, -1px -1px 0 #000",
+            animation: "mobsFloatUp 1.1s ease-out forwards",
+            whiteSpace: "nowrap",
+            userSelect: "none",
+          }}>
             {n.value}
           </div>
         </Html>
@@ -528,13 +395,87 @@ function FloatingDamageNumbers({ nums }: { nums: FloatNum[] }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
+// Spells
+// ---------------------------------------------------------------------------
+
+type SpellId = "smite" | "fireball" | "cone" | "lightning";
+type EffectColor = "fire" | "lightning";
+
+type SpellDef = {
+  id: SpellId;
+  name: string;
+  key: string;
+  damagePerTick: number;
+  effectDuration: number;
+  effectColor: EffectColor;
+  description: string;
+  getTargetCells: (px: number, py: number, fdx: number, fdy: number) => GridPos[];
+};
+
+const SPELLS: SpellDef[] = [
+  {
+    id: "smite",
+    name: "Smite",
+    key: "1",
+    damagePerTick: 8,
+    effectDuration: 1,
+    effectColor: "lightning",
+    description: "Strike 1 cell ahead",
+    getTargetCells: (px, py, fdx, fdy) =>
+      tilesInRadius(px + fdx, py + fdy, 0, "chebyshev"),
+  },
+  {
+    id: "fireball",
+    name: "Fireball",
+    key: "2",
+    damagePerTick: 4,
+    effectDuration: 3,
+    effectColor: "fire",
+    description: "AoE fire r=3, lasts 3 turns",
+    getTargetCells: (px, py, fdx, fdy) =>
+      tilesInRadius(px + fdx * 3, py + fdy * 3, 3, "euclidean"),
+  },
+  {
+    id: "cone",
+    name: "Cone Blast",
+    key: "3",
+    damagePerTick: 5,
+    effectDuration: 2,
+    effectColor: "fire",
+    description: "Fire cone 90°, range 5",
+    getTargetCells: (px, py, fdx, fdy) =>
+      tilesInCone(px, py, Math.atan2(fdy, fdx), Math.PI / 4, 5),
+  },
+  {
+    id: "lightning",
+    name: "Lightning",
+    key: "4",
+    damagePerTick: 6,
+    effectDuration: 1,
+    effectColor: "lightning",
+    description: "Bolt in facing dir, range 8",
+    getTargetCells: (px, py, fdx, fdy) =>
+      tilesInLine({ x: px + fdx, y: py + fdy }, { x: px + fdx * 8, y: py + fdy * 8 }),
+  },
+];
+
+// ---------------------------------------------------------------------------
+// World effects
+// ---------------------------------------------------------------------------
+
+type WorldEffect = {
+  id: number;
+  cellList: GridPos[];
+  effect: ActiveEffect;
+  effectColor: EffectColor;
+};
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function Targeting() {
-  const [seed, setSeed] = useState(() =>
-    Math.floor(Math.random() * 0x7fffffff),
-  );
+  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 0x7fffffff));
   const gameRef = useRef<GameState | null>(null);
   const [turnState, setTurnState] = useState<TurnSystemState | null>(null);
 
@@ -546,51 +487,38 @@ export default function Targeting() {
   const [gameOver, setGameOver] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
-  // Flash state: actorId → expiry timestamp
   const flashExpiryRef = useRef<Map<string, number>>(new Map());
   const [flashTick, setFlashTick] = useState(0);
 
-  // Floating damage numbers
   const [floatNums, setFloatNums] = useState<FloatNum[]>([]);
   const floatIdRef = useRef(0);
 
-  // Camera — logical (grid-aligned) target and lerp animation
+  // Spell state
+  const [selectedSpell, setSelectedSpell] = useState<SpellId | null>(null);
+  const [worldEffects, setWorldEffects] = useState<WorldEffect[]>([]);
+  const worldEffectsRef = useRef<WorldEffect[]>([]);
+  const worldEffectIdRef = useRef(0);
+  // facing tracks logical yaw for highlight recompute (updated on A/D)
+  const [facing, setFacing] = useState(0);
+  const [highlightMask, setHighlightMask] = useState<Uint8Array | null>(null);
+
   const logicalRef = useRef({ x: 1.5, z: 1.5, yaw: 0 });
   const animRef = useRef({
-    fromX: 1.5,
-    fromZ: 1.5,
-    fromYaw: 0,
-    toX: 1.5,
-    toZ: 1.5,
-    toYaw: 0,
-    startTime: 0,
-    animating: false,
+    fromX: 1.5, fromZ: 1.5, fromYaw: 0,
+    toX: 1.5, toZ: 1.5, toYaw: 0,
+    startTime: 0, animating: false,
   });
   const [camera, setCamera] = useState({ x: 1.5, z: 1.5, yaw: 0 });
 
-  // Bump animation (attack lunge / hit recoil)
   const bumpRef = useRef({
-    bumping: false,
-    startTime: 0,
-    duration: 130,
-    dx: 0,
-    dz: 0,
-    mag: 0,
-    shake: false,
+    bumping: false, startTime: 0, duration: 130,
+    dx: 0, dz: 0, mag: 0, shake: false,
   });
 
-  // Static assets — created once
-  const atlas = useMemo(
-    () => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX),
-    [],
-  );
-  const [dungeonTexture, setDungeonTexture] = useState<THREE.Texture | null>(
-    null,
-  );
+  const atlas = useMemo(() => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX), []);
+  const [dungeonTexture, setDungeonTexture] = useState<THREE.Texture | null>(null);
   useEffect(() => {
-    loadRepackedAtlasTexture([SRC_FLOOR, SRC_CEILING, SRC_WALL]).then(
-      setDungeonTexture,
-    );
+    loadRepackedAtlasTexture([SRC_FLOOR, SRC_CEILING, SRC_WALL]).then(setDungeonTexture);
   }, []);
   const [spriteAtlas, setSpriteAtlas] = useState<SpriteAtlas | null>(null);
   useEffect(() => {
@@ -612,28 +540,21 @@ export default function Targeting() {
     setTurnState(game.turnState);
     setGameOver(false);
     setPlayerXp(0);
-    const player = game.turnState.actors[
-      game.turnState.playerId
-    ] as PlayerActor;
+    setWorldEffects([]);
+    worldEffectsRef.current = [];
+    setSelectedSpell(null);
+    const player = game.turnState.actors[game.turnState.playerId] as PlayerActor;
     setPlayerHp(player.hp);
     setPlayerMaxHp(player.maxHp);
     setAlertCount(0);
-    setLog([{ text: "New dungeon. Hunt the monsters!", kind: "info" }]);
+    setLog([{ text: "New dungeon. Use 1-4 to select spells, F to cast.", kind: "info" }]);
 
     const cx = game.spawnX + 0.5;
     const cz = game.spawnZ + 0.5;
     logicalRef.current = { x: cx, z: cz, yaw: 0 };
-    animRef.current = {
-      fromX: cx,
-      fromZ: cz,
-      fromYaw: 0,
-      toX: cx,
-      toZ: cz,
-      toYaw: 0,
-      startTime: 0,
-      animating: false,
-    };
+    animRef.current = { fromX: cx, fromZ: cz, fromYaw: 0, toX: cx, toZ: cz, toYaw: 0, startTime: 0, animating: false };
     setCamera({ x: cx, z: cz, yaw: 0 });
+    setFacing(0);
   }, [seed]);
 
   // Smooth-lerp + bump animation loop
@@ -645,33 +566,26 @@ export default function Targeting() {
       const bump = bumpRef.current;
       if (!anim.animating && !bump.bumping) return;
 
-      // Main lerp
-      let x = anim.toX,
-        z = anim.toZ,
-        yaw = anim.toYaw;
+      let x = anim.toX, z = anim.toZ, yaw = anim.toYaw;
       if (anim.animating) {
         const raw = (now - anim.startTime) / LERP_MS;
         const t = Math.min(raw, 1);
-        const s = t * t * (3 - 2 * t); // smoothstep
+        const s = t * t * (3 - 2 * t);
         x = anim.fromX + (anim.toX - anim.fromX) * s;
         z = anim.fromZ + (anim.toZ - anim.fromZ) * s;
         yaw = anim.fromYaw + (anim.toYaw - anim.fromYaw) * s;
         if (t >= 1) anim.animating = false;
       }
 
-      // Bump / shake offset
-      let bx = 0,
-        bz = 0;
+      let bx = 0, bz = 0;
       if (bump.bumping) {
         const bt = Math.min((now - bump.startTime) / bump.duration, 1);
         if (bump.shake) {
-          // Side-to-side shake that decays
           const sign = Math.floor(now / 25) % 2 === 0 ? 1 : -1;
           const decay = 1 - bt;
           bx = bump.dx * bump.mag * decay * sign;
           bz = bump.dz * bump.mag * decay * sign;
         } else {
-          // Triangle wave: lunge forward then back
           const fac = bt < 0.5 ? bt * 2 : (1 - bt) * 2;
           bx = bump.dx * bump.mag * fac;
           bz = bump.dz * bump.mag * fac;
@@ -689,86 +603,127 @@ export default function Targeting() {
   useEffect(() => {
     if (!minimapRef.current || !gameRef.current || !turnState) return;
     const { solidData, dungeon } = gameRef.current;
-    drawMinimap(
-      minimapRef.current,
-      solidData,
-      dungeon.width,
-      dungeon.height,
-      logicalRef.current.x,
-      logicalRef.current.z,
-      logicalRef.current.yaw,
-      turnState.actors,
-    );
+    drawMinimap(minimapRef.current, solidData, dungeon.width, dungeon.height,
+      logicalRef.current.x, logicalRef.current.z, logicalRef.current.yaw, turnState.actors);
   }, [turnState, camera]);
 
-  // Commit a player turn action
+  // Highlight mask recompute
+  useEffect(() => {
+    const game = gameRef.current;
+    const player = turnState?.actors[turnState?.playerId] as PlayerActor | undefined;
+    const mask = new Uint8Array(DW * DH);
+
+    // Active world effects
+    for (const we of worldEffects) {
+      const v = we.effectColor === "fire" ? 2 : 3;
+      for (const { x, y } of we.cellList) {
+        if (x >= 0 && y >= 0 && x < DW && y < DH) mask[y * DW + x] = v;
+      }
+    }
+
+    // Spell preview (only overwrite cells not already showing an active effect)
+    if (selectedSpell && player && game) {
+      const yaw = logicalRef.current.yaw;
+      const fdx = Math.round(-Math.sin(yaw));
+      const fdy = Math.round(-Math.cos(yaw));
+      const spell = SPELLS.find((s) => s.id === selectedSpell)!;
+      const cells = spell.getTargetCells(player.x, player.y, fdx, fdy);
+      for (const { x, y } of cells) {
+        if (x >= 0 && y >= 0 && x < DW && y < DH && mask[y * DW + x] === 0) {
+          mask[y * DW + x] = 1;
+        }
+      }
+    }
+
+    setHighlightMask(mask.some((v) => v > 0) ? mask : null);
+  }, [selectedSpell, worldEffects, turnState, facing]);
+
+  // Spawn a floating damage number
+  const spawnFloat = useCallback((wx: number, wy: number, wz: number, amount: number, color?: string) => {
+    const id = ++floatIdRef.current;
+    setFloatNums((prev) => [...prev, { id, wx, wy, wz, value: amount, color }]);
+    setTimeout(() => setFloatNums((prev) => prev.filter((f) => f.id !== id)), 1150);
+  }, []);
+
+  // Commit a player turn action (also ticks world effects)
   const applyTurn = useCallback(
     (action: TurnAction) => {
       const game = gameRef.current;
       if (!game || gameOver || !game.turnState.awaitingPlayerInput) return;
 
-      const prevPlayer = game.turnState.actors[
-        game.turnState.playerId
-      ] as PlayerActor;
+      const prevPlayer = game.turnState.actors[game.turnState.playerId] as PlayerActor;
       const prevX = prevPlayer.x;
       const prevZ = prevPlayer.y;
 
       const evts: TurnEvent[] = [];
-      const deps = buildDeps(
-        game.dungeon,
-        game.solidData,
-        game.turnState.actors,
-        (e) => evts.push(e),
-      );
-      const newState = commitPlayerAction(game.turnState, deps, action);
-      game.turnState = newState;
-      setTurnState(newState);
+      const deps = buildDeps(game.dungeon, game.solidData, game.turnState.actors, (e) => evts.push(e));
+      let newState = commitPlayerAction(game.turnState, deps, action);
+
+      // Tick world effects
+      let workingActors = { ...newState.actors };
+      const updatedWorldEffects: WorldEffect[] = [];
+      for (const we of worldEffectsRef.current) {
+        const { updatedEffects, deltas } = tickEffects([we.effect], 0);
+        const cellSet = new Set(we.cellList.map(({ x, y }) => `${x},${y}`));
+        for (const delta of deltas) {
+          const dmg = delta.hp != null ? Math.abs(delta.hp) : 0;
+          if (dmg === 0) continue;
+          for (const actor of Object.values(workingActors)) {
+            if (actor.kind !== "monster" || !actor.alive) continue;
+            if (!cellSet.has(`${actor.x},${actor.y}`)) continue;
+            const monster = actor as MonsterActor;
+            const newHp = Math.max(0, monster.hp - dmg);
+            const died = newHp <= 0;
+            evts.push({ kind: "damage", actorId: monster.id, amount: dmg, x: monster.x, y: monster.y });
+            if (died) {
+              evts.push({ kind: "death", actorId: monster.id, sourceId: newState.playerId, x: monster.x, y: monster.y });
+              evts.push({ kind: "xpGain", amount: monster.xp, x: monster.x, y: monster.y });
+            }
+            workingActors = { ...workingActors, [monster.id]: { ...monster, hp: newHp, alive: !died } };
+          }
+        }
+        if (updatedEffects.length > 0) {
+          updatedWorldEffects.push({ ...we, effect: updatedEffects[0] });
+        }
+      }
+
+      const finalState = { ...newState, actors: workingActors };
+      game.turnState = finalState;
+      setTurnState(finalState);
+      worldEffectsRef.current = updatedWorldEffects;
+      setWorldEffects(updatedWorldEffects);
 
       let playerTookDamage = false;
       for (const evt of evts) {
         if (evt.kind === "damage") {
-          const who =
-            evt.actorId === newState.playerId
-              ? "You"
-              : ((newState.actors[evt.actorId] as MonsterActor | undefined)
-                  ?.name ?? evt.actorId);
+          const who = evt.actorId === finalState.playerId
+            ? "You"
+            : ((finalState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId);
           pushLog({ text: `${who} takes ${evt.amount} dmg`, kind: "damage" });
 
-          if (evt.actorId === newState.playerId) {
+          if (evt.actorId === finalState.playerId) {
             playerTookDamage = true;
           } else {
-            // Flash the monster red
             flashExpiryRef.current.set(evt.actorId, performance.now() + 220);
             setFlashTick((t) => t + 1);
             setTimeout(() => setFlashTick((t) => t + 1), 230);
 
-            // Floating damage number at monster head
-            const monster = newState.actors[evt.actorId] as
-              | MonsterActor
-              | undefined;
+            const monster = finalState.actors[evt.actorId] as MonsterActor | undefined;
             if (monster) {
-              const id = ++floatIdRef.current;
               const wx = (monster.x + 0.5) * TILE_SIZE;
               const wy = CEILING_H * 0.9;
               const wz = (monster.y + 0.5) * TILE_SIZE;
-              setFloatNums((prev) => [
-                ...prev,
-                { id, wx, wy, wz, value: evt.amount },
-              ]);
-              setTimeout(
-                () => setFloatNums((prev) => prev.filter((f) => f.id !== id)),
-                1150,
-              );
+              // fire damage = orange, lightning = yellow
+              const color = worldEffectsRef.current.length > 0 ? "#ff8800" : "#ff3333";
+              spawnFloat(wx, wy, wz, evt.amount, color);
             }
           }
         } else if (evt.kind === "death") {
-          const who =
-            evt.actorId === newState.playerId
-              ? "You"
-              : ((newState.actors[evt.actorId] as MonsterActor | undefined)
-                  ?.name ?? evt.actorId);
+          const who = evt.actorId === finalState.playerId
+            ? "You"
+            : ((finalState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId);
           pushLog({ text: `${who} died!`, kind: "death" });
-          if (evt.actorId === newState.playerId) setGameOver(true);
+          if (evt.actorId === finalState.playerId) setGameOver(true);
         } else if (evt.kind === "xpGain") {
           const xpEvt = evt as XpGainEvent;
           setPlayerXp((prev) => prev + xpEvt.amount);
@@ -776,76 +731,80 @@ export default function Targeting() {
         }
       }
 
-      const newPlayer = newState.actors[newState.playerId] as PlayerActor;
+      const newPlayer = finalState.actors[finalState.playerId] as PlayerActor;
       setPlayerHp(newPlayer.hp);
 
-      const alerted = Object.values(newState.actors).filter(
-        (a) =>
-          a.kind === "monster" &&
-          a.alive &&
-          (a as MonsterActor).alertState !== "idle",
+      const alerted = Object.values(finalState.actors).filter(
+        (a) => a.kind === "monster" && a.alive && (a as MonsterActor).alertState !== "idle",
       ).length;
       setAlertCount(alerted);
 
       if (!newPlayer.alive) {
         setGameOver(true);
-        pushLog({
-          text: "You died. Press R for a new dungeon.",
-          kind: "death",
-        });
+        pushLog({ text: "You died. Press R for a new dungeon.", kind: "death" });
       }
 
-      // Bump animations
       if (action.kind === "move" && action.dx != null && action.dy != null) {
-        const attackHit = evts.some(
-          (e) => e.kind === "damage" && e.actorId !== newState.playerId,
-        );
+        const attackHit = evts.some((e) => e.kind === "damage" && e.actorId !== finalState.playerId);
         if (attackHit) {
-          // Lunge forward toward monster (dx/dz are ±1 unit cell direction)
-          bumpRef.current = {
-            bumping: true,
-            startTime: performance.now(),
-            duration: 130,
-            dx: action.dx,
-            dz: action.dy ?? 0,
-            mag: 0.35,
-            shake: false,
-          };
+          bumpRef.current = { bumping: true, startTime: performance.now(), duration: 130, dx: action.dx, dz: action.dy ?? 0, mag: 0.35, shake: false };
         }
       }
       if (playerTookDamage) {
-        // Horizontal shake on hit
-        bumpRef.current = {
-          bumping: true,
-          startTime: performance.now(),
-          duration: 250,
-          dx: 1,
-          dz: 0,
-          mag: 0.05,
-          shake: true,
-        };
+        bumpRef.current = { bumping: true, startTime: performance.now(), duration: 250, dx: 1, dz: 0, mag: 0.05, shake: true };
       }
 
-      // Animate camera to new player position if they actually moved
       if (newPlayer.x !== prevX || newPlayer.y !== prevZ) {
         const { yaw } = logicalRef.current;
         const toX = newPlayer.x + 0.5;
         const toZ = newPlayer.y + 0.5;
-        animRef.current = {
-          fromX: logicalRef.current.x,
-          fromZ: logicalRef.current.z,
-          fromYaw: yaw,
-          toX,
-          toZ,
-          toYaw: yaw,
-          startTime: performance.now(),
-          animating: true,
-        };
+        animRef.current = { fromX: logicalRef.current.x, fromZ: logicalRef.current.z, fromYaw: yaw, toX, toZ, toYaw: yaw, startTime: performance.now(), animating: true };
         logicalRef.current.x = toX;
         logicalRef.current.z = toZ;
       }
     },
-    [gameOver, pushLog],
+    [gameOver, pushLog, spawnFloat],
+  );
+
+  // Cast a spell: create world effect then consume a turn
+  const castSpell = useCallback(
+    (spell: SpellDef) => {
+      const game = gameRef.current;
+      if (!game || gameOver || !game.turnState.awaitingPlayerInput) return;
+
+      const player = game.turnState.actors[game.turnState.playerId] as PlayerActor;
+      const { yaw } = logicalRef.current;
+      const fdx = Math.round(-Math.sin(yaw));
+      const fdy = Math.round(-Math.cos(yaw));
+
+      const cells = spell.getTargetCells(player.x, player.y, fdx, fdy).filter(
+        ({ x, y }) => x >= 0 && y >= 0 && x < DW && y < DH,
+      );
+      if (cells.length === 0) return;
+
+      const effectId = ++worldEffectIdRef.current;
+      const newEffect: WorldEffect = {
+        id: effectId,
+        cellList: cells,
+        effect: {
+          id: `${spell.id}_${effectId}`,
+          name: spell.name,
+          stepsRemaining: spell.effectDuration,
+          data: { damage: spell.damagePerTick },
+          ticks: {
+            onTick: (eff) => ({ hp: -eff.data.damage }),
+          },
+        },
+        effectColor: spell.effectColor,
+      };
+
+      // Add to ref immediately so applyTurn sees it
+      worldEffectsRef.current = [...worldEffectsRef.current, newEffect];
+      setSelectedSpell(null);
+      pushLog({ text: `Cast ${spell.name}! (${cells.length} cells, ${spell.effectDuration} turns)`, kind: "spell" });
+      applyTurn({ kind: "wait" });
+    },
+    [gameOver, applyTurn, pushLog],
   );
 
   // Keyboard handler
@@ -871,33 +830,17 @@ export default function Targeting() {
         case "KeyA": {
           e.preventDefault();
           const toYaw = yaw + Math.PI / 2;
-          animRef.current = {
-            fromX: x,
-            fromZ: z,
-            fromYaw: yaw,
-            toX: x,
-            toZ: z,
-            toYaw,
-            startTime: performance.now(),
-            animating: true,
-          };
+          animRef.current = { fromX: x, fromZ: z, fromYaw: yaw, toX: x, toZ: z, toYaw, startTime: performance.now(), animating: true };
           logicalRef.current.yaw = toYaw;
+          setFacing(toYaw);
           break;
         }
         case "KeyD": {
           e.preventDefault();
           const toYaw = yaw - Math.PI / 2;
-          animRef.current = {
-            fromX: x,
-            fromZ: z,
-            fromYaw: yaw,
-            toX: x,
-            toZ: z,
-            toYaw,
-            startTime: performance.now(),
-            animating: true,
-          };
+          animRef.current = { fromX: x, fromZ: z, fromYaw: yaw, toX: x, toZ: z, toYaw, startTime: performance.now(), animating: true };
           logicalRef.current.yaw = toYaw;
+          setFacing(toYaw);
           break;
         }
         case "Space":
@@ -908,18 +851,43 @@ export default function Targeting() {
         case "KeyR":
           setSeed(Math.floor(Math.random() * 0x7fffffff));
           break;
+        case "Digit1":
+          setSelectedSpell((p) => (p === "smite" ? null : "smite"));
+          break;
+        case "Digit2":
+          setSelectedSpell((p) => (p === "fireball" ? null : "fireball"));
+          break;
+        case "Digit3":
+          setSelectedSpell((p) => (p === "cone" ? null : "cone"));
+          break;
+        case "Digit4":
+          setSelectedSpell((p) => (p === "lightning" ? null : "lightning"));
+          break;
+        case "Escape":
+          setSelectedSpell(null);
+          break;
+        case "KeyF":
+        case "Enter": {
+          e.preventDefault();
+          const spellId = selectedSpell;
+          if (spellId) {
+            const spell = SPELLS.find((s) => s.id === spellId);
+            if (spell) castSpell(spell);
+          }
+          break;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applyTurn]);
+  }, [applyTurn, castSpell, selectedSpell]);
 
   // Scroll log to bottom
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
-  // Billboard mobiles and per-mobile flash derived from turn state
+  // Billboard mobiles
   const { mobiles, mobileFlash } = useMemo(() => {
     if (!turnState) return { mobiles: [], mobileFlash: [] };
     const now = performance.now();
@@ -928,39 +896,33 @@ export default function Targeting() {
       (a) => a.kind === "monster" && (a as MonsterActor).alive,
     ) as MonsterActor[];
     return {
-      mobiles: alive.map((m) => ({
-        x: m.x,
-        z: m.y,
-        type: "monster",
-        tileId: mobTileId(m.glyph),
-      })),
+      mobiles: alive.map((m) => ({ x: m.x, z: m.y, type: "monster", tileId: mobTileId(m.glyph) })),
       mobileFlash: alive.map((m) => (flashMap.get(m.id) ?? 0) > now),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnState, flashTick]);
 
   const game = gameRef.current;
+  const activeSpell = SPELLS.find((s) => s.id === selectedSpell);
 
   return (
     <div className={styles.container}>
-      {/* ── Header ── */}
+      {/* Header */}
       <div className={styles.header}>
-        <span className={styles.title}>MOBS</span>
-        <span className={styles.hp}>
-          HP {playerHp}/{playerMaxHp}
-        </span>
+        <span className={styles.title}>TARGETING</span>
+        <span className={styles.hp}>HP {playerHp}/{playerMaxHp}</span>
         <span className={styles.xp}>XP {playerXp}</span>
         {alertCount > 0 && (
-          <span className={styles.alert}>
-            {alertCount} monster{alertCount !== 1 ? "s" : ""} alerted
-          </span>
+          <span className={styles.alert}>{alertCount} monster{alertCount !== 1 ? "s" : ""} alerted</span>
+        )}
+        {worldEffects.length > 0 && (
+          <span className={styles.alert}>{worldEffects.length} active effect{worldEffects.length !== 1 ? "s" : ""}</span>
         )}
         {gameOver && <span className={styles.dead}>DEAD — press R</span>}
       </div>
 
-      {/* ── Main area ── */}
+      {/* Main area */}
       <div className={styles.mainArea}>
-        {/* First-person 3-D view */}
         <div className={styles.perspectiveView} tabIndex={0}>
           {game && dungeonTexture && (
             <PerspectiveDungeonView
@@ -984,35 +946,33 @@ export default function Targeting() {
               mobiles={mobiles}
               mobileFlash={mobileFlash}
               spriteAtlas={spriteAtlas ?? undefined}
+              highlightMask={highlightMask ?? undefined}
               style={{ width: "100%", height: "100%" }}
             >
               <FloatingDamageNumbers nums={floatNums} />
             </PerspectiveDungeonView>
           )}
+          {selectedSpell && (
+            <div className={styles.crosshair}>
+              <div className={styles.crosshairH} />
+              <div className={styles.crosshairV} />
+              <div className={styles.crosshairDot} />
+            </div>
+          )}
         </div>
 
-        {/* Sidebar: minimap + combat log */}
+        {/* Sidebar */}
         <div className={styles.sidebar}>
-          <canvas
-            ref={minimapRef}
-            width={240}
-            height={160}
-            className={styles.minimapCanvas}
-          />
+          <canvas ref={minimapRef} width={240} height={160} className={styles.minimapCanvas} />
           <div ref={logRef} className={styles.log}>
             {log.map((entry, i) => (
-              <div
-                key={i}
-                className={
-                  entry.kind === "damage"
-                    ? styles.logDamage
-                    : entry.kind === "death"
-                      ? styles.logDeath
-                      : entry.kind === "xp"
-                        ? styles.logXp
-                        : styles.logEntry
-                }
-              >
+              <div key={i} className={
+                entry.kind === "damage" ? styles.logDamage
+                  : entry.kind === "death" ? styles.logDeath
+                  : entry.kind === "xp" ? styles.logXp
+                  : entry.kind === "spell" ? styles.logSpell
+                  : styles.logEntry
+              }>
                 {entry.text}
               </div>
             ))}
@@ -1020,12 +980,30 @@ export default function Targeting() {
         </div>
       </div>
 
-      {/* ── Status panel ── */}
+      {/* Spell bar */}
+      <div className={styles.spellBar}>
+        {SPELLS.map((spell) => (
+          <button
+            key={spell.id}
+            className={selectedSpell === spell.id ? styles.spellBtnActive : styles.spellBtn}
+            onClick={() => setSelectedSpell((p) => (p === spell.id ? null : spell.id))}
+            title={spell.description}
+          >
+            [{spell.key}] {spell.name}
+          </button>
+        ))}
+        <span className={styles.spellHint}>
+          {activeSpell
+            ? `${activeSpell.description} · F/Enter: cast · Esc: cancel`
+            : "Select a spell (1-4) then F/Enter to cast"}
+        </span>
+      </div>
+
+      {/* Status panel */}
       <div className={styles.statusPanel}>
         <span>Facing: {cardinalDir(camera.yaw)}</span>
         <span className={styles.controls}>
-          W/S — move &nbsp;·&nbsp; A/D — turn 90° &nbsp;·&nbsp; Space — wait
-          &nbsp;·&nbsp; R — new dungeon
+          W/S move · A/D turn · 1-4 spell · F cast · Esc cancel · Space wait · R new
         </span>
       </div>
     </div>

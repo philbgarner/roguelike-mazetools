@@ -16,6 +16,8 @@ import type { TileAtlas } from "./tileAtlas";
 export type TileInstance = {
   matrix: THREE.Matrix4;
   tileId: number;
+  cellX?: number;
+  cellZ?: number;
 };
 
 const MAX_INSTANCES = 32768;
@@ -26,6 +28,7 @@ const MAX_INSTANCES = 32768;
 
 const vertexShader = /* glsl */ `
 attribute float aTileId;
+attribute float aHighlight;
 uniform vec2  uTileSize;   // (tileW/sheetW, tileH/sheetH)
 uniform float uColumns;    // tiles per row in the atlas
 
@@ -34,6 +37,7 @@ varying vec2  vTileOrigin; // atlas UV of this tile's bottom-left corner
 varying float vFogDist;
 varying vec2  vWorldPos;
 varying vec2  vTileUv;
+varying float vHighlight;
 
 void main() {
   float id  = floor(aTileId + 0.5);
@@ -45,6 +49,8 @@ void main() {
   vAtlasUv    = offset + uv * uTileSize;
   vTileOrigin = offset;
   vTileUv     = uv; // [0,1]² local quad coords, used for debug edge overlay
+
+  vHighlight = aHighlight;
 
   vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
   vWorldPos = worldPos.xz;
@@ -77,6 +83,7 @@ varying vec2  vTileOrigin;
 varying float vFogDist;
 varying vec2  vWorldPos;
 varying vec2  vTileUv;
+varying float vHighlight;
 
 // Simple spatial hash: returns [0,1) for a given cell coord.
 float hash(vec2 p) {
@@ -150,6 +157,35 @@ void main() {
     lit = mix(lit, vec3(1.0, 0.0, 1.0), onEdge * 0.85);
   }
 
+  // Highlight overlay
+  float hi = floor(vHighlight + 0.5);
+
+  if (hi == 1.0) {
+    // Targeting preview: blue/white pulse
+    float pulse = 0.5 + 0.5 * sin(uTime * 4.0);
+    vec3 highlightColor = mix(vec3(0.2, 0.5, 1.0), vec3(0.7, 0.9, 1.0), pulse);
+    lit = mix(lit, highlightColor, 0.55 * pulse + 0.2);
+  } else if (hi == 2.0) {
+    // Fire: orange/red flicker with per-cell spatial hash variation
+    float cellHash = hash(floor(vWorldPos));
+    float firePhase = uTime * 6.0 + cellHash * 12.566; // per-cell offset
+    float fireFlicker = 0.5 + 0.5 * sin(firePhase)
+                      + 0.25 * sin(firePhase * 1.7 + 1.3)
+                      + 0.15 * sin(firePhase * 2.9 + 0.7);
+    fireFlicker = clamp(fireFlicker / 1.9, 0.0, 1.0);
+    vec3 fireColor = mix(vec3(0.8, 0.1, 0.0), vec3(1.0, 0.7, 0.1), fireFlicker);
+    lit = mix(lit, fireColor, 0.6 + 0.3 * fireFlicker);
+  } else if (hi == 3.0) {
+    // Lightning: sharp yellow/white flashes
+    float cellHash2 = hash(floor(vWorldPos) + vec2(7.3, 3.1));
+    float lightningPhase = uTime * 18.0 + cellHash2 * 6.283;
+    float flash = step(0.72, fract(lightningPhase));
+    float flash2 = step(0.85, fract(lightningPhase * 1.618));
+    float boltIntensity = clamp(flash + flash2, 0.0, 1.0);
+    vec3 lightningColor = mix(vec3(0.9, 0.9, 0.2), vec3(1.0, 1.0, 1.0), boltIntensity);
+    lit = mix(lit, lightningColor, 0.45 + 0.5 * boltIntensity);
+  }
+
   gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
 }
 `;
@@ -166,6 +202,8 @@ type Props = {
   fogFar?: number;
   fogColor?: THREE.Color;
   debugEdges?: boolean;
+  highlightData?: Uint8Array;
+  gridWidth?: number;
 };
 
 export function InstancedTileMesh({
@@ -176,15 +214,21 @@ export function InstancedTileMesh({
   fogFar = 10,
   fogColor,
   debugEdges = false,
+  highlightData,
+  gridWidth,
 }: Props) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Geometry is created once; the aTileId attribute is pre-allocated to
-  // MAX_INSTANCES so we never need to recreate it.
+  // Geometry is created once; the aTileId and aHighlight attributes are
+  // pre-allocated to MAX_INSTANCES so we never need to recreate them.
   const geometry = useMemo(() => {
     const geo = new THREE.PlaneGeometry(1, 1);
     geo.setAttribute(
       "aTileId",
+      new THREE.InstancedBufferAttribute(new Float32Array(MAX_INSTANCES), 1),
+    );
+    geo.setAttribute(
+      "aHighlight",
       new THREE.InstancedBufferAttribute(new Float32Array(MAX_INSTANCES), 1),
     );
     return geo;
@@ -248,6 +292,37 @@ export function InstancedTileMesh({
     mesh.instanceMatrix.needsUpdate = true;
     tileAttr.needsUpdate = true;
   }, [instances]);
+
+  // Update aHighlight attribute from highlightData + instance cell coordinates
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    const highlightAttr = mesh.geometry.getAttribute(
+      "aHighlight",
+    ) as THREE.InstancedBufferAttribute;
+
+    const count = Math.min(instances.length, MAX_INSTANCES);
+
+    if (!highlightData || !gridWidth) {
+      // Clear all highlights
+      for (let i = 0; i < count; i++) {
+        highlightAttr.setX(i, 0);
+      }
+    } else {
+      for (let i = 0; i < count; i++) {
+        const inst = instances[i];
+        if (inst.cellX !== undefined && inst.cellZ !== undefined) {
+          const idx = inst.cellZ * gridWidth + inst.cellX;
+          highlightAttr.setX(i, highlightData[idx] ?? 0);
+        } else {
+          highlightAttr.setX(i, 0);
+        }
+      }
+    }
+
+    highlightAttr.needsUpdate = true;
+  }, [instances, highlightData, gridWidth]);
 
   return (
     <instancedMesh
