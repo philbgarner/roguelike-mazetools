@@ -59,10 +59,16 @@ function SceneObjects({
   registry,
   placements,
   tileSize = 1,
+  fogNear,
+  fogFar,
+  fogColor,
 }: {
   registry: ObjectRegistry;
   placements: ObjectPlacement[];
   tileSize?: number;
+  fogNear?: number;
+  fogFar?: number;
+  fogColor?: THREE.Color;
 }) {
   const objects = useMemo(() => {
     return placements.map((p) => {
@@ -75,9 +81,40 @@ function SceneObjects({
       obj.position.set(wx, wy, wz);
       obj.rotation.set(0, p.yaw ?? 0, 0);
       if (p.scale !== undefined) obj.scale.setScalar(p.scale);
+      // Initialise fog uniforms on any ShaderMaterials in this object.
+      obj.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+          if (!(mat instanceof THREE.ShaderMaterial)) continue;
+          if (mat.uniforms.uFogNear) mat.uniforms.uFogNear.value = fogNear ?? 4;
+          if (mat.uniforms.uFogFar) mat.uniforms.uFogFar.value = fogFar ?? 10;
+          if (mat.uniforms.uFogColor && fogColor) mat.uniforms.uFogColor.value = fogColor;
+        }
+      });
       return obj;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registry, placements, tileSize]);
+
+  // Update uTime each frame on all ShaderMaterials contained in placed objects.
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    for (const obj of objects) {
+      if (!obj) continue;
+      obj.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+          if (mat instanceof THREE.ShaderMaterial && mat.uniforms.uTime) {
+            mat.uniforms.uTime.value = t;
+          }
+        }
+      });
+    }
+  });
 
   return (
     <>
@@ -613,6 +650,9 @@ function DungeonScene({
           registry={objectRegistry}
           placements={objects}
           tileSize={tileSize}
+          fogNear={fogNear}
+          fogFar={fogFar}
+          fogColor={fogColorObj}
         />
       )}
 

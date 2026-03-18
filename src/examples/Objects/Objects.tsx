@@ -28,8 +28,19 @@ import {
   PerspectiveDungeonView,
   type ObjectRegistry,
 } from "../../rendering/PerspectiveDungeonView";
-import type { ObjectPlacement } from "../../content";
+import {
+  generateContent,
+  type ContentOutputs,
+  type ObjectPlacement,
+} from "../../content";
 import styles from "./Objects.module.css";
+
+// ---------------------------------------------------------------------------
+// Extended content outputs — developers can add more typed fields here.
+// ---------------------------------------------------------------------------
+export interface ObjectsContentOutputs extends ContentOutputs {
+  // extensible: add typed fields as needed
+}
 
 // ---------------------------------------------------------------------------
 // Tile atlas — padded sheet: tiles are 16×16 px, first tile at (16,16),
@@ -449,9 +460,84 @@ export default function Objects() {
     loader.load(
       "/examples/objects/chest-1.fbx",
       (fbx) => {
-        // Replace all mesh materials with a simple lit material so the chest
-        // is always visible regardless of embedded FBX texture paths.
-        const chestMat = new THREE.MeshLambertMaterial({ color: 0x8b5e3c });
+        // Custom shader material matching the wall torchlight effect.
+        const chestMat = new THREE.ShaderMaterial({
+          vertexShader: /* glsl */ `
+            varying vec3 vNormal;
+            varying float vFogDist;
+            varying vec2 vWorldPos;
+            void main() {
+              vec4 worldPos = modelMatrix * vec4(position, 1.0);
+              vWorldPos = worldPos.xz;
+              vNormal = normalize(normalMatrix * normal);
+              vec4 eyePos = viewMatrix * worldPos;
+              vFogDist = length(eyePos.xyz);
+              gl_Position = projectionMatrix * eyePos;
+            }
+          `,
+          fragmentShader: /* glsl */ `
+            uniform vec3  uFogColor;
+            uniform float uFogNear;
+            uniform float uFogFar;
+            uniform float uTime;
+            uniform vec3  uBaseColor;
+            varying vec3  vNormal;
+            varying float vFogDist;
+            varying vec2  vWorldPos;
+
+            float hash(vec2 p) {
+              return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+            }
+
+            void main() {
+              // Diffuse shading from a warm overhead-ish light direction.
+              vec3 lightDir = normalize(vec3(0.4, 1.0, 0.3));
+              float diffuse = clamp(dot(vNormal, lightDir), 0.0, 1.0);
+              float shade = 0.65 + 0.35 * diffuse;
+
+              // Candlelight flicker — same co-prime sines as the wall shader.
+              float raw = sin(uTime * 7.0)  * 0.45
+                        + sin(uTime * 13.7) * 0.35
+                        + sin(uTime * 3.1)  * 0.20;
+              float flicker = (floor(raw * 1.5 + 0.5)) / 6.0;
+
+              float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+              float flickeredDist = clamp(dist + flicker * 0.03, 0.0, 1.0);
+              float curved = pow(flickeredDist, 0.75);
+              float band = floor(curved * 5.0);
+
+              // Spatial turbulence — snaps like the wall tiles.
+              float timeSlot = floor(uTime * 1.5);
+              vec2 cell = floor(vWorldPos * 0.5);
+              float spatialNoise = hash(cell + vec2(timeSlot * 7.3, timeSlot * 3.1));
+              float turb = (floor(spatialNoise * 3.0) / 3.0) * 0.18;
+
+              float brightness;
+              vec3  tint;
+              if (band < 1.0) {
+                brightness = 1.00 - turb; tint = vec3(1.00, 0.90, 0.68);
+              } else if (band < 2.0) {
+                brightness = 0.55; tint = vec3(1.00, 0.94, 0.76);
+              } else if (band < 3.0) {
+                brightness = 0.22; tint = vec3(0.60, 0.55, 0.80);
+              } else if (band < 4.0) {
+                brightness = 0.10; tint = vec3(0.30, 0.25, 0.60);
+              } else {
+                brightness = 0.00; tint = vec3(1.0);
+              }
+
+              vec3 lit = uBaseColor * tint * brightness * shade;
+              gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), 1.0);
+            }
+          `,
+          uniforms: {
+            uFogColor: { value: new THREE.Color(0, 0, 0) },
+            uFogNear: { value: 4 },
+            uFogFar: { value: 28 },
+            uTime: { value: 0 },
+            uBaseColor: { value: new THREE.Color(0xf2e5d2) },
+          },
+        });
         fbx.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             (child as THREE.Mesh).material = chestMat;
@@ -493,36 +579,57 @@ export default function Objects() {
     };
   }, [chestProto]);
 
-  const chestPlacements = useMemo<ObjectPlacement[]>(() => {
-    const placements: ObjectPlacement[] = [];
-    const rooms = dungeon.rooms;
+  // Use generateContent to collect wall-adjacent floor candidates per room,
+  // then pick one chest location per selected room.
+  const content = useMemo<ObjectsContentOutputs>(() => {
+    // Collect wall-adjacent floor cells grouped by region (room) ID.
+    const candidatesByRegion = new Map<
+      number,
+      Array<{ x: number; z: number }>
+    >();
 
-    function roomCentre(id: number): { x: number; z: number } | null {
-      const r = rooms.get(id);
-      if (!r) return null;
-      return {
-        x: r.rect.x + Math.floor(r.rect.w / 2),
-        z: r.rect.y + Math.floor(r.rect.h / 2),
-      };
+    const result = generateContent(dungeon, {
+      seed: DUNGEON_SEED,
+      callback: ({ x, y, masks }) => {
+        if (masks.getSolid(x, y) !== "floor") return;
+        if (masks.getDistanceToWall(x, y) !== 1) return;
+        const rid = masks.getRegionId(x, y);
+        if (rid === 0) return;
+        let arr = candidatesByRegion.get(rid);
+        if (!arr) {
+          arr = [];
+          candidatesByRegion.set(rid, arr);
+        }
+        arr.push({ x, z: y });
+      },
+    });
+
+    // Pick a deterministic candidate from each region's wall-adjacent cells
+    // (use the middle index so the choice is stable across renders).
+    function pickFromRegion(regionId: number): ObjectPlacement | null {
+      const arr = candidatesByRegion.get(regionId);
+      if (!arr || arr.length === 0) return null;
+      const picked = arr[Math.floor(arr.length / 2)];
+      return { type: "chest", x: picked.x, z: picked.z };
     }
 
-    // End room is guaranteed to have a chest
-    const endCentre = roomCentre(dungeon.endRoomId);
-    if (endCentre) placements.push({ type: "chest", ...endCentre });
+    // End room is guaranteed a chest.
+    const endChest = pickFromRegion(dungeon.endRoomId);
+    if (endChest) result.objects.push(endChest);
 
-    // Add chests in up to 3 other rooms (skip start and end rooms)
+    // Add chests in up to 3 other rooms (skip start and end rooms).
     let count = 0;
-    for (const [id] of rooms) {
+    for (const [id] of dungeon.rooms) {
       if (count >= 3) break;
       if (id === dungeon.endRoomId || id === dungeon.startRoomId) continue;
-      const centre = roomCentre(id);
-      if (centre) {
-        placements.push({ type: "chest", ...centre });
+      const chest = pickFromRegion(id);
+      if (chest) {
+        result.objects.push(chest);
         count++;
       }
     }
 
-    return placements;
+    return result;
   }, [dungeon]);
 
   const { camera, containerRef } = useObjectsCamera(
@@ -546,9 +653,9 @@ export default function Objects() {
       camera.yaw,
       maskOverlay,
       overlayData,
-      chestPlacements,
+      content.objects,
     );
-  }, [solidData, camera, maskOverlay, overlayData, chestPlacements]);
+  }, [solidData, camera, maskOverlay, overlayData, content.objects]);
 
   return (
     <div className={styles.container}>
@@ -582,7 +689,7 @@ export default function Objects() {
               fogFar={28}
               tileSize={3}
               debugEdges={debugEdges}
-              objects={chestPlacements}
+              objects={content.objects}
               objectRegistry={objectRegistry}
               style={{ width: "100%", height: "100%" }}
             />
