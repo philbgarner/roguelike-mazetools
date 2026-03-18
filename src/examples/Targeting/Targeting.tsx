@@ -78,7 +78,17 @@ function loadRepackedAtlasTexture(
       canvas.height = TILE_PX;
       const ctx = canvas.getContext("2d")!;
       sources.forEach(({ x, y }, i) => {
-        ctx.drawImage(img, x, y, TILE_PX, TILE_PX, i * TILE_PX, 0, TILE_PX, TILE_PX);
+        ctx.drawImage(
+          img,
+          x,
+          y,
+          TILE_PX,
+          TILE_PX,
+          i * TILE_PX,
+          0,
+          TILE_PX,
+          TILE_PX,
+        );
       });
       const tex = new THREE.CanvasTexture(canvas);
       tex.magFilter = THREE.NearestFilter;
@@ -96,13 +106,57 @@ function loadRepackedAtlasTexture(
 // ---------------------------------------------------------------------------
 
 const TEMPLATES: Record<string, MonsterTemplate> = {
-  goblin:   { name: "Goblin",    glyph: "g", danger: 1, hp: 6,  attack: 3, defense: 0, xp: 10,  speed: 8 },
-  minotaur: { name: "Minotaur",  glyph: "m", danger: 3, hp: 14, attack: 6, defense: 1, xp: 25,  speed: 6 },
-  troll:    { name: "Troll",     glyph: "T", danger: 6, hp: 30, attack: 9, defense: 2, xp: 60,  speed: 5 },
-  rat:      { name: "Giant Rat", glyph: "r", danger: 0, hp: 4,  attack: 2, defense: 0, xp: 5,   speed: 9 },
+  goblin: {
+    name: "Goblin",
+    glyph: "g",
+    danger: 1,
+    hp: 6,
+    attack: 3,
+    defense: 0,
+    xp: 10,
+    speed: 8,
+  },
+  minotaur: {
+    name: "Minotaur",
+    glyph: "m",
+    danger: 3,
+    hp: 14,
+    attack: 6,
+    defense: 1,
+    xp: 25,
+    speed: 6,
+  },
+  troll: {
+    name: "Troll",
+    glyph: "T",
+    danger: 6,
+    hp: 30,
+    attack: 9,
+    defense: 2,
+    xp: 60,
+    speed: 5,
+  },
+  rat: {
+    name: "Giant Rat",
+    glyph: "r",
+    danger: 0,
+    hp: 4,
+    attack: 2,
+    defense: 0,
+    xp: 5,
+    speed: 9,
+  },
 };
 
-const MOB_TYPES = ["goblin", "minotaur", "troll", "goblin", "rat", "troll", "rat"];
+const MOB_TYPES = [
+  "goblin",
+  "minotaur",
+  "troll",
+  "goblin",
+  "rat",
+  "troll",
+  "rat",
+];
 
 const GLYPH_COL: Record<string, number> = { g: 0, m: 1, T: 2, r: 3 };
 const SPRITE_COLS = 4;
@@ -119,9 +173,9 @@ function cardinalDir(yaw: number): string {
 }
 
 const SPRITE_SRC: Array<{ x: number; y: number }> = [
-  { x: 80,  y: 416 },
+  { x: 80, y: 416 },
   { x: 272, y: 448 },
-  { x: 80,  y: 448 },
+  { x: 80, y: 448 },
   { x: 144, y: 368 },
 ];
 const SRC_TILE = 16;
@@ -131,7 +185,10 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
-    el.onerror = (e) => { console.error("Failed to load sprite sheet:", url, e); reject(e); };
+    el.onerror = (e) => {
+      console.error("Failed to load sprite sheet:", url, e);
+      reject(e);
+    };
     el.src = url;
   });
 
@@ -150,17 +207,35 @@ async function loadMonsterSpriteAtlas(url: string): Promise<SpriteAtlas> {
     tCtx.clearRect(0, 0, SRC_TILE, SRC_TILE);
     tCtx.drawImage(img, x, y, SRC_TILE, SRC_TILE, 0, 0, SRC_TILE, SRC_TILE);
     const px = tCtx.getImageData(0, 0, SRC_TILE, SRC_TILE);
-    const bgR = px.data[0], bgG = px.data[1], bgB = px.data[2];
+    const bgR = px.data[0],
+      bgG = px.data[1],
+      bgB = px.data[2];
     const TOLERANCE = 30;
     for (let i = 0; i < px.data.length; i += 4) {
-      const r = px.data[i], g = px.data[i + 1], b = px.data[i + 2];
-      if (Math.abs(r - bgR) < TOLERANCE && Math.abs(g - bgG) < TOLERANCE && Math.abs(b - bgB) < TOLERANCE) {
+      const r = px.data[i],
+        g = px.data[i + 1],
+        b = px.data[i + 2];
+      if (
+        Math.abs(r - bgR) < TOLERANCE &&
+        Math.abs(g - bgG) < TOLERANCE &&
+        Math.abs(b - bgB) < TOLERANCE
+      ) {
         px.data[i + 3] = 0;
       }
     }
     tCtx.putImageData(px, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(tmp, 0, 0, SRC_TILE, SRC_TILE, col * DST_TILE, 0, DST_TILE, DST_TILE);
+    ctx.drawImage(
+      tmp,
+      0,
+      0,
+      SRC_TILE,
+      SRC_TILE,
+      col * DST_TILE,
+      0,
+      DST_TILE,
+      DST_TILE,
+    );
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -205,7 +280,12 @@ function drawMinimap(
   for (const actor of Object.values(actors)) {
     if (actor.kind !== "monster" || !(actor as MonsterActor).alive) continue;
     const m = actor as MonsterActor;
-    ctx.fillStyle = m.alertState === "chasing" ? "#f44" : m.alertState === "searching" ? "#f80" : "#844";
+    ctx.fillStyle =
+      m.alertState === "chasing"
+        ? "#f44"
+        : m.alertState === "searching"
+          ? "#f80"
+          : "#844";
     const px = (m.x + 0.5) * cellW;
     const pz = (m.y + 0.5) * cellH;
     ctx.beginPath();
@@ -250,13 +330,33 @@ function resolveBump(
   const newHp = Math.max(0, target.hp - dmg);
   const died = newHp <= 0;
 
-  onEvent({ kind: "damage", actorId: target.id, amount: dmg, x: target.x, y: target.y });
-  const newActors = { ...state.actors, [target.id]: { ...target, hp: newHp, alive: !died } };
+  onEvent({
+    kind: "damage",
+    actorId: target.id,
+    amount: dmg,
+    x: target.x,
+    y: target.y,
+  });
+  const newActors = {
+    ...state.actors,
+    [target.id]: { ...target, hp: newHp, alive: !died },
+  };
 
   if (died) {
-    onEvent({ kind: "death", actorId: target.id, sourceId: attackerId, x: target.x, y: target.y });
+    onEvent({
+      kind: "death",
+      actorId: target.id,
+      sourceId: attackerId,
+      x: target.x,
+      y: target.y,
+    });
     if (attackerId === state.playerId && target.kind === "monster") {
-      onEvent({ kind: "xpGain", amount: (target as MonsterActor).xp, x: target.x, y: target.y });
+      onEvent({
+        kind: "xpGain",
+        amount: (target as MonsterActor).xp,
+        x: target.x,
+        y: target.y,
+      });
     }
   }
 
@@ -274,7 +374,8 @@ function buildDeps(
   onEvent: (e: TurnEvent) => void,
 ): TurnSystemDeps {
   const isWalkable = (x: number, y: number) => {
-    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height) return false;
+    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height)
+      return false;
     return solidData[y * dungeon.width + x] === 0;
   };
   return {
@@ -287,17 +388,26 @@ function buildDeps(
     },
     applyAction: (state, actorId, action, deps) => {
       if (action.kind === "wait" || action.kind === "interact") return state;
-      if (action.kind !== "move" || action.dx == null || action.dy == null) return state;
+      if (action.kind !== "move" || action.dx == null || action.dy == null)
+        return state;
       const actor = state.actors[actorId];
       if (!actor) return state;
       const nx = actor.x + action.dx;
       const ny = actor.y + action.dy;
       const blocker = Object.values(state.actors).find(
-        (a) => a.id !== actorId && a.alive && a.blocksMovement && a.x === nx && a.y === ny,
+        (a) =>
+          a.id !== actorId &&
+          a.alive &&
+          a.blocksMovement &&
+          a.x === nx &&
+          a.y === ny,
       );
       if (blocker) return resolveBump(state, actorId, nx, ny, onEvent);
       if (!deps.isWalkable(nx, ny)) return state;
-      return { ...state, actors: { ...state.actors, [actorId]: { ...actor, x: nx, y: ny } } };
+      return {
+        ...state,
+        actors: { ...state.actors, [actorId]: { ...actor, x: nx, y: ny } },
+      };
     },
     onEvent,
   };
@@ -316,10 +426,16 @@ type GameState = {
 };
 
 function initGame(seed: number): GameState {
-  const dungeon = generateBspDungeon({ width: DW, height: DH, seed, keepOuterWalls: true });
+  const dungeon = generateBspDungeon({
+    width: DW,
+    height: DH,
+    seed,
+    keepOuterWalls: true,
+  });
   const solidData = dungeon.textures.solid.image.data as Uint8Array;
 
-  const mobiles: Array<{ x: number; z: number; type: string; tileId: number }> = [];
+  const mobiles: Array<{ x: number; z: number; type: string; tileId: number }> =
+    [];
   let mobIdx = 0;
   for (const [roomId, room] of dungeon.rooms) {
     if (roomId === dungeon.startRoomId || mobIdx >= MOB_TYPES.length) continue;
@@ -332,8 +448,12 @@ function initGame(seed: number): GameState {
   }
 
   const startRoom = dungeon.rooms.get(dungeon.startRoomId);
-  const spawnX = startRoom ? Math.floor(startRoom.rect.x + startRoom.rect.w / 2) : Math.floor(DW / 2);
-  const spawnZ = startRoom ? Math.floor(startRoom.rect.y + startRoom.rect.h / 2) : Math.floor(DH / 2);
+  const spawnX = startRoom
+    ? Math.floor(startRoom.rect.x + startRoom.rect.w / 2)
+    : Math.floor(DW / 2);
+  const spawnZ = startRoom
+    ? Math.floor(startRoom.rect.y + startRoom.rect.h / 2)
+    : Math.floor(DH / 2);
 
   const player = createPlayerActor(spawnX, spawnZ);
   const monsters = createMonstersFromMobiles(mobiles, TEMPLATES);
@@ -365,7 +485,10 @@ type FloatNum = {
   color?: string;
 };
 
-if (typeof document !== "undefined" && !document.getElementById("mobs-float-style")) {
+if (
+  typeof document !== "undefined" &&
+  !document.getElementById("mobs-float-style")
+) {
   const s = document.createElement("style");
   s.id = "mobs-float-style";
   s.textContent = `@keyframes mobsFloatUp { 0% { opacity:1; transform:translateY(0); } 100% { opacity:0; transform:translateY(-56px); } }`;
@@ -376,17 +499,24 @@ function FloatingDamageNumbers({ nums }: { nums: FloatNum[] }): ReactNode {
   return (
     <>
       {nums.map((n) => (
-        <Html key={n.id} position={[n.wx, n.wy, n.wz]} center style={{ pointerEvents: "none" }}>
-          <div style={{
-            color: n.color ?? "#ff3333",
-            fontFamily: "monospace",
-            fontSize: "22px",
-            fontWeight: "bold",
-            textShadow: "0 0 4px #000, 1px 1px 0 #000, -1px -1px 0 #000",
-            animation: "mobsFloatUp 1.1s ease-out forwards",
-            whiteSpace: "nowrap",
-            userSelect: "none",
-          }}>
+        <Html
+          key={n.id}
+          position={[n.wx, n.wy, n.wz]}
+          center
+          style={{ pointerEvents: "none" }}
+        >
+          <div
+            style={{
+              color: n.color ?? "#ff3333",
+              fontFamily: "monospace",
+              fontSize: "22px",
+              fontWeight: "bold",
+              textShadow: "0 0 4px #000, 1px 1px 0 #000, -1px -1px 0 #000",
+              animation: "mobsFloatUp 1.1s ease-out forwards",
+              whiteSpace: "nowrap",
+              userSelect: "none",
+            }}
+          >
             {n.value}
           </div>
         </Html>
@@ -410,7 +540,12 @@ type SpellDef = {
   effectDuration: number;
   effectColor: EffectColor;
   description: string;
-  getTargetCells: (px: number, py: number, fdx: number, fdy: number) => GridPos[];
+  getTargetCells: (
+    px: number,
+    py: number,
+    fdx: number,
+    fdy: number,
+  ) => GridPos[];
 };
 
 const SPELLS: SpellDef[] = [
@@ -427,7 +562,7 @@ const SPELLS: SpellDef[] = [
   },
   {
     id: "fireball",
-    name: "Fireball",
+    name: "OmgFlOoRisLAvA UwU",
     key: "2",
     damagePerTick: 4,
     effectDuration: 3,
@@ -456,7 +591,10 @@ const SPELLS: SpellDef[] = [
     effectColor: "lightning",
     description: "Bolt in facing dir, range 8",
     getTargetCells: (px, py, fdx, fdy) =>
-      tilesInLine({ x: px + fdx, y: py + fdy }, { x: px + fdx * 8, y: py + fdy * 8 }),
+      tilesInLine(
+        { x: px + fdx, y: py + fdy },
+        { x: px + fdx * 8, y: py + fdy * 8 },
+      ),
   },
 ];
 
@@ -477,7 +615,9 @@ type WorldEffect = {
 
 export default function Targeting() {
   const navigate = useNavigate();
-  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 0x7fffffff));
+  const [seed, setSeed] = useState(() =>
+    Math.floor(Math.random() * 0x7fffffff),
+  );
   const gameRef = useRef<GameState | null>(null);
   const [turnState, setTurnState] = useState<TurnSystemState | null>(null);
 
@@ -506,21 +646,38 @@ export default function Targeting() {
 
   const logicalRef = useRef({ x: 1.5, z: 1.5, yaw: 0 });
   const animRef = useRef({
-    fromX: 1.5, fromZ: 1.5, fromYaw: 0,
-    toX: 1.5, toZ: 1.5, toYaw: 0,
-    startTime: 0, animating: false,
+    fromX: 1.5,
+    fromZ: 1.5,
+    fromYaw: 0,
+    toX: 1.5,
+    toZ: 1.5,
+    toYaw: 0,
+    startTime: 0,
+    animating: false,
   });
   const [camera, setCamera] = useState({ x: 1.5, z: 1.5, yaw: 0 });
 
   const bumpRef = useRef({
-    bumping: false, startTime: 0, duration: 130,
-    dx: 0, dz: 0, mag: 0, shake: false,
+    bumping: false,
+    startTime: 0,
+    duration: 130,
+    dx: 0,
+    dz: 0,
+    mag: 0,
+    shake: false,
   });
 
-  const atlas = useMemo(() => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX), []);
-  const [dungeonTexture, setDungeonTexture] = useState<THREE.Texture | null>(null);
+  const atlas = useMemo(
+    () => buildTileAtlas(TILE_PX * 3, TILE_PX, TILE_PX, TILE_PX),
+    [],
+  );
+  const [dungeonTexture, setDungeonTexture] = useState<THREE.Texture | null>(
+    null,
+  );
   useEffect(() => {
-    loadRepackedAtlasTexture([SRC_FLOOR, SRC_CEILING, SRC_WALL]).then(setDungeonTexture);
+    loadRepackedAtlasTexture([SRC_FLOOR, SRC_CEILING, SRC_WALL]).then(
+      setDungeonTexture,
+    );
   }, []);
   const [spriteAtlas, setSpriteAtlas] = useState<SpriteAtlas | null>(null);
   useEffect(() => {
@@ -545,16 +702,32 @@ export default function Targeting() {
     setWorldEffects([]);
     worldEffectsRef.current = [];
     setSelectedSpell(null);
-    const player = game.turnState.actors[game.turnState.playerId] as PlayerActor;
+    const player = game.turnState.actors[
+      game.turnState.playerId
+    ] as PlayerActor;
     setPlayerHp(player.hp);
     setPlayerMaxHp(player.maxHp);
     setAlertCount(0);
-    setLog([{ text: "New dungeon. Use 1-4 to select spells, F to cast.", kind: "info" }]);
+    setLog([
+      {
+        text: "New dungeon. Use 1-4 to select spells, F to cast.",
+        kind: "info",
+      },
+    ]);
 
     const cx = game.spawnX + 0.5;
     const cz = game.spawnZ + 0.5;
     logicalRef.current = { x: cx, z: cz, yaw: 0 };
-    animRef.current = { fromX: cx, fromZ: cz, fromYaw: 0, toX: cx, toZ: cz, toYaw: 0, startTime: 0, animating: false };
+    animRef.current = {
+      fromX: cx,
+      fromZ: cz,
+      fromYaw: 0,
+      toX: cx,
+      toZ: cz,
+      toYaw: 0,
+      startTime: 0,
+      animating: false,
+    };
     setCamera({ x: cx, z: cz, yaw: 0 });
     setFacing(0);
   }, [seed]);
@@ -568,7 +741,9 @@ export default function Targeting() {
       const bump = bumpRef.current;
       if (!anim.animating && !bump.bumping) return;
 
-      let x = anim.toX, z = anim.toZ, yaw = anim.toYaw;
+      let x = anim.toX,
+        z = anim.toZ,
+        yaw = anim.toYaw;
       if (anim.animating) {
         const raw = (now - anim.startTime) / LERP_MS;
         const t = Math.min(raw, 1);
@@ -579,7 +754,8 @@ export default function Targeting() {
         if (t >= 1) anim.animating = false;
       }
 
-      let bx = 0, bz = 0;
+      let bx = 0,
+        bz = 0;
       if (bump.bumping) {
         const bt = Math.min((now - bump.startTime) / bump.duration, 1);
         if (bump.shake) {
@@ -605,14 +781,24 @@ export default function Targeting() {
   useEffect(() => {
     if (!minimapRef.current || !gameRef.current || !turnState) return;
     const { solidData, dungeon } = gameRef.current;
-    drawMinimap(minimapRef.current, solidData, dungeon.width, dungeon.height,
-      logicalRef.current.x, logicalRef.current.z, logicalRef.current.yaw, turnState.actors);
+    drawMinimap(
+      minimapRef.current,
+      solidData,
+      dungeon.width,
+      dungeon.height,
+      logicalRef.current.x,
+      logicalRef.current.z,
+      logicalRef.current.yaw,
+      turnState.actors,
+    );
   }, [turnState, camera]);
 
   // Highlight mask recompute
   useEffect(() => {
     const game = gameRef.current;
-    const player = turnState?.actors[turnState?.playerId] as PlayerActor | undefined;
+    const player = turnState?.actors[turnState?.playerId] as
+      | PlayerActor
+      | undefined;
     const mask = new Uint8Array(DW * DH);
 
     // Active world effects
@@ -641,11 +827,20 @@ export default function Targeting() {
   }, [selectedSpell, worldEffects, turnState, facing]);
 
   // Spawn a floating damage number
-  const spawnFloat = useCallback((wx: number, wy: number, wz: number, amount: number, color?: string) => {
-    const id = ++floatIdRef.current;
-    setFloatNums((prev) => [...prev, { id, wx, wy, wz, value: amount, color }]);
-    setTimeout(() => setFloatNums((prev) => prev.filter((f) => f.id !== id)), 1150);
-  }, []);
+  const spawnFloat = useCallback(
+    (wx: number, wy: number, wz: number, amount: number, color?: string) => {
+      const id = ++floatIdRef.current;
+      setFloatNums((prev) => [
+        ...prev,
+        { id, wx, wy, wz, value: amount, color },
+      ]);
+      setTimeout(
+        () => setFloatNums((prev) => prev.filter((f) => f.id !== id)),
+        1150,
+      );
+    },
+    [],
+  );
 
   // Commit a player turn action (also ticks world effects)
   const applyTurn = useCallback(
@@ -653,12 +848,19 @@ export default function Targeting() {
       const game = gameRef.current;
       if (!game || gameOver || !game.turnState.awaitingPlayerInput) return;
 
-      const prevPlayer = game.turnState.actors[game.turnState.playerId] as PlayerActor;
+      const prevPlayer = game.turnState.actors[
+        game.turnState.playerId
+      ] as PlayerActor;
       const prevX = prevPlayer.x;
       const prevZ = prevPlayer.y;
 
       const evts: TurnEvent[] = [];
-      const deps = buildDeps(game.dungeon, game.solidData, game.turnState.actors, (e) => evts.push(e));
+      const deps = buildDeps(
+        game.dungeon,
+        game.solidData,
+        game.turnState.actors,
+        (e) => evts.push(e),
+      );
       let newState = commitPlayerAction(game.turnState, deps, action);
 
       // Tick world effects
@@ -676,12 +878,32 @@ export default function Targeting() {
             const monster = actor as MonsterActor;
             const newHp = Math.max(0, monster.hp - dmg);
             const died = newHp <= 0;
-            evts.push({ kind: "damage", actorId: monster.id, amount: dmg, x: monster.x, y: monster.y });
+            evts.push({
+              kind: "damage",
+              actorId: monster.id,
+              amount: dmg,
+              x: monster.x,
+              y: monster.y,
+            });
             if (died) {
-              evts.push({ kind: "death", actorId: monster.id, sourceId: newState.playerId, x: monster.x, y: monster.y });
-              evts.push({ kind: "xpGain", amount: monster.xp, x: monster.x, y: monster.y });
+              evts.push({
+                kind: "death",
+                actorId: monster.id,
+                sourceId: newState.playerId,
+                x: monster.x,
+                y: monster.y,
+              });
+              evts.push({
+                kind: "xpGain",
+                amount: monster.xp,
+                x: monster.x,
+                y: monster.y,
+              });
             }
-            workingActors = { ...workingActors, [monster.id]: { ...monster, hp: newHp, alive: !died } };
+            workingActors = {
+              ...workingActors,
+              [monster.id]: { ...monster, hp: newHp, alive: !died },
+            };
           }
         }
         if (updatedEffects.length > 0) {
@@ -698,9 +920,11 @@ export default function Targeting() {
       let playerTookDamage = false;
       for (const evt of evts) {
         if (evt.kind === "damage") {
-          const who = evt.actorId === finalState.playerId
-            ? "You"
-            : ((finalState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId);
+          const who =
+            evt.actorId === finalState.playerId
+              ? "You"
+              : ((finalState.actors[evt.actorId] as MonsterActor | undefined)
+                  ?.name ?? evt.actorId);
           pushLog({ text: `${who} takes ${evt.amount} dmg`, kind: "damage" });
 
           if (evt.actorId === finalState.playerId) {
@@ -710,20 +934,25 @@ export default function Targeting() {
             setFlashTick((t) => t + 1);
             setTimeout(() => setFlashTick((t) => t + 1), 230);
 
-            const monster = finalState.actors[evt.actorId] as MonsterActor | undefined;
+            const monster = finalState.actors[evt.actorId] as
+              | MonsterActor
+              | undefined;
             if (monster) {
               const wx = (monster.x + 0.5) * TILE_SIZE;
               const wy = CEILING_H * 0.9;
               const wz = (monster.y + 0.5) * TILE_SIZE;
               // fire damage = orange, lightning = yellow
-              const color = worldEffectsRef.current.length > 0 ? "#ff8800" : "#ff3333";
+              const color =
+                worldEffectsRef.current.length > 0 ? "#ff8800" : "#ff3333";
               spawnFloat(wx, wy, wz, evt.amount, color);
             }
           }
         } else if (evt.kind === "death") {
-          const who = evt.actorId === finalState.playerId
-            ? "You"
-            : ((finalState.actors[evt.actorId] as MonsterActor | undefined)?.name ?? evt.actorId);
+          const who =
+            evt.actorId === finalState.playerId
+              ? "You"
+              : ((finalState.actors[evt.actorId] as MonsterActor | undefined)
+                  ?.name ?? evt.actorId);
           pushLog({ text: `${who} died!`, kind: "death" });
           if (evt.actorId === finalState.playerId) setGameOver(true);
         } else if (evt.kind === "xpGain") {
@@ -737,30 +966,63 @@ export default function Targeting() {
       setPlayerHp(newPlayer.hp);
 
       const alerted = Object.values(finalState.actors).filter(
-        (a) => a.kind === "monster" && a.alive && (a as MonsterActor).alertState !== "idle",
+        (a) =>
+          a.kind === "monster" &&
+          a.alive &&
+          (a as MonsterActor).alertState !== "idle",
       ).length;
       setAlertCount(alerted);
 
       if (!newPlayer.alive) {
         setGameOver(true);
-        pushLog({ text: "You died. Press R for a new dungeon.", kind: "death" });
+        pushLog({
+          text: "You died. Press R for a new dungeon.",
+          kind: "death",
+        });
       }
 
       if (action.kind === "move" && action.dx != null && action.dy != null) {
-        const attackHit = evts.some((e) => e.kind === "damage" && e.actorId !== finalState.playerId);
+        const attackHit = evts.some(
+          (e) => e.kind === "damage" && e.actorId !== finalState.playerId,
+        );
         if (attackHit) {
-          bumpRef.current = { bumping: true, startTime: performance.now(), duration: 130, dx: action.dx, dz: action.dy ?? 0, mag: 0.35, shake: false };
+          bumpRef.current = {
+            bumping: true,
+            startTime: performance.now(),
+            duration: 130,
+            dx: action.dx,
+            dz: action.dy ?? 0,
+            mag: 0.35,
+            shake: false,
+          };
         }
       }
       if (playerTookDamage) {
-        bumpRef.current = { bumping: true, startTime: performance.now(), duration: 250, dx: 1, dz: 0, mag: 0.05, shake: true };
+        bumpRef.current = {
+          bumping: true,
+          startTime: performance.now(),
+          duration: 250,
+          dx: 1,
+          dz: 0,
+          mag: 0.05,
+          shake: true,
+        };
       }
 
       if (newPlayer.x !== prevX || newPlayer.y !== prevZ) {
         const { yaw } = logicalRef.current;
         const toX = newPlayer.x + 0.5;
         const toZ = newPlayer.y + 0.5;
-        animRef.current = { fromX: logicalRef.current.x, fromZ: logicalRef.current.z, fromYaw: yaw, toX, toZ, toYaw: yaw, startTime: performance.now(), animating: true };
+        animRef.current = {
+          fromX: logicalRef.current.x,
+          fromZ: logicalRef.current.z,
+          fromYaw: yaw,
+          toX,
+          toZ,
+          toYaw: yaw,
+          startTime: performance.now(),
+          animating: true,
+        };
         logicalRef.current.x = toX;
         logicalRef.current.z = toZ;
       }
@@ -774,14 +1036,16 @@ export default function Targeting() {
       const game = gameRef.current;
       if (!game || gameOver || !game.turnState.awaitingPlayerInput) return;
 
-      const player = game.turnState.actors[game.turnState.playerId] as PlayerActor;
+      const player = game.turnState.actors[
+        game.turnState.playerId
+      ] as PlayerActor;
       const { yaw } = logicalRef.current;
       const fdx = Math.round(-Math.sin(yaw));
       const fdy = Math.round(-Math.cos(yaw));
 
-      const cells = spell.getTargetCells(player.x, player.y, fdx, fdy).filter(
-        ({ x, y }) => x >= 0 && y >= 0 && x < DW && y < DH,
-      );
+      const cells = spell
+        .getTargetCells(player.x, player.y, fdx, fdy)
+        .filter(({ x, y }) => x >= 0 && y >= 0 && x < DW && y < DH);
       if (cells.length === 0) return;
 
       const effectId = ++worldEffectIdRef.current;
@@ -803,7 +1067,10 @@ export default function Targeting() {
       // Add to ref immediately so applyTurn sees it
       worldEffectsRef.current = [...worldEffectsRef.current, newEffect];
       setSelectedSpell(null);
-      pushLog({ text: `Cast ${spell.name}! (${cells.length} cells, ${spell.effectDuration} turns)`, kind: "spell" });
+      pushLog({
+        text: `Cast ${spell.name}! (${cells.length} cells, ${spell.effectDuration} turns)`,
+        kind: "spell",
+      });
       applyTurn({ kind: "wait" });
     },
     [gameOver, applyTurn, pushLog],
@@ -832,7 +1099,16 @@ export default function Targeting() {
         case "KeyA": {
           e.preventDefault();
           const toYaw = yaw + Math.PI / 2;
-          animRef.current = { fromX: x, fromZ: z, fromYaw: yaw, toX: x, toZ: z, toYaw, startTime: performance.now(), animating: true };
+          animRef.current = {
+            fromX: x,
+            fromZ: z,
+            fromYaw: yaw,
+            toX: x,
+            toZ: z,
+            toYaw,
+            startTime: performance.now(),
+            animating: true,
+          };
           logicalRef.current.yaw = toYaw;
           setFacing(toYaw);
           break;
@@ -840,7 +1116,16 @@ export default function Targeting() {
         case "KeyD": {
           e.preventDefault();
           const toYaw = yaw - Math.PI / 2;
-          animRef.current = { fromX: x, fromZ: z, fromYaw: yaw, toX: x, toZ: z, toYaw, startTime: performance.now(), animating: true };
+          animRef.current = {
+            fromX: x,
+            fromZ: z,
+            fromYaw: yaw,
+            toX: x,
+            toZ: z,
+            toYaw,
+            startTime: performance.now(),
+            animating: true,
+          };
           logicalRef.current.yaw = toYaw;
           setFacing(toYaw);
           break;
@@ -898,7 +1183,12 @@ export default function Targeting() {
       (a) => a.kind === "monster" && (a as MonsterActor).alive,
     ) as MonsterActor[];
     return {
-      mobiles: alive.map((m) => ({ x: m.x, z: m.y, type: "monster", tileId: mobTileId(m.glyph) })),
+      mobiles: alive.map((m) => ({
+        x: m.x,
+        z: m.y,
+        type: "monster",
+        tileId: mobTileId(m.glyph),
+      })),
       mobileFlash: alive.map((m) => (flashMap.get(m.id) ?? 0) > now),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -912,16 +1202,25 @@ export default function Targeting() {
       {/* Header */}
       <div className={styles.header}>
         <span className={styles.title}>TARGETING</span>
-        <span className={styles.hp}>HP {playerHp}/{playerMaxHp}</span>
+        <span className={styles.hp}>
+          HP {playerHp}/{playerMaxHp}
+        </span>
         <span className={styles.xp}>XP {playerXp}</span>
         {alertCount > 0 && (
-          <span className={styles.alert}>{alertCount} monster{alertCount !== 1 ? "s" : ""} alerted</span>
+          <span className={styles.alert}>
+            {alertCount} monster{alertCount !== 1 ? "s" : ""} alerted
+          </span>
         )}
         {worldEffects.length > 0 && (
-          <span className={styles.alert}>{worldEffects.length} active effect{worldEffects.length !== 1 ? "s" : ""}</span>
+          <span className={styles.alert}>
+            {worldEffects.length} active effect
+            {worldEffects.length !== 1 ? "s" : ""}
+          </span>
         )}
         {gameOver && <span className={styles.dead}>DEAD — press R</span>}
-        <button className={styles.backBtn} onClick={() => navigate("/")}>← Menu</button>
+        <button className={styles.backBtn} onClick={() => navigate("/")}>
+          ← Menu
+        </button>
       </div>
 
       {/* Main area */}
@@ -966,16 +1265,28 @@ export default function Targeting() {
 
         {/* Sidebar */}
         <div className={styles.sidebar}>
-          <canvas ref={minimapRef} width={240} height={160} className={styles.minimapCanvas} />
+          <canvas
+            ref={minimapRef}
+            width={240}
+            height={160}
+            className={styles.minimapCanvas}
+          />
           <div ref={logRef} className={styles.log}>
             {log.map((entry, i) => (
-              <div key={i} className={
-                entry.kind === "damage" ? styles.logDamage
-                  : entry.kind === "death" ? styles.logDeath
-                  : entry.kind === "xp" ? styles.logXp
-                  : entry.kind === "spell" ? styles.logSpell
-                  : styles.logEntry
-              }>
+              <div
+                key={i}
+                className={
+                  entry.kind === "damage"
+                    ? styles.logDamage
+                    : entry.kind === "death"
+                      ? styles.logDeath
+                      : entry.kind === "xp"
+                        ? styles.logXp
+                        : entry.kind === "spell"
+                          ? styles.logSpell
+                          : styles.logEntry
+                }
+              >
                 {entry.text}
               </div>
             ))}
@@ -988,8 +1299,14 @@ export default function Targeting() {
         {SPELLS.map((spell) => (
           <button
             key={spell.id}
-            className={selectedSpell === spell.id ? styles.spellBtnActive : styles.spellBtn}
-            onClick={() => setSelectedSpell((p) => (p === spell.id ? null : spell.id))}
+            className={
+              selectedSpell === spell.id
+                ? styles.spellBtnActive
+                : styles.spellBtn
+            }
+            onClick={() =>
+              setSelectedSpell((p) => (p === spell.id ? null : spell.id))
+            }
             title={spell.description}
           >
             [{spell.key}] {spell.name}
@@ -1006,7 +1323,8 @@ export default function Targeting() {
       <div className={styles.statusPanel}>
         <span>Facing: {cardinalDir(camera.yaw)}</span>
         <span className={styles.controls}>
-          W/S move · A/D turn · 1-4 spell · F cast · Esc cancel · Space wait · R new
+          W/S move · A/D turn · 1-4 spell · F cast · Esc cancel · Space wait · R
+          new
         </span>
       </div>
     </div>
