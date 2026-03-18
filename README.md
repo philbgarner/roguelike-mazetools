@@ -28,6 +28,28 @@ The engine is designed around callbacks over baked-in logic: generators produce 
 
 ## Quick Start
 
+Make sure you have NodeJS installed on your machine.
+
+In a terminal prompt in your repositories folder run this command:
+
+`git clone https://github.com/philbgarner/roguelike-mazetools`
+
+Then switch in to the folder it cloned the repository into:
+
+`cd roguelike-mazetools`
+
+Next you have to install the npm packages:
+
+`npm install`
+
+Now all that's left is to start the development server:
+
+`npm run dev`
+
+And then browse to http://localhost:5173/
+
+### Simple Example
+
 ```ts
 import { generateBspDungeon } from "./src/bsp";
 import { generateContent } from "./src/content";
@@ -65,5 +87,7 @@ computeFov(player.x, player.y, {
   radius: 12,
 });
 ```
+
+Additional examples in the [examples](./src/examples/Examples.md) folder.
 
 See [docs/index.md](./docs/index.md) for the full reference including the cellular generator, serialization, status effects, factions, and action middleware.

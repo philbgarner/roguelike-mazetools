@@ -22,6 +22,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { generateBspDungeon } from "../../bsp";
 import { buildTileAtlas } from "../../rendering/tileAtlas";
 import {
@@ -451,6 +452,132 @@ export default function Objects() {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // GLB column model loading
+  // ---------------------------------------------------------------------------
+  // GLB column dimensions (from the accessor bounds in column.glb).
+  // max.y=4 — scale so the cap exactly meets the ceiling; the plinth base
+  // (min.y=0.5) will sit just above the floor, which is architecturally correct.
+  const COLUMN_MAX_Y = 4;
+
+  const [columnProto, setColumnProto] = useState<THREE.Group | null>(null);
+  useEffect(() => {
+    const loader = new GLTFLoader();
+    loader.load(
+      "/examples/objects/column.glb",
+      (gltf) => {
+        const model = gltf.scene;
+
+        // Extract the baked texture from the first mesh so the shader can use it.
+        let columnTex: THREE.Texture | null = null;
+        model.traverse((child) => {
+          const mesh = child as THREE.Mesh;
+          if (mesh.isMesh && !columnTex) {
+            const src = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+            const stdMat = src as THREE.MeshStandardMaterial;
+            if (stdMat.map) columnTex = stdMat.map;
+          }
+        });
+
+        // Torchlight shader — same band-lighting as the chest, but samples the
+        // column's baked texture instead of a flat base colour.
+        const columnMat = new THREE.ShaderMaterial({
+          vertexShader: /* glsl */ `
+            varying vec3  vNormal;
+            varying float vFogDist;
+            varying vec2  vWorldPos;
+            varying vec2  vUv;
+            void main() {
+              vUv = uv;
+              vec4 worldPos = modelMatrix * vec4(position, 1.0);
+              vWorldPos = worldPos.xz;
+              vNormal = normalize(normalMatrix * normal);
+              vec4 eyePos = viewMatrix * worldPos;
+              vFogDist = length(eyePos.xyz);
+              gl_Position = projectionMatrix * eyePos;
+            }
+          `,
+          fragmentShader: /* glsl */ `
+            uniform vec3      uFogColor;
+            uniform float     uFogNear;
+            uniform float     uFogFar;
+            uniform float     uTime;
+            uniform sampler2D uMap;
+            varying vec3  vNormal;
+            varying float vFogDist;
+            varying vec2  vWorldPos;
+            varying vec2  vUv;
+
+            float hash(vec2 p) {
+              return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+            }
+
+            void main() {
+              vec4 texColor = texture2D(uMap, vUv);
+              if (texColor.a < 0.01) discard;
+
+              vec3 lightDir = normalize(vec3(0.4, 1.0, 0.3));
+              float diffuse = clamp(dot(vNormal, lightDir), 0.0, 1.0);
+              float shade = 0.65 + 0.35 * diffuse;
+
+              float raw = sin(uTime * 7.0)  * 0.45
+                        + sin(uTime * 13.7) * 0.35
+                        + sin(uTime * 3.1)  * 0.20;
+              float flicker = (floor(raw * 1.5 + 0.5)) / 6.0;
+
+              float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+              float flickeredDist = clamp(dist + flicker * 0.03, 0.0, 1.0);
+              float curved = pow(flickeredDist, 0.75);
+              float band = floor(curved * 5.0);
+
+              float timeSlot = floor(uTime * 1.5);
+              vec2 cell = floor(vWorldPos * 0.5);
+              float spatialNoise = hash(cell + vec2(timeSlot * 7.3, timeSlot * 3.1));
+              float turb = (floor(spatialNoise * 3.0) / 3.0) * 0.18;
+
+              float brightness;
+              if (band < 1.0) {
+                brightness = 1.00 - turb;
+              } else if (band < 2.0) {
+                brightness = 0.55;
+              } else if (band < 3.0) {
+                brightness = 0.22;
+              } else if (band < 4.0) {
+                brightness = 0.10;
+              } else {
+                brightness = 0.00;
+              }
+
+              vec3 lit = texColor.rgb * brightness * shade;
+              gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), 1.0);
+            }
+          `,
+          uniforms: {
+            uFogColor: { value: new THREE.Color(0, 0, 0) },
+            uFogNear:  { value: 4 },
+            uFogFar:   { value: 28 },
+            uTime:     { value: 0 },
+            uMap:      { value: columnTex },
+          },
+        });
+
+        model.traverse((child) => {
+          const mesh = child as THREE.Mesh;
+          if (mesh.isMesh) mesh.material = columnMat;
+        });
+
+        // Do NOT shift model.position.y here — offsetY in each ObjectPlacement
+        // accounts for the min-y offset after the container scale is applied,
+        // so the column base stays flush with the floor regardless of scale.
+        const container = new THREE.Group();
+        container.add(model);
+        setColumnProto(container);
+      },
+      undefined,
+      (err) => console.error("Failed to load column.glb", err),
+    );
+  }, []);
+
+  // ---------------------------------------------------------------------------
   // FBX chest model loading
   // ---------------------------------------------------------------------------
   const [chestProto, setChestProto] = useState<THREE.Group | null>(null);
@@ -573,11 +700,11 @@ export default function Objects() {
   // Object registry & placements — chests in end room + a few other rooms
   // ---------------------------------------------------------------------------
   const objectRegistry = useMemo<ObjectRegistry>(() => {
-    if (!chestProto) return {} as ObjectRegistry;
-    return {
-      chest: () => chestProto.clone(true),
-    };
-  }, [chestProto]);
+    const reg: ObjectRegistry = {};
+    if (chestProto) reg.chest = () => chestProto.clone(true);
+    if (columnProto) reg.column = () => columnProto.clone(true);
+    return reg;
+  }, [chestProto, columnProto]);
 
   // Use generateContent to collect wall-adjacent floor candidates per room,
   // then pick one chest location per selected room.
@@ -592,7 +719,9 @@ export default function Objects() {
       seed: DUNGEON_SEED,
       callback: ({ x, y, masks }) => {
         if (masks.getSolid(x, y) !== "floor") return;
+
         if (masks.getDistanceToWall(x, y) !== 1) return;
+
         const rid = masks.getRegionId(x, y);
         if (rid === 0) return;
         let arr = candidatesByRegion.get(rid);
@@ -629,8 +758,47 @@ export default function Objects() {
       }
     }
 
+    // Add symmetric columns to rooms large enough to warrant them.
+    // Columns are always placed in mirrored pairs (or quads) so they match
+    // real-world architectural logic: you wouldn't build a single column.
+    // Scale so the column cap (local y=4) meets the ceiling exactly.
+    // The plinth base (local y=0.5*scale) sits just above the floor — correct for a column.
+    const colScale = ceilingHeight / COLUMN_MAX_Y;
+
+    for (const [id, room] of dungeon.rooms) {
+      if (id === dungeon.startRoomId) continue; // keep entrance clear
+      const { x, y, w, h } = room.rect;
+
+      // Margin = 1/4 of the dimension so columns sit at the 1/4 and 3/4 marks,
+      // equidistant from opposite walls.
+      const marginX = Math.max(1, Math.floor(w / 4));
+      const marginY = Math.max(1, Math.floor(h / 4));
+      const leftX  = x + marginX;
+      const rightX = x + (w - 1 - marginX);
+      const topZ   = y + marginY;
+      const botZ   = y + (h - 1 - marginY);
+      const midX   = x + Math.floor(w / 2);
+      const midZ   = y + Math.floor(h / 2);
+
+      if (w >= 6 && h >= 6) {
+        // Large room: 4-column quad, symmetric on both axes.
+        result.objects.push({ type: "column", x: leftX,  z: topZ,  scale: colScale });
+        result.objects.push({ type: "column", x: rightX, z: topZ,  scale: colScale });
+        result.objects.push({ type: "column", x: leftX,  z: botZ,  scale: colScale });
+        result.objects.push({ type: "column", x: rightX, z: botZ,  scale: colScale });
+      } else if (w >= 6 && h >= 4) {
+        // Wide room: 2 columns side by side across the width.
+        result.objects.push({ type: "column", x: leftX,  z: midZ, scale: colScale });
+        result.objects.push({ type: "column", x: rightX, z: midZ, scale: colScale });
+      } else if (h >= 6 && w >= 4) {
+        // Tall room: 2 columns along the depth.
+        result.objects.push({ type: "column", x: midX, z: topZ, scale: colScale });
+        result.objects.push({ type: "column", x: midX, z: botZ, scale: colScale });
+      }
+    }
+
     return result;
-  }, [dungeon]);
+  }, [dungeon, ceilingHeight]);
 
   const { camera, containerRef } = useObjectsCamera(
     solidData,
