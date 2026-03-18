@@ -1,0 +1,103 @@
+.container {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 40px 1fr 48px;
+  background: #111;
+  color: #ccc;
+  font-family: monospace;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.header {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 4px;
+  color: #f80;
+  text-shadow: 0 0 8px #f804;
+}
+
+.hp     { color: #e55; font-size: 12px; }
+.xp     { color: #8b8; font-size: 12px; }
+.alert  { color: #fa0; font-size: 12px; }
+.dead   { color: #f44; font-size: 12px; font-weight: bold; }
+
+/* ── Main area ── */
+.mainArea {
+  grid-row: 2;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+.perspectiveView {
+  flex: 1;
+  outline: none;
+  cursor: default;
+}
+
+.sidebar {
+  width: 260px;
+  min-width: 260px;
+  background: #111;
+  border-left: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 8px;
+  gap: 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.minimapCanvas {
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  border: 1px solid #333;
+}
+
+.log {
+  flex: 1;
+  overflow-y: auto;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #888;
+}
+
+.logEntry  { color: #aaa; }
+.logDamage { color: #e55; }
+.logDeath  { color: #f80; }
+.logXp     { color: #8cf; }
+
+/* ── Status panel ── */
+.statusPanel {
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.controls {
+  color: #666;
+  font-size: 11px;
+}
