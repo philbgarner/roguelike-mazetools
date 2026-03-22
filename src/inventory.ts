@@ -1,7 +1,6 @@
 // Generic item interface - can represent any item type
 export interface Item {
   name: string;
-  quantity: number;
   state?: any; // Implemented per item type
 }
 
@@ -16,21 +15,16 @@ export interface ItemType {
 export interface InventorySlot {
   index: number; // Slot position
   item: Item | null;
-}
-
-// Clean inventory config (behavior only)
-export interface InventoryConfig {
-  name: string;
-  slotCount: number;
+  quantity: number; // How many of this item in this slot
 }
 
 // Generic inventory props
 export interface InventoryProps {
-  inventory: Item[];
-  config: InventoryConfig;
+  inventory: InventorySlot[]; // Array of slots, not items
+  inventoryName: string;
   itemTypeRegistry: Record<string, ItemType>; // Game item definitions
   isOpen: boolean;
   onToggle: () => void;
-  onUseItem?: (item: Item, quantity: number) => void;
-  onRemoveItem?: (item: Item, quantity: number) => void;
+  onUseItem?: (slot: InventorySlot) => void;
+  onRemoveItem?: (slot: InventorySlot) => void;
 }

@@ -1,45 +1,16 @@
 import React, { useState, useRef } from 'react';
 import styles from './Objects.module.css';
-import { InventoryProps, InventorySlot, ItemType, Item } from '../../inventory';
+import { InventoryProps, InventorySlot, Item } from '../../inventory';
 
-export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTypeRegistry, isOpen, onToggle, onUseItem, onRemoveItem }) => {
+export const Inventory: React.FC<InventoryProps> = ({ inventory, inventoryName, itemTypeRegistry, isOpen, onToggle, onUseItem, onRemoveItem }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const clickTimeoutRef = useRef<number | null>(null);
   const lastClickedIndexRef = useRef<number | null>(null);
 
-  // Convert inventory items to slots using config
-  const slots: InventorySlot[] = Array(config.slotCount).fill(null).map((_, index) => ({ index, item: null }));
-  
-  // Fill slots with items respecting stack limits
-  let slotIndex = 0;
-  inventory.forEach(item => {
-    let remainingQuantity = item.quantity;
-    const itemType = itemTypeRegistry[item.name];
-    const maxStack = itemType?.maxStack || 99;
-    
-    while (remainingQuantity > 0 && slotIndex < slots.length) {
-      const quantityToAdd = Math.min(remainingQuantity, maxStack);
-      
-      if (slots[slotIndex].item === null) {
-        slots[slotIndex].item = {
-          name: item.name,
-          quantity: quantityToAdd,
-          state: item.state
-        };
-        remainingQuantity -= quantityToAdd;
-      } else if (slots[slotIndex].item?.name === item.name) {
-        // Stack with existing item
-        const currentStack = slots[slotIndex].item!.quantity;
-        const canAdd = Math.min(maxStack - currentStack, remainingQuantity);
-        slots[slotIndex].item!.quantity += canAdd;
-        remainingQuantity -= canAdd;
-      }
-      
-      slotIndex++;
-    }
-  });
+  // Inventory is now already an array of slots
+  const slots = inventory;
 
-  const handleSlotClick = (slotIndex: number, item: Item) => {
+  const handleSlotClick = (slotIndex: number, slot: InventorySlot) => {
     // Clear any existing timeout
     if (clickTimeoutRef.current) {
       clearTimeout(clickTimeoutRef.current);
@@ -49,7 +20,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTyp
     // Check if this is a second click on same slot (double click)
     if (lastClickedIndexRef.current === slotIndex) {
       // This is a double click
-      handleSlotDoubleClick(item);
+      handleSlotDoubleClick(slot);
       lastClickedIndexRef.current = null;
     } else {
       // This might be first click, wait to see if there's a second click
@@ -63,7 +34,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTyp
     }
   };
 
-  const handleSlotDoubleClick = (item: Item) => {
+  const handleSlotDoubleClick = (slot: InventorySlot) => {
     // Clear any pending single click
     if (clickTimeoutRef.current) {
       clearTimeout(clickTimeoutRef.current);
@@ -72,35 +43,35 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTyp
     lastClickedIndexRef.current = null;
 
     // Only use items that have onUse behavior (same as Use button)
-    if (itemTypeRegistry[item.name]?.onUse) {
-      handleUseItem(item, 1);
+    if (slot.item && itemTypeRegistry[slot.item.name]?.onUse) {
+      handleUseItem(slot, 1);
     }
     setSelectedIndex(null);
   };
 
-  const handleUseItem = (item: Item, quantity: number) => {
-  // Always call item-specific behavior first (if exists)
-  if (itemTypeRegistry[item.name]?.onUse) {
-    itemTypeRegistry[item.name].onUse!(item, quantity);
-  }
+  const handleUseItem = (slot: InventorySlot, quantity: number) => {
+    // Always call item-specific behavior first (if exists)
+    if (slot.item && itemTypeRegistry[slot.item.name]?.onUse) {
+      itemTypeRegistry[slot.item.name].onUse!(slot.item, quantity);
+    }
   
     // Then call generic handler for inventory updates
     if (onUseItem) {
-      onUseItem(item, quantity);
+      onUseItem(slot);
     }
-  setSelectedIndex(null);
+    setSelectedIndex(null);
 };
 
-  const handleRemoveItem = (item: Item, quantity: number) => {
+  const handleRemoveItem = (slot: InventorySlot) => {
     if (onRemoveItem) {
-      onRemoveItem(item, quantity);
+      onRemoveItem(slot);
     }
     setSelectedIndex(null);
   };
 
   const getSelectedItemInfo = () => {
     if (selectedIndex === null) return null;
-    return slots[selectedIndex]?.item || null;
+    return slots[selectedIndex] || null;
   };
 
   const selectedItemInfo = getSelectedItemInfo();
@@ -108,7 +79,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTyp
   return (
     <div className={styles.inventoryPanel}>
       <div className={styles.inventoryHeader}>
-        <h3>{config.name}</h3>
+        <h3>{inventoryName}</h3>
       </div>
       {isOpen && (
         <div className={styles.inventoryContent}>
@@ -117,12 +88,12 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTyp
               <div 
                 key={index} 
                 className={`${styles.inventorySlot} ${slot.item && selectedIndex === index ? styles.selectedSlot : ''}`}
-                onClick={() => slot.item && handleSlotClick(index, slot.item)}
+                onClick={() => slot.item && handleSlotClick(index, slot)}
               >
                 {slot.item ? (
                   <div className={styles.slotItem}>
                     <span className={styles.itemName}>{slot.item.name}</span>
-                    <span className={styles.itemQuantity}>×{slot.item.quantity}</span>
+                    <span className={styles.itemQuantity}>×{slot.quantity}</span>
                   </div>
                 ) : (
                   <div className={styles.emptySlot}></div>
@@ -131,15 +102,15 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTyp
             ))}
           </div>
           
-          {selectedItemInfo && (
+          {selectedItemInfo && selectedItemInfo.item && (
             <div className={styles.inventoryActions}>
               <div className={styles.inventoryActionItem}>
                 <div className={styles.actionItemInfo}>
-                  <span className={styles.itemName}>{selectedItemInfo.name}</span>
+                  <span className={styles.itemName}>{selectedItemInfo.item.name}</span>
                   <span className={styles.itemQuantity}>×{selectedItemInfo.quantity}</span>
                 </div>
                 <div className={styles.actionItemButtons}>
-                  {itemTypeRegistry[selectedItemInfo.name]?.onUse && (
+                  {itemTypeRegistry[selectedItemInfo.item.name]?.onUse && (
                     <button 
                       className={styles.useButton}
                       onClick={() => handleUseItem(selectedItemInfo, 1)}
@@ -149,7 +120,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTyp
                   )}
                   <button 
                     className={styles.removeButton}
-                    onClick={() => handleRemoveItem(selectedItemInfo, selectedItemInfo.quantity)}
+                    onClick={() => handleRemoveItem(selectedItemInfo)}
                   >
                     Remove
                   </button>

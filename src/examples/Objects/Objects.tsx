@@ -36,7 +36,7 @@ import {
 } from "../../content";
 import { useNavigate } from "react-router-dom";
 import styles from "./Objects.module.css";
-import { InventoryConfig, ItemType, Item } from "../../inventory";
+import { ItemType, InventorySlot } from "../../inventory";
 import Inventory from "./inventory";
 
 // ---------------------------------------------------------------------------
@@ -869,7 +869,7 @@ export default function Objects() {
   }, [solidData, camera, maskOverlay, overlayData, content.objects]);
 
   // Chest record system - tracks individual chest states
-  const [chestRecords, setChestRecords] = useState<Record<string, Item[]>>({});
+  const [chestRecords, setChestRecords] = useState<Record<string, InventorySlot[]>>({});
 
   const possibleChestItems = [
       ItemName.GoldCoins,
@@ -880,7 +880,7 @@ export default function Objects() {
     ];
 
   // Generate chest content when chest is first opened
-  const generateChestContent = (chestX: number, chestZ: number): Item[] => {
+  const generateChestContent = (chestX: number, chestZ: number): InventorySlot[] => {
     const chestId = `${chestX},${chestZ}`;
 
     // If chest already has a record, return existing content
@@ -888,103 +888,109 @@ export default function Objects() {
       return chestRecords[chestId];
     }
 
-    // Generate new content using ItemTypeRegistry initializeQuantity functions
-    const newContent = possibleChestItems
+    // Generate new content - create slots like player inventory
+    const chestSlots: InventorySlot[] = [];
+    let slotIndex = 0;
+
+    possibleChestItems
       .filter(() => Math.random() > 0.3) // 70% chance for each item type
-      .map(itemName => ({
-        name: itemName,
-        quantity: ItemTypeRegistry[itemName].initializeQuantity?.() || 1
-      }));
+      .forEach(itemName => {
+        const quantity = ItemTypeRegistry[itemName].initializeQuantity?.() || 1;
+        chestSlots.push({
+          index: slotIndex++,
+          item: { name: itemName },
+          quantity
+        });
+      });
 
     // Store in chest records
     setChestRecords(prev => ({
       ...prev,
-      [chestId]: newContent
+      [chestId]: chestSlots
     }));
 
-    return newContent;
-  };
-
-  // Default game inventory configuration
-  const GameInventoryConfig: InventoryConfig = {
-    name: "Inventory",
-    slotCount: 6
+    return chestSlots;
   };
 
   const initRandomQuantity = (min: number, max: number) => {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   };
 
-  // Global item type registry - game data centralized here
-  const ItemTypeRegistry: Record<ItemName, ItemType> = {
-    [ItemName.GoldCoins]: { 
-      maxStack: 999,
-      initializeQuantity: () => initRandomQuantity(10, 50)
+// Global item type registry - game data centralized here
+const ItemTypeRegistry: Record<ItemName, ItemType> = {
+  [ItemName.GoldCoins]: { 
+    maxStack: 999,
+    initializeQuantity: () => initRandomQuantity(10, 50)
+  },
+  [ItemName.HealthPotion]: {
+    maxStack: 20,
+    onUse: (item, quantity) => {
+      console.log(`Healed ${quantity * 20} HP with ${item.name}`);
     },
-    [ItemName.HealthPotion]: {
-      maxStack: 20,
-      onUse: (item, quantity) => {
-        console.log(`Healed ${quantity * 20} HP with ${item.name}`);
-      },
-      initializeQuantity: () => initRandomQuantity(1, 3)
+    initializeQuantity: () => initRandomQuantity(1, 3)
+  },
+  [ItemName.ManaPotion]: {
+    maxStack: 20,
+    onUse: (item, quantity) => {
+      console.log(`Restored ${quantity * 15} MP with ${item.name}`);
     },
-    [ItemName.ManaPotion]: {
-      maxStack: 20,
-      onUse: (item, quantity) => {
-        console.log(`Restored ${quantity * 15} MP with ${item.name}`);
-      },
-      initializeQuantity: () => initRandomQuantity(1, 3)
+    initializeQuantity: () => initRandomQuantity(1, 3)
+  },
+  [ItemName.Torch]: {
+    maxStack: 10,
+    onUse: (item, quantity) => {
+      console.log(`Lit ${item.name} for ${quantity * 60} seconds`);
     },
-    [ItemName.Torch]: {
-      maxStack: 10,
-      onUse: (item, quantity) => {
-        console.log(`Lit ${item.name} for ${quantity * 60} seconds`);
-      },
-      initializeQuantity: () => initRandomQuantity(1, 4)
+    initializeQuantity: () => initRandomQuantity(1, 4)
+  },
+  [ItemName.Scroll]: {
+    maxStack: 5,
+    onUse: (item, quantity) => {
+      console.log(`Read ${item.name} (level ${item.state?.level || 1})`);
     },
-    [ItemName.Scroll]: {
-      maxStack: 5,
-      onUse: (item, quantity) => {
-        console.log(`Read ${item.name} (level ${item.state?.level || 1})`);
-      },
-      initializeQuantity: () => initRandomQuantity(1, 2)
+    initializeQuantity: () => initRandomQuantity(1, 2)
+  },
+  [ItemName.Key]: { 
+    maxStack: 1,
+    initializeQuantity: () => 1
+  },
+  [ItemName.Rations]: {
+    maxStack: 50,
+    onUse: (item, quantity) => {
+      console.log(`Ate ${quantity}x ${item.name}`);
     },
-    [ItemName.Key]: { 
-      maxStack: 1,
-      initializeQuantity: () => 1
-    },
-    [ItemName.Rations]: {
-      maxStack: 50,
-      onUse: (item, quantity) => {
-        console.log(`Ate ${quantity}x ${item.name}`);
-      },
-      initializeQuantity: () => initRandomQuantity(2, 5)
-    }
-  };
+    initializeQuantity: () => initRandomQuantity(2, 5)
+  }
+};
 
-  const [sampleInventory, setSampleInventory] = useState([
-    { name: ItemName.Torch, quantity: 3 },
-    { name: ItemName.HealthPotion, quantity: 2 },
-    { name: ItemName.Key, quantity: 1 },
-    { name: ItemName.GoldCoins, quantity: 50 },
-    { name: ItemName.Rations, quantity: 5 },
-  ]);
+const [sampleInventory, setSampleInventory] = useState<InventorySlot[]>([
+  { index: 0, item: { name: ItemName.Torch }, quantity: 3 },
+  { index: 1, item: { name: ItemName.HealthPotion }, quantity: 2 },
+  { index: 2, item: { name: ItemName.Key }, quantity: 1 },
+  { index: 3, item: { name: ItemName.GoldCoins }, quantity: 50 },
+  { index: 4, item: { name: ItemName.Rations }, quantity: 5 },
+  { index: 5, item: null, quantity: 0 }
+]);
 
-  const [showChestInventory, setShowChestInventory] = useState(false);
-  const [currentChestItems, setCurrentChestItems] = useState<Item[]>([]);
+const [showChestInventory, setShowChestInventory] = useState(false);
+const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
 
   // Handle using items from inventory
-  const handleUseItem = (item: any, quantity: number) => {
+  const handleUseItem = (slot: InventorySlot) => {
+    if (!slot.item) return;
+    
     setSampleInventory(prev => {
-      const existingItem = prev.find(invItem => invItem.name === item.name);
-      if (existingItem && existingItem.quantity >= quantity) {
-        const updatedInventory = prev.map(invItem =>
-          invItem.name === item.name
-            ? { ...invItem, quantity: invItem.quantity - quantity }
-            : invItem
-        ).filter(invItem => invItem.quantity > 0);
+      const existingSlot = prev.find(invSlot => invSlot.index === slot.index);
+      if (existingSlot && existingSlot.quantity >= 1) {
+        const updatedInventory = prev.map(invSlot =>
+          invSlot.index === slot.index
+            ? { ...invSlot, quantity: invSlot.quantity - 1 }
+            : invSlot
+        ).map(invSlot => 
+          invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot
+        );
 
-        console.log(`Used ${quantity}x ${item.name}`);
+        console.log(`Used 1x ${slot.item!.name}`);
         return updatedInventory;
       }
       return prev;
@@ -992,102 +998,86 @@ export default function Objects() {
   };
 
   // Handle removing items from inventory
-  const handleRemoveItem = (item: any, quantity: number) => {
+  const handleRemoveItem = (slot: InventorySlot) => {
+    if (!slot.item) return;
+    
     setSampleInventory(prev => {
-      const existingItem = prev.find(invItem => invItem.name === item.name);
-      if (existingItem && existingItem.quantity >= quantity) {
-        const updatedInventory = prev.map(invItem =>
-          invItem.name === item.name
-            ? { ...invItem, quantity: invItem.quantity - quantity }
-            : invItem
-        ).filter(invItem => invItem.quantity > 0);
+      const existingSlot = prev.find(invSlot => invSlot.index === slot.index);
+      if (existingSlot && existingSlot.quantity >= 1) {
+        const updatedInventory = prev.map(invSlot =>
+          invSlot.index === slot.index
+            ? { ...invSlot, quantity: invSlot.quantity - 1 }
+            : invSlot
+        ).map(invSlot => 
+          invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot
+        );
 
-        console.log(`Removed ${quantity}x ${item.name} from inventory`);
+        console.log(`Removed 1x ${slot.item!.name} from inventory`);
         return updatedInventory;
       }
       return prev;
     });
   };
-  const handleTakeItem = (itemName: ItemName, quantity: number) => {
 
+  const handleTakeItem = (itemName: ItemName, requestedQuantity: number) => {
     // Use the global ItemTypeRegistry for consistent item definitions
     const itemType = ItemTypeRegistry[itemName];
 
     // Add item to player inventory
     setSampleInventory(prev => {
-      // Find existing item of same type
-      const existingItem = prev.find((item: any) => item.name === itemName);
+      // Find existing slot with same item type
+      const existingSlot = prev.find(slot => slot.item?.name === itemName);
 
       let transferAmount = 0;
+      let targetSlotIndex = -1;
 
-      if (existingItem) {
+      if (existingSlot) {
         // Stack with existing item
-        const currentStack = existingItem.quantity;
-        const canAdd = Math.min(quantity, itemType.maxStack - currentStack);
+        const currentStack = existingSlot.quantity;
+        const canAdd = Math.min(requestedQuantity, itemType.maxStack - currentStack);
 
         if (canAdd > 0) {
           transferAmount = canAdd;
+          targetSlotIndex = existingSlot.index;
         }
       } else {
-        // Check if we have an empty slot (less than 6 items in inventory)
-        if (prev.length < 6) {
-          transferAmount = Math.min(quantity, itemType.maxStack);
+        // Find first empty slot
+        const emptySlot = prev.find(slot => slot.item === null);
+        if (emptySlot) {
+          targetSlotIndex = emptySlot.index;
+          transferAmount = Math.min(requestedQuantity, itemType.maxStack);
         }
       }
 
       // If no space, don't transfer anything
-      if (transferAmount === 0) {
-        console.log(`Cannot take ${quantity}x ${itemName} - no available space`);
+      if (transferAmount === 0 || targetSlotIndex === -1) {
+        console.log(`Cannot take ${requestedQuantity}x ${itemName} - no available space`);
         return prev;
       }
 
-      if (existingItem) {
-        // Stack with existing item
-        const updatedInventory = prev.map(item =>
-          item.name === itemName
-            ? { ...item, quantity: item.quantity + transferAmount }
-            : item
-        );
+      // Update the target slot
+      const updatedInventory = prev.map(slot =>
+        slot.index === targetSlotIndex
+          ? { 
+              ...slot, 
+              item: { name: itemName }, 
+              quantity: existingSlot ? slot.quantity + transferAmount : transferAmount 
+            }
+          : slot
+      );
 
-        // Update chest records and remove item from chest
-        setCurrentChestItems(chestPrev => {
-          const updatedChest = chestPrev.map(item =>
-            item.name === itemName
-              ? { ...item, quantity: item.quantity - transferAmount }
-              : item
-          ).filter(item => item.quantity > 0);
-
-          // Update chest records with new content
-          // Find which chest is currently open and update its record
-          const playerTileX = Math.floor(camera.x);
-          const playerTileZ = Math.floor(camera.z);
-          const chestId = `${playerTileX},${playerTileZ}`;
-
-          setChestRecords(prev => ({
-            ...prev,
-            [chestId]: updatedChest
-          }));
-
-          return updatedChest;
-        });
-
-        console.log(`Taking ${transferAmount}x ${itemName} from chest (stacked with existing)`);
-        return updatedInventory;
-      } else {
-        // Add new item to empty slot
-        const newItem = {
-          name: itemName,
-          quantity: transferAmount
-        };
-        const updatedInventory = [...prev, newItem];
-
-        // Update chest records and remove item from chest
-        setCurrentChestItems(chestPrev => {
-          const updatedChest = chestPrev.map(item =>
-            item.name === itemName
-              ? { ...item, quantity: item.quantity - transferAmount }
-              : item
-          ).filter(item => item.quantity > 0);
+      // Update chest records and remove item from chest
+      setCurrentChestItems(chestPrev => {
+        // Find the slot in chest and reduce its quantity
+        const chestSlot = chestPrev.find(slot => slot.item?.name === itemName);
+        if (chestSlot) {
+          const remainingQuantity = chestSlot.quantity - transferAmount;
+          
+          const updatedChest = chestPrev.map(slot =>
+            slot.item?.name === itemName
+              ? { ...slot, quantity: remainingQuantity }
+              : slot
+          ).filter(slot => slot.quantity > 0);
 
           // Update chest records with new content
           const playerTileX = Math.floor(camera.x);
@@ -1100,11 +1090,12 @@ export default function Objects() {
           }));
 
           return updatedChest;
-        });
+        }
+        return chestPrev;
+      });
 
-        console.log(`Taking ${transferAmount}x ${itemName} from chest (new slot)`);
-        return updatedInventory;
-      }
+      console.log(`Taking ${transferAmount}x ${itemName} from chest`);
+      return updatedInventory;
     });
   };
 
@@ -1249,7 +1240,7 @@ export default function Objects() {
             {/* ── Inventory Panel ── */}
             <Inventory
               inventory={sampleInventory}
-              config={GameInventoryConfig}
+              inventoryName={"Inventory"}
               itemTypeRegistry={ItemTypeRegistry}
               isOpen={showInventory}
               onToggle={() => setShowInventory(prev => !prev)}
@@ -1268,16 +1259,16 @@ export default function Objects() {
                     <p className={styles.chestPanelEmpty}>This chest is empty.</p>
                   ) : (
                     <div className={styles.chestInventoryGrid}>
-                      {currentChestItems.map((item, index) => (
+                      {currentChestItems.map((slot, index) => (
                         <div key={index} className={styles.chestInventoryItem}>
                           <div className={styles.chestItemInfo}>
-                            <span className={styles.itemName}>{item.name}</span>
-                            <span className={styles.itemQuantity}>×{item.quantity}</span>
+                            <span className={styles.itemName}>{slot.item?.name}</span>
+                            <span className={styles.itemQuantity}>×{slot.quantity}</span>
                           </div>
                           <div className={styles.chestItemActions}>
                             <button
                               className={styles.chestTakeButton}
-                              onClick={() => handleTakeItem(item.name as ItemName, item.quantity)}
+                              onClick={() => slot.item && handleTakeItem(slot.item.name as ItemName, slot.quantity)}
                             >
                               Take
                             </button>
