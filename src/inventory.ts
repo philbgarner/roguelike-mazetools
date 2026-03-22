@@ -8,10 +8,9 @@ export interface Item {
 // Item type definitions (reusable across game)
 export interface ItemType {
   maxStack: number;
-  isUsable?: boolean;
+  onUse?: (item: Item, quantity: number) => void; // Item-specific behavior
   initializeQuantity?: () => number;
 }
-
 
 // Generic inventory slot
 export interface InventorySlot {
@@ -29,9 +28,9 @@ export interface InventoryConfig {
 export interface InventoryProps {
   inventory: Item[];
   config: InventoryConfig;
+  itemTypeRegistry: Record<string, ItemType>; // Game item definitions
   isOpen: boolean;
   onToggle: () => void;
-  onDoubleClickItem?: Function;
   onUseItem?: (item: Item, quantity: number) => void;
   onRemoveItem?: (item: Item, quantity: number) => void;
 }

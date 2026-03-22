@@ -2,19 +2,7 @@ import React, { useState, useRef } from 'react';
 import styles from './Objects.module.css';
 import { InventoryProps, InventorySlot, ItemType, Item } from '../../inventory';
 
-
-// Global item type registry
-export const ItemTypeRegistry: Record<string, ItemType> = {
-  "Gold Coins": { maxStack: 999, isUsable: false },
-  "Health Potion": { maxStack: 20, isUsable: true },
-  "Mana Potion": { maxStack: 20, isUsable: true },
-  "Torch": { maxStack: 10, isUsable: true },
-  "Scroll": { maxStack: 5, isUsable: true },
-  "Key": { maxStack: 1, isUsable: false },
-  "Rations": { maxStack: 50, isUsable: true }
-};
-
-export const Inventory: React.FC<InventoryProps> = ({ inventory, config, isOpen, onToggle, onUseItem, onRemoveItem }) => {
+export const Inventory: React.FC<InventoryProps> = ({ inventory, config, itemTypeRegistry, isOpen, onToggle, onUseItem, onRemoveItem }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const clickTimeoutRef = useRef<number | null>(null);
   const lastClickedIndexRef = useRef<number | null>(null);
@@ -26,7 +14,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, isOpen,
   let slotIndex = 0;
   inventory.forEach(item => {
     let remainingQuantity = item.quantity;
-    const itemType = ItemTypeRegistry[item.name];
+    const itemType = itemTypeRegistry[item.name];
     const maxStack = itemType?.maxStack || 99;
     
     while (remainingQuantity > 0 && slotIndex < slots.length) {
@@ -82,20 +70,26 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, isOpen,
       clickTimeoutRef.current = null;
     }
     lastClickedIndexRef.current = null;
-    
-    if (onUseItem && ItemTypeRegistry[item.name]?.isUsable) {
-      // Default behavior: use item if it's usable
-      onUseItem(item, 1);
+
+    // Only use items that have onUse behavior (same as Use button)
+    if (itemTypeRegistry[item.name]?.onUse) {
+      handleUseItem(item, 1);
     }
     setSelectedIndex(null);
   };
 
   const handleUseItem = (item: Item, quantity: number) => {
+  // Always call item-specific behavior first (if exists)
+  if (itemTypeRegistry[item.name]?.onUse) {
+    itemTypeRegistry[item.name].onUse!(item, quantity);
+  }
+  
+    // Then call generic handler for inventory updates
     if (onUseItem) {
       onUseItem(item, quantity);
     }
-    setSelectedIndex(null);
-  };
+  setSelectedIndex(null);
+};
 
   const handleRemoveItem = (item: Item, quantity: number) => {
     if (onRemoveItem) {
@@ -145,7 +139,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, config, isOpen,
                   <span className={styles.itemQuantity}>×{selectedItemInfo.quantity}</span>
                 </div>
                 <div className={styles.actionItemButtons}>
-                  {ItemTypeRegistry[selectedItemInfo.name]?.isUsable && (
+                  {itemTypeRegistry[selectedItemInfo.name]?.onUse && (
                     <button 
                       className={styles.useButton}
                       onClick={() => handleUseItem(selectedItemInfo, 1)}

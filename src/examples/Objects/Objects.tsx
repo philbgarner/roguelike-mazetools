@@ -36,7 +36,7 @@ import {
 } from "../../content";
 import { useNavigate } from "react-router-dom";
 import styles from "./Objects.module.css";
-import { InventoryConfig } from "../../inventory";
+import { InventoryConfig, ItemType, Item } from "../../inventory";
 import Inventory from "./inventory";
 
 // ---------------------------------------------------------------------------
@@ -64,6 +64,17 @@ const SRC_WALL = { x: 208, y: 304 };
 const TILE_FLOOR = 0;
 const TILE_CEILING = 1;
 const TILE_WALL = 2;
+
+// Game item names enum - type safety for this specific game
+enum ItemName {
+  GoldCoins = "Gold Coins",
+  HealthPotion = "Health Potion",
+  ManaPotion = "Mana Potion",
+  Torch = "Torch",
+  Scroll = "Scroll",
+  Key = "Key",
+  Rations = "Rations"
+}
 
 // Sanity-check: verify coords align to the padded grid
 function assertAligned(label: string, x: number, y: number) {
@@ -743,26 +754,26 @@ export default function Objects() {
     function pickFromRegion(regionId: number, existingObjects: ObjectPlacement[] = []): ObjectPlacement | null {
       const arr = candidatesByRegion.get(regionId);
       if (!arr || arr.length === 0) return null;
-      
+
       // Create a simple hash from regionId and existing objects for deterministic randomness
       const seedBase = regionId + existingObjects.length * 1000;
       const index = (seedBase * 9301 + 49297) % 233280;
       const normalizedIndex = Math.floor((index / 233280) * arr.length);
-      
+
       // Try to find a position that doesn't conflict with existing objects
       for (let i = 0; i < arr.length; i++) {
         const tryIndex = (normalizedIndex + i) % arr.length;
         const candidate = arr[tryIndex];
-        
-        const hasConflict = existingObjects.some(obj => 
+
+        const hasConflict = existingObjects.some(obj =>
           obj.x === candidate.x && obj.z === candidate.z
         );
-        
+
         if (!hasConflict) {
           return { type: "chest", x: candidate.x, z: candidate.z };
         }
       }
-      
+
       return null; // No valid position found
     }
 
@@ -858,32 +869,39 @@ export default function Objects() {
   }, [solidData, camera, maskOverlay, overlayData, content.objects]);
 
   // Chest record system - tracks individual chest states
-  const [chestRecords, setChestRecords] = useState<Record<string, Array<{ name: string; quantity: number }>>>({});
+  const [chestRecords, setChestRecords] = useState<Record<string, Item[]>>({});
+
+  const possibleChestItems = [
+      ItemName.GoldCoins,
+      ItemName.HealthPotion,
+      ItemName.ManaPotion,
+      ItemName.Torch,
+      ItemName.Scroll,
+    ];
 
   // Generate chest content when chest is first opened
-  const generateChestContent = (chestX: number, chestZ: number) => {
+  const generateChestContent = (chestX: number, chestZ: number): Item[] => {
     const chestId = `${chestX},${chestZ}`;
-    
+
     // If chest already has a record, return existing content
     if (chestRecords[chestId]) {
       return chestRecords[chestId];
     }
-    
-    // Generate new content for first-time opened chest
-    const newContent = [
-      { name: "Gold Coins", quantity: Math.floor(Math.random() * 50) + 10 },
-      { name: "Health Potion", quantity: Math.floor(Math.random() * 3) + 1 },
-      { name: "Mana Potion", quantity: Math.floor(Math.random() * 2) + 1 },
-      { name: "Torch", quantity: Math.floor(Math.random() * 4) + 1 },
-      { name: "Scroll", quantity: Math.floor(Math.random() * 2) + 1 },
-    ].filter(() => Math.random() > 0.3); // 70% chance for each item type
-    
+
+    // Generate new content using ItemTypeRegistry initializeQuantity functions
+    const newContent = possibleChestItems
+      .filter(() => Math.random() > 0.3) // 70% chance for each item type
+      .map(itemName => ({
+        name: itemName,
+        quantity: ItemTypeRegistry[itemName].initializeQuantity?.() || 1
+      }));
+
     // Store in chest records
     setChestRecords(prev => ({
       ...prev,
       [chestId]: newContent
     }));
-    
+
     return newContent;
   };
 
@@ -892,30 +910,80 @@ export default function Objects() {
     name: "Inventory",
     slotCount: 6
   };
-  
+
+  const initRandomQuantity = (min: number, max: number) => {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  };
+
+  // Global item type registry - game data centralized here
+  const ItemTypeRegistry: Record<ItemName, ItemType> = {
+    [ItemName.GoldCoins]: { 
+      maxStack: 999,
+      initializeQuantity: () => initRandomQuantity(10, 50)
+    },
+    [ItemName.HealthPotion]: {
+      maxStack: 20,
+      onUse: (item, quantity) => {
+        console.log(`Healed ${quantity * 20} HP with ${item.name}`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 3)
+    },
+    [ItemName.ManaPotion]: {
+      maxStack: 20,
+      onUse: (item, quantity) => {
+        console.log(`Restored ${quantity * 15} MP with ${item.name}`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 3)
+    },
+    [ItemName.Torch]: {
+      maxStack: 10,
+      onUse: (item, quantity) => {
+        console.log(`Lit ${item.name} for ${quantity * 60} seconds`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 4)
+    },
+    [ItemName.Scroll]: {
+      maxStack: 5,
+      onUse: (item, quantity) => {
+        console.log(`Read ${item.name} (level ${item.state?.level || 1})`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 2)
+    },
+    [ItemName.Key]: { 
+      maxStack: 1,
+      initializeQuantity: () => 1
+    },
+    [ItemName.Rations]: {
+      maxStack: 50,
+      onUse: (item, quantity) => {
+        console.log(`Ate ${quantity}x ${item.name}`);
+      },
+      initializeQuantity: () => initRandomQuantity(2, 5)
+    }
+  };
 
   const [sampleInventory, setSampleInventory] = useState([
-    { name: "Torch", quantity: 3 },
-    { name: "Health Potion", quantity: 2 },
-    { name: "Key", quantity: 1 },
-    { name: "Gold Coins", quantity: 50 },
-    { name: "Rations", quantity: 5 },
+    { name: ItemName.Torch, quantity: 3 },
+    { name: ItemName.HealthPotion, quantity: 2 },
+    { name: ItemName.Key, quantity: 1 },
+    { name: ItemName.GoldCoins, quantity: 50 },
+    { name: ItemName.Rations, quantity: 5 },
   ]);
 
   const [showChestInventory, setShowChestInventory] = useState(false);
-  const [currentChestItems, setCurrentChestItems] = useState<Array<{ name: string; quantity: number }>>([]);
+  const [currentChestItems, setCurrentChestItems] = useState<Item[]>([]);
 
   // Handle using items from inventory
   const handleUseItem = (item: any, quantity: number) => {
     setSampleInventory(prev => {
       const existingItem = prev.find(invItem => invItem.name === item.name);
       if (existingItem && existingItem.quantity >= quantity) {
-        const updatedInventory = prev.map(invItem => 
-          invItem.name === item.name 
+        const updatedInventory = prev.map(invItem =>
+          invItem.name === item.name
             ? { ...invItem, quantity: invItem.quantity - quantity }
             : invItem
         ).filter(invItem => invItem.quantity > 0);
-        
+
         console.log(`Used ${quantity}x ${item.name}`);
         return updatedInventory;
       }
@@ -928,44 +996,35 @@ export default function Objects() {
     setSampleInventory(prev => {
       const existingItem = prev.find(invItem => invItem.name === item.name);
       if (existingItem && existingItem.quantity >= quantity) {
-        const updatedInventory = prev.map(invItem => 
-          invItem.name === item.name 
+        const updatedInventory = prev.map(invItem =>
+          invItem.name === item.name
             ? { ...invItem, quantity: invItem.quantity - quantity }
             : invItem
         ).filter(invItem => invItem.quantity > 0);
-        
+
         console.log(`Removed ${quantity}x ${item.name} from inventory`);
         return updatedInventory;
       }
       return prev;
     });
   };
-  const handleTakeItem = (itemName: string, quantity: number) => {
-    // Define item types with max stack sizes (same as in inventory component)
-    const ITEM_TYPES: Record<string, { maxStack: number }> = {
-      "Gold Coins": { maxStack: 999 },
-      "Health Potion": { maxStack: 20 },
-      "Mana Potion": { maxStack: 20 },
-      "Torch": { maxStack: 10 },
-      "Scroll": { maxStack: 5 },
-      "Key": { maxStack: 1 },
-      "Rations": { maxStack: 50 }
-    };
+  const handleTakeItem = (itemName: ItemName, quantity: number) => {
+
+    // Use the global ItemTypeRegistry for consistent item definitions
+    const itemType = ItemTypeRegistry[itemName];
 
     // Add item to player inventory
     setSampleInventory(prev => {
-      const itemType = ITEM_TYPES[itemName] || { maxStack: 99 };
-      
       // Find existing item of same type
-      const existingItem = prev.find(item => item.name === itemName);
-      
+      const existingItem = prev.find((item: any) => item.name === itemName);
+
       let transferAmount = 0;
-      
+
       if (existingItem) {
         // Stack with existing item
         const currentStack = existingItem.quantity;
         const canAdd = Math.min(quantity, itemType.maxStack - currentStack);
-        
+
         if (canAdd > 0) {
           transferAmount = canAdd;
         }
@@ -975,74 +1034,74 @@ export default function Objects() {
           transferAmount = Math.min(quantity, itemType.maxStack);
         }
       }
-      
+
       // If no space, don't transfer anything
       if (transferAmount === 0) {
         console.log(`Cannot take ${quantity}x ${itemName} - no available space`);
         return prev;
       }
-      
+
       if (existingItem) {
         // Stack with existing item
-        const updatedInventory = prev.map(item => 
-          item.name === itemName 
+        const updatedInventory = prev.map(item =>
+          item.name === itemName
             ? { ...item, quantity: item.quantity + transferAmount }
             : item
         );
-        
+
         // Update chest records and remove item from chest
         setCurrentChestItems(chestPrev => {
-          const updatedChest = chestPrev.map(item => 
-            item.name === itemName 
+          const updatedChest = chestPrev.map(item =>
+            item.name === itemName
               ? { ...item, quantity: item.quantity - transferAmount }
               : item
           ).filter(item => item.quantity > 0);
-          
+
           // Update chest records with new content
           // Find which chest is currently open and update its record
           const playerTileX = Math.floor(camera.x);
           const playerTileZ = Math.floor(camera.z);
           const chestId = `${playerTileX},${playerTileZ}`;
-          
+
           setChestRecords(prev => ({
             ...prev,
             [chestId]: updatedChest
           }));
-          
+
           return updatedChest;
         });
-        
+
         console.log(`Taking ${transferAmount}x ${itemName} from chest (stacked with existing)`);
         return updatedInventory;
       } else {
         // Add new item to empty slot
-        const newItem = { 
-          name: itemName, 
-          quantity: transferAmount 
+        const newItem = {
+          name: itemName,
+          quantity: transferAmount
         };
         const updatedInventory = [...prev, newItem];
-        
+
         // Update chest records and remove item from chest
         setCurrentChestItems(chestPrev => {
-          const updatedChest = chestPrev.map(item => 
-            item.name === itemName 
+          const updatedChest = chestPrev.map(item =>
+            item.name === itemName
               ? { ...item, quantity: item.quantity - transferAmount }
               : item
           ).filter(item => item.quantity > 0);
-          
+
           // Update chest records with new content
           const playerTileX = Math.floor(camera.x);
           const playerTileZ = Math.floor(camera.z);
           const chestId = `${playerTileX},${playerTileZ}`;
-          
+
           setChestRecords(prev => ({
             ...prev,
             [chestId]: updatedChest
           }));
-          
+
           return updatedChest;
         });
-        
+
         console.log(`Taking ${transferAmount}x ${itemName} from chest (new slot)`);
         return updatedInventory;
       }
@@ -1057,13 +1116,13 @@ export default function Objects() {
         setShowInventory(prev => !prev);
       } else if (e.code === "KeyE") {
         e.preventDefault();
-        
+
         // If chest inventory is already open, close it
         if (showChestInventory) {
           setShowChestInventory(false);
           return;
         }
-        
+
         // Check if player is on same tile as a chest
         const playerTileX = Math.floor(camera.x);
         const playerTileZ = Math.floor(camera.z);
@@ -1191,6 +1250,7 @@ export default function Objects() {
             <Inventory
               inventory={sampleInventory}
               config={GameInventoryConfig}
+              itemTypeRegistry={ItemTypeRegistry}
               isOpen={showInventory}
               onToggle={() => setShowInventory(prev => !prev)}
               onUseItem={handleUseItem}
@@ -1217,7 +1277,7 @@ export default function Objects() {
                           <div className={styles.chestItemActions}>
                             <button
                               className={styles.chestTakeButton}
-                              onClick={() => handleTakeItem(item.name, item.quantity)}
+                              onClick={() => handleTakeItem(item.name as ItemName, item.quantity)}
                             >
                               Take
                             </button>
