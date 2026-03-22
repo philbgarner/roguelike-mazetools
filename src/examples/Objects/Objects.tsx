@@ -36,7 +36,8 @@ import {
 } from "../../content";
 import { useNavigate } from "react-router-dom";
 import styles from "./Objects.module.css";
-import Inventory from "../../inventory";
+import { InventoryConfig } from "../../inventory";
+import Inventory from "./inventory";
 
 // ---------------------------------------------------------------------------
 // Extended content outputs — developers can add more typed fields here.
@@ -886,6 +887,13 @@ export default function Objects() {
     return newContent;
   };
 
+  // Default game inventory configuration
+  const GameInventoryConfig: InventoryConfig = {
+    name: "Inventory",
+    slotCount: 6
+  };
+  
+
   const [sampleInventory, setSampleInventory] = useState([
     { name: "Torch", quantity: 3 },
     { name: "Health Potion", quantity: 2 },
@@ -898,17 +906,17 @@ export default function Objects() {
   const [currentChestItems, setCurrentChestItems] = useState<Array<{ name: string; quantity: number }>>([]);
 
   // Handle using items from inventory
-  const handleUseItem = (itemName: string, quantity: number) => {
+  const handleUseItem = (item: any, quantity: number) => {
     setSampleInventory(prev => {
-      const existingItem = prev.find(item => item.name === itemName);
+      const existingItem = prev.find(invItem => invItem.name === item.name);
       if (existingItem && existingItem.quantity >= quantity) {
-        const updatedInventory = prev.map(item => 
-          item.name === itemName 
-            ? { ...item, quantity: item.quantity - quantity }
-            : item
-        ).filter(item => item.quantity > 0);
+        const updatedInventory = prev.map(invItem => 
+          invItem.name === item.name 
+            ? { ...invItem, quantity: invItem.quantity - quantity }
+            : invItem
+        ).filter(invItem => invItem.quantity > 0);
         
-        console.log(`Used ${quantity}x ${itemName}`);
+        console.log(`Used ${quantity}x ${item.name}`);
         return updatedInventory;
       }
       return prev;
@@ -916,17 +924,17 @@ export default function Objects() {
   };
 
   // Handle removing items from inventory
-  const handleRemoveItem = (itemName: string, quantity: number) => {
+  const handleRemoveItem = (item: any, quantity: number) => {
     setSampleInventory(prev => {
-      const existingItem = prev.find(item => item.name === itemName);
+      const existingItem = prev.find(invItem => invItem.name === item.name);
       if (existingItem && existingItem.quantity >= quantity) {
-        const updatedInventory = prev.map(item => 
-          item.name === itemName 
-            ? { ...item, quantity: item.quantity - quantity }
-            : item
-        ).filter(item => item.quantity > 0);
+        const updatedInventory = prev.map(invItem => 
+          invItem.name === item.name 
+            ? { ...invItem, quantity: invItem.quantity - quantity }
+            : invItem
+        ).filter(invItem => invItem.quantity > 0);
         
-        console.log(`Removed ${quantity}x ${itemName} from inventory`);
+        console.log(`Removed ${quantity}x ${item.name} from inventory`);
         return updatedInventory;
       }
       return prev;
@@ -1008,7 +1016,11 @@ export default function Objects() {
         return updatedInventory;
       } else {
         // Add new item to empty slot
-        const updatedInventory = [...prev, { name: itemName, quantity: transferAmount }];
+        const newItem = { 
+          name: itemName, 
+          quantity: transferAmount 
+        };
+        const updatedInventory = [...prev, newItem];
         
         // Update chest records and remove item from chest
         setCurrentChestItems(chestPrev => {
@@ -1178,6 +1190,7 @@ export default function Objects() {
             {/* ── Inventory Panel ── */}
             <Inventory
               inventory={sampleInventory}
+              config={GameInventoryConfig}
               isOpen={showInventory}
               onToggle={() => setShowInventory(prev => !prev)}
               onUseItem={handleUseItem}
