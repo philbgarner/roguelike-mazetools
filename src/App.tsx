@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Cave from "./examples/Cave/Cave";
 import EotB from "./examples/EotB/EotB";
+import Hidden from "./examples/hidden/Hidden";
 import Mobs from "./examples/Mobs/Mobs";
 import Objects from "./examples/Objects/Objects";
 import Targeting from "./examples/Targeting/Targeting";
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/" element={<AppMenu />} />
         <Route path="/cave" element={<Cave />} />
         <Route path="/eotb" element={<EotB />} />
+        <Route path="/hidden" element={<Hidden />} />
         <Route path="/mobs" element={<Mobs />} />
         <Route path="/objects" element={<Objects />} />
         <Route path="/targeting" element={<Targeting />} />

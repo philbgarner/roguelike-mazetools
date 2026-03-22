@@ -28,6 +28,14 @@ const MENU_ITEMS: MenuItem[] = [
     icon: "👁",
   },
   {
+    label: "Hidden",
+    subtitle: "Secret Passages",
+    description:
+      "Discover hidden wall tunnels connecting distant rooms. Unlock passages with E when standing at a cyan wall, then walk into it to traverse.",
+    path: "/hidden",
+    icon: "🔍",
+  },
+  {
     label: "Mobs",
     subtitle: "Turn-Based Combat",
     description:

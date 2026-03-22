@@ -29,6 +29,7 @@ const MAX_INSTANCES = 32768;
 const vertexShader = /* glsl */ `
 attribute float aTileId;
 attribute float aHighlight;
+attribute float aPassage;
 uniform vec2  uTileSize;   // (tileW/sheetW, tileH/sheetH)
 uniform float uColumns;    // tiles per row in the atlas
 
@@ -38,6 +39,7 @@ varying float vFogDist;
 varying vec2  vWorldPos;
 varying vec2  vTileUv;
 varying float vHighlight;
+varying float vPassage;
 
 void main() {
   float id  = floor(aTileId + 0.5);
@@ -51,6 +53,7 @@ void main() {
   vTileUv     = uv; // [0,1]² local quad coords, used for debug edge overlay
 
   vHighlight = aHighlight;
+  vPassage   = aPassage;
 
   vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
   vWorldPos = worldPos.xz;
@@ -84,6 +87,7 @@ varying float vFogDist;
 varying vec2  vWorldPos;
 varying vec2  vTileUv;
 varying float vHighlight;
+varying float vPassage;
 
 // Simple spatial hash: returns [0,1) for a given cell coord.
 float hash(vec2 p) {
@@ -186,6 +190,16 @@ void main() {
     lit = mix(lit, lightningColor, 0.45 + 0.5 * boltIntensity);
   }
 
+  // Passage overlay (applied after highlights so it shows on wall faces)
+  float pa = floor(vPassage + 0.5);
+  if (pa > 1.5) {
+    // Enabled passage: bright cyan
+    lit = mix(lit, vec3(0.0, 0.9, 0.9), 0.35);
+  } else if (pa > 0.5) {
+    // Disabled passage: faint cyan hint
+    lit = mix(lit, vec3(0.0, 0.4, 0.5), 0.2);
+  }
+
   gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
 }
 `;
@@ -203,6 +217,7 @@ type Props = {
   fogColor?: THREE.Color;
   debugEdges?: boolean;
   highlightData?: Uint8Array;
+  passageData?: Uint8Array;
   gridWidth?: number;
 };
 
@@ -215,12 +230,13 @@ export function InstancedTileMesh({
   fogColor,
   debugEdges = false,
   highlightData,
+  passageData,
   gridWidth,
 }: Props) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Geometry is created once; the aTileId and aHighlight attributes are
-  // pre-allocated to MAX_INSTANCES so we never need to recreate them.
+  // Geometry is created once; the aTileId, aHighlight and aPassage attributes
+  // are pre-allocated to MAX_INSTANCES so we never need to recreate them.
   const geometry = useMemo(() => {
     const geo = new THREE.PlaneGeometry(1, 1);
     geo.setAttribute(
@@ -229,6 +245,10 @@ export function InstancedTileMesh({
     );
     geo.setAttribute(
       "aHighlight",
+      new THREE.InstancedBufferAttribute(new Float32Array(MAX_INSTANCES), 1),
+    );
+    geo.setAttribute(
+      "aPassage",
       new THREE.InstancedBufferAttribute(new Float32Array(MAX_INSTANCES), 1),
     );
     return geo;
@@ -323,6 +343,33 @@ export function InstancedTileMesh({
 
     highlightAttr.needsUpdate = true;
   }, [instances, highlightData, gridWidth]);
+
+  // Update aPassage attribute from passageData + instance cell coordinates
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    const passageAttr = mesh.geometry.getAttribute(
+      "aPassage",
+    ) as THREE.InstancedBufferAttribute;
+
+    const count = Math.min(instances.length, MAX_INSTANCES);
+
+    if (!passageData || !gridWidth) {
+      for (let i = 0; i < count; i++) passageAttr.setX(i, 0);
+    } else {
+      for (let i = 0; i < count; i++) {
+        const inst = instances[i];
+        if (inst.cellX !== undefined && inst.cellZ !== undefined) {
+          passageAttr.setX(i, passageData[inst.cellZ * gridWidth + inst.cellX] ?? 0);
+        } else {
+          passageAttr.setX(i, 0);
+        }
+      }
+    }
+
+    passageAttr.needsUpdate = true;
+  }, [instances, passageData, gridWidth]);
 
   return (
     <instancedMesh

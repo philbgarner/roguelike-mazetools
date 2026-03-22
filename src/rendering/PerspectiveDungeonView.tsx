@@ -418,7 +418,10 @@ function buildFaceInstances(
         tileId: ceilTile,
       });
 
-      // Wall faces: emit only where neighbour is solid
+      // Wall faces: emit only where neighbour is solid.
+      // cellX/cellZ on wall instances point to the solid neighbour cell so that
+      // per-cell data (passage tint, etc.) can be looked up for that solid cell.
+
       // North wall: between this cell (cz) and cell (cz-1). Face at z=cz, normal +Z.
       if (solid(cx, cz - 1))
         walls.push({
@@ -433,6 +436,8 @@ function buildFaceInstances(
             tileSize,
           ),
           tileId: wallTile,
+          cellX: cx,
+          cellZ: cz - 1,
         });
 
       // South wall: at z=cz+1, normal -Z.
@@ -449,6 +454,8 @@ function buildFaceInstances(
             tileSize,
           ),
           tileId: wallTile,
+          cellX: cx,
+          cellZ: cz + 1,
         });
 
       // West wall: at x=cx, normal +X.
@@ -465,6 +472,8 @@ function buildFaceInstances(
             tileSize,
           ),
           tileId: wallTile,
+          cellX: cx - 1,
+          cellZ: cz,
         });
 
       // East wall: at x=cx+1, normal -X.
@@ -481,6 +490,8 @@ function buildFaceInstances(
             tileSize,
           ),
           tileId: wallTile,
+          cellX: cx + 1,
+          cellZ: cz,
         });
     }
   }
@@ -522,6 +533,8 @@ type SceneProps = {
   mobileFlash?: boolean[];
   /** Per-cell highlight mask: 0=none, 1=targeting preview, 2=fire, 3=lightning. */
   highlightMask?: Uint8Array;
+  /** Per-cell passage mask: 0=none, 1=disabled, 2=enabled. Applied to wall faces. */
+  passageMask?: Uint8Array;
 };
 
 function DungeonScene({
@@ -550,6 +563,7 @@ function DungeonScene({
   spriteAtlas,
   mobileFlash,
   highlightMask,
+  passageMask,
 }: SceneProps) {
   const fogColorObj = useMemo(
     () => (fogColor ? new THREE.Color(fogColor) : undefined),
@@ -650,6 +664,8 @@ function DungeonScene({
         fogFar={fogFar}
         fogColor={fogColorObj}
         debugEdges={debugEdges}
+        passageData={passageMask}
+        gridWidth={width}
       />
 
       {objects && objects.length > 0 && objectRegistry && (

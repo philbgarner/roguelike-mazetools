@@ -1,0 +1,186 @@
+.container {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 40px 1fr 56px;
+  grid-template-columns: 1fr;
+  margin: 0;
+  padding: 0;
+  background: #080c12;
+  color: #b8c8d8;
+  font-family: monospace;
+  overflow: hidden;
+}
+
+.uiHeaderBar {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 16px;
+  background: #0d1520;
+  border-bottom: 1px solid #1e2d3d;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 4px;
+  color: #00dddd;
+  text-shadow: 0 0 10px rgba(0, 200, 200, 0.4);
+}
+
+.seed {
+  font-size: 11px;
+  color: #3a5060;
+}
+
+.rerollBtn {
+  background: transparent;
+  border: 1px solid #1e2d3d;
+  border-radius: 4px;
+  color: #3a5060;
+  font-family: monospace;
+  font-size: 14px;
+  line-height: 1;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.rerollBtn:hover {
+  border-color: #00aaaa;
+  color: #00cccc;
+}
+
+.passageCount {
+  margin-left: auto;
+  font-size: 11px;
+  color: #006666;
+}
+
+.mainArea {
+  grid-row: 2;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+.perspectiveView {
+  flex: 1;
+  outline: none;
+  cursor: default;
+}
+
+.miniMapView {
+  width: 280px;
+  min-width: 280px;
+  background: #080c12;
+  border-left: 1px solid #1e2d3d;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 8px;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.minimapCanvas {
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.minimapLegend {
+  font-size: 10px;
+  color: #3a5060;
+  line-height: 1.8;
+}
+
+.statusPanel {
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: #0d1520;
+  border-top: 1px solid #1e2d3d;
+  font-size: 12px;
+  color: #6a8a9a;
+}
+
+.hint {
+  color: #3a5060;
+  font-size: 11px;
+}
+
+.backBtn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  color: #6a8a9a;
+  font-family: monospace;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.backBtn:hover {
+  border-color: #5a9fd4;
+  color: #b8c8d8;
+}
+
+.log {
+  position: absolute;
+  bottom: 64px;
+  left: 16px;
+  width: 340px;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.logEntry {
+  font-size: 11px;
+  color: #6a8a9a;
+  text-shadow: 0 0 4px #000;
+}
+
+.logEntry.passage {
+  color: #00cccc;
+}
+
+.sliderGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1e2d3d;
+}
+
+.sliderLabel {
+  font-size: 11px;
+  color: #6a8a9a;
+}
+
+.sliderLabel strong {
+  color: #00cccc;
+}
+
+.slider {
+  width: 100%;
+  accent-color: #00aaaa;
+  cursor: pointer;
+}
+
+.sliderHint {
+  font-size: 10px;
+  color: #3a5060;
+  line-height: 1.4;
+}
