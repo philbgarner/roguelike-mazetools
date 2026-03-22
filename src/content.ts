@@ -32,6 +32,8 @@ export interface MobilePlacement {
   meta?: Record<string, unknown>;
 }
 
+export interface ContentHiddenPassages {}
+
 export interface ContentOutputs {
   objects: ObjectPlacement[];
   mobiles: MobilePlacement[];
