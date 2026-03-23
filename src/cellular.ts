@@ -46,6 +46,8 @@ export type CellularDungeonOutputs = DungeonOutputs & {
     regionId: THREE.DataTexture;
     distanceToWall: THREE.DataTexture;
     hazards: THREE.DataTexture;
+    /** Per-cell temperature, 0 = coldest, 255 = hottest. Default: 127 for all floor cells. */
+    temperature: THREE.DataTexture;
   };
   /** Floor cell closest to the centroid of the largest region — good spawn point. */
   startPos: GridPos;
@@ -304,9 +306,13 @@ export function generateCellularDungeon(options: CellularOptions): CellularDunge
     }
   }
 
-  // Step 7: compute distanceToWall
+  // Step 7: compute distanceToWall and ancillary masks
   const distanceToWall = computeDistanceToWall(solid, W, H);
   const hazards = new Uint8Array(W * H);
+  const temperature = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    if (solid[i] === 0) temperature[i] = 127;
+  }
 
   return {
     width: W,
@@ -318,6 +324,7 @@ export function generateCellularDungeon(options: CellularOptions): CellularDunge
       regionId:        maskToDataTextureR8(regionId,        W, H, "cellular_region_id"),
       distanceToWall:  maskToDataTextureR8(distanceToWall,  W, H, "cellular_distance_to_wall"),
       hazards:         maskToDataTextureR8(hazards,         W, H, "cellular_hazards"),
+      temperature:     maskToDataTextureR8(temperature,     W, H, "cellular_temperature"),
     },
   };
 }

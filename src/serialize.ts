@@ -6,6 +6,7 @@
 
 import type { BspDungeonOptions, BspDungeonOutputs, RoomInfo } from "./bsp";
 import { generateBspDungeon } from "./bsp";
+import { buildFullRegionIds } from "./rendering/temperatureMask";
 import * as THREE from "three";
 
 // --------------------------------
@@ -104,18 +105,38 @@ export function serializeDungeon(dungeon: BspDungeonOutputs): SerializedDungeon 
  */
 export function deserializeDungeon(data: SerializedDungeon): BspDungeonOutputs {
   const { width: W, height: H } = data;
+  const solidData    = base64ToUint8(data.solid);
+  const regionIdData = base64ToUint8(data.regionId);
+
+  // Reconstruct corridor region IDs from the raw arrays
+  const rooms = new Map<number, RoomInfo>();
+  const maxRoomId = regionIdData.reduce((m, v) => (v > m ? v : m), 0);
+  const firstCorridorRegionId = maxRoomId + 1;
+  const { fullRegionIds } = buildFullRegionIds(
+    regionIdData, solidData, W, H, firstCorridorRegionId,
+  );
+
+  // Default temperature: 127 for all floor cells
+  const temperature = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    if (solidData[i] === 0) temperature[i] = 127;
+  }
+
   return {
     width: W,
     height: H,
     seed: data.seed,
     startRoomId: data.startRoomId,
     endRoomId: data.endRoomId,
-    rooms: new Map<number, RoomInfo>(),
+    rooms,
+    fullRegionIds,
+    firstCorridorRegionId,
     textures: {
-      solid:          makeDataTexture(base64ToUint8(data.solid),          W, H, "bsp_dungeon_solid"),
-      regionId:       makeDataTexture(base64ToUint8(data.regionId),       W, H, "bsp_dungeon_region_id"),
+      solid:          makeDataTexture(solidData,                           W, H, "bsp_dungeon_solid"),
+      regionId:       makeDataTexture(regionIdData,                        W, H, "bsp_dungeon_region_id"),
       distanceToWall: makeDataTexture(base64ToUint8(data.distanceToWall), W, H, "bsp_dungeon_distance_to_wall"),
       hazards:        makeDataTexture(base64ToUint8(data.hazards),        W, H, "bsp_dungeon_hazards"),
+      temperature:    makeDataTexture(temperature,                        W, H, "bsp_dungeon_temperature"),
     },
   };
 }

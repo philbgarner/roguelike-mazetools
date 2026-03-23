@@ -17,6 +17,8 @@ export type DungeonOutputs = {
     regionId: THREE.DataTexture;
     distanceToWall: THREE.DataTexture;
     hazards: THREE.DataTexture;
+    /** Per-cell temperature, 0 = coldest, 255 = hottest. Default: 127 for all floor cells. */
+    temperature: THREE.DataTexture;
   };
 };
 
@@ -29,9 +31,14 @@ export type RoomRect = {
 
 export type RoomInfo = {
   id: number;
-  /** Bounding rect of the room (carved area, not the BSP leaf). */
+  /** Whether this entry represents a carved room or a corridor segment. */
+  type: "room" | "corridor";
+  /** Bounding rect of the room (carved area) or tight bounding box of the corridor cells. */
   rect: RoomRect;
-  /** Room IDs that share a corridor with this room. */
+  /**
+   * For rooms: IDs of rooms connected via a corridor.
+   * For corridors: IDs of the rooms this corridor segment touches.
+   */
   connections: number[];
 };
 
@@ -63,11 +70,20 @@ export type BspDungeonOutputs = DungeonOutputs & {
   /** Room ID furthest from endRoomId — used as the player spawn room. */
   startRoomId: number;
   /**
-   * Map from roomId → RoomInfo for every carved room.
-   * Rooms are identified by the same integer written into textures.regionId.
-   * startRoomId and endRoomId are guaranteed to be keys in this map.
+   * Map from regionId → RoomInfo for every carved room AND every corridor segment.
+   * Room entries have `type: "room"` and IDs matching textures.regionId values (1+).
+   * Corridor entries have `type: "corridor"` and IDs starting at `firstCorridorRegionId`.
+   * startRoomId and endRoomId are guaranteed keys.
    */
   rooms: Map<number, RoomInfo>;
+  /**
+   * Copy of the regionId pixel data with corridor floor cells re-labelled into
+   * unique connected-component IDs (starting at `firstCorridorRegionId`).
+   * textures.regionId is left unchanged (0 = corridor) for systems that rely on it.
+   */
+  fullRegionIds: Uint8Array;
+  /** Lowest regionId assigned to a corridor segment. */
+  firstCorridorRegionId: number;
 };
 
 // -----------------------------
@@ -153,7 +169,10 @@ function carvePoint(
   keepOuterWalls: boolean,
 ) {
   if (!inBounds(p.x, p.y, W, H)) return;
-  if (keepOuterWalls && (p.x === 0 || p.y === 0 || p.x === W - 1 || p.y === H - 1))
+  if (
+    keepOuterWalls &&
+    (p.x === 0 || p.y === 0 || p.x === W - 1 || p.y === H - 1)
+  )
     return;
   solid[idx(p.x, p.y, W)] = 0;
 }
@@ -212,7 +231,10 @@ function buildBsp(
   rect: Rect,
   depth: number,
   opts: Required<
-    Pick<BspDungeonOptions, "maxDepth" | "minLeafSize" | "maxLeafSize" | "splitPadding">
+    Pick<
+      BspDungeonOptions,
+      "maxDepth" | "minLeafSize" | "maxLeafSize" | "splitPadding"
+    >
   >,
   rng: RNG,
 ): { node: BspNode; maxDepthReached: number } {
@@ -221,7 +243,8 @@ function buildBsp(
   const canSplitBySize = rect.w > opts.maxLeafSize || rect.h > opts.maxLeafSize;
   const shouldSplitByDepth = depth < opts.maxDepth;
 
-  if (!shouldSplitByDepth && !canSplitBySize) return { node, maxDepthReached: depth };
+  if (!shouldSplitByDepth && !canSplitBySize)
+    return { node, maxDepthReached: depth };
 
   const aspect = rect.w / rect.h;
   let splitVertical: boolean;
@@ -249,7 +272,10 @@ function buildBsp(
     );
     node.left = L.node;
     node.right = R.node;
-    return { node, maxDepthReached: Math.max(L.maxDepthReached, R.maxDepthReached) };
+    return {
+      node,
+      maxDepthReached: Math.max(L.maxDepthReached, R.maxDepthReached),
+    };
   } else {
     const minSplitY = rect.y + opts.splitPadding + opts.minLeafSize;
     const maxSplitY = rect.y + rect.h - opts.splitPadding - opts.minLeafSize;
@@ -270,7 +296,10 @@ function buildBsp(
     );
     node.left = L.node;
     node.right = R.node;
-    return { node, maxDepthReached: Math.max(L.maxDepthReached, R.maxDepthReached) };
+    return {
+      node,
+      maxDepthReached: Math.max(L.maxDepthReached, R.maxDepthReached),
+    };
   }
 }
 
@@ -315,7 +344,11 @@ function createRooms(
   opts: Required<
     Pick<
       BspDungeonOptions,
-      "roomPadding" | "minRoomSize" | "maxRoomSize" | "roomFillLeafChance" | "keepOuterWalls"
+      | "roomPadding"
+      | "minRoomSize"
+      | "maxRoomSize"
+      | "roomFillLeafChance"
+      | "keepOuterWalls"
     >
   >,
   rng: RNG,
@@ -339,8 +372,14 @@ function createRooms(
 
     const minX = leaf.rect.x + pad;
     const minY = leaf.rect.y + pad;
-    const rx = rng.int(minX, Math.max(minX, leaf.rect.x + leaf.rect.w - pad - rw));
-    const ry = rng.int(minY, Math.max(minY, leaf.rect.y + leaf.rect.h - pad - rh));
+    const rx = rng.int(
+      minX,
+      Math.max(minX, leaf.rect.x + leaf.rect.w - pad - rw),
+    );
+    const ry = rng.int(
+      minY,
+      Math.max(minY, leaf.rect.y + leaf.rect.h - pad - rh),
+    );
     const room: Rect = { x: rx, y: ry, w: rw, h: rh };
 
     leaf.room = room;
@@ -368,7 +407,8 @@ function connectSiblings(
   adjacency: Map<number, Set<number>>,
 ): { rep: Point; roomId: number } {
   if (!node.left && !node.right) {
-    if (!node.rep) node.rep = node.room ? rectCenter(node.room) : rectCenter(node.rect);
+    if (!node.rep)
+      node.rep = node.room ? rectCenter(node.room) : rectCenter(node.rect);
     return { rep: node.rep, roomId: node.roomId! };
   }
 
@@ -384,15 +424,55 @@ function connectSiblings(
   }
 
   if (L.rep.x === R.rep.x || L.rep.y === R.rep.y) {
-    carveCorridor(solid, W, H, L.rep, R.rep, opts.corridorWidth, opts.keepOuterWalls);
+    carveCorridor(
+      solid,
+      W,
+      H,
+      L.rep,
+      R.rep,
+      opts.corridorWidth,
+      opts.keepOuterWalls,
+    );
   } else if (rng.chance(0.5)) {
     const mid: Point = { x: R.rep.x, y: L.rep.y };
-    carveCorridor(solid, W, H, L.rep, mid, opts.corridorWidth, opts.keepOuterWalls);
-    carveCorridor(solid, W, H, mid, R.rep, opts.corridorWidth, opts.keepOuterWalls);
+    carveCorridor(
+      solid,
+      W,
+      H,
+      L.rep,
+      mid,
+      opts.corridorWidth,
+      opts.keepOuterWalls,
+    );
+    carveCorridor(
+      solid,
+      W,
+      H,
+      mid,
+      R.rep,
+      opts.corridorWidth,
+      opts.keepOuterWalls,
+    );
   } else {
     const mid: Point = { x: L.rep.x, y: R.rep.y };
-    carveCorridor(solid, W, H, L.rep, mid, opts.corridorWidth, opts.keepOuterWalls);
-    carveCorridor(solid, W, H, mid, R.rep, opts.corridorWidth, opts.keepOuterWalls);
+    carveCorridor(
+      solid,
+      W,
+      H,
+      L.rep,
+      mid,
+      opts.corridorWidth,
+      opts.keepOuterWalls,
+    );
+    carveCorridor(
+      solid,
+      W,
+      H,
+      mid,
+      R.rep,
+      opts.corridorWidth,
+      opts.keepOuterWalls,
+    );
   }
 
   const useLeft = rng.chance(0.5);
@@ -413,6 +493,7 @@ function buildRoomsMap(
     if (leaf.roomId === undefined || !leaf.room) return;
     rooms.set(leaf.roomId, {
       id: leaf.roomId,
+      type: "room",
       rect: { x: leaf.room.x, y: leaf.room.y, w: leaf.room.w, h: leaf.room.h },
       connections: Array.from(adjacency.get(leaf.roomId) ?? []),
     });
@@ -421,18 +502,101 @@ function buildRoomsMap(
 }
 
 // -----------------------------
+// Corridor region assignment
+// -----------------------------
+
+/**
+ * Flood-fills corridor floor cells (regionId === 0) into unique connected
+ * components, assigning IDs starting from `firstId`.  Returns:
+ * - `fullRegionIds` — copy of `regionIdData` with corridor cells re-labelled
+ * - `corridorRooms`  — a `RoomInfo` entry for every corridor segment, with
+ *    its bounding rect and the room IDs it borders in `connections`
+ */
+function assignCorridorRegions(
+  regionIdData: Uint8Array,
+  solidData: Uint8Array,
+  W: number,
+  H: number,
+  firstId: number,
+): { fullRegionIds: Uint8Array; corridorRooms: RoomInfo[] } {
+  const full = new Uint8Array(regionIdData); // copy — room cells keep their IDs
+  const visited = new Uint8Array(W * H);
+  const corridorRooms: RoomInfo[] = [];
+  let nextId = firstId;
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      if (solidData[i] !== 0) continue;       // wall
+      if (regionIdData[i] !== 0) continue;    // room cell — keep original ID
+      if (visited[i]) continue;               // corridor cell already labelled
+
+      // Clamp to byte range (1-255); IDs wrap if somehow > 255
+      const corridorId = ((nextId - 1) & 0xff) + 1;
+      nextId++;
+
+      let minX = x, minY = y, maxX = x, maxY = y;
+      const adjacentRooms = new Set<number>();
+      const queue: number[] = [i];
+      visited[i] = 1;
+      let head = 0;
+
+      while (head < queue.length) {
+        const ci = queue[head++];
+        full[ci] = corridorId;
+        const cx = ci % W;
+        const cy = (ci / W) | 0;
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+
+        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const ni = ny * W + nx;
+          const nReg = regionIdData[ni];
+          if (nReg !== 0) {
+            // Neighbour is a room floor cell — record the connection
+            if (solidData[ni] === 0) adjacentRooms.add(nReg);
+            continue;
+          }
+          if (visited[ni] || solidData[ni] !== 0) continue;
+          visited[ni] = 1;
+          queue.push(ni);
+        }
+      }
+
+      corridorRooms.push({
+        id: corridorId,
+        type: "corridor",
+        rect: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 },
+        connections: Array.from(adjacentRooms),
+      });
+    }
+  }
+
+  return { fullRegionIds: full, corridorRooms };
+}
+
+// -----------------------------
 // Start/end room selection
 // -----------------------------
 
-function pickStartEndRooms(
-  adjacency: Map<number, Set<number>>,
-): { startRoomId: number; endRoomId: number } {
+function pickStartEndRooms(adjacency: Map<number, Set<number>>): {
+  startRoomId: number;
+  endRoomId: number;
+} {
   const allRooms = Array.from(adjacency.keys());
   if (allRooms.length === 0) return { startRoomId: 1, endRoomId: 1 };
-  if (allRooms.length === 1) return { startRoomId: allRooms[0], endRoomId: allRooms[0] };
+  if (allRooms.length === 1)
+    return { startRoomId: allRooms[0], endRoomId: allRooms[0] };
 
   // Find rooms with exactly 1 connection (dead ends) — candidates for end room
-  const deadEnds = allRooms.filter((id) => (adjacency.get(id)?.size ?? 0) === 1);
+  const deadEnds = allRooms.filter(
+    (id) => (adjacency.get(id)?.size ?? 0) === 1,
+  );
   const candidates = deadEnds.length > 0 ? deadEnds : allRooms;
 
   // BFS from each candidate to find the one that maximises the longest shortest path
@@ -485,7 +649,11 @@ function pickStartEndRooms(
 // Distance-to-wall (BFS)
 // -----------------------------
 
-function computeDistanceToWall(solid: Uint8Array, W: number, H: number): Uint8Array {
+function computeDistanceToWall(
+  solid: Uint8Array,
+  W: number,
+  H: number,
+): Uint8Array {
   const dist = new Uint16Array(W * H);
   const INF = 0xffff;
   dist.fill(INF);
@@ -549,7 +717,13 @@ function maskToDataTextureR8(
   H: number,
   name: string,
 ): THREE.DataTexture {
-  const tex = new THREE.DataTexture(mask, W, H, THREE.RedFormat, THREE.UnsignedByteType);
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
   tex.name = name;
   tex.needsUpdate = true;
   tex.magFilter = THREE.NearestFilter;
@@ -566,7 +740,9 @@ function maskToDataTextureR8(
 // Public generator
 // -----------------------------
 
-export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutputs {
+export function generateBspDungeon(
+  options: BspDungeonOptions,
+): BspDungeonOutputs {
   const opts = {
     width: options.width,
     height: options.height,
@@ -587,7 +763,9 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
   if (opts.width <= 2 || opts.height <= 2)
     throw new Error("generateBspDungeon: width/height must be > 2");
   if (opts.minLeafSize < 4)
-    throw new Error("generateBspDungeon: minLeafSize too small (recommend >= 4)");
+    throw new Error(
+      "generateBspDungeon: minLeafSize too small (recommend >= 4)",
+    );
 
   const seedUsed = hashSeedToUint32(opts.seed);
   const rng = makeRng(seedUsed);
@@ -610,22 +788,58 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
     rng,
   );
 
-  createRooms(root, solid, regionId, W, H, {
-    roomPadding: opts.roomPadding,
-    minRoomSize: opts.minRoomSize,
-    maxRoomSize: opts.maxRoomSize,
-    roomFillLeafChance: opts.roomFillLeafChance,
-    keepOuterWalls: opts.keepOuterWalls,
-  }, rng);
+  createRooms(
+    root,
+    solid,
+    regionId,
+    W,
+    H,
+    {
+      roomPadding: opts.roomPadding,
+      minRoomSize: opts.minRoomSize,
+      maxRoomSize: opts.maxRoomSize,
+      roomFillLeafChance: opts.roomFillLeafChance,
+      keepOuterWalls: opts.keepOuterWalls,
+    },
+    rng,
+  );
 
   const adjacency = new Map<number, Set<number>>();
-  connectSiblings(root, solid, W, H, {
-    corridorWidth: opts.corridorWidth,
-    keepOuterWalls: opts.keepOuterWalls,
-  }, rng, adjacency);
+  connectSiblings(
+    root,
+    solid,
+    W,
+    H,
+    {
+      corridorWidth: opts.corridorWidth,
+      keepOuterWalls: opts.keepOuterWalls,
+    },
+    rng,
+    adjacency,
+  );
 
   const { startRoomId, endRoomId } = pickStartEndRooms(adjacency);
   const rooms = buildRoomsMap(root, adjacency);
+
+  // Assign unique regionIds to corridor segments and build corridor RoomInfo entries
+  const maxRoomId = rooms.size > 0 ? Math.max(...rooms.keys()) : 0;
+  const firstCorridorRegionId = maxRoomId + 1;
+  const { fullRegionIds, corridorRooms } = assignCorridorRegions(
+    regionId,
+    solid,
+    W,
+    H,
+    firstCorridorRegionId,
+  );
+  for (const cr of corridorRooms) {
+    rooms.set(cr.id, cr);
+  }
+
+  // Temperature mask: 127 (middle) for all floor cells, 0 for walls
+  const temperature = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    if (solid[i] === 0) temperature[i] = 127;
+  }
 
   const distanceToWall = computeDistanceToWall(solid, W, H);
   const hazards = new Uint8Array(W * H); // all zeros — placed by content callback
@@ -637,11 +851,19 @@ export function generateBspDungeon(options: BspDungeonOptions): BspDungeonOutput
     endRoomId,
     startRoomId,
     rooms,
+    fullRegionIds,
+    firstCorridorRegionId,
     textures: {
       solid: maskToDataTextureR8(solid, W, H, "bsp_dungeon_solid"),
       regionId: maskToDataTextureR8(regionId, W, H, "bsp_dungeon_region_id"),
-      distanceToWall: maskToDataTextureR8(distanceToWall, W, H, "bsp_dungeon_distance_to_wall"),
+      distanceToWall: maskToDataTextureR8(
+        distanceToWall,
+        W,
+        H,
+        "bsp_dungeon_distance_to_wall",
+      ),
       hazards: maskToDataTextureR8(hazards, W, H, "bsp_dungeon_hazards"),
+      temperature: maskToDataTextureR8(temperature, W, H, "bsp_dungeon_temperature"),
     },
   };
 }
