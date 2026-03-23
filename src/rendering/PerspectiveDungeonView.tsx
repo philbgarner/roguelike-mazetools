@@ -27,12 +27,151 @@
  * tileSize       World-space width (and depth) of each tile (default 1).
  *                cameraX/Z are in cell units; world positions = cell * tileSize.
  */
-import { useMemo, useEffect, useRef, type ReactNode } from "react";
+import { useMemo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import { InstancedTileMesh, type TileInstance } from "./InstancedTileMesh";
 import type { TileAtlas } from "./tileAtlas";
 import type { ObjectPlacement, MobilePlacement } from "../content";
+
+// ---------------------------------------------------------------------------
+// Speech bubble type (exported so App can build the array)
+// ---------------------------------------------------------------------------
+
+export type SpeechBubbleData = {
+  id: string;
+  x: number; // cell coordinate
+  z: number; // cell coordinate
+  text: string;
+  speakerName?: string;
+};
+
+// ---------------------------------------------------------------------------
+// SpeechBubbleSprite — renders a single speech bubble via drei Html
+// ---------------------------------------------------------------------------
+
+function SpeechBubbleSprite({
+  bubble,
+  tileSize = 1,
+  ceilingHeight = 1.5,
+  fogNear = 4,
+  fogFar = 28,
+}: {
+  bubble: SpeechBubbleData;
+  tileSize?: number;
+  ceilingHeight?: number;
+  fogNear?: number;
+  fogFar?: number;
+}) {
+  const [displayed, setDisplayed] = useState("");
+  const divRef = useRef<HTMLDivElement>(null);
+
+  // Character-by-character typewriter animation
+  useEffect(() => {
+    setDisplayed("");
+    let i = 0;
+    const timer = setInterval(() => {
+      i++;
+      setDisplayed(bubble.text.slice(0, i));
+      if (i >= bubble.text.length) clearInterval(timer);
+    }, 28);
+    return () => clearInterval(timer);
+  }, [bubble.text]);
+
+  const wx = (bubble.x + 0.5) * tileSize;
+  const wy = ceilingHeight + 0.5; // above the sprite (which sits at ceilingHeight/2)
+  const wz = (bubble.z + 0.5) * tileSize;
+
+  // Update opacity each frame based on distance — fades like fog, min 0.35 so
+  // it stays legible even when the speaker is deep in shadow / behind geometry.
+  useFrame(({ camera }) => {
+    if (!divRef.current) return;
+    const dx = camera.position.x - wx;
+    const dz = camera.position.z - wz;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const t = Math.max(
+      0,
+      Math.min(1, (dist - fogNear) / Math.max(1, fogFar - fogNear)),
+    );
+    const opacity = Math.max(0.35, 1.0 - t * 0.65);
+    divRef.current.style.opacity = String(opacity);
+  });
+
+  return (
+    <Html
+      position={[wx, wy, wz]}
+      center
+      distanceFactor={tileSize * 4}
+      style={{ pointerEvents: "none", userSelect: "none" }}
+    >
+      <div
+        ref={divRef}
+        style={{
+          position: "relative",
+          background: "rgba(6, 4, 18, 0.90)",
+          border: "1.5px solid rgba(200, 185, 110, 0.75)",
+          borderRadius: 8,
+          padding: "6px 10px",
+          maxWidth: 320,
+          minWidth: 200,
+          fontSize: 12,
+          color: "#f2e6b8",
+          fontFamily: "monospace",
+          lineHeight: 1.45,
+          whiteSpace: "pre-wrap",
+          textAlign: "left",
+          filter: "drop-shadow(0 0 6px rgba(0,0,0,0.95))",
+          transition: "opacity 0.25s ease",
+        }}
+      >
+        {bubble.speakerName && (
+          <div
+            style={{
+              fontSize: 10,
+              color: "#88aaff",
+              marginBottom: 3,
+              fontWeight: "bold",
+              letterSpacing: 1,
+              textTransform: "uppercase",
+            }}
+          >
+            {bubble.speakerName}
+          </div>
+        )}
+        {displayed}
+        {/* Tail border (outline colour) */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: -10,
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 0,
+            height: 0,
+            borderLeft: "7px solid transparent",
+            borderRight: "7px solid transparent",
+            borderTop: "10px solid rgba(200, 185, 110, 0.75)",
+          }}
+        />
+        {/* Tail fill (bubble background colour) */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: -8,
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 0,
+            height: 0,
+            borderLeft: "5.5px solid transparent",
+            borderRight: "5.5px solid transparent",
+            borderTop: "8.5px solid rgba(6, 4, 18, 0.90)",
+          }}
+        />
+      </div>
+    </Html>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Object registry
@@ -85,17 +224,20 @@ function SceneObjects({
       obj.traverse((child) => {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) return;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
         for (const mat of mats) {
           if (!(mat instanceof THREE.ShaderMaterial)) continue;
           if (mat.uniforms.uFogNear) mat.uniforms.uFogNear.value = fogNear ?? 4;
           if (mat.uniforms.uFogFar) mat.uniforms.uFogFar.value = fogFar ?? 10;
-          if (mat.uniforms.uFogColor && fogColor) mat.uniforms.uFogColor.value = fogColor;
+          if (mat.uniforms.uFogColor && fogColor)
+            mat.uniforms.uFogColor.value = fogColor;
         }
       });
       return obj;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registry, placements, tileSize]);
 
   // Update uTime each frame on all ShaderMaterials contained in placed objects.
@@ -106,7 +248,9 @@ function SceneObjects({
       obj.traverse((child) => {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) return;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
         for (const mat of mats) {
           if (mat instanceof THREE.ShaderMaterial && mat.uniforms.uTime) {
             mat.uniforms.uTime.value = t;
@@ -118,7 +262,9 @@ function SceneObjects({
 
   return (
     <>
-      {objects.map((obj, i) => (obj ? <primitive key={i} object={obj} /> : null))}
+      {objects.map((obj, i) =>
+        obj ? <primitive key={i} object={obj} /> : null,
+      )}
     </>
   );
 }
@@ -283,7 +429,10 @@ function SceneMobiles({
       let changed = false;
       for (let i = 0; i < count; i++) {
         const v = flash[i] ? 1.0 : 0.0;
-        if (arr[i] !== v) { arr[i] = v; changed = true; }
+        if (arr[i] !== v) {
+          arr[i] = v;
+          changed = true;
+        }
       }
       if (changed) tintRedRef.current.needsUpdate = true;
     }
@@ -535,6 +684,8 @@ type SceneProps = {
   highlightMask?: Uint8Array;
   /** Per-cell passage mask: 0=none, 1=disabled, 2=enabled. Applied to wall faces. */
   passageMask?: Uint8Array;
+  /** Active speech bubbles to render above speakers in 3-D space. */
+  speechBubbles?: SpeechBubbleData[];
 };
 
 function DungeonScene({
@@ -564,6 +715,7 @@ function DungeonScene({
   mobileFlash,
   highlightMask,
   passageMask,
+  speechBubbles,
 }: SceneProps) {
   const fogColorObj = useMemo(
     () => (fogColor ? new THREE.Color(fogColor) : undefined),
@@ -691,6 +843,18 @@ function DungeonScene({
           flash={mobileFlash}
         />
       )}
+
+      {speechBubbles &&
+        speechBubbles.map((b) => (
+          <SpeechBubbleSprite
+            key={b.id}
+            bubble={b}
+            tileSize={tileSize}
+            ceilingHeight={ceilingHeight}
+            fogNear={fogNear ?? 4}
+            fogFar={fogFar ?? 28}
+          />
+        ))}
     </>
   );
 }
@@ -703,6 +867,7 @@ export type PerspectiveDungeonViewProps = SceneProps & {
   className?: string;
   style?: React.CSSProperties;
   children?: ReactNode;
+  // speechBubbles is already part of SceneProps; re-listed here for clarity
 };
 
 export function PerspectiveDungeonView({
