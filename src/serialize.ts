@@ -75,6 +75,20 @@ function makeDataTexture(data: Uint8Array, W: number, H: number, name: string): 
   return tex;
 }
 
+function makeDataTextureRGBA(data: Uint8Array, W: number, H: number, name: string): THREE.DataTexture {
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.name = name;
+  tex.needsUpdate = true;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+  return tex;
+}
+
 // --------------------------------
 // Public API
 // --------------------------------
@@ -137,6 +151,10 @@ export function deserializeDungeon(data: SerializedDungeon): BspDungeonOutputs {
       distanceToWall: makeDataTexture(base64ToUint8(data.distanceToWall), W, H, "bsp_dungeon_distance_to_wall"),
       hazards:        makeDataTexture(base64ToUint8(data.hazards),        W, H, "bsp_dungeon_hazards"),
       temperature:    makeDataTexture(temperature,                        W, H, "bsp_dungeon_temperature"),
+      floorType:      makeDataTexture(new Uint8Array(W * H),          W, H, "bsp_dungeon_floor_type"),
+      overlays:       makeDataTextureRGBA(new Uint8Array(4 * W * H),  W, H, "bsp_dungeon_overlays"),
+      wallType:       makeDataTexture(new Uint8Array(W * H),          W, H, "bsp_dungeon_wall_type"),
+      wallOverlays:   makeDataTextureRGBA(new Uint8Array(4 * W * H), W, H, "bsp_dungeon_wall_overlays"),
     },
   };
 }

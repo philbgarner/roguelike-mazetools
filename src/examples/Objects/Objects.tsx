@@ -19,7 +19,7 @@
  *   │         statusPanel          │  56 px
  *   └──────────────────────────────┘
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -41,7 +41,8 @@ import styles from "./Objects.module.css";
 // Extended content outputs — developers can add more typed fields here.
 // ---------------------------------------------------------------------------
 export interface ObjectsContentOutputs extends ContentOutputs {
-  // extensible: add typed fields as needed
+  /** Wall-adjacent floor candidates per room id, used for runtime chest spawning. */
+  candidatesByRegion: Map<number, Array<{ x: number; z: number }>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +136,7 @@ function drawMinimap(
   overlay: MaskOverlay,
   overlayData: Record<Exclude<MaskOverlay, "all">, Uint8Array>,
   objectPositions?: Array<{ x: number; z: number }>,
+  adventurerPositions?: Array<{ x: number; z: number }>,
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -215,6 +217,18 @@ function drawMinimap(
       const oz = (z + 0.5) * cellH;
       ctx.beginPath();
       ctx.arc(ox, oz, Math.max(cellW * 0.5, 2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Cyan dots for adventurers
+  if (adventurerPositions) {
+    ctx.fillStyle = "#0ff";
+    for (const { x, z } of adventurerPositions) {
+      const ax = (x + 0.5) * cellW;
+      const az = (z + 0.5) * cellH;
+      ctx.beginPath();
+      ctx.arc(ax, az, Math.max(cellW * 0.6, 3), 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -382,6 +396,99 @@ function useObjectsCamera(
   }, []);
 
   return { camera, containerRef };
+}
+
+// ---------------------------------------------------------------------------
+// Adventurers — autonomous NPCs that wander the dungeon and loot chests
+// ---------------------------------------------------------------------------
+
+type Adventurer = { id: number; x: number; z: number };
+
+const ADVENTURER_MOVE_MS = 1200;
+const MOVE_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+
+/**
+ * Manages a set of wandering adventurers.  Each moves to a random adjacent
+ * walkable cell every ADVENTURER_MOVE_MS ms.  `onStepRef.current` is called
+ * with the adventurer id and its new grid position after each move.
+ *
+ * `startNewWave()` teleports all adventurers back to `startPos` (the start
+ * room) so the next wave begins from the same entry point.
+ */
+function useAdventurers(
+  solidData: Uint8Array | null,
+  width: number,
+  height: number,
+  startPos: { x: number; z: number },
+  count: number,
+  onStepRef: MutableRefObject<((id: number, gx: number, gz: number) => void) | undefined>,
+): { adventurers: Adventurer[]; startNewWave: () => void } {
+  const makeWave = () =>
+    Array.from({ length: count }, (_, i) => ({ id: i, ...startPos }));
+
+  const [adventurers, setAdventurers] = useState<Adventurer[]>(makeWave);
+  const adventurersRef = useRef<Adventurer[]>(adventurers);
+
+  const startPosRef = useRef(startPos);
+  startPosRef.current = startPos;
+
+  const solidRef = useRef(solidData);
+  useEffect(() => { solidRef.current = solidData; }, [solidData]);
+
+  // Reset when dungeon changes
+  useEffect(() => {
+    const next = Array.from({ length: count }, (_, i) => ({ id: i, ...startPosRef.current }));
+    adventurersRef.current = next;
+    setAdventurers(next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count, width, height]);
+
+  const startNewWave = useRef(() => {
+    const next = Array.from({ length: count }, (_, i) => ({ id: i, ...startPosRef.current }));
+    adventurersRef.current = next;
+    setAdventurers(next);
+  });
+  // Keep count in sync without recreating the ref
+  startNewWave.current = () => {
+    const next = Array.from({ length: count }, (_, i) => ({ id: i, ...startPosRef.current }));
+    adventurersRef.current = next;
+    setAdventurers(next);
+  };
+
+  useEffect(() => {
+    // Simple deterministic pseudo-random walk
+    let seed = 0xdeadbeef;
+    function rand() {
+      seed ^= seed << 13;
+      seed ^= seed >> 17;
+      seed ^= seed << 5;
+      return (seed >>> 0) / 0x100000000;
+    }
+
+    function walkable(x: number, z: number): boolean {
+      const solid = solidRef.current;
+      if (!solid || x < 0 || z < 0 || x >= width || z >= height) return false;
+      return solid[z * width + x] === 0;
+    }
+
+    const intervalId = setInterval(() => {
+      const next = adventurersRef.current.map((adv) => {
+        const options = MOVE_DIRS
+          .map(([dx, dz]) => ({ x: adv.x + dx, z: adv.z + dz }))
+          .filter((p) => walkable(p.x, p.z));
+        if (options.length === 0) return adv;
+        const picked = options[Math.floor(rand() * options.length)];
+        onStepRef.current?.(adv.id, picked.x, picked.z);
+        return { ...adv, x: picked.x, z: picked.z };
+      });
+      adventurersRef.current = next;
+      setAdventurers(next);
+    }, ADVENTURER_MOVE_MS);
+
+    return () => clearInterval(intervalId);
+  }, [width, height, onStepRef]);
+
+  return { adventurers, startNewWave: startNewWave.current };
 }
 
 // ---------------------------------------------------------------------------
@@ -799,8 +906,125 @@ export default function Objects() {
       }
     }
 
-    return result;
+    return { ...result, candidatesByRegion };
   }, [dungeon, ceilingHeight]);
+
+  // ---------------------------------------------------------------------------
+  // Chest looting — adventurers loot chests by walking onto them; two new
+  // chests then spawn in rooms that are neutral (127) or cooler.
+  // ---------------------------------------------------------------------------
+  const [lootedKeys, setLootedKeys] = useState<Set<string>>(() => new Set());
+  const [extraChests, setExtraChests] = useState<ObjectPlacement[]>([]);
+  const lootedKeysRef = useRef<Set<string>>(new Set());
+  const extraChestsRef = useRef<ObjectPlacement[]>([]);
+  const lootCountRef = useRef(0);
+
+  // All adventurers spawn at the centre of the start room.
+  const adventurerStart = useMemo(() => {
+    const room = dungeon.rooms.get(dungeon.startRoomId)!;
+    return {
+      x: Math.floor(room.rect.x + room.rect.w / 2),
+      z: Math.floor(room.rect.y + room.rect.h / 2),
+    };
+  }, [dungeon]);
+
+  const ADVENTURER_COUNT = 3;
+
+  // Track which adventurers have looted at least once this wave.
+  // When all have looted, the wave ends and a new one begins.
+  const lootedThisWaveRef = useRef<Set<number>>(new Set());
+  const startNewWaveRef = useRef<(() => void) | undefined>(undefined);
+
+  // Reassigned each render so closures always see the latest state.
+  const adventurerOnStepRef = useRef<
+    ((id: number, gx: number, gz: number) => void) | undefined
+  >(undefined);
+  adventurerOnStepRef.current = (id: number, gx: number, gz: number) => {
+    const key = `${gx}_${gz}`;
+    if (lootedKeysRef.current.has(key)) return;
+
+    const allChests = [...content.objects, ...extraChestsRef.current].filter(
+      (o) => o.type === "chest",
+    );
+    const hasChest = allChests.some(
+      (o) => Math.floor(o.x) === gx && Math.floor(o.z) === gz,
+    );
+    if (!hasChest) return;
+
+    // Mark looted
+    const nextLooted = new Set(lootedKeysRef.current);
+    nextLooted.add(key);
+    lootedKeysRef.current = nextLooted;
+    setLootedKeys(new Set(nextLooted));
+
+    // Current unlootable chest positions (to avoid duplicates when spawning)
+    const occupiedKeys = new Set<string>();
+    for (const o of [...content.objects, ...extraChestsRef.current]) {
+      if (o.type !== "chest") continue;
+      const ok = `${Math.floor(o.x)}_${Math.floor(o.z)}`;
+      if (!nextLooted.has(ok)) occupiedKeys.add(ok);
+    }
+
+    const tempData = dungeon.textures.temperature.image.data as Uint8Array;
+    const newChests: ObjectPlacement[] = [];
+    let spawned = 0;
+    const lootCount = lootCountRef.current++;
+
+    const roomIds = [...dungeon.rooms.entries()]
+      .filter(([, r]) => r.type === "room")
+      .map(([id]) => id);
+
+    for (let i = 0; i < roomIds.length && spawned < 2; i++) {
+      const roomId = roomIds[(lootCount * 2 + i) % roomIds.length];
+      const room = dungeon.rooms.get(roomId)!;
+      const cx = Math.floor(room.rect.x + room.rect.w / 2);
+      const cy = Math.floor(room.rect.y + room.rect.h / 2);
+      const temp = tempData[cy * dungeon.width + cx];
+      if (temp > 127) continue;
+
+      const candidates = content.candidatesByRegion.get(roomId) ?? [];
+      for (let ci = 0; ci < candidates.length; ci++) {
+        const idx = (Math.floor(candidates.length / 2) + ci) % candidates.length;
+        const c = candidates[idx];
+        const cKey = `${c.x}_${c.z}`;
+        if (occupiedKeys.has(cKey)) continue;
+        newChests.push({ type: "chest", x: c.x, z: c.z });
+        occupiedKeys.add(cKey);
+        spawned++;
+        break;
+      }
+    }
+
+    extraChestsRef.current = [...extraChestsRef.current, ...newChests];
+    setExtraChests([...extraChestsRef.current]);
+
+    // Wave completion: once every adventurer has looted once, start a new wave.
+    lootedThisWaveRef.current.add(id);
+    if (lootedThisWaveRef.current.size >= ADVENTURER_COUNT) {
+      lootedThisWaveRef.current.clear();
+      startNewWaveRef.current?.();
+    }
+  };
+
+  const { adventurers, startNewWave } = useAdventurers(
+    solidData,
+    DUNGEON_W,
+    DUNGEON_H,
+    adventurerStart,
+    ADVENTURER_COUNT,
+    adventurerOnStepRef,
+  );
+  startNewWaveRef.current = startNewWave;
+
+  const visibleObjects = useMemo(
+    () =>
+      [...content.objects, ...extraChests].filter(
+        (o) =>
+          o.type !== "chest" ||
+          !lootedKeys.has(`${Math.floor(o.x)}_${Math.floor(o.z)}`),
+      ),
+    [content.objects, extraChests, lootedKeys],
+  );
 
   const { camera, containerRef } = useObjectsCamera(
     solidData,
@@ -823,9 +1047,10 @@ export default function Objects() {
       camera.yaw,
       maskOverlay,
       overlayData,
-      content.objects,
+      visibleObjects,
+      adventurers,
     );
-  }, [solidData, camera, maskOverlay, overlayData, content.objects]);
+  }, [solidData, camera, maskOverlay, overlayData, visibleObjects, adventurers]);
 
   return (
     <div className={styles.container}>
@@ -860,7 +1085,7 @@ export default function Objects() {
               fogFar={28}
               tileSize={3}
               debugEdges={debugEdges}
-              objects={content.objects}
+              objects={visibleObjects}
               objectRegistry={objectRegistry}
               style={{ width: "100%", height: "100%" }}
             />

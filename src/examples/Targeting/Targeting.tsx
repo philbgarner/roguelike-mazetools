@@ -378,10 +378,15 @@ function buildDeps(
       return false;
     return solidData[y * dungeon.width + x] === 0;
   };
+  const isOpaque = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= dungeon.width || y >= dungeon.height)
+      return true;
+    return solidData[y * dungeon.width + x] !== 0;
+  };
   return {
     isWalkable,
     monsterDecide: (state, monsterId) =>
-      decideChasePlayer(state, monsterId, dungeon, isWalkable, 8, true),
+      decideChasePlayer(state, monsterId, dungeon, isWalkable, isOpaque, 8, true),
     computeCost: (actorId, action: TurnAction) => {
       const actor = actors[actorId];
       return { time: actionDelay(actor?.speed ?? 10, action) };

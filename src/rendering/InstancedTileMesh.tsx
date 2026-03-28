@@ -80,6 +80,10 @@ uniform float uTime;
 uniform float uFlickerRadius; // fraction of fog range the radius breathes
 uniform vec2  uTexelSize;     // (1/sheetWidth, 1/sheetHeight)
 uniform float uDebugEdges;    // 1.0 = draw tile-edge debug border, 0.0 = off
+uniform vec3 uTint0;
+uniform vec3 uTint1;
+uniform vec3 uTint2;
+uniform vec3 uTint3;
 
 varying vec2  vAtlasUv;
 varying vec2  vTileOrigin;
@@ -139,15 +143,15 @@ void main() {
   float brightness;
   vec3  tint;
   if (band < 1.0) {
-    brightness = 1.00 - turb; tint = vec3(1.00, 0.90, 0.68); // near-white, soft warm
+    brightness = 1.00 - turb; tint = uTint0;
   } else if (band < 2.0) {
-    brightness = 0.55; tint = vec3(1.00, 0.94, 0.76); // near-white, faint warm
+    brightness = 0.55; tint = uTint1;
   } else if (band < 3.0) {
-    brightness = 0.22; tint = vec3(0.60, 0.55, 0.80); // cool purple
+    brightness = 0.22; tint = uTint2;
   } else if (band < 4.0) {
-    brightness = 0.10; tint = vec3(0.30, 0.25, 0.60); // deep blue-violet
+    brightness = 0.10; tint = uTint3;
   } else {
-    brightness = 0.00; tint = vec3(1.0);               // darkness
+    brightness = 0.00; tint = vec3(1.0);
   }
 
   vec3 lit = color.rgb * tint * brightness * bumpShade;
@@ -219,6 +223,7 @@ type Props = {
   highlightData?: Uint8Array;
   passageData?: Uint8Array;
   gridWidth?: number;
+  tintColors?: THREE.Color[];
 };
 
 export function InstancedTileMesh({
@@ -232,6 +237,7 @@ export function InstancedTileMesh({
   highlightData,
   passageData,
   gridWidth,
+  tintColors,
 }: Props) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
@@ -280,6 +286,10 @@ export function InstancedTileMesh({
             ),
           },
           uDebugEdges: { value: debugEdges ? 1.0 : 0.0 },
+          uTint0: { value: tintColors?.[0] ?? new THREE.Color(1.00, 0.90, 0.68) },
+          uTint1: { value: tintColors?.[1] ?? new THREE.Color(1.00, 0.94, 0.76) },
+          uTint2: { value: tintColors?.[2] ?? new THREE.Color(0.60, 0.55, 0.80) },
+          uTint3: { value: tintColors?.[3] ?? new THREE.Color(0.30, 0.25, 0.60) },
         },
         side: THREE.FrontSide,
       }),
@@ -293,6 +303,13 @@ export function InstancedTileMesh({
   useEffect(() => {
     material.uniforms.uDebugEdges.value = debugEdges ? 1.0 : 0.0;
   }, [debugEdges, material]);
+
+  useEffect(() => {
+    if (tintColors?.[0]) material.uniforms.uTint0.value = tintColors[0];
+    if (tintColors?.[1]) material.uniforms.uTint1.value = tintColors[1];
+    if (tintColors?.[2]) material.uniforms.uTint2.value = tintColors[2];
+    if (tintColors?.[3]) material.uniforms.uTint3.value = tintColors[3];
+  }, [tintColors, material]);
 
   useEffect(() => {
     const mesh = meshRef.current;

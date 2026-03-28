@@ -1,4 +1,4 @@
-import type { DungeonOutputs } from "./bsp";
+import type { DungeonOutputs, BspDungeonOutputs } from "./bsp";
 
 // --------------------------------
 // Placements
@@ -514,4 +514,60 @@ export function generateHiddenPassages(
   }
 
   return { passages };
+}
+
+// --------------------------------
+// generateThemedRooms
+// --------------------------------
+
+/**
+ * Called once per floor/wall cell that belongs to the room or corridor
+ * identified by `roomId`.
+ *
+ * @param x       Grid column of the cell.
+ * @param y       Grid row of the cell.
+ * @param context The full BSP dungeon output — use its textures to write
+ *                floor/wall types, overlays, etc.
+ */
+export type ThemedRoomCallback = (
+  x: number,
+  y: number,
+  context: BspDungeonOutputs,
+) => void;
+
+/**
+ * Iterate every cell in the dungeon and invoke the matching `ThemedRoomCallback`
+ * (keyed by room / corridor region id) for each cell that belongs to a themed
+ * region.
+ *
+ * - Room cells are identified by their `regionId` texture value (1+).
+ * - Corridor cells are identified by their `fullRegionIds` value, which
+ *   assigns a unique id to each connected corridor component.
+ * - Wall cells carry the same `fullRegionIds` value as the nearest floor
+ *   region; pass them to your callback so you can set `wallType` etc.
+ * - If no callback is registered for a region the cells are skipped.
+ *
+ * Mark textures as dirty after writing:
+ * `context.textures.floorType.needsUpdate = true;`
+ *
+ * @example
+ * generateThemedRooms(dungeon, {
+ *   [dungeon.startRoomId]: (x, y, ctx) => {
+ *     ctx.textures.floorType.image.data[y * ctx.width + x] =
+ *       atlas.floorTypes.idByName("Cobblestone");
+ *   },
+ * });
+ */
+export function generateThemedRooms(
+  context: BspDungeonOutputs,
+  themes: Partial<Record<number, ThemedRoomCallback>>,
+): void {
+  const { width: W, height: H, fullRegionIds } = context;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const regionId = fullRegionIds[y * W + x];
+      const cb = themes[regionId];
+      if (cb !== undefined) cb(x, y, context);
+    }
+  }
 }

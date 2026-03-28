@@ -38,12 +38,42 @@ export function monsterAlertConfig(danger: number): MonsterAlertConfig {
 // Visibility helpers
 // ---------------------------------------------------------------------------
 
-function isMonsterInPlayerFov(
+/**
+ * Bresenham line-of-sight check.
+ * Returns true if there is an unobstructed path from (x0,y0) to (x1,y1).
+ * Intermediate cells (not the endpoints) must all be non-opaque.
+ */
+function hasLineOfSight(
+  x0: number, y0: number,
+  x1: number, y1: number,
+  isOpaque: (x: number, y: number) => boolean,
+): boolean {
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  const stepX = x0 < x1 ? 1 : -1;
+  const stepY = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  let x = x0;
+  let y = y0;
+
+  while (x !== x1 || y !== y1) {
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += stepX; }
+    if (e2 < dx)  { err += dx; y += stepY; }
+    if (x === x1 && y === y1) break;
+    if (isOpaque(x, y)) return false;
+  }
+  return true;
+}
+
+function canMonsterSeePlayer(
   monsterX: number, monsterY: number,
   playerX: number, playerY: number,
   playerVisRadius: number,
+  isOpaque: (x: number, y: number) => boolean,
 ): boolean {
-  return Math.hypot(monsterX - playerX, monsterY - playerY) <= playerVisRadius;
+  if (Math.hypot(monsterX - playerX, monsterY - playerY) > playerVisRadius) return false;
+  return hasLineOfSight(monsterX, monsterY, playerX, playerY, isOpaque);
 }
 
 // ---------------------------------------------------------------------------
@@ -91,8 +121,9 @@ function transitionAlertState(
   playerX: number, playerY: number,
   playerVisRadius: number,
   config: MonsterAlertConfig,
+  isOpaque: (x: number, y: number) => boolean,
 ): AlertTransition {
-  const canSeePlayer = isMonsterInPlayerFov(monster.x, monster.y, playerX, playerY, playerVisRadius);
+  const canSeePlayer = canMonsterSeePlayer(monster.x, monster.y, playerX, playerY, playerVisRadius, isOpaque);
   const withinDetection = Math.hypot(monster.x - playerX, monster.y - playerY) <= config.detectionRadius;
 
   switch (monster.alertState) {
@@ -140,6 +171,7 @@ export function decideChasePlayer(
   monsterId: ActorId,
   dungeon: DungeonOutputs,
   isWalkable: (x: number, y: number) => boolean,
+  isOpaque: (x: number, y: number) => boolean,
   playerVisRadius = 8,
   fourDir = false,
 ): DecideResult {
@@ -151,7 +183,7 @@ export function decideChasePlayer(
   }
 
   const config = monsterAlertConfig(monster.danger);
-  const transition = transitionAlertState(monster, player.x, player.y, playerVisRadius, config);
+  const transition = transitionAlertState(monster, player.x, player.y, playerVisRadius, config, isOpaque);
 
   const patch: DecideResult["monsterPatch"] = {
     alertState: transition.newAlertState,

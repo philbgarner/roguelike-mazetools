@@ -200,6 +200,25 @@ function maskToDataTextureR8(
   return tex;
 }
 
+function maskToDataTextureRGBA(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(mask, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.name = name;
+  tex.needsUpdate = true;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+  return tex;
+}
+
 // --------------------------------
 // Public generator
 // --------------------------------
@@ -313,6 +332,10 @@ export function generateCellularDungeon(options: CellularOptions): CellularDunge
   for (let i = 0; i < W * H; i++) {
     if (solid[i] === 0) temperature[i] = 127;
   }
+  const floorType = new Uint8Array(W * H);
+  const wallType = new Uint8Array(W * H);
+  const overlays = new Uint8Array(4 * W * H);
+  const wallOverlays = new Uint8Array(4 * W * H);
 
   return {
     width: W,
@@ -325,6 +348,10 @@ export function generateCellularDungeon(options: CellularOptions): CellularDunge
       distanceToWall:  maskToDataTextureR8(distanceToWall,  W, H, "cellular_distance_to_wall"),
       hazards:         maskToDataTextureR8(hazards,         W, H, "cellular_hazards"),
       temperature:     maskToDataTextureR8(temperature,     W, H, "cellular_temperature"),
+      floorType:       maskToDataTextureR8(floorType,       W, H, "cellular_floor_type"),
+      overlays:        maskToDataTextureRGBA(overlays,      W, H, "cellular_overlays"),
+      wallType:        maskToDataTextureR8(wallType,        W, H, "cellular_wall_type"),
+      wallOverlays:    maskToDataTextureRGBA(wallOverlays,  W, H, "cellular_wall_overlays"),
     },
   };
 }

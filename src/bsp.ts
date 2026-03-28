@@ -19,6 +19,27 @@ export type DungeonOutputs = {
     hazards: THREE.DataTexture;
     /** Per-cell temperature, 0 = coldest, 255 = hottest. Default: 127 for all floor cells. */
     temperature: THREE.DataTexture;
+    /**
+     * Per-cell floor type index (R8). Value matches the `id` field in atlas.json `floorTypes`.
+     * 0 = wall/no floor. Corridors inherit the floor type of the nearest room.
+     */
+    floorType: THREE.DataTexture;
+    /**
+     * Per-cell overlay bit-flags for floor cells (RGBA). Each channel stores 8 overlay slots as individual bits.
+     * R = overlay IDs 1–8, G = 9–16, B = 17–24, A = 25–32.
+     * IDs correspond to the `id` field in atlas.json `overlays`. All zeros by default.
+     */
+    overlays: THREE.DataTexture;
+    /**
+     * Per-cell wall type index (R8). Value matches the `id` field in atlas.json `wallTypes`.
+     * 0 = floor/no wall. Wall cells inherit the type of the nearest floor cell.
+     */
+    wallType: THREE.DataTexture;
+    /**
+     * Per-cell overlay bit-flags for wall cells (RGBA). Same encoding as `overlays`.
+     * IDs correspond to the `id` field in atlas.json `wallOverlays`. All zeros by default.
+     */
+    wallOverlays: THREE.DataTexture;
   };
 };
 
@@ -339,6 +360,7 @@ function createRooms(
   root: BspNode,
   solid: Uint8Array,
   regionId: Uint8Array,
+  floorType: Uint8Array,
   W: number,
   H: number,
   opts: Required<
@@ -352,6 +374,7 @@ function createRooms(
     >
   >,
   rng: RNG,
+  numFloorTypes: number,
 ) {
   let nextRoomId = 1;
   forEachLeaf(root, (leaf) => {
@@ -390,6 +413,14 @@ function createRooms(
 
     carveRect(solid, W, H, room, opts.keepOuterWalls);
     writeRegionRect(regionId, W, H, room, leaf.roomId);
+
+    const roomFloorType = rng.int(1, numFloorTypes);
+    for (let y = room.y; y <= room.y + room.h - 1; y++) {
+      for (let x = room.x; x <= room.x + room.w - 1; x++) {
+        if (!inBounds(x, y, W, H)) continue;
+        floorType[idx(x, y, W)] = roomFloorType;
+      }
+    }
   });
 }
 
@@ -736,6 +767,31 @@ function maskToDataTextureR8(
   return tex;
 }
 
+function maskToDataTextureRGBA(
+  mask: Uint8Array,
+  W: number,
+  H: number,
+  name: string,
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    mask,
+    W,
+    H,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+  );
+  tex.name = name;
+  tex.needsUpdate = true;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.flipY = false;
+  return tex;
+}
+
 // -----------------------------
 // Public generator
 // -----------------------------
@@ -775,6 +831,11 @@ export function generateBspDungeon(
   const solid = new Uint8Array(W * H);
   solid.fill(255);
   const regionId = new Uint8Array(W * H);
+  const floorType = new Uint8Array(W * H);
+  const wallType = new Uint8Array(W * H);
+  // 4 bytes per cell (RGBA); all zeros = no overlays active
+  const overlays = new Uint8Array(4 * W * H);
+  const wallOverlays = new Uint8Array(4 * W * H);
 
   const { node: root } = buildBsp(
     { x: 0, y: 0, w: W, h: H },
@@ -788,10 +849,13 @@ export function generateBspDungeon(
     rng,
   );
 
+  const NUM_FLOOR_TYPES = 3; // Cobblestone=1, Flagstone=2, Concrete=3
+
   createRooms(
     root,
     solid,
     regionId,
+    floorType,
     W,
     H,
     {
@@ -802,6 +866,7 @@ export function generateBspDungeon(
       keepOuterWalls: opts.keepOuterWalls,
     },
     rng,
+    NUM_FLOOR_TYPES,
   );
 
   const adjacency = new Map<number, Set<number>>();
@@ -835,6 +900,58 @@ export function generateBspDungeon(
     rooms.set(cr.id, cr);
   }
 
+  // Flood-fill floor types from room cells into corridor cells
+  {
+    const queue: number[] = [];
+    for (let i = 0; i < W * H; i++) {
+      if (solid[i] === 0 && floorType[i] > 0) queue.push(i);
+    }
+    let qh = 0;
+    while (qh < queue.length) {
+      const ci = queue[qh++];
+      const cx = ci % W;
+      const cy = (ci / W) | 0;
+      const neighbors = [
+        cy > 0 ? ci - W : -1,
+        cy < H - 1 ? ci + W : -1,
+        cx > 0 ? ci - 1 : -1,
+        cx < W - 1 ? ci + 1 : -1,
+      ];
+      for (const ni of neighbors) {
+        if (ni < 0) continue;
+        if (solid[ni] !== 0 || floorType[ni] !== 0) continue;
+        floorType[ni] = floorType[ci];
+        queue.push(ni);
+      }
+    }
+  }
+
+  // Flood-fill wall types outward from floor cells into wall cells
+  {
+    const queue: number[] = [];
+    for (let i = 0; i < W * H; i++) {
+      if (solid[i] === 0 && floorType[i] > 0) queue.push(i);
+    }
+    let qh = 0;
+    while (qh < queue.length) {
+      const ci = queue[qh++];
+      const cx = ci % W;
+      const cy = (ci / W) | 0;
+      const neighbors = [
+        cy > 0 ? ci - W : -1,
+        cy < H - 1 ? ci + W : -1,
+        cx > 0 ? ci - 1 : -1,
+        cx < W - 1 ? ci + 1 : -1,
+      ];
+      for (const ni of neighbors) {
+        if (ni < 0) continue;
+        if (solid[ni] === 0 || wallType[ni] !== 0) continue;
+        wallType[ni] = solid[ci] === 0 ? floorType[ci] : wallType[ci];
+        queue.push(ni);
+      }
+    }
+  }
+
   // Temperature mask: 127 (middle) for all floor cells, 0 for walls
   const temperature = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) {
@@ -864,6 +981,10 @@ export function generateBspDungeon(
       ),
       hazards: maskToDataTextureR8(hazards, W, H, "bsp_dungeon_hazards"),
       temperature: maskToDataTextureR8(temperature, W, H, "bsp_dungeon_temperature"),
+      floorType: maskToDataTextureR8(floorType, W, H, "bsp_dungeon_floor_type"),
+      overlays: maskToDataTextureRGBA(overlays, W, H, "bsp_dungeon_overlays"),
+      wallType: maskToDataTextureR8(wallType, W, H, "bsp_dungeon_wall_type"),
+      wallOverlays: maskToDataTextureRGBA(wallOverlays, W, H, "bsp_dungeon_wall_overlays"),
     },
   };
 }
