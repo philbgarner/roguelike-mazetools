@@ -1,6 +1,17 @@
 import React, { useState, useRef } from 'react';
 import styles from './Objects.module.css';
-import { InventoryProps, InventorySlot, Item } from '../../inventory';
+import { ItemType, InventorySlot } from '../../Inventory/inventory';
+
+// Generic inventory props
+export interface InventoryProps {
+  inventory: InventorySlot[]; // Array of slots, not items
+  inventoryName: string;
+  itemTypeRegistry: Record<string, ItemType>; // Game item definitions
+  isOpen: boolean;
+  onToggle: () => void;
+  onUseItem?: (slot: InventorySlot) => void;
+  onRemoveItem?: (slot: InventorySlot) => void;
+}
 
 export const Inventory: React.FC<InventoryProps> = ({ inventory, inventoryName, itemTypeRegistry, isOpen, onToggle, onUseItem, onRemoveItem }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);

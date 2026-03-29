@@ -36,7 +36,7 @@ import {
 } from "../../content";
 import { useNavigate } from "react-router-dom";
 import styles from "./Objects.module.css";
-import { ItemType, InventorySlot } from "../../inventory";
+import { ItemType, InventorySlot } from "../../Inventory/inventory";
 import Inventory from "./inventory";
 
 // ---------------------------------------------------------------------------
