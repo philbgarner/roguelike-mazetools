@@ -27,7 +27,7 @@ export class UseSystem {
 
     // Handle consumable logic
     if (this.registry.components.consummable.has(objectDefEntity)) {
-      this.registry.removeObjectFromSlot(slotEntity, 1);
+      this.registry.removeQuantityFromSlot(slotEntity, 1);
     }
   }
 

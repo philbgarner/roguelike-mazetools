@@ -24,6 +24,10 @@ export type TemperatureChangeComponent = {
     deltaTemperature: number;
 };
 
+export interface DescriptionComponent {
+    name: string;
+}
+
 //TODO: Add other usable components when they are created
 export enum UsableType {
     heal = 'heal',
@@ -63,4 +67,8 @@ export type InventorySlotComponent = {
 
 export type HasOwnerComponent = {
     owner: Entity;
+};
+
+export type InventoryOwnerComponent = {
+    inventories: Entity[];
 };

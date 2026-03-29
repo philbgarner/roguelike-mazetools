@@ -4,6 +4,7 @@ import EotB from "./examples/EotB/EotB";
 import Mobs from "./examples/Mobs/Mobs";
 import Objects from "./examples/Objects/Objects";
 import Targeting from "./examples/Targeting/Targeting";
+import Ecs from "./examples/ECS/ECS";
 import AppMenu from "./AppMenu";
 
 import "./styles/App.css";
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/mobs" element={<Mobs />} />
         <Route path="/objects" element={<Objects />} />
         <Route path="/targeting" element={<Targeting />} />
+        <Route path="/ecs" element={<Ecs />} />
       </Routes>
     </BrowserRouter>
   );

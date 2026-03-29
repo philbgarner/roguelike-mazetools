@@ -14,7 +14,7 @@ export enum ObjectId {
     CHEST = 4,
     SWORD = 5,
     BANDAGE = 6,
-    TEA_CUP = 6
+    TEA_CUP = 7
 }
 
 // Chest loot generation constants
@@ -50,57 +50,62 @@ export function initializeObjectDefinitions(registry: ComponentRegistry) {
     addTeaCupDefinition(registry);
 }
 
-function createObjectDefinition(registry: ComponentRegistry, objectType: ObjectId) {
+function createObjectDefinition(registry: ComponentRegistry, objectType: ObjectId, name: string) {
     const entityId = registry.createEntity();
     registry.components.objectDefinition.add(entityId, {
         objectType: objectType
+    });
+    registry.components.description.add(entityId, {
+        name: name
     });
     registry.objectDefinitions[objectType] = entityId; // Store the definition entity for easy access
     return entityId;
 }
 
 function addPlayerDefinition(registry: ComponentRegistry) {
-    createObjectDefinition(registry, ObjectId.PLAYER);
+    createObjectDefinition(registry, ObjectId.PLAYER, "Player");
 }
 
 function addMonsterDefinition(registry: ComponentRegistry) {
-    createObjectDefinition(registry, ObjectId.MONSTER);
+    createObjectDefinition(registry, ObjectId.MONSTER, "Monster");
 }
 
 function addEnemyDefinition(registry: ComponentRegistry) {
-    createObjectDefinition(registry, ObjectId.ENEMY);
+    createObjectDefinition(registry, ObjectId.ENEMY, "Enemy");
 }
 
 function addRoomDefinition(registry: ComponentRegistry) {
-    const entityId = createObjectDefinition(registry, ObjectId.ROOM);
+    const entityId = createObjectDefinition(registry, ObjectId.ROOM, "Room");
     registry.components.temperatureChange.add(entityId, {
         deltaTemperature: -0.5
     });
 }
 
 function addChestDefinition(registry: ComponentRegistry) {
-    createObjectDefinition(registry, ObjectId.CHEST);
+    createObjectDefinition(registry, ObjectId.CHEST, "Chest");
 }
 
 function addSwordDefinition(registry: ComponentRegistry) {
-    const entityId = createObjectDefinition(registry, ObjectId.SWORD);
+    const entityId = createObjectDefinition(registry, ObjectId.SWORD, "Sword");
     registry.components.weapon.add(entityId, {
         damage: 10
     });
 }
 
 function addBandageDefinition(registry: ComponentRegistry) {
-    const entityId = createObjectDefinition(registry, ObjectId.BANDAGE);
+    const entityId = createObjectDefinition(registry, ObjectId.BANDAGE, "Bandage");
     registry.components.stackable.add(entityId, {
         maxStack: 10
     });
     registry.components.heal.add(entityId, {
         amount: 10
     });
+    registry.components.usable.add(entityId, {});
+    registry.components.consummable.add(entityId, {});
 }
 
 function addTeaCupDefinition(registry: ComponentRegistry) {
-    createObjectDefinition(registry, ObjectId.TEA_CUP);
+    createObjectDefinition(registry, ObjectId.TEA_CUP, "Tea Cup");
 }
 
 export function getObjectDefinition(registry: ComponentRegistry, objectType: ObjectId): Entity {
@@ -125,25 +130,32 @@ export function createObjectInstance(registry: ComponentRegistry, objectType: Ob
 export function createPlayerInstance(registry: ComponentRegistry) {
     const playerEntity = createObjectInstance(registry, ObjectId.PLAYER);
     registry.createInventory(playerEntity, PLAYER_INVENTORY_SIZE);
-
+    initializePlayerInventory(registry, playerEntity);
     return playerEntity;
 }
 
 export function createEnemyInstance(registry: ComponentRegistry) {
     const enemyEntity = createObjectInstance(registry, ObjectId.ENEMY);
     registry.createInventory(enemyEntity, ENEMY_INVENTORY_SIZE);
-
+    initializeEnemyInventory(registry, enemyEntity);
     return enemyEntity;
 }
 
 export function createChestInstance(registry: ComponentRegistry) {
     const chestEntity = createObjectInstance(registry, ObjectId.CHEST);
     registry.createInventory(chestEntity, CHEST_INVENTORY_SIZE);
+    initializeChestInventory(registry, chestEntity);
     return chestEntity;
 }
 
 export function createTeaCupInstance(registry: ComponentRegistry, content: TeaContent) {
     const teaCupEntity = createObjectInstance(registry, ObjectId.TEA_CUP);
+    
+    // Add description component with tea type as name
+    registry.components.description.add(teaCupEntity, {
+        name: `Tea Cup (${content})`
+    });
+    
     switch (content) {
         case TeaContent.EARL_GREY:
             registry.components.temperature.add(teaCupEntity, {
@@ -172,29 +184,49 @@ export function createTeaCupInstance(registry: ComponentRegistry, content: TeaCo
 
 // Handle inventory initialization
 export function initializePlayerInventory(registry: ComponentRegistry, player: Entity) {
-    const inventory = registry.components.inventory.get(player);
+    const playerInventories = registry.getInventoriesByOwner(player);
+    if (playerInventories.length === 0) return;
+    
+    const playerInventory = playerInventories[0];
+    const playerInventorySlots = registry.getFirstInventorySlots(player);
+    
+    // Check if inventory is already initialized to prevent re-initialization
+    const existingItems = playerInventorySlots.filter(slot => registry.components.inventorySlot.get(slot)?.object);
+    if (existingItems.length > 0) {
+        return;
+    }
+    
+    const inventory = registry.components.inventory.get(playerInventory);
     if (!inventory) return;
     
     // Add 5 bandages to first available slot
     const bandageEntity = getObjectDefinition(registry, ObjectId.BANDAGE);
-    registry.addObjectToInventory(player, bandageEntity, 5);
+    registry.addObjectToInventory(playerInventory, bandageEntity, 5);
     
     // Add sword to first available slot
     const swordEntity = getObjectDefinition(registry, ObjectId.SWORD);
-    registry.addObjectToInventory(player, swordEntity, 1);
+    registry.addObjectToInventory(playerInventory, swordEntity, 1);
 }
 
-export function initializeMonsterInventory(registry: ComponentRegistry, monster: Entity) {
-    const inventory = registry.components.inventory.get(monster);
+export function initializeEnemyInventory(registry: ComponentRegistry, enemy: Entity) {
+    const enemyInventories = registry.getInventoriesByOwner(enemy);
+    if (enemyInventories.length === 0) return;
+    
+    const enemyInventory = enemyInventories[0];
+    const inventory = registry.components.inventory.get(enemyInventory);
     if (!inventory) return;
     
     // Add sword to first available slot
     const swordEntity = getObjectDefinition(registry, ObjectId.SWORD);
-    registry.addObjectToInventory(monster, swordEntity, 1);
+    registry.addObjectToInventory(enemyInventory, swordEntity, 1);
 }
 
 export function initializeChestInventory(registry: ComponentRegistry, chest: Entity) {
-    const inventory = registry.components.inventory.get(chest);
+    const chestInventories = registry.getInventoriesByOwner(chest);
+    if (chestInventories.length === 0) return;
+    
+    const chestInventory = chestInventories[0];
+    const inventory = registry.components.inventory.get(chestInventory);
     if (!inventory) return;
     
     // Track which item types have been used to prevent duplicates
@@ -229,7 +261,7 @@ export function initializeChestInventory(registry: ComponentRegistry, chest: Ent
                 quantity = selectedItem.minCount + Math.floor(Math.random() * (selectedItem.maxCount - selectedItem.minCount + 1));
             }
             
-            registry.addObjectToInventory(chest, itemEntity, quantity);
+            registry.addObjectToInventory(chestInventory, itemEntity, quantity);
         }
     }
 }

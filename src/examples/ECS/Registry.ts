@@ -1,5 +1,5 @@
-import { Entity, InventoryComponent, UsableType, HealthComponent, StackableComponent, WeaponComponent, TemperatureComponent, TemperatureChangeComponent, InventorySlotComponent, ObjectDefinitionComponent, ObjectInstanceComponent, HealComponent, ConsummableTagComponent, HasOwnerComponent, UsableTagComponent } from "./Components";
-import { ObjectId } from "./ObjectDefinition";
+import { Entity, InventoryComponent, UsableType, HealthComponent, StackableComponent, WeaponComponent, TemperatureComponent, TemperatureChangeComponent, InventorySlotComponent, ObjectDefinitionComponent, ObjectInstanceComponent, HealComponent, ConsummableTagComponent, HasOwnerComponent, UsableTagComponent, InventoryOwnerComponent, DescriptionComponent } from "./Components";
+import { initializeObjectDefinitions, ObjectId } from "./ObjectDefinition";
 
 // Generic component storage
 class ComponentStore<T> {
@@ -37,6 +37,7 @@ export class ComponentRegistry {
         weapon: new ComponentStore<WeaponComponent>(),
         heal: new ComponentStore<HealComponent>(),
         temperatureChange: new ComponentStore<TemperatureChangeComponent>(),
+        description: new ComponentStore<DescriptionComponent>(),
         usable: new ComponentStore<UsableTagComponent>(),
         consummable: new ComponentStore<ConsummableTagComponent>(),
 
@@ -47,6 +48,7 @@ export class ComponentRegistry {
         inventory: new ComponentStore<InventoryComponent>(),
         inventorySlot: new ComponentStore<InventorySlotComponent>(),
         hasOwner: new ComponentStore<HasOwnerComponent>(),
+        inventoryOwner: new ComponentStore<InventoryOwnerComponent>(),
     };
 
     // Store for pre-created object definitions
@@ -94,7 +96,11 @@ export class ComponentRegistry {
             component.clear();
         }
     }
-    
+
+    initializeRegistry() {
+        initializeObjectDefinitions(this);
+    }
+
     //Object methods
     getObjectUses(entity: Entity): UsableType[] | undefined {
         const uses: UsableType[] = [];
@@ -115,6 +121,14 @@ export class ComponentRegistry {
         this.components.hasOwner.add(inventoryEntity, {
             owner: ownerEntity
         });
+        if (this.components.inventoryOwner.has(ownerEntity)) {
+            const inventoryOwner = this.components.inventoryOwner.get(ownerEntity)!;
+            inventoryOwner.inventories.push(inventoryEntity);
+        } else {
+            this.components.inventoryOwner.add(ownerEntity, {
+                inventories: [inventoryEntity]
+            });
+        }
         const inventory = this.components.inventory.get(inventoryEntity)!;
         for (let i = 0; i < size; i++) {
             const slotEntity = this.createEntity();
@@ -128,6 +142,15 @@ export class ComponentRegistry {
             });
             inventory.slots.push(slotEntity);
         }
+    }
+
+    getInventoriesByOwner(ownerEntity: Entity): Entity[] {
+        return this.components.inventoryOwner.get(ownerEntity)?.inventories || [];
+    }
+
+    getFirstInventorySlots(ownerEntity: Entity) {
+        const inventories = this.getInventoriesByOwner(ownerEntity);
+        return inventories.length > 0 ? this.components.inventory.get(inventories[0])?.slots ?? [] : [];
     }
 
     slotHasObject(slotEntity: Entity) {
@@ -190,7 +213,7 @@ export class ComponentRegistry {
         }
     }
 
-    removeObjectFromSlot(slotEntity: Entity, quantity: number = 1) {
+    removeQuantityFromSlot(slotEntity: Entity, quantity: number = 1) {
         if (quantity <= 0) return; // prevent negative removal
 
         const inventorySlot = this.components.inventorySlot.get(slotEntity);
@@ -202,7 +225,15 @@ export class ComponentRegistry {
         if (inventorySlot.count <= 0) {
             inventorySlot.object = null;
             inventorySlot.count = 0;
+            console.log(`Slot ${slotEntity} is now empty`);
         }
+    }
+
+    removeObjectFromSlot(slotEntity: Entity) {
+        const slot = this.components.inventorySlot.get(slotEntity);
+        if (!slot) return;
+        console.log(`Removing object from slot ${slotEntity}`);
+        this.removeQuantityFromSlot(slotEntity, slot.count);
     }
 
     exchangeObjectInSlots(fromSlotEntity: Entity, toSlotEntity: Entity) {
@@ -243,7 +274,7 @@ export class ComponentRegistry {
             else {
                 // Some objects were added, remove them from source slot
                 const amountAdded = fromSlot.count - leftOver;
-                this.removeObjectFromSlot(fromSlotEntity, amountAdded);
+                this.removeQuantityFromSlot(fromSlotEntity, amountAdded);
             }
         }
     }   
@@ -254,7 +285,38 @@ export class ComponentRegistry {
         if (slot && inventory) {
             const leftOver = this.addObjectToInventory(inventoryEntity, slot.object!, slot.count);
             if (leftOver === slot.count) return;
-            this.removeObjectFromSlot(slotEntity, slot.count - leftOver);
+            this.removeQuantityFromSlot(slotEntity, slot.count - leftOver);
         }
+    }
+
+    getSlotIndex(slotEntity: Entity) {
+        const slot = this.components.inventorySlot.get(slotEntity);
+        return slot?.index;
+    }
+
+    getSlotObjectName(slotEntity: Entity): string {
+        const slot = this.components.inventorySlot.get(slotEntity);
+        if (!slot || !slot.object) return "";
+        
+        let objectEntity: Entity;
+        if (this.components.objectInstance.has(slot.object)) {
+            objectEntity = this.components.objectInstance.get(slot.object)!.definition;
+        } else {
+            objectEntity = slot.object;
+        }
+        
+        // Check if the object instance has a description component first
+        if (this.components.description.has(slot.object)) {
+            return this.components.description.get(slot.object)!.name;
+        }
+        
+        // Fall back to description component on the definition
+        return this.components.description.get(objectEntity)?.name || "";
+    }
+
+    getSlotQuantity(slotEntity: Entity): number {
+        const slot = this.components.inventorySlot.get(slotEntity);
+        if (!slot || !slot.object) return 0;
+        return slot.count;
     }
 }
