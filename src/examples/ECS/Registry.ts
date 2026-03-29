@@ -1,5 +1,5 @@
-import { Entity, InventoryComponent, UsableType, HealthComponent, StackableComponent, WeaponComponent, TemperatureComponent, TemperatureChangeComponent, InventorySlotComponent, ItemDefinitionComponent, ItemInstanceComponent, HealComponent, ConsummableTagComponent, HasOwnerComponent, UsableTagComponent } from "./Components";
-import { ItemIds } from "./ItemDefinition";
+import { Entity, InventoryComponent, UsableType, HealthComponent, StackableComponent, WeaponComponent, TemperatureComponent, TemperatureChangeComponent, InventorySlotComponent, ObjectDefinitionComponent, ObjectInstanceComponent, HealComponent, ConsummableTagComponent, HasOwnerComponent, UsableTagComponent } from "./Components";
+import { ObjectId } from "./ObjectDefinition";
 
 // Generic component storage
 class ComponentStore<T> {
@@ -32,7 +32,7 @@ class ComponentStore<T> {
 
 export class ComponentRegistry {
     components = {
-        itemDefinition: new ComponentStore<ItemDefinitionComponent>(),
+        objectDefinition: new ComponentStore<ObjectDefinitionComponent>(),
         stackable: new ComponentStore<StackableComponent>(),
         weapon: new ComponentStore<WeaponComponent>(),
         heal: new ComponentStore<HealComponent>(),
@@ -40,7 +40,7 @@ export class ComponentRegistry {
         usable: new ComponentStore<UsableTagComponent>(),
         consummable: new ComponentStore<ConsummableTagComponent>(),
 
-        itemInstance: new ComponentStore<ItemInstanceComponent>(),
+        objectInstance: new ComponentStore<ObjectInstanceComponent>(),
         health: new ComponentStore<HealthComponent>(),
         temperature: new ComponentStore<TemperatureComponent>(),
 
@@ -49,8 +49,8 @@ export class ComponentRegistry {
         hasOwner: new ComponentStore<HasOwnerComponent>(),
     };
 
-    // Store for pre-created item definitions
-    itemDefinitions: Record<ItemIds, Entity> = {} as Record<ItemIds, Entity>;
+    // Store for pre-created object definitions
+    objectDefinitions: Record<ObjectId, Entity> = {} as Record<ObjectId, Entity>;
 
     currentEntity: number = 0;
 
@@ -95,8 +95,8 @@ export class ComponentRegistry {
         }
     }
     
-    //Item methods
-    getItemUses(entity: Entity): UsableType[] | undefined {
+    //Object methods
+    getObjectUses(entity: Entity): UsableType[] | undefined {
         const uses: UsableType[] = [];
         for (const type of Object.values(UsableType)) {
             if (this.components[type].has(entity)) {
@@ -120,7 +120,7 @@ export class ComponentRegistry {
             const slotEntity = this.createEntity();
             this.components.inventorySlot.add(slotEntity, {
                 index: i,
-                item: null,
+                object: null,
                 count: 0,
             });
             this.components.hasOwner.add(slotEntity, {
@@ -130,19 +130,19 @@ export class ComponentRegistry {
         }
     }
 
-    slotHasItem(slotEntity: Entity) {
+    slotHasObject(slotEntity: Entity) {
         const inventorySlot = this.components.inventorySlot.get(slotEntity);
-        return inventorySlot?.item !== null;
+        return inventorySlot?.object !== null;
     }
 
-    addItemToInventory(inventoryEntity: Entity, itemEntity: Entity, count: number = 1) {
+    addObjectToInventory(inventoryEntity: Entity, objectEntity: Entity, count: number = 1) {
         const inventory = this.components.inventory.get(inventoryEntity);
 
         if (inventory) {
             for (let i = 0; i < inventory.slots.length; i++) {
                 const slot = inventory.slots[i];
                 if (slot) {
-                    const leftOver = this.addItemToSlot(slot, itemEntity, count);
+                    const leftOver = this.addObjectToSlot(slot, objectEntity, count);
                     if (leftOver === 0) {
                         return 0;
                     }
@@ -153,16 +153,16 @@ export class ComponentRegistry {
         return count;
     }
 
-    addItemToSlot(slotEntity: Entity, itemEntity: Entity, count: number = 1) {
+    addObjectToSlot(slotEntity: Entity, objectEntity: Entity, count: number = 1) {
         if (count <= 0) return count;
 
         const inventorySlot = this.components.inventorySlot.get(slotEntity);
         if (!inventorySlot) return count;
 
-        if (!inventorySlot.item) {
-            inventorySlot.item = itemEntity;
-            if (this.components.stackable.has(itemEntity)) {
-                const stackable = this.components.stackable.get(itemEntity)!;
+        if (!inventorySlot.object) {
+            inventorySlot.object = objectEntity;
+            if (this.components.stackable.has(objectEntity)) {
+                const stackable = this.components.stackable.get(objectEntity)!;
                 inventorySlot.count = Math.min(count, stackable.maxStack);
                 return count - inventorySlot.count;
             }
@@ -172,89 +172,89 @@ export class ComponentRegistry {
             }
         }
         else {
-            if (this.components.itemInstance.has(inventorySlot.item) || this.components.itemInstance.has(itemEntity)) {
+            if (this.components.objectInstance.has(inventorySlot.object) || this.components.objectInstance.has(objectEntity)) {
                 return count;
             }
 
-            const currentItemDef = this.components.itemDefinition.get(inventorySlot.item)!;
-            const newItemDef = this.components.itemDefinition.get(itemEntity)!;
-            const stackable = this.components.stackable.get(inventorySlot.item);
+            const currentObjectDef = this.components.objectDefinition.get(inventorySlot.object)!;
+            const newObjectDef = this.components.objectDefinition.get(objectEntity)!;
+            const stackable = this.components.stackable.get(inventorySlot.object);
 
-            if (currentItemDef.itemType !== newItemDef.itemType || !stackable) {
+            if (currentObjectDef.objectType !== newObjectDef.objectType || !stackable) {
                 return count;
             }
 
-            const totalItems = inventorySlot.count + count;
-            inventorySlot.count = Math.min(totalItems, stackable.maxStack);
-            return totalItems - inventorySlot.count;
+            const totalObjects = inventorySlot.count + count;
+            inventorySlot.count = Math.min(totalObjects, stackable.maxStack);
+            return totalObjects - inventorySlot.count;
         }
     }
 
-    removeItemFromSlot(slotEntity: Entity, quantity: number = 1) {
+    removeObjectFromSlot(slotEntity: Entity, quantity: number = 1) {
         if (quantity <= 0) return; // prevent negative removal
 
         const inventorySlot = this.components.inventorySlot.get(slotEntity);
-        if (!inventorySlot || !inventorySlot.item) return; // nothing to remove
+        if (!inventorySlot || !inventorySlot.object) return; // nothing to remove
 
         // Might be interesting to think about handling case where quantity > count
         inventorySlot.count -= quantity;
 
         if (inventorySlot.count <= 0) {
-            inventorySlot.item = null;
+            inventorySlot.object = null;
             inventorySlot.count = 0;
         }
     }
 
-    exchangeItemInSlots(fromSlotEntity: Entity, toSlotEntity: Entity) {
+    exchangeObjectInSlots(fromSlotEntity: Entity, toSlotEntity: Entity) {
         const fromSlot = this.components.inventorySlot.get(fromSlotEntity);
         const toSlot = this.components.inventorySlot.get(toSlotEntity);
 
         // If one of the slots is not defined or the slot we take from has nothing, return
-        if (!fromSlot || !toSlot || !fromSlot.item) return;
+        if (!fromSlot || !toSlot || !fromSlot.object) return;
 
         const fromSlotOwner = this.components.hasOwner.get(fromSlotEntity)!;
         const toSlotOwner = this.components.hasOwner.get(toSlotEntity)!;
         if (fromSlotOwner.owner !== toSlotOwner.owner) {
-            this.moveItemFromSlotToInventory(fromSlotEntity, toSlotOwner.owner);
+            this.moveObjectFromSlotToInventory(fromSlotEntity, toSlotOwner.owner);
             return;
         }
 
         // They are from the same inventory
-        if (!toSlot.item) {
-            // Target slot is empty, move the item
-            toSlot.item = fromSlot.item;
+        if (!toSlot.object) {
+            // Target slot is empty, move the object
+            toSlot.object = fromSlot.object;
             toSlot.count = fromSlot.count;
-            fromSlot.item = null;
+            fromSlot.object = null;
             fromSlot.count = 0;
         }
         else {
-            // Both slots have items, try to add to target slot first
-            const leftOver = this.addItemToSlot(toSlotEntity, fromSlot.item, fromSlot.count);
+            // Both slots have objects, try to add to target slot first
+            const leftOver = this.addObjectToSlot(toSlotEntity, fromSlot.object, fromSlot.count);
 
             // If nothing was added (leftOver === fromSlot.count), exchange the two slots
             if (leftOver === fromSlot.count) {
-                const tempItem = toSlot.item;
+                const tempObject = toSlot.object;
                 const tempCount = toSlot.count;
-                toSlot.item = fromSlot.item;
+                toSlot.object = fromSlot.object;
                 toSlot.count = fromSlot.count;
-                fromSlot.item = tempItem;
+                fromSlot.object = tempObject;
                 fromSlot.count = tempCount;
             }
             else {
-                // Some items were added, remove them from source slot
+                // Some objects were added, remove them from source slot
                 const amountAdded = fromSlot.count - leftOver;
-                this.removeItemFromSlot(fromSlotEntity, amountAdded);
+                this.removeObjectFromSlot(fromSlotEntity, amountAdded);
             }
         }
     }   
 
-    moveItemFromSlotToInventory(slotEntity: Entity, inventoryEntity: Entity) {
+    moveObjectFromSlotToInventory(slotEntity: Entity, inventoryEntity: Entity) {
         const slot = this.components.inventorySlot.get(slotEntity);
         const inventory = this.components.inventory.get(inventoryEntity);
         if (slot && inventory) {
-            const leftOver = this.addItemToInventory(inventoryEntity, slot.item!, slot.count);
+            const leftOver = this.addObjectToInventory(inventoryEntity, slot.object!, slot.count);
             if (leftOver === slot.count) return;
-            this.removeItemFromSlot(slotEntity, slot.count - leftOver);
+            this.removeObjectFromSlot(slotEntity, slot.count - leftOver);
         }
     }
 }

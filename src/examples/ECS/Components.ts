@@ -1,11 +1,11 @@
-import { ItemIds } from "./ItemDefinition";
+import { ObjectId } from "./ObjectDefinition";
 
 // Components - Pure data, no behavior
 export type Entity = number; // Just an ID
 
 //Item Definition components
-export type ItemDefinitionComponent = {
-    itemType: ItemIds;
+export type ObjectDefinitionComponent = {
+    objectType: ObjectId;
 };
 
 export type StackableComponent = {
@@ -35,7 +35,7 @@ export type UsableTagComponent = {};
 export type ConsummableTagComponent = {};
 
 // Item instance components -> Everything that represent a state that you can apply to an entity
-export type ItemInstanceComponent = {
+export type ObjectInstanceComponent = {
     definition: Entity;
 };
 
@@ -57,7 +57,7 @@ export type InventoryComponent = {
 
 export type InventorySlotComponent = {
     index: number;
-    item: Entity | null;
+    object: Entity | null;
     count: number;
 };
 

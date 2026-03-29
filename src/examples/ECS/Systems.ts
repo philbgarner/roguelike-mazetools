@@ -5,57 +5,57 @@ import { ComponentRegistry } from "./Registry";
 export class UseSystem {
   constructor(private registry: ComponentRegistry) { }
 
-  // Main entry point: player uses item from inventory slot on target
-  useItemFromInventory(slotEntity: Entity, targetEntity: Entity) {
+  // Main entry point: player uses object from inventory slot on target
+  useObjectFromInventory(slotEntity: Entity, targetEntity: Entity) {
     // Find player's inventory (assuming player has InInventoryComponent)
     const slot = this.registry.components.inventorySlot.get(slotEntity);
-    if (!slot || !slot.item) {
+    if (!slot || !slot.object) {
       return;
     }
 
-    // Find item in the specified slot
-    const itemInstance = this.registry.components.itemInstance.get(slot.item);
-    const itemDefEntity = itemInstance?.definition ?? slot.item;
-    const itemUsable = this.registry.components.usable.get(itemDefEntity);
-    if (!itemUsable) {
-      console.log(`Item ${slot.item} is not usable`);
+    // Find object in the specified slot
+    const objectInstance = this.registry.components.objectInstance.get(slot.object);
+    const objectDefEntity = objectInstance?.definition ?? slot.object;
+    const objectUsable = this.registry.components.usable.get(objectDefEntity);
+    if (!objectUsable) {
+      console.log(`Object ${slot.object} is not usable`);
       return;
     }
 
-    // Use the item on the target
-    this.useItem(itemDefEntity, targetEntity);
+    // Use the object on the target
+    this.useObject(objectDefEntity, targetEntity);
 
     // Handle consumable logic
-    if (this.registry.components.consummable.has(itemDefEntity)) {
-      this.registry.removeItemFromSlot(slotEntity, 1);
+    if (this.registry.components.consummable.has(objectDefEntity)) {
+      this.registry.removeObjectFromSlot(slotEntity, 1);
     }
   }
 
-  // Use item on target
-  useItem(itemEntity: Entity, targetEntity: Entity) {
-    const uses = this.registry.getItemUses(itemEntity);
+  // Use object on target
+  useObject(objectEntity: Entity, targetEntity: Entity) {
+    const uses = this.registry.getObjectUses(objectEntity);
 
     if (!uses) {
-      console.log(`Item ${itemEntity} has no uses`);
+      console.log(`Object ${objectEntity} has no uses`);
       return;
     }
 
-    console.log(`Using item ${itemEntity} on target ${targetEntity}`);
+    console.log(`Using object ${objectEntity} on target ${targetEntity}`);
 
     // Apply all effects
     for (const use of uses) {
-      this.applyEffect(use, itemEntity, targetEntity);
+      this.applyEffect(use, objectEntity, targetEntity);
     }
   }
 
   // Apply specific effect
-  private applyEffect(useType: string, itemEntity: Entity, targetEntity: Entity) {
+  applyEffect(useType: string, objectEntity: Entity, targetEntity: Entity) {
     switch (useType) {
       case 'temperatureChange':
-        this.applyTemperatureChange(itemEntity, targetEntity);
+        this.applyTemperatureChange(objectEntity, targetEntity);
         break;
       case 'heal':
-        this.applyHeal(itemEntity, targetEntity);
+        this.applyHeal(objectEntity, targetEntity);
         break;
       default:
         console.log(`Unknown use type: ${useType}`);
@@ -64,8 +64,8 @@ export class UseSystem {
   }
 
 
-  private applyTemperatureChange(itemEntity: Entity, targetEntity: Entity) {
-    const temperatureChangeComponent = this.registry.components.temperatureChange.get(itemEntity);
+  private applyTemperatureChange(objectEntity: Entity, targetEntity: Entity) {
+    const temperatureChangeComponent = this.registry.components.temperatureChange.get(objectEntity);
     const targetTemperature = this.registry.components.temperature.get(targetEntity);
     if (!temperatureChangeComponent || !targetTemperature) return;
 
@@ -80,8 +80,8 @@ export class UseSystem {
     }
   }
 
-  private applyHeal(itemEntity: Entity, targetEntity: Entity) {
-    const healComponent = this.registry.components.heal.get(itemEntity);
+  private applyHeal(objectEntity: Entity, targetEntity: Entity) {
+    const healComponent = this.registry.components.heal.get(objectEntity);
     const targetHealth = this.registry.components.health.get(targetEntity);
     if (!healComponent || !targetHealth) return;
 
