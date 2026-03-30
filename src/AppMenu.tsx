@@ -59,6 +59,14 @@ const MENU_ITEMS: MenuItem[] = [
     path: "/targeting",
     icon: "🎯",
   },
+  {
+    label: "ECS",
+    subtitle: "ECS architecture",
+    description:
+      "Entity Component System architecture demonstration. Shows how entities, components, and systems work together in a game engine.",
+    path: "/ecs",
+    icon: "📦",
+  },
 ];
 
 export default function AppMenu() {

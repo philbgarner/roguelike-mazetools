@@ -36,6 +36,8 @@ import {
 } from "../../content";
 import { useNavigate } from "react-router-dom";
 import styles from "./Objects.module.css";
+import { ItemType, InventorySlot } from "../../Inventory/inventory";
+import Inventory from "./inventory";
 
 // ---------------------------------------------------------------------------
 // Extended content outputs — developers can add more typed fields here.
@@ -63,6 +65,17 @@ const SRC_WALL = { x: 208, y: 304 };
 const TILE_FLOOR = 0;
 const TILE_CEILING = 1;
 const TILE_WALL = 2;
+
+// Game item names enum - type safety for this specific game
+enum ItemName {
+  GoldCoins = "Gold Coins",
+  HealthPotion = "Health Potion",
+  ManaPotion = "Mana Potion",
+  Torch = "Torch",
+  Scroll = "Scroll",
+  Key = "Key",
+  Rations = "Rations"
+}
 
 // Sanity-check: verify coords align to the padded grid
 function assertAligned(label: string, x: number, y: number) {
@@ -512,6 +525,7 @@ export default function Objects() {
   const [maskOverlay, setMaskOverlay] = useState<MaskOverlay>("all");
   const [ceilingHeight, setCeilingHeight] = useState(3);
   const [debugEdges, setDebugEdges] = useState(false);
+  const [showInventory, setShowInventory] = useState(false);
 
   const dungeon = useMemo(
     () =>
@@ -842,25 +856,52 @@ export default function Objects() {
       },
     });
 
-    // Pick a deterministic candidate from each region's wall-adjacent cells
-    // (use the middle index so the choice is stable across renders).
-    function pickFromRegion(regionId: number): ObjectPlacement | null {
+    // Pick a deterministic but varied candidate from each region's wall-adjacent cells
+    // Uses seed-based selection to ensure consistency while avoiding conflicts
+    function pickFromRegion(regionId: number, existingObjects: ObjectPlacement[] = []): ObjectPlacement | null {
       const arr = candidatesByRegion.get(regionId);
       if (!arr || arr.length === 0) return null;
-      const picked = arr[Math.floor(arr.length / 2)];
-      return { type: "chest", x: picked.x, z: picked.z };
+
+      // Create a simple hash from regionId and existing objects for deterministic randomness
+      const seedBase = regionId + existingObjects.length * 1000;
+      const index = (seedBase * 9301 + 49297) % 233280;
+      const normalizedIndex = Math.floor((index / 233280) * arr.length);
+
+      // Try to find a position that doesn't conflict with existing objects
+      for (let i = 0; i < arr.length; i++) {
+        const tryIndex = (normalizedIndex + i) % arr.length;
+        const candidate = arr[tryIndex];
+
+        const hasConflict = existingObjects.some(obj =>
+          obj.x === candidate.x && obj.z === candidate.z
+        );
+
+        if (!hasConflict) {
+          return { type: "chest", x: candidate.x, z: candidate.z };
+        }
+      }
+
+      return null; // No valid position found
     }
 
     // End room is guaranteed a chest.
-    const endChest = pickFromRegion(dungeon.endRoomId);
+    const endChest = pickFromRegion(dungeon.endRoomId, result.objects);
     if (endChest) result.objects.push(endChest);
+
+    // Start room is also guaranteed a chest.
+    const startChest = pickFromRegion(dungeon.startRoomId, result.objects);
+    if (startChest) result.objects.push(startChest);
+
+    // Add a second chest in the start room
+    const startChest2 = pickFromRegion(dungeon.startRoomId, result.objects);
+    if (startChest2) result.objects.push(startChest2);
 
     // Add chests in up to 3 other rooms (skip start and end rooms).
     let count = 0;
     for (const [id] of dungeon.rooms) {
       if (count >= 3) break;
       if (id === dungeon.endRoomId || id === dungeon.startRoomId) continue;
-      const chest = pickFromRegion(id);
+      const chest = pickFromRegion(id, result.objects);
       if (chest) {
         result.objects.push(chest);
         count++;
@@ -1052,6 +1093,289 @@ export default function Objects() {
     );
   }, [solidData, camera, maskOverlay, overlayData, visibleObjects, adventurers]);
 
+  // Chest record system - tracks individual chest states
+  const [chestRecords, setChestRecords] = useState<Record<string, InventorySlot[]>>({});
+
+  const possibleChestItems = [
+      ItemName.GoldCoins,
+      ItemName.HealthPotion,
+      ItemName.ManaPotion,
+      ItemName.Torch,
+      ItemName.Scroll,
+    ];
+
+  // Generate chest content when chest is first opened
+  const generateChestContent = (chestX: number, chestZ: number): InventorySlot[] => {
+    const chestId = `${chestX},${chestZ}`;
+
+    // If chest already has a record, return existing content
+    if (chestRecords[chestId]) {
+      return chestRecords[chestId];
+    }
+
+    // Generate new content - create slots like player inventory
+    const chestSlots: InventorySlot[] = [];
+    let slotIndex = 0;
+
+    possibleChestItems
+      .filter(() => Math.random() > 0.3) // 70% chance for each item type
+      .forEach(itemName => {
+        const quantity = ItemTypeRegistry[itemName].initializeQuantity?.() || 1;
+        chestSlots.push({
+          index: slotIndex++,
+          item: { name: itemName },
+          quantity
+        });
+      });
+
+    // Store in chest records
+    setChestRecords(prev => ({
+      ...prev,
+      [chestId]: chestSlots
+    }));
+
+    return chestSlots;
+  };
+
+  const initRandomQuantity = (min: number, max: number) => {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  };
+
+// Global item type registry - game data centralized here
+const ItemTypeRegistry: Record<ItemName, ItemType> = {
+  [ItemName.GoldCoins]: { 
+    maxStack: 999,
+    initializeQuantity: () => initRandomQuantity(10, 50)
+  },
+  [ItemName.HealthPotion]: {
+    maxStack: 20,
+    onUse: (item, quantity) => {
+      console.log(`Healed ${quantity * 20} HP with ${item.name}`);
+    },
+    initializeQuantity: () => initRandomQuantity(1, 3)
+  },
+  [ItemName.ManaPotion]: {
+    maxStack: 20,
+    onUse: (item, quantity) => {
+      console.log(`Restored ${quantity * 15} MP with ${item.name}`);
+    },
+    initializeQuantity: () => initRandomQuantity(1, 3)
+  },
+  [ItemName.Torch]: {
+    maxStack: 10,
+    onUse: (item, quantity) => {
+      console.log(`Lit ${item.name} for ${quantity * 60} seconds`);
+    },
+    initializeQuantity: () => initRandomQuantity(1, 4)
+  },
+  [ItemName.Scroll]: {
+    maxStack: 5,
+    onUse: (item, quantity) => {
+      console.log(`Read ${item.name} (level ${item.state?.level || 1})`);
+    },
+    initializeQuantity: () => initRandomQuantity(1, 2)
+  },
+  [ItemName.Key]: { 
+    maxStack: 1,
+    initializeQuantity: () => 1
+  },
+  [ItemName.Rations]: {
+    maxStack: 50,
+    onUse: (item, quantity) => {
+      console.log(`Ate ${quantity}x ${item.name}`);
+    },
+    initializeQuantity: () => initRandomQuantity(2, 5)
+  }
+};
+
+const [sampleInventory, setSampleInventory] = useState<InventorySlot[]>([
+  { index: 0, item: { name: ItemName.Torch }, quantity: 3 },
+  { index: 1, item: { name: ItemName.HealthPotion }, quantity: 2 },
+  { index: 2, item: { name: ItemName.Key }, quantity: 1 },
+  { index: 3, item: { name: ItemName.GoldCoins }, quantity: 50 },
+  { index: 4, item: { name: ItemName.Rations }, quantity: 5 },
+  { index: 5, item: null, quantity: 0 }
+]);
+
+const [showChestInventory, setShowChestInventory] = useState(false);
+const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
+
+  // Handle using items from inventory
+  const handleUseItem = (slot: InventorySlot) => {
+    if (!slot.item) return;
+    
+    setSampleInventory(prev => {
+      const existingSlot = prev.find(invSlot => invSlot.index === slot.index);
+      if (existingSlot && existingSlot.quantity >= 1) {
+        const updatedInventory = prev.map(invSlot =>
+          invSlot.index === slot.index
+            ? { ...invSlot, quantity: invSlot.quantity - 1 }
+            : invSlot
+        ).map(invSlot => 
+          invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot
+        );
+
+        console.log(`Used 1x ${slot.item!.name}`);
+        return updatedInventory;
+      }
+      return prev;
+    });
+  };
+
+  // Handle removing items from inventory
+  const handleRemoveItem = (slot: InventorySlot) => {
+    if (!slot.item) return;
+    
+    setSampleInventory(prev => {
+      const existingSlot = prev.find(invSlot => invSlot.index === slot.index);
+      if (existingSlot && existingSlot.quantity >= 1) {
+        const updatedInventory = prev.map(invSlot =>
+          invSlot.index === slot.index
+            ? { ...invSlot, quantity: invSlot.quantity - 1 }
+            : invSlot
+        ).map(invSlot => 
+          invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot
+        );
+
+        console.log(`Removed 1x ${slot.item!.name} from inventory`);
+        return updatedInventory;
+      }
+      return prev;
+    });
+  };
+
+  const handleTakeItem = (itemName: ItemName, requestedQuantity: number) => {
+    // Use the global ItemTypeRegistry for consistent item definitions
+    const itemType = ItemTypeRegistry[itemName];
+
+    // Add item to player inventory
+    setSampleInventory(prev => {
+      // Find existing slot with same item type
+      const existingSlot = prev.find(slot => slot.item?.name === itemName);
+
+      let transferAmount = 0;
+      let targetSlotIndex = -1;
+
+      if (existingSlot) {
+        // Stack with existing item
+        const currentStack = existingSlot.quantity;
+        const canAdd = Math.min(requestedQuantity, itemType.maxStack - currentStack);
+
+        if (canAdd > 0) {
+          transferAmount = canAdd;
+          targetSlotIndex = existingSlot.index;
+        }
+      } else {
+        // Find first empty slot
+        const emptySlot = prev.find(slot => slot.item === null);
+        if (emptySlot) {
+          targetSlotIndex = emptySlot.index;
+          transferAmount = Math.min(requestedQuantity, itemType.maxStack);
+        }
+      }
+
+      // If no space, don't transfer anything
+      if (transferAmount === 0 || targetSlotIndex === -1) {
+        console.log(`Cannot take ${requestedQuantity}x ${itemName} - no available space`);
+        return prev;
+      }
+
+      // Update the target slot
+      const updatedInventory = prev.map(slot =>
+        slot.index === targetSlotIndex
+          ? { 
+              ...slot, 
+              item: { name: itemName }, 
+              quantity: existingSlot ? slot.quantity + transferAmount : transferAmount 
+            }
+          : slot
+      );
+
+      // Update chest records and remove item from chest
+      setCurrentChestItems(chestPrev => {
+        // Find the slot in chest and reduce its quantity
+        const chestSlot = chestPrev.find(slot => slot.item?.name === itemName);
+        if (chestSlot) {
+          const remainingQuantity = chestSlot.quantity - transferAmount;
+          
+          const updatedChest = chestPrev.map(slot =>
+            slot.item?.name === itemName
+              ? { ...slot, quantity: remainingQuantity }
+              : slot
+          ).filter(slot => slot.quantity > 0);
+
+          // Update chest records with new content
+          const playerTileX = Math.floor(camera.x);
+          const playerTileZ = Math.floor(camera.z);
+          const chestId = `${playerTileX},${playerTileZ}`;
+
+          setChestRecords(prev => ({
+            ...prev,
+            [chestId]: updatedChest
+          }));
+
+          return updatedChest;
+        }
+        return chestPrev;
+      });
+
+      console.log(`Taking ${transferAmount}x ${itemName} from chest`);
+      return updatedInventory;
+    });
+  };
+
+  // Keyboard input for inventory toggle and chest interaction
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "KeyI") {
+        e.preventDefault();
+        setShowInventory(prev => !prev);
+      } else if (e.code === "KeyE") {
+        e.preventDefault();
+
+        // If chest inventory is already open, close it
+        if (showChestInventory) {
+          setShowChestInventory(false);
+          return;
+        }
+
+        // Check if player is on same tile as a chest
+        const playerTileX = Math.floor(camera.x);
+        const playerTileZ = Math.floor(camera.z);
+
+        const chest = content.objects.find(obj =>
+          obj.type === 'chest' && obj.x === playerTileX && obj.z === playerTileZ
+        );
+
+        if (chest) {
+          // Generate or get chest content from records
+          const items = generateChestContent(chest.x, chest.z);
+          setCurrentChestItems(items);
+          setShowChestInventory(true);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [camera, content.objects, showChestInventory, chestRecords]);
+
+  // Check if player is still on chest tile and close inventory if moved away
+  useEffect(() => {
+    if (!showChestInventory) return;
+
+    const playerTileX = Math.floor(camera.x);
+    const playerTileZ = Math.floor(camera.z);
+
+    const chest = content.objects.find(obj =>
+      obj.type === 'chest' && obj.x === playerTileX && obj.z === playerTileZ
+    );
+
+    if (!chest) {
+      setShowChestInventory(false);
+    }
+  }, [camera, content.objects, showChestInventory]);
+
   return (
     <div className={styles.container}>
       {/* ── Header ── */}
@@ -1094,43 +1418,94 @@ export default function Objects() {
 
         {/* Minimap */}
         <div className={styles.miniMapView}>
-          <label className={styles.minimapLabel}>
-            Ceiling height: {ceilingHeight.toFixed(1)}
-            <input
-              type="range"
-              min={0.5}
-              max={4}
-              step={0.1}
-              value={ceilingHeight}
-              onChange={(e) => setCeilingHeight(parseFloat(e.target.value))}
-              className={styles.minimapSlider}
+          {/* Fixed Controls Area */}
+          <div className={styles.fixedControls}>
+            {/* Minimap Controls */}
+            <label className={styles.minimapLabel}>
+              Ceiling height: {ceilingHeight.toFixed(1)}
+              <input
+                type="range"
+                min={0.5}
+                max={4}
+                step={0.1}
+                value={ceilingHeight}
+                onChange={(e) => setCeilingHeight(parseFloat(e.target.value))}
+                className={styles.minimapSlider}
+              />
+            </label>
+            <label className={styles.minimapLabel}>
+              <input
+                type="checkbox"
+                checked={debugEdges}
+                onChange={(e) => setDebugEdges(e.target.checked)}
+              />{" "}
+              Debug edges
+            </label>
+            <select
+              className={styles.minimapSelect}
+              value={maskOverlay}
+              onChange={(e) => setMaskOverlay(e.target.value as MaskOverlay)}
+            >
+              {MASK_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <canvas
+              ref={minimapRef}
+              width={200}
+              height={200}
+              className={styles.minimapCanvas}
             />
-          </label>
-          <label className={styles.minimapLabel}>
-            <input
-              type="checkbox"
-              checked={debugEdges}
-              onChange={(e) => setDebugEdges(e.target.checked)}
-            />{" "}
-            Debug edges
-          </label>
-          <select
-            className={styles.minimapSelect}
-            value={maskOverlay}
-            onChange={(e) => setMaskOverlay(e.target.value as MaskOverlay)}
-          >
-            {MASK_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <canvas
-            ref={minimapRef}
-            width={200}
-            height={200}
-            className={styles.minimapCanvas}
-          />
+          </div>
+
+          {/* Scrollable Inventory Area */}
+          <div className={styles.scrollableInventoryArea}>
+            {/* ── Inventory Panel ── */}
+            <Inventory
+              inventory={sampleInventory}
+              inventoryName={"Inventory"}
+              itemTypeRegistry={ItemTypeRegistry}
+              isOpen={showInventory}
+              onToggle={() => setShowInventory(prev => !prev)}
+              onUseItem={handleUseItem}
+              onRemoveItem={handleRemoveItem}
+            />
+
+            {/* ── Chest Inventory Panel ── */}
+            {showChestInventory && (
+              <div className={styles.chestPanel}>
+                <div className={styles.chestPanelHeader}>
+                  <h3>Chest</h3>
+                </div>
+                <div className={styles.chestPanelContent}>
+                  {currentChestItems.length === 0 ? (
+                    <p className={styles.chestPanelEmpty}>This chest is empty.</p>
+                  ) : (
+                    <div className={styles.chestInventoryGrid}>
+                      {currentChestItems.map((slot, index) => (
+                        <div key={index} className={styles.chestInventoryItem}>
+                          <div className={styles.chestItemInfo}>
+                            <span className={styles.itemName}>{slot.item?.name}</span>
+                            <span className={styles.itemQuantity}>×{slot.quantity}</span>
+                          </div>
+                          <div className={styles.chestItemActions}>
+                            <button
+                              className={styles.chestTakeButton}
+                              onClick={() => slot.item && handleTakeItem(slot.item.name as ItemName, slot.quantity)}
+                            >
+                              Take
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1141,7 +1516,7 @@ export default function Objects() {
           {cardinalDir(camera.yaw)}
         </span>
         <span className={styles.controls}>
-          W/S — move &nbsp;|&nbsp; A/D — turn 90°
+          W/S — move &nbsp;|&nbsp; A/D — turn 90° &nbsp;|&nbsp; I — inventory &nbsp;|&nbsp; E — open chest
         </span>
       </div>
     </div>
