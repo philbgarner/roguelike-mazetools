@@ -123,13 +123,13 @@ ${TORCH_HASH_GLSL}
 ${TORCH_FNS_GLSL}
 
 void main() {
-  gl_FragColor = texture2D(uMap, vUv);
-  //vec4 color = texture2D(uMap, vUv);
-  // if (color.a < 0.01) discard;
+//  gl_FragColor = texture2D(uMap, vUv);
+  vec4 color = texture2D(uMap, vUv);
+  if (color.a < 0.01) discard;
 
-  // float band = torchBand(0.03);
-  // vec3 lit = applyTorchLighting(color.rgb, band);
-  // gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
+  float band = torchBand(0.03);
+  vec3 lit = applyTorchLighting(color.rgb, band);
+  gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
 }
 `;
 
