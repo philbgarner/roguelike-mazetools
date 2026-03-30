@@ -34,6 +34,12 @@ import * as THREE from "three";
 import { InstancedTileMesh, type TileInstance } from "./InstancedTileMesh";
 import type { TileAtlas } from "./tileAtlas";
 import type { ObjectPlacement, MobilePlacement } from "../content";
+import {
+  TORCH_UNIFORMS_GLSL,
+  TORCH_HASH_GLSL,
+  TORCH_FNS_GLSL,
+  makeTorchUniforms,
+} from "./torchLighting";
 
 // ---------------------------------------------------------------------------
 // Speech bubble type (exported so App can build the array)
@@ -203,6 +209,8 @@ function SceneObjects({
   fogColor,
   occupiedKeys,
   tintColors,
+  torchColor,
+  torchIntensity,
 }: {
   registry: ObjectRegistry;
   placements: ObjectPlacement[];
@@ -212,14 +220,11 @@ function SceneObjects({
   fogColor?: THREE.Color;
   occupiedKeys?: Set<string>;
   tintColors?: THREE.Color[];
+  torchColor?: THREE.Color;
+  torchIntensity?: number;
 }) {
-  // Per-placement current animated yaw (for doors)
-  const doorYawsRef = useRef<Float32Array | null>(null);
-
   const objects = useMemo(() => {
-    const yaws = new Float32Array(placements.length);
-    doorYawsRef.current = yaws;
-    return placements.map((p, i) => {
+    return placements.map((p) => {
       const factory = registry[p.type];
       if (!factory) return null;
       const obj = factory();
@@ -228,7 +233,6 @@ function SceneObjects({
       const wz = (p.z + 0.5 + (p.offsetZ ?? 0)) * tileSize;
       obj.position.set(wx, wy, wz);
       const baseYaw = p.yaw ?? 0;
-      yaws[i] = baseYaw;
       obj.rotation.set(0, baseYaw, 0);
       if (p.scale !== undefined) obj.scale.setScalar(p.scale);
       // Initialise fog uniforms on any ShaderMaterials in this object.
@@ -248,6 +252,7 @@ function SceneObjects({
           if (mat.uniforms.uTint1 && tintColors?.[1]) mat.uniforms.uTint1.value = tintColors[1];
           if (mat.uniforms.uTint2 && tintColors?.[2]) mat.uniforms.uTint2.value = tintColors[2];
           if (mat.uniforms.uTint3 && tintColors?.[3]) mat.uniforms.uTint3.value = tintColors[3];
+          if (mat.uniforms.uTorchColor && torchColor) mat.uniforms.uTorchColor.value = torchColor;
         }
       });
       return obj;
@@ -275,26 +280,44 @@ function SceneObjects({
     }
   }, [tintColors, objects]);
 
-  // Update uTime each frame on all ShaderMaterials; animate door rotations.
+  useEffect(() => {
+    if (!torchColor) return;
+    for (const obj of objects) {
+      if (!obj) continue;
+      obj.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+          if (mat instanceof THREE.ShaderMaterial && mat.uniforms.uTorchColor)
+            mat.uniforms.uTorchColor.value = torchColor;
+        }
+      });
+    }
+  }, [torchColor, objects]);
+
+  useEffect(() => {
+    if (torchIntensity === undefined) return;
+    for (const obj of objects) {
+      if (!obj) continue;
+      obj.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+          if (mat instanceof THREE.ShaderMaterial && mat.uniforms.uTorchIntensity)
+            mat.uniforms.uTorchIntensity.value = torchIntensity;
+        }
+      });
+    }
+  }, [torchIntensity, objects]);
+
+  // Update uTime each frame on all ShaderMaterials.
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
-    const yaws = doorYawsRef.current;
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
       if (!obj) continue;
-
-      // Animate door open/close based on occupancy
-      if (yaws && placements[i].type === "door") {
-        const p = placements[i];
-        const isOccupied = occupiedKeys?.has(`${p.x}_${p.z}`) ?? false;
-        const baseYaw = p.yaw ?? 0;
-        const targetYaw = isOccupied ? baseYaw + Math.PI / 2 : baseYaw;
-        // Lerp toward target (shortest path)
-        let delta = targetYaw - yaws[i];
-        delta = ((delta + Math.PI) % (2 * Math.PI)) - Math.PI;
-        yaws[i] += delta * 0.15;
-        obj.rotation.y = yaws[i];
-      }
 
       obj.traverse((child) => {
         const mesh = child as THREE.Mesh;
@@ -327,16 +350,19 @@ function SceneObjects({
 const MOBILE_VERT = /* glsl */ `
 attribute float aTileId;
 attribute float aTintRed;
-varying vec2 vUv;
+attribute vec4  aUvRect;   // x, y, w, h in normalized texture space
+varying vec2  vUv;
 varying float vTileId;
 varying float vFogDist;
-varying vec2 vWorldPos;
+varying vec2  vWorldPos;
 varying float vTintRed;
+varying vec4  vUvRect;
 
 void main() {
   vUv = uv;
   vTileId = aTileId;
   vTintRed = aTintRed;
+  vUvRect = aUvRect;
   vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
   vWorldPos = worldPos.xz;
   vec4 eyePos = viewMatrix * worldPos;
@@ -350,62 +376,41 @@ uniform sampler2D uAtlas;
 uniform float uColumns;
 uniform float uRows;
 uniform vec3  uFogColor;
-uniform float uFogNear;
-uniform float uFogFar;
-uniform float uTime;
-uniform vec3  uTint0;
-uniform vec3  uTint1;
-uniform vec3  uTint2;
-uniform vec3  uTint3;
+${TORCH_UNIFORMS_GLSL}
 varying vec2  vUv;
 varying float vTileId;
 varying float vFogDist;
 varying vec2  vWorldPos;
 varying float vTintRed;
+varying vec4  vUvRect;    // x, y, w, h in normalized texture space
 
-float hash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
+${TORCH_HASH_GLSL}
+${TORCH_FNS_GLSL}
 
 void main() {
-  float col = mod(vTileId, uColumns);
-  float row = floor(vTileId / uColumns);
-  vec2 uvMin = vec2(col / uColumns, 1.0 - (row + 1.0) / uRows);
-  vec2 uvSize = vec2(1.0 / uColumns, 1.0 / uRows);
+  // Use explicit UV rect when provided (w > 0), otherwise derive from tileId.
+  vec2 uvMin, uvSize;
+  if (vUvRect.z > 0.0) {
+    uvMin  = vUvRect.xy;
+    uvSize = vUvRect.zw;
+  } else {
+    float col = mod(vTileId, uColumns);
+    float row = floor(vTileId / uColumns);
+    uvMin  = vec2(col / uColumns, 1.0 - (row + 1.0) / uRows);
+    uvSize = vec2(1.0 / uColumns, 1.0 / uRows);
+  }
   vec2 atlasUv = uvMin + vUv * uvSize;
   vec4 color = texture2D(uAtlas, atlasUv);
   if (color.a < 0.5) discard;
 
-  float raw = sin(uTime * 7.0)  * 0.45
-            + sin(uTime * 13.7) * 0.35
-            + sin(uTime * 3.1)  * 0.20;
-  float flicker = (floor(raw * 1.5 + 0.5)) / 6.0;
+  float band = torchBand(0.03);
+  vec3 lit = applyTorchLighting(color.rgb, band);
 
-  float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
-  float flickeredDist = clamp(dist + flicker * 0.03, 0.0, 1.0);
-  float curved = pow(flickeredDist, 0.75);
-  float band = floor(curved * 5.0);
-
-  float timeSlot = floor(uTime * 1.5);
-  vec2 cell = floor(vWorldPos * 0.5);
-  float spatialNoise = hash(cell + vec2(timeSlot * 7.3, timeSlot * 3.1));
-  float turb = (floor(spatialNoise * 3.0) / 3.0) * 0.18;
-
-  float brightness;
-  vec3  tint;
-  if (band < 1.0) {
-    brightness = 1.00 - turb; tint = uTint0;
-  } else if (band < 2.0) {
-    brightness = 0.55; tint = uTint1;
-  } else if (band < 3.0) {
-    brightness = 0.22; tint = uTint2;
-  } else if (band < 4.0) {
-    brightness = 0.10; tint = uTint3;
-  } else {
-    brightness = 0.00; tint = vec3(1.0);
-  }
-
-  vec3 lit = color.rgb * tint * brightness;
+  // Red damage flash — use pre-torch brightness as flash intensity proxy
+  float brightness = (band < 1.0) ? 1.00 :
+                     (band < 2.0) ? 0.55 :
+                     (band < 3.0) ? 0.22 :
+                     (band < 4.0) ? 0.10 : 0.00;
   lit = mix(lit, vec3(brightness, 0.0, 0.0), vTintRed * 0.85);
   gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
 }`;
@@ -427,6 +432,8 @@ function SceneMobiles({
   fogColor,
   flash,
   tintColors,
+  torchColor,
+  torchIntensity,
 }: {
   placements: MobilePlacement[];
   atlas: SpriteAtlas;
@@ -437,6 +444,8 @@ function SceneMobiles({
   fogColor?: THREE.Color;
   flash?: boolean[];
   tintColors?: THREE.Color[];
+  torchColor?: THREE.Color;
+  torchIntensity?: number;
 }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const tintRedRef = useRef<THREE.InstancedBufferAttribute | null>(null);
@@ -446,10 +455,19 @@ function SceneMobiles({
     const geo = new THREE.PlaneGeometry(1, 1);
 
     const tileIds = new Float32Array(count);
+    const uvRects = new Float32Array(count * 4);
     placements.forEach((p, i) => {
       tileIds[i] = p.tileId;
+      if (p.uvRect) {
+        uvRects[i * 4]     = p.uvRect[0];
+        uvRects[i * 4 + 1] = p.uvRect[1];
+        uvRects[i * 4 + 2] = p.uvRect[2];
+        uvRects[i * 4 + 3] = p.uvRect[3];
+      }
+      // When uvRect is absent the values stay 0; the shader falls back to tileId.
     });
     geo.setAttribute("aTileId", new THREE.InstancedBufferAttribute(tileIds, 1));
+    geo.setAttribute("aUvRect", new THREE.InstancedBufferAttribute(uvRects, 4));
 
     const tintRed = new Float32Array(count);
     const tintRedAttr = new THREE.InstancedBufferAttribute(tintRed, 1);
@@ -465,10 +483,7 @@ function SceneMobiles({
         uFogNear: { value: fogNear },
         uFogFar: { value: fogFar },
         uTime: { value: 0 },
-        uTint0: { value: tintColors?.[0] ?? new THREE.Color(1.00, 0.90, 0.68) },
-        uTint1: { value: tintColors?.[1] ?? new THREE.Color(1.00, 0.94, 0.76) },
-        uTint2: { value: tintColors?.[2] ?? new THREE.Color(0.60, 0.55, 0.80) },
-        uTint3: { value: tintColors?.[3] ?? new THREE.Color(0.30, 0.25, 0.60) },
+        ...makeTorchUniforms(tintColors),
       },
       vertexShader: MOBILE_VERT,
       fragmentShader: MOBILE_FRAG,
@@ -486,6 +501,14 @@ function SceneMobiles({
     if (tintColors?.[2]) mat.uniforms.uTint2.value = tintColors[2];
     if (tintColors?.[3]) mat.uniforms.uTint3.value = tintColors[3];
   }, [tintColors, mat]);
+
+  useEffect(() => {
+    if (torchColor) mat.uniforms.uTorchColor.value = torchColor;
+  }, [torchColor, mat]);
+
+  useEffect(() => {
+    if (torchIntensity !== undefined) mat.uniforms.uTorchIntensity.value = torchIntensity;
+  }, [torchIntensity, mat]);
 
   useFrame(({ camera, clock }) => {
     if (!meshRef.current || count === 0) return;
@@ -507,12 +530,14 @@ function SceneMobiles({
 
     const camPos = camera.position;
 
-    _mbScale.set(tileSize, ceilingHeight, 1);
     placements.forEach((p, i) => {
+      const [geomW, geomH] = p.geometrySize ?? [1, 1];
       const wx = (p.x + 0.5) * tileSize;
       const wz = (p.z + 0.5) * tileSize;
-      const wy = ceilingHeight / 2;
+      // Centre the billboard vertically within its cell height.
+      const wy = (geomH * tileSize) / 2;
       _mbPos.set(wx, wy, wz);
+      _mbScale.set(geomW * tileSize, geomH * tileSize, 1);
       const angle = Math.atan2(camPos.x - wx, camPos.z - wz);
       _mbEuler.set(0, angle, 0);
       _mbQuat.setFromEuler(_mbEuler);
@@ -583,6 +608,8 @@ function buildFaceInstances(
   wallData?: Uint8Array,
   floorTileMap?: number[],
   wallTileMap?: number[],
+  ceilingData?: Uint8Array,
+  ceilingTileMap?: number[],
 ): {
   floors: TileInstance[];
   ceilings: TileInstance[];
@@ -630,6 +657,11 @@ function buildFaceInstances(
         cellX: cx,
         cellZ: cz,
       });
+      const cellCeilingType = ceilingData ? ceilingData[cz * width + cx] : 0;
+      const resolvedCeilingTile =
+        ceilingData && ceilingTileMap && cellCeilingType > 0
+          ? (ceilingTileMap[cellCeilingType] ?? ceilTile)
+          : ceilTile;
       ceilings.push({
         matrix: faceMatrix(
           wx,
@@ -641,7 +673,7 @@ function buildFaceInstances(
           tileSize,
           tileSize,
         ),
-        tileId: ceilTile,
+        tileId: resolvedCeilingTile,
       });
 
       // Wall faces: emit only where neighbour is solid.
@@ -763,6 +795,8 @@ type SceneProps = {
   /** Billboard sprite mobiles. */
   mobiles?: MobilePlacement[];
   spriteAtlas?: SpriteAtlas;
+  /** Separate atlas used for mobiles whose type === "adventurer". Falls back to spriteAtlas. */
+  adventurerSpriteAtlas?: SpriteAtlas;
   /** Per-mobile flash state (parallel array to mobiles). */
   mobileFlash?: boolean[];
   /** Per-cell highlight mask: 0=none, 1=targeting preview, 2=fire, 3=lightning. */
@@ -773,6 +807,10 @@ type SceneProps = {
   speechBubbles?: SpeechBubbleData[];
   /** Four torchlight tint band colours as CSS hex strings (bands 0–3, near→far). */
   tintColors?: string[];
+  /** Additive torch colour as a CSS hex string. */
+  torchColor?: string;
+  /** Intensity multiplier for the additive torch (0–2, default 1). */
+  torchIntensity?: number;
   /** Per-cell floor type IDs (from atlas floorTypes). Used with floorTileMap. */
   floorData?: Uint8Array;
   /** Per-cell wall type IDs (from atlas wallTypes). Used with wallTileMap. */
@@ -781,6 +819,10 @@ type SceneProps = {
   floorTileMap?: number[];
   /** Maps atlas wallType id → row-major tile ID. Index 0 = fallback to wallTile. */
   wallTileMap?: number[];
+  /** Per-cell ceiling type IDs (from atlas ceilingTypes). Used with ceilingTileMap. */
+  ceilingData?: Uint8Array;
+  /** Maps atlas ceilingType id → row-major tile ID. Index 0 = fallback to ceilingTile. */
+  ceilingTileMap?: number[];
 };
 
 function DungeonScene({
@@ -808,15 +850,20 @@ function DungeonScene({
   objectOccupiedKeys,
   mobiles,
   spriteAtlas,
+  adventurerSpriteAtlas,
   mobileFlash,
   highlightMask,
   passageMask,
   speechBubbles,
   tintColors,
+  torchColor,
+  torchIntensity,
   floorData,
   wallData,
   floorTileMap,
   wallTileMap,
+  ceilingData,
+  ceilingTileMap,
 }: SceneProps) {
   const fogColorObj = useMemo(
     () => (fogColor ? new THREE.Color(fogColor) : undefined),
@@ -825,6 +872,10 @@ function DungeonScene({
   const tintColorObjs = useMemo(
     () => tintColors?.map((c) => new THREE.Color(c)),
     [tintColors],
+  );
+  const torchColorObj = useMemo(
+    () => (torchColor ? new THREE.Color(torchColor) : undefined),
+    [torchColor],
   );
   const { camera } = useThree();
 
@@ -850,6 +901,8 @@ function DungeonScene({
         wallData,
         floorTileMap,
         wallTileMap,
+        ceilingData,
+        ceilingTileMap,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -868,6 +921,8 @@ function DungeonScene({
       wallData,
       floorTileMap,
       wallTileMap,
+      ceilingData,
+      ceilingTileMap,
     ],
   );
 
@@ -912,6 +967,8 @@ function DungeonScene({
         highlightData={highlightMask}
         gridWidth={width}
         tintColors={tintColorObjs}
+        torchColor={torchColorObj}
+        torchIntensity={torchIntensity}
       />
       <InstancedTileMesh
         instances={ceilings}
@@ -922,6 +979,8 @@ function DungeonScene({
         fogColor={fogColorObj}
         debugEdges={debugEdges}
         tintColors={tintColorObjs}
+        torchColor={torchColorObj}
+        torchIntensity={torchIntensity}
       />
       <InstancedTileMesh
         instances={walls}
@@ -934,6 +993,8 @@ function DungeonScene({
         passageData={passageMask}
         gridWidth={width}
         tintColors={tintColorObjs}
+        torchColor={torchColorObj}
+        torchIntensity={torchIntensity}
       />
 
       {objects && objects.length > 0 && objectRegistry && (
@@ -946,22 +1007,49 @@ function DungeonScene({
           fogColor={fogColorObj}
           occupiedKeys={objectOccupiedKeys}
           tintColors={tintColorObjs}
+          torchColor={torchColorObj}
+          torchIntensity={torchIntensity}
         />
       )}
 
-      {mobiles && mobiles.length > 0 && spriteAtlas && (
-        <SceneMobiles
-          placements={mobiles}
-          atlas={spriteAtlas}
-          tileSize={tileSize}
-          ceilingHeight={ceilingHeight}
-          fogNear={fogNear}
-          fogFar={fogFar}
-          fogColor={fogColorObj}
-          flash={mobileFlash}
-          tintColors={tintColorObjs}
-        />
-      )}
+      {spriteAtlas && (() => {
+        const advAtlas = adventurerSpriteAtlas ?? spriteAtlas;
+        const nonAdvs = mobiles?.filter((p) => p.type !== "adventurer") ?? [];
+        const advs    = mobiles?.filter((p) => p.type === "adventurer") ?? [];
+        return (
+          <>
+            {nonAdvs.length > 0 && (
+              <SceneMobiles
+                placements={nonAdvs}
+                atlas={spriteAtlas}
+                tileSize={tileSize}
+                ceilingHeight={ceilingHeight}
+                fogNear={fogNear}
+                fogFar={fogFar}
+                fogColor={fogColorObj}
+                flash={mobileFlash}
+                tintColors={tintColorObjs}
+                torchColor={torchColorObj}
+                torchIntensity={torchIntensity}
+              />
+            )}
+            {advs.length > 0 && (
+              <SceneMobiles
+                placements={advs}
+                atlas={advAtlas}
+                tileSize={tileSize}
+                ceilingHeight={ceilingHeight}
+                fogNear={fogNear}
+                fogFar={fogFar}
+                fogColor={fogColorObj}
+                tintColors={tintColorObjs}
+                torchColor={torchColorObj}
+                torchIntensity={torchIntensity}
+              />
+            )}
+          </>
+        );
+      })()}
 
       {speechBubbles &&
         speechBubbles.map((b) => (

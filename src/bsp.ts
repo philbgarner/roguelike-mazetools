@@ -40,6 +40,16 @@ export type DungeonOutputs = {
      * IDs correspond to the `id` field in atlas.json `wallOverlays`. All zeros by default.
      */
     wallOverlays: THREE.DataTexture;
+    /**
+     * Per-cell ceiling type index (R8). Value matches the `id` field in atlas.json `ceilingTypes`.
+     * 0 = no ceiling type assigned. Floor cells default to 1 (Cobblestone).
+     */
+    ceilingType: THREE.DataTexture;
+    /**
+     * Per-cell overlay bit-flags for ceiling cells (RGBA). Same encoding as `overlays`.
+     * IDs correspond to the `id` field in atlas.json `ceilingOverlays`. All zeros by default.
+     */
+    ceilingOverlays: THREE.DataTexture;
   };
 };
 
@@ -374,7 +384,6 @@ function createRooms(
     >
   >,
   rng: RNG,
-  numFloorTypes: number,
 ) {
   let nextRoomId = 1;
   forEachLeaf(root, (leaf) => {
@@ -414,11 +423,10 @@ function createRooms(
     carveRect(solid, W, H, room, opts.keepOuterWalls);
     writeRegionRect(regionId, W, H, room, leaf.roomId);
 
-    const roomFloorType = rng.int(1, numFloorTypes);
     for (let y = room.y; y <= room.y + room.h - 1; y++) {
       for (let x = room.x; x <= room.x + room.w - 1; x++) {
         if (!inBounds(x, y, W, H)) continue;
-        floorType[idx(x, y, W)] = roomFloorType;
+        floorType[idx(x, y, W)] = 1; // Cobblestone default; override via generateThemedRooms
       }
     }
   });
@@ -836,6 +844,8 @@ export function generateBspDungeon(
   // 4 bytes per cell (RGBA); all zeros = no overlays active
   const overlays = new Uint8Array(4 * W * H);
   const wallOverlays = new Uint8Array(4 * W * H);
+  const ceilingType = new Uint8Array(W * H);
+  const ceilingOverlays = new Uint8Array(4 * W * H);
 
   const { node: root } = buildBsp(
     { x: 0, y: 0, w: W, h: H },
@@ -848,8 +858,6 @@ export function generateBspDungeon(
     },
     rng,
   );
-
-  const NUM_FLOOR_TYPES = 3; // Cobblestone=1, Flagstone=2, Concrete=3
 
   createRooms(
     root,
@@ -866,7 +874,6 @@ export function generateBspDungeon(
       keepOuterWalls: opts.keepOuterWalls,
     },
     rng,
-    NUM_FLOOR_TYPES,
   );
 
   const adjacency = new Map<number, Set<number>>();
@@ -952,6 +959,11 @@ export function generateBspDungeon(
     }
   }
 
+  // Ceiling type: default Cobblestone (1) for all floor cells; override via generateThemedRooms
+  for (let i = 0; i < W * H; i++) {
+    if (solid[i] === 0) ceilingType[i] = 1;
+  }
+
   // Temperature mask: 127 (middle) for all floor cells, 0 for walls
   const temperature = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) {
@@ -985,6 +997,8 @@ export function generateBspDungeon(
       overlays: maskToDataTextureRGBA(overlays, W, H, "bsp_dungeon_overlays"),
       wallType: maskToDataTextureR8(wallType, W, H, "bsp_dungeon_wall_type"),
       wallOverlays: maskToDataTextureRGBA(wallOverlays, W, H, "bsp_dungeon_wall_overlays"),
+      ceilingType: maskToDataTextureR8(ceilingType, W, H, "bsp_dungeon_ceiling_type"),
+      ceilingOverlays: maskToDataTextureRGBA(ceilingOverlays, W, H, "bsp_dungeon_ceiling_overlays"),
     },
   };
 }

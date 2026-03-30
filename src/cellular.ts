@@ -336,6 +336,12 @@ export function generateCellularDungeon(options: CellularOptions): CellularDunge
   const wallType = new Uint8Array(W * H);
   const overlays = new Uint8Array(4 * W * H);
   const wallOverlays = new Uint8Array(4 * W * H);
+  const ceilingType = new Uint8Array(W * H);
+  const ceilingOverlays = new Uint8Array(4 * W * H);
+
+  for (let i = 0; i < W * H; i++) {
+    if (solid[i] === 0) ceilingType[i] = 1; // Cobblestone default
+  }
 
   return {
     width: W,
@@ -352,6 +358,8 @@ export function generateCellularDungeon(options: CellularOptions): CellularDunge
       overlays:        maskToDataTextureRGBA(overlays,      W, H, "cellular_overlays"),
       wallType:        maskToDataTextureR8(wallType,        W, H, "cellular_wall_type"),
       wallOverlays:    maskToDataTextureRGBA(wallOverlays,  W, H, "cellular_wall_overlays"),
+      ceilingType:     maskToDataTextureR8(ceilingType,     W, H, "cellular_ceiling_type"),
+      ceilingOverlays: maskToDataTextureRGBA(ceilingOverlays, W, H, "cellular_ceiling_overlays"),
     },
   };
 }

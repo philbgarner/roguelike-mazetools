@@ -151,10 +151,12 @@ export function deserializeDungeon(data: SerializedDungeon): BspDungeonOutputs {
       distanceToWall: makeDataTexture(base64ToUint8(data.distanceToWall), W, H, "bsp_dungeon_distance_to_wall"),
       hazards:        makeDataTexture(base64ToUint8(data.hazards),        W, H, "bsp_dungeon_hazards"),
       temperature:    makeDataTexture(temperature,                        W, H, "bsp_dungeon_temperature"),
-      floorType:      makeDataTexture(new Uint8Array(W * H),          W, H, "bsp_dungeon_floor_type"),
-      overlays:       makeDataTextureRGBA(new Uint8Array(4 * W * H),  W, H, "bsp_dungeon_overlays"),
-      wallType:       makeDataTexture(new Uint8Array(W * H),          W, H, "bsp_dungeon_wall_type"),
-      wallOverlays:   makeDataTextureRGBA(new Uint8Array(4 * W * H), W, H, "bsp_dungeon_wall_overlays"),
+      floorType:       makeDataTexture(new Uint8Array(W * H),           W, H, "bsp_dungeon_floor_type"),
+      overlays:        makeDataTextureRGBA(new Uint8Array(4 * W * H),  W, H, "bsp_dungeon_overlays"),
+      wallType:        makeDataTexture(new Uint8Array(W * H),           W, H, "bsp_dungeon_wall_type"),
+      wallOverlays:    makeDataTextureRGBA(new Uint8Array(4 * W * H),  W, H, "bsp_dungeon_wall_overlays"),
+      ceilingType:     makeDataTexture(new Uint8Array(W * H),           W, H, "bsp_dungeon_ceiling_type"),
+      ceilingOverlays: makeDataTextureRGBA(new Uint8Array(4 * W * H),  W, H, "bsp_dungeon_ceiling_overlays"),
     },
   };
 }

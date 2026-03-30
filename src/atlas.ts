@@ -35,8 +35,10 @@ export type AtlasData = {
   architecture: AtlasEntry[];
   floorTypes: AtlasTypedEntry[];
   wallTypes: AtlasTypedEntry[];
+  ceilingTypes: AtlasTypedEntry[];
   overlays: AtlasEntry[];
   wallOverlays: AtlasEntry[];
+  ceilingOverlays: AtlasEntry[];
   water: AtlasEntry[];
   sprites: AtlasSpriteEntry[];
   aoOverlays: AtlasEntry[];
@@ -76,8 +78,10 @@ export type AtlasIndex = {
   architecture: AtlasLookup<AtlasEntry>;
   floorTypes: AtlasLookup<AtlasTypedEntry>;
   wallTypes: AtlasLookup<AtlasTypedEntry>;
+  ceilingTypes: AtlasLookup<AtlasTypedEntry>;
   overlays: AtlasLookup<AtlasEntry>;
   wallOverlays: AtlasLookup<AtlasEntry>;
+  ceilingOverlays: AtlasLookup<AtlasEntry>;
   water: AtlasLookup<AtlasEntry>;
   sprites: AtlasLookup<AtlasSpriteEntry>;
   aoOverlays: AtlasLookup<AtlasEntry>;
@@ -97,8 +101,10 @@ export function buildAtlasIndex(data: AtlasData): AtlasIndex {
     architecture: makeLookup(data.architecture),
     floorTypes: makeLookup(data.floorTypes as (AtlasTypedEntry & { id: number; name: string })[]),
     wallTypes: makeLookup(data.wallTypes as (AtlasTypedEntry & { id: number; name: string })[]),
+    ceilingTypes: makeLookup(data.ceilingTypes as (AtlasTypedEntry & { id: number; name: string })[]),
     overlays: makeLookup(data.overlays),
     wallOverlays: makeLookup(data.wallOverlays),
+    ceilingOverlays: makeLookup(data.ceilingOverlays),
     water: makeLookup(data.water),
     sprites: makeLookup(data.sprites),
     aoOverlays: makeLookup(data.aoOverlays),

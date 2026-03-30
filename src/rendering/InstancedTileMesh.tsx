@@ -12,6 +12,12 @@ import { useRef, useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { TileAtlas } from "./tileAtlas";
+import {
+  TORCH_UNIFORMS_GLSL,
+  TORCH_HASH_GLSL,
+  TORCH_FNS_GLSL,
+  makeTorchUniforms,
+} from "./torchLighting";
 
 export type TileInstance = {
   matrix: THREE.Matrix4;
@@ -74,16 +80,10 @@ const fragmentShader = /* glsl */ `
 uniform sampler2D uAtlas;
 uniform vec2  uTileSize;      // (tileW/sheetW, tileH/sheetH)
 uniform vec3  uFogColor;
-uniform float uFogNear;
-uniform float uFogFar;
-uniform float uTime;
 uniform float uFlickerRadius; // fraction of fog range the radius breathes
 uniform vec2  uTexelSize;     // (1/sheetWidth, 1/sheetHeight)
 uniform float uDebugEdges;    // 1.0 = draw tile-edge debug border, 0.0 = off
-uniform vec3 uTint0;
-uniform vec3 uTint1;
-uniform vec3 uTint2;
-uniform vec3 uTint3;
+${TORCH_UNIFORMS_GLSL}
 
 varying vec2  vAtlasUv;
 varying vec2  vTileOrigin;
@@ -93,10 +93,8 @@ varying vec2  vTileUv;
 varying float vHighlight;
 varying float vPassage;
 
-// Simple spatial hash: returns [0,1) for a given cell coord.
-float hash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
+${TORCH_HASH_GLSL}
+${TORCH_FNS_GLSL}
 
 void main() {
   // Clamp to this tile's texel bounds so perspective-interpolated UVs that
@@ -118,43 +116,8 @@ void main() {
   float bumpShade = clamp(dot(bumpN, normalize(vec3(0.5, 0.5, 1.0))), 0.0, 1.0);
   bumpShade = 0.8 + 0.35 * bumpShade; // remap to [0.8, 1.15]
 
-  // Layered sines at co-prime frequencies → irregular candlelight rhythm.
-  // Quantised to 3 discrete levels so the flicker snaps rather than fades.
-  float raw = sin(uTime * 7.0)  * 0.45
-            + sin(uTime * 13.7) * 0.35
-            + sin(uTime * 3.1)  * 0.20;
-  float flicker = (floor(raw * 1.5 + 0.5)) / 6.0; // snaps to ~±0.167 steps
-
-  float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
-
-  // Flicker shifts the effective dist so the torch radius breathes.
-  float flickeredDist = clamp(dist + flicker * uFlickerRadius, 0.0, 1.0);
-  float curved = pow(flickeredDist, 0.75);
-  float band = floor(curved * 5.0); // 0 = closest … 4 = darkest
-
-  // Spatial turbulence: pattern holds still then snaps to a new arrangement.
-  // floor(uTime * 1.5) ticks ~1.5×/sec; mixing it into the hash seed
-  // changes every cell simultaneously on each tick.
-  float timeSlot = floor(uTime * 1.5);
-  vec2 cell = floor(vWorldPos * 0.5);
-  float spatialNoise = hash(cell + vec2(timeSlot * 7.3, timeSlot * 3.1));
-  float turb = (floor(spatialNoise * 3.0) / 3.0) * 0.18; // 0, 0.06, or 0.12 off full brightness
-
-  float brightness;
-  vec3  tint;
-  if (band < 1.0) {
-    brightness = 1.00 - turb; tint = uTint0;
-  } else if (band < 2.0) {
-    brightness = 0.55; tint = uTint1;
-  } else if (band < 3.0) {
-    brightness = 0.22; tint = uTint2;
-  } else if (band < 4.0) {
-    brightness = 0.10; tint = uTint3;
-  } else {
-    brightness = 0.00; tint = vec3(1.0);
-  }
-
-  vec3 lit = color.rgb * tint * brightness * bumpShade;
+  float band = torchBand(uFlickerRadius);
+  vec3 lit = applyTorchLighting(color.rgb * bumpShade, band);
 
   // Debug edge: highlight the 1-pixel border of each tile quad.
   // Uses screen-space derivatives so the border is always ~1px regardless of zoom.
@@ -224,6 +187,8 @@ type Props = {
   passageData?: Uint8Array;
   gridWidth?: number;
   tintColors?: THREE.Color[];
+  torchColor?: THREE.Color;
+  torchIntensity?: number;
 };
 
 export function InstancedTileMesh({
@@ -238,6 +203,8 @@ export function InstancedTileMesh({
   passageData,
   gridWidth,
   tintColors,
+  torchColor,
+  torchIntensity,
 }: Props) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
@@ -286,10 +253,7 @@ export function InstancedTileMesh({
             ),
           },
           uDebugEdges: { value: debugEdges ? 1.0 : 0.0 },
-          uTint0: { value: tintColors?.[0] ?? new THREE.Color(1.00, 0.90, 0.68) },
-          uTint1: { value: tintColors?.[1] ?? new THREE.Color(1.00, 0.94, 0.76) },
-          uTint2: { value: tintColors?.[2] ?? new THREE.Color(0.60, 0.55, 0.80) },
-          uTint3: { value: tintColors?.[3] ?? new THREE.Color(0.30, 0.25, 0.60) },
+          ...makeTorchUniforms(tintColors),
         },
         side: THREE.FrontSide,
       }),
@@ -310,6 +274,14 @@ export function InstancedTileMesh({
     if (tintColors?.[2]) material.uniforms.uTint2.value = tintColors[2];
     if (tintColors?.[3]) material.uniforms.uTint3.value = tintColors[3];
   }, [tintColors, material]);
+
+  useEffect(() => {
+    if (torchColor) material.uniforms.uTorchColor.value = torchColor;
+  }, [torchColor, material]);
+
+  useEffect(() => {
+    if (torchIntensity !== undefined) material.uniforms.uTorchIntensity.value = torchIntensity;
+  }, [torchIntensity, material]);
 
   useEffect(() => {
     const mesh = meshRef.current;

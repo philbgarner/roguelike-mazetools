@@ -27,8 +27,18 @@ export interface MobilePlacement {
   x: number;
   z: number;
   type: string;
-  /** Tile index into the SpriteAtlas texture. */
+  /** Tile index into the SpriteAtlas texture. Used as fallback when uvRect is absent. */
   tileId: number;
+  /**
+   * Explicit UV rect [x, y, w, h] in normalized (0–1) texture space.
+   * When present, used instead of deriving UVs from tileId.
+   */
+  uvRect?: [number, number, number, number];
+  /**
+   * Billboard geometry size in map cells [width, height].
+   * A map cell is 3×3 world units. Defaults to [1, 1].
+   */
+  geometrySize?: [number, number];
   meta?: Record<string, unknown>;
 }
 
@@ -120,6 +130,9 @@ export interface CellMasks {
   /** Hazard value at (x, y). 0 = no hazard; non-zero values are user-defined. */
   getHazard(x: number, y: number): number;
   setHazard(x: number, y: number, value: number): void;
+  /** Ceiling type index at (x, y). Matches atlas.json `ceilingTypes` ids. */
+  getCeilingType(x: number, y: number): number;
+  setCeilingType(x: number, y: number, value: number): void;
 }
 
 // --------------------------------
@@ -227,6 +240,7 @@ export function generateContent(
   const regionData = dungeon.textures.regionId.image.data as Uint8Array;
   const distData = dungeon.textures.distanceToWall.image.data as Uint8Array;
   const hazardData = dungeon.textures.hazards.image.data as Uint8Array;
+  const ceilingTypeData = dungeon.textures.ceilingType.image.data as Uint8Array;
 
   const masks: CellMasks = {
     getSolid: (x, y) => {
@@ -260,6 +274,14 @@ export function generateContent(
     setHazard: (x, y, value) => {
       if (!inBounds(x, y, W, H)) return;
       hazardData[y * W + x] = value;
+    },
+    getCeilingType: (x, y) => {
+      if (!inBounds(x, y, W, H)) return 0;
+      return ceilingTypeData[y * W + x];
+    },
+    setCeilingType: (x, y, value) => {
+      if (!inBounds(x, y, W, H)) return;
+      ceilingTypeData[y * W + x] = value;
     },
   };
 
@@ -295,6 +317,7 @@ export function generateContent(
 
   dungeon.textures.solid.needsUpdate = true;
   dungeon.textures.hazards.needsUpdate = true;
+  dungeon.textures.ceilingType.needsUpdate = true;
 
   return { objects, mobiles, hiddenPassages: { passages: [] } };
 }

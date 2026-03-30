@@ -51,15 +51,29 @@ export type MonsterTemplate = {
   defense: number;
   xp: number;
   speed: number;
+  /**
+   * Billboard geometry size in map cells [width, height].
+   * A map cell is 3×3 world units. Defaults to [1, 1].
+   */
+  geometrySize?: [number, number];
+  /**
+   * UV rect [x, y, w, h] in normalized (0–1) texture space for the sprite sheet.
+   * When absent the renderer falls back to deriving UVs from the placement's tileId.
+   */
+  uvRect?: [number, number, number, number];
 };
 
 /** Built-in monster templates keyed by mobile type string. */
 export const DEFAULT_MONSTER_TEMPLATES: Record<string, MonsterTemplate> = {
-  goblin: { name: "Goblin",    glyph: "g", danger: 1, hp: 6,  attack: 3, defense: 0, xp: 10, speed: 8  },
-  orc:    { name: "Orc",       glyph: "o", danger: 3, hp: 12, attack: 5, defense: 1, xp: 25, speed: 6  },
-  troll:  { name: "Troll",     glyph: "T", danger: 6, hp: 25, attack: 8, defense: 2, xp: 60, speed: 5  },
-  rat:    { name: "Giant Rat", glyph: "r", danger: 0, hp: 4,  attack: 2, defense: 0, xp: 5,  speed: 9  },
-  kobold: { name: "Kobold",    glyph: "k", danger: 1, hp: 5,  attack: 3, defense: 0, xp: 8,  speed: 9  },
+  goblin:  { name: "Goblin",    glyph: "g", danger: 1, hp: 6,  attack: 3, defense: 0, xp: 10, speed: 8  },
+  orc:     { name: "Orc",       glyph: "o", danger: 3, hp: 12, attack: 5, defense: 1, xp: 25, speed: 6  },
+  troll:   { name: "Troll",     glyph: "T", danger: 6, hp: 25, attack: 8, defense: 2, xp: 60, speed: 5  },
+  rat:     { name: "Giant Rat", glyph: "r", danger: 0, hp: 4,  attack: 2, defense: 0, xp: 5,  speed: 9  },
+  kobold:  { name: "Kobold",    glyph: "k", danger: 1, hp: 5,  attack: 3, defense: 0, xp: 8,  speed: 9  },
+  // Humanoid adventurer types — geometry sizes set, uvRect to be filled once sprite sheet is ready
+  rogue:   { name: "Rogue",   glyph: "r", danger: 3, hp: 10, attack: 5, defense: 1, xp: 20, speed: 9,  geometrySize: [1, 1] },
+  warrior: { name: "Warrior", glyph: "w", danger: 4, hp: 15, attack: 6, defense: 2, xp: 30, speed: 7,  geometrySize: [1, 1] },
+  mage:    { name: "Mage",    glyph: "m", danger: 5, hp: 8,  attack: 8, defense: 0, xp: 40, speed: 6,  geometrySize: [2, 2] },
   // fallback for unknown types
   monster: { name: "Monster", glyph: "m", danger: 2, hp: 8,  attack: 4, defense: 1, xp: 15, speed: 7  },
 };
