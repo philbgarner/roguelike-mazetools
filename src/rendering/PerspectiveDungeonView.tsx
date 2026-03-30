@@ -248,11 +248,16 @@ function SceneObjects({
           if (mat.uniforms.uFogFar) mat.uniforms.uFogFar.value = fogFar ?? 10;
           if (mat.uniforms.uFogColor && fogColor)
             mat.uniforms.uFogColor.value = fogColor;
-          if (mat.uniforms.uTint0 && tintColors?.[0]) mat.uniforms.uTint0.value = tintColors[0];
-          if (mat.uniforms.uTint1 && tintColors?.[1]) mat.uniforms.uTint1.value = tintColors[1];
-          if (mat.uniforms.uTint2 && tintColors?.[2]) mat.uniforms.uTint2.value = tintColors[2];
-          if (mat.uniforms.uTint3 && tintColors?.[3]) mat.uniforms.uTint3.value = tintColors[3];
-          if (mat.uniforms.uTorchColor && torchColor) mat.uniforms.uTorchColor.value = torchColor;
+          if (mat.uniforms.uTint0 && tintColors?.[0])
+            mat.uniforms.uTint0.value = tintColors[0];
+          if (mat.uniforms.uTint1 && tintColors?.[1])
+            mat.uniforms.uTint1.value = tintColors[1];
+          if (mat.uniforms.uTint2 && tintColors?.[2])
+            mat.uniforms.uTint2.value = tintColors[2];
+          if (mat.uniforms.uTint3 && tintColors?.[3])
+            mat.uniforms.uTint3.value = tintColors[3];
+          if (mat.uniforms.uTorchColor && torchColor)
+            mat.uniforms.uTorchColor.value = torchColor;
         }
       });
       return obj;
@@ -268,13 +273,19 @@ function SceneObjects({
       obj.traverse((child) => {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) return;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
         for (const mat of mats) {
           if (!(mat instanceof THREE.ShaderMaterial)) continue;
-          if (mat.uniforms.uTint0 && tintColors[0]) mat.uniforms.uTint0.value = tintColors[0];
-          if (mat.uniforms.uTint1 && tintColors[1]) mat.uniforms.uTint1.value = tintColors[1];
-          if (mat.uniforms.uTint2 && tintColors[2]) mat.uniforms.uTint2.value = tintColors[2];
-          if (mat.uniforms.uTint3 && tintColors[3]) mat.uniforms.uTint3.value = tintColors[3];
+          if (mat.uniforms.uTint0 && tintColors[0])
+            mat.uniforms.uTint0.value = tintColors[0];
+          if (mat.uniforms.uTint1 && tintColors[1])
+            mat.uniforms.uTint1.value = tintColors[1];
+          if (mat.uniforms.uTint2 && tintColors[2])
+            mat.uniforms.uTint2.value = tintColors[2];
+          if (mat.uniforms.uTint3 && tintColors[3])
+            mat.uniforms.uTint3.value = tintColors[3];
         }
       });
     }
@@ -287,7 +298,9 @@ function SceneObjects({
       obj.traverse((child) => {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) return;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
         for (const mat of mats) {
           if (mat instanceof THREE.ShaderMaterial && mat.uniforms.uTorchColor)
             mat.uniforms.uTorchColor.value = torchColor;
@@ -303,9 +316,14 @@ function SceneObjects({
       obj.traverse((child) => {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) return;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
         for (const mat of mats) {
-          if (mat instanceof THREE.ShaderMaterial && mat.uniforms.uTorchIntensity)
+          if (
+            mat instanceof THREE.ShaderMaterial &&
+            mat.uniforms.uTorchIntensity
+          )
             mat.uniforms.uTorchIntensity.value = torchIntensity;
         }
       });
@@ -459,7 +477,7 @@ function SceneMobiles({
     placements.forEach((p, i) => {
       tileIds[i] = p.tileId;
       if (p.uvRect) {
-        uvRects[i * 4]     = p.uvRect[0];
+        uvRects[i * 4] = p.uvRect[0];
         uvRects[i * 4 + 1] = p.uvRect[1];
         uvRects[i * 4 + 2] = p.uvRect[2];
         uvRects[i * 4 + 3] = p.uvRect[3];
@@ -507,7 +525,8 @@ function SceneMobiles({
   }, [torchColor, mat]);
 
   useEffect(() => {
-    if (torchIntensity !== undefined) mat.uniforms.uTorchIntensity.value = torchIntensity;
+    if (torchIntensity !== undefined)
+      mat.uniforms.uTorchIntensity.value = torchIntensity;
   }, [torchIntensity, mat]);
 
   useFrame(({ camera, clock }) => {
@@ -1012,44 +1031,45 @@ function DungeonScene({
         />
       )}
 
-      {spriteAtlas && (() => {
-        const advAtlas = adventurerSpriteAtlas ?? spriteAtlas;
-        const nonAdvs = mobiles?.filter((p) => p.type !== "adventurer") ?? [];
-        const advs    = mobiles?.filter((p) => p.type === "adventurer") ?? [];
-        return (
-          <>
-            {nonAdvs.length > 0 && (
-              <SceneMobiles
-                placements={nonAdvs}
-                atlas={spriteAtlas}
-                tileSize={tileSize}
-                ceilingHeight={ceilingHeight}
-                fogNear={fogNear}
-                fogFar={fogFar}
-                fogColor={fogColorObj}
-                flash={mobileFlash}
-                tintColors={tintColorObjs}
-                torchColor={torchColorObj}
-                torchIntensity={torchIntensity}
-              />
-            )}
-            {advs.length > 0 && (
-              <SceneMobiles
-                placements={advs}
-                atlas={advAtlas}
-                tileSize={tileSize}
-                ceilingHeight={ceilingHeight}
-                fogNear={fogNear}
-                fogFar={fogFar}
-                fogColor={fogColorObj}
-                tintColors={tintColorObjs}
-                torchColor={torchColorObj}
-                torchIntensity={torchIntensity}
-              />
-            )}
-          </>
-        );
-      })()}
+      {spriteAtlas &&
+        (() => {
+          const advAtlas = adventurerSpriteAtlas ?? spriteAtlas;
+          const nonAdvs = mobiles?.filter((p) => p.type !== "adventurer") ?? [];
+          const advs = mobiles?.filter((p) => p.type === "adventurer") ?? [];
+          return (
+            <>
+              {nonAdvs.length > 0 && (
+                <SceneMobiles
+                  placements={nonAdvs}
+                  atlas={spriteAtlas}
+                  tileSize={tileSize}
+                  ceilingHeight={ceilingHeight}
+                  fogNear={fogNear}
+                  fogFar={fogFar}
+                  fogColor={fogColorObj}
+                  flash={mobileFlash}
+                  tintColors={tintColorObjs}
+                  torchColor={torchColorObj}
+                  torchIntensity={torchIntensity}
+                />
+              )}
+              {advs.length > 0 && (
+                <SceneMobiles
+                  placements={advs}
+                  atlas={advAtlas}
+                  tileSize={tileSize}
+                  ceilingHeight={ceilingHeight}
+                  fogNear={fogNear}
+                  fogFar={fogFar}
+                  fogColor={fogColorObj}
+                  tintColors={tintColorObjs}
+                  torchColor={torchColorObj}
+                  torchIntensity={torchIntensity}
+                />
+              )}
+            </>
+          );
+        })()}
 
       {speechBubbles &&
         speechBubbles.map((b) => (

@@ -13,6 +13,7 @@ import * as THREE from "three";
 export const TORCH_UNIFORMS_GLSL = /* glsl */ `
 uniform float uFogNear;
 uniform float uFogFar;
+uniform float uBandNear;   // distance at which brightness falloff begins (≥ uFogNear)
 uniform float uTime;
 uniform vec3  uTint0;      // distance band 0 (closest)
 uniform vec3  uTint1;      // distance band 1
@@ -48,7 +49,7 @@ float torchBand(float flickerRadius) {
             + sin(uTime * 13.7) * 0.35
             + sin(uTime * 3.1)  * 0.20;
   float flicker = (floor(raw * 1.5 + 0.5)) / 6.0;
-  float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+  float dist = clamp((vFogDist - uBandNear) / (uFogFar - uBandNear), 0.0, 1.0);
   float flickeredDist = clamp(dist + flicker * flickerRadius, 0.0, 1.0);
   return floor(pow(flickeredDist, 0.75) * 5.0);
 }
@@ -85,6 +86,60 @@ vec3 applyTorchLighting(vec3 baseColor, float band) {
 }
 `;
 
+/**
+ * Vertex shader for textured 3-D objects (GLB/FBX models).
+ * Outputs vUv, vFogDist, vWorldPos for use with TORCH_OBJECT_FRAG.
+ */
+export const TORCH_OBJECT_VERT = /* glsl */ `
+varying vec2  vUv;
+varying float vFogDist;
+varying vec2  vWorldPos;
+
+void main() {
+  vUv = uv;
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vWorldPos = worldPos.xz;
+  vec4 eyePos = viewMatrix * worldPos;
+  vFogDist = length(eyePos.xyz);
+  gl_Position = projectionMatrix * eyePos;
+}
+`;
+
+/**
+ * Fragment shader for textured 3-D objects (GLB/FBX models).
+ * Samples uMap, applies torch lighting + fog.
+ * Requires uniforms: uMap (sampler2D), uFogColor (vec3), + TORCH_UNIFORMS_GLSL set.
+ */
+export const TORCH_OBJECT_FRAG = /* glsl */ `
+uniform sampler2D uMap;
+uniform vec3  uFogColor;
+${TORCH_UNIFORMS_GLSL}
+
+varying vec2  vUv;
+varying float vFogDist;
+varying vec2  vWorldPos;
+
+${TORCH_HASH_GLSL}
+${TORCH_FNS_GLSL}
+
+void main() {
+  gl_FragColor = texture2D(uMap, vUv);
+  //vec4 color = texture2D(uMap, vUv);
+  // if (color.a < 0.01) discard;
+
+  // float band = torchBand(0.03);
+  // vec3 lit = applyTorchLighting(color.rgb, band);
+  // gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
+}
+`;
+
+/**
+ * Distance (world units) at which brightness falloff begins.
+ * Everything closer than this is band 0 (full brightness, uTint0).
+ * With tileSize=3 this keeps ~2 cells in front of the player fully lit.
+ */
+export const DEFAULT_BAND_NEAR = 8;
+
 /** Warm yellow additive torch colour. */
 export const DEFAULT_TORCH_COLOR = new THREE.Color(1.0, 0.85, 0.4);
 /** Default torch intensity multiplier. */
@@ -116,6 +171,7 @@ export function makeTorchUniforms(
   tintColors?: THREE.Color[],
 ): Record<string, { value: THREE.Color | number }> {
   return {
+    uBandNear: { value: DEFAULT_BAND_NEAR },
     uTint0: { value: tintColors?.[0] ?? DEFAULT_TINT_COLORS[0] },
     uTint1: { value: tintColors?.[1] ?? DEFAULT_TINT_COLORS[1] },
     uTint2: { value: tintColors?.[2] ?? DEFAULT_TINT_COLORS[2] },

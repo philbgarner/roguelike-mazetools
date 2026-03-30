@@ -22,34 +22,33 @@ import {
 } from "react";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
-import { generateBspDungeon, type BspDungeonOutputs } from "../../bsp";
-import { buildTileAtlas } from "../../rendering/tileAtlas";
-import { PerspectiveDungeonView } from "../../rendering/PerspectiveDungeonView";
-import type { SpriteAtlas } from "../../rendering/PerspectiveDungeonView";
+import { generateBspDungeon, type BspDungeonOutputs } from "../../../bsp";
+import { buildTileAtlas } from "../../../rendering/tileAtlas";
+import { PerspectiveDungeonView } from "../../../rendering/PerspectiveDungeonView";
+import type { SpriteAtlas } from "../../../rendering/PerspectiveDungeonView";
 import {
   createTurnSystemState,
   commitPlayerAction,
   tickUntilPlayer,
   type TurnSystemState,
   type TurnSystemDeps,
-} from "../../turn/turnSystem";
-import { actionDelay } from "../../turn/actionCosts";
-import { decideChasePlayer } from "../../turn/monsterAI";
+} from "../../../turn/turnSystem";
+import { actionDelay } from "../../../turn/actionCosts";
+import { decideChasePlayer } from "../../../turn/monsterAI";
 import {
   createPlayerActor,
   createMonstersFromMobiles,
   type MonsterTemplate,
-} from "../../turn/createActors";
+} from "../../../turn/createActors";
 import type {
   MonsterActor,
   PlayerActor,
   TurnAction,
-} from "../../turn/turnTypes";
-import type { TurnEvent, XpGainEvent } from "../../turn/turnEvents";
-import type { MobilePlacement } from "../../content";
-import { tilesInRadius, tilesInCone, tilesInLine } from "../../spatial";
-import type { GridPos } from "../../astar";
-import { tickEffects, type ActiveEffect } from "../../effects";
+} from "../../../turn/turnTypes";
+import type { TurnEvent, XpGainEvent } from "../../../turn/turnEvents";
+import { tilesInRadius, tilesInCone, tilesInLine } from "../../../spatial";
+import type { GridPos } from "../../../astar";
+import { tickEffects, type ActiveEffect } from "../../../effects";
 import { useNavigate } from "react-router-dom";
 import styles from "./Targeting.module.css";
 
@@ -386,7 +385,15 @@ function buildDeps(
   return {
     isWalkable,
     monsterDecide: (state, monsterId) =>
-      decideChasePlayer(state, monsterId, dungeon, isWalkable, isOpaque, 8, true),
+      decideChasePlayer(
+        state,
+        monsterId,
+        dungeon,
+        isWalkable,
+        isOpaque,
+        8,
+        true,
+      ),
     computeCost: (actorId, action: TurnAction) => {
       const actor = actors[actorId];
       return { time: actionDelay(actor?.speed ?? 10, action) };

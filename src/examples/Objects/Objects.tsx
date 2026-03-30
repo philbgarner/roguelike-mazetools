@@ -19,7 +19,13 @@
  *   │         statusPanel          │  56 px
  *   └──────────────────────────────┘
  */
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -36,6 +42,15 @@ import {
 } from "../../content";
 import { useNavigate } from "react-router-dom";
 import styles from "./Objects.module.css";
+import {
+  TORCH_UNIFORMS_GLSL,
+  TORCH_HASH_GLSL,
+  TORCH_FNS_GLSL,
+  TORCH_OBJECT_VERT,
+  TORCH_OBJECT_FRAG,
+  DEFAULT_BAND_NEAR,
+  makeTorchUniforms,
+} from "../../rendering/torchLighting";
 import { ItemType, InventorySlot } from "../../Inventory/inventory";
 import Inventory from "./inventory";
 
@@ -74,7 +89,7 @@ enum ItemName {
   Torch = "Torch",
   Scroll = "Scroll",
   Key = "Key",
-  Rations = "Rations"
+  Rations = "Rations",
 }
 
 // Sanity-check: verify coords align to the padded grid
@@ -418,7 +433,12 @@ function useObjectsCamera(
 type Adventurer = { id: number; x: number; z: number };
 
 const ADVENTURER_MOVE_MS = 1200;
-const MOVE_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+const MOVE_DIRS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] as const;
 
 /**
  * Manages a set of wandering adventurers.  Each moves to a random adjacent
@@ -434,7 +454,9 @@ function useAdventurers(
   height: number,
   startPos: { x: number; z: number },
   count: number,
-  onStepRef: MutableRefObject<((id: number, gx: number, gz: number) => void) | undefined>,
+  onStepRef: MutableRefObject<
+    ((id: number, gx: number, gz: number) => void) | undefined
+  >,
 ): { adventurers: Adventurer[]; startNewWave: () => void } {
   const makeWave = () =>
     Array.from({ length: count }, (_, i) => ({ id: i, ...startPos }));
@@ -446,24 +468,35 @@ function useAdventurers(
   startPosRef.current = startPos;
 
   const solidRef = useRef(solidData);
-  useEffect(() => { solidRef.current = solidData; }, [solidData]);
+  useEffect(() => {
+    solidRef.current = solidData;
+  }, [solidData]);
 
   // Reset when dungeon changes
   useEffect(() => {
-    const next = Array.from({ length: count }, (_, i) => ({ id: i, ...startPosRef.current }));
+    const next = Array.from({ length: count }, (_, i) => ({
+      id: i,
+      ...startPosRef.current,
+    }));
     adventurersRef.current = next;
     setAdventurers(next);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count, width, height]);
 
   const startNewWave = useRef(() => {
-    const next = Array.from({ length: count }, (_, i) => ({ id: i, ...startPosRef.current }));
+    const next = Array.from({ length: count }, (_, i) => ({
+      id: i,
+      ...startPosRef.current,
+    }));
     adventurersRef.current = next;
     setAdventurers(next);
   });
   // Keep count in sync without recreating the ref
   startNewWave.current = () => {
-    const next = Array.from({ length: count }, (_, i) => ({ id: i, ...startPosRef.current }));
+    const next = Array.from({ length: count }, (_, i) => ({
+      id: i,
+      ...startPosRef.current,
+    }));
     adventurersRef.current = next;
     setAdventurers(next);
   };
@@ -486,9 +519,10 @@ function useAdventurers(
 
     const intervalId = setInterval(() => {
       const next = adventurersRef.current.map((adv) => {
-        const options = MOVE_DIRS
-          .map(([dx, dz]) => ({ x: adv.x + dx, z: adv.z + dz }))
-          .filter((p) => walkable(p.x, p.z));
+        const options = MOVE_DIRS.map(([dx, dz]) => ({
+          x: adv.x + dx,
+          z: adv.z + dz,
+        })).filter((p) => walkable(p.x, p.z));
         if (options.length === 0) return adv;
         const picked = options[Math.floor(rand() * options.length)];
         onStepRef.current?.(adv.id, picked.x, picked.z);
@@ -595,7 +629,9 @@ export default function Objects() {
         model.traverse((child) => {
           const mesh = child as THREE.Mesh;
           if (mesh.isMesh && !columnTex) {
-            const src = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+            const src = Array.isArray(mesh.material)
+              ? mesh.material[0]
+              : mesh.material;
             const stdMat = src as THREE.MeshStandardMaterial;
             if (stdMat.map) columnTex = stdMat.map;
           }
@@ -604,82 +640,15 @@ export default function Objects() {
         // Torchlight shader — same band-lighting as the chest, but samples the
         // column's baked texture instead of a flat base colour.
         const columnMat = new THREE.ShaderMaterial({
-          vertexShader: /* glsl */ `
-            varying vec3  vNormal;
-            varying float vFogDist;
-            varying vec2  vWorldPos;
-            varying vec2  vUv;
-            void main() {
-              vUv = uv;
-              vec4 worldPos = modelMatrix * vec4(position, 1.0);
-              vWorldPos = worldPos.xz;
-              vNormal = normalize(normalMatrix * normal);
-              vec4 eyePos = viewMatrix * worldPos;
-              vFogDist = length(eyePos.xyz);
-              gl_Position = projectionMatrix * eyePos;
-            }
-          `,
-          fragmentShader: /* glsl */ `
-            uniform vec3      uFogColor;
-            uniform float     uFogNear;
-            uniform float     uFogFar;
-            uniform float     uTime;
-            uniform sampler2D uMap;
-            varying vec3  vNormal;
-            varying float vFogDist;
-            varying vec2  vWorldPos;
-            varying vec2  vUv;
-
-            float hash(vec2 p) {
-              return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-            }
-
-            void main() {
-              vec4 texColor = texture2D(uMap, vUv);
-              if (texColor.a < 0.01) discard;
-
-              vec3 lightDir = normalize(vec3(0.4, 1.0, 0.3));
-              float diffuse = clamp(dot(vNormal, lightDir), 0.0, 1.0);
-              float shade = 0.65 + 0.35 * diffuse;
-
-              float raw = sin(uTime * 7.0)  * 0.45
-                        + sin(uTime * 13.7) * 0.35
-                        + sin(uTime * 3.1)  * 0.20;
-              float flicker = (floor(raw * 1.5 + 0.5)) / 6.0;
-
-              float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
-              float flickeredDist = clamp(dist + flicker * 0.03, 0.0, 1.0);
-              float curved = pow(flickeredDist, 0.75);
-              float band = floor(curved * 5.0);
-
-              float timeSlot = floor(uTime * 1.5);
-              vec2 cell = floor(vWorldPos * 0.5);
-              float spatialNoise = hash(cell + vec2(timeSlot * 7.3, timeSlot * 3.1));
-              float turb = (floor(spatialNoise * 3.0) / 3.0) * 0.18;
-
-              float brightness;
-              if (band < 1.0) {
-                brightness = 1.00 - turb;
-              } else if (band < 2.0) {
-                brightness = 0.55;
-              } else if (band < 3.0) {
-                brightness = 0.22;
-              } else if (band < 4.0) {
-                brightness = 0.10;
-              } else {
-                brightness = 0.00;
-              }
-
-              vec3 lit = texColor.rgb * brightness * shade;
-              gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), 1.0);
-            }
-          `,
+          vertexShader: TORCH_OBJECT_VERT,
+          fragmentShader: TORCH_OBJECT_FRAG,
           uniforms: {
             uFogColor: { value: new THREE.Color(0, 0, 0) },
-            uFogNear:  { value: 4 },
-            uFogFar:   { value: 28 },
-            uTime:     { value: 0 },
-            uMap:      { value: columnTex },
+            uFogNear: { value: 4 },
+            uFogFar: { value: 28 },
+            uTime: { value: 0 },
+            uMap: { value: columnTex },
+            ...makeTorchUniforms(),
           },
         });
 
@@ -727,56 +696,18 @@ export default function Objects() {
           `,
           fragmentShader: /* glsl */ `
             uniform vec3  uFogColor;
-            uniform float uFogNear;
-            uniform float uFogFar;
-            uniform float uTime;
             uniform vec3  uBaseColor;
+            ${TORCH_UNIFORMS_GLSL}
             varying vec3  vNormal;
             varying float vFogDist;
             varying vec2  vWorldPos;
 
-            float hash(vec2 p) {
-              return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-            }
+            ${TORCH_HASH_GLSL}
+            ${TORCH_FNS_GLSL}
 
             void main() {
-              // Diffuse shading from a warm overhead-ish light direction.
-              vec3 lightDir = normalize(vec3(0.4, 1.0, 0.3));
-              float diffuse = clamp(dot(vNormal, lightDir), 0.0, 1.0);
-              float shade = 0.65 + 0.35 * diffuse;
-
-              // Candlelight flicker — same co-prime sines as the wall shader.
-              float raw = sin(uTime * 7.0)  * 0.45
-                        + sin(uTime * 13.7) * 0.35
-                        + sin(uTime * 3.1)  * 0.20;
-              float flicker = (floor(raw * 1.5 + 0.5)) / 6.0;
-
-              float dist = clamp((vFogDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
-              float flickeredDist = clamp(dist + flicker * 0.03, 0.0, 1.0);
-              float curved = pow(flickeredDist, 0.75);
-              float band = floor(curved * 5.0);
-
-              // Spatial turbulence — snaps like the wall tiles.
-              float timeSlot = floor(uTime * 1.5);
-              vec2 cell = floor(vWorldPos * 0.5);
-              float spatialNoise = hash(cell + vec2(timeSlot * 7.3, timeSlot * 3.1));
-              float turb = (floor(spatialNoise * 3.0) / 3.0) * 0.18;
-
-              float brightness;
-              vec3  tint;
-              if (band < 1.0) {
-                brightness = 1.00 - turb; tint = vec3(1.00, 0.90, 0.68);
-              } else if (band < 2.0) {
-                brightness = 0.55; tint = vec3(1.00, 0.94, 0.76);
-              } else if (band < 3.0) {
-                brightness = 0.22; tint = vec3(0.60, 0.55, 0.80);
-              } else if (band < 4.0) {
-                brightness = 0.10; tint = vec3(0.30, 0.25, 0.60);
-              } else {
-                brightness = 0.00; tint = vec3(1.0);
-              }
-
-              vec3 lit = uBaseColor * tint * brightness * shade;
+              float band = torchBand(0.03);
+              vec3 lit = applyTorchLighting(uBaseColor, band);
               gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), 1.0);
             }
           `,
@@ -786,6 +717,7 @@ export default function Objects() {
             uFogFar: { value: 28 },
             uTime: { value: 0 },
             uBaseColor: { value: new THREE.Color(0xf2e5d2) },
+            ...makeTorchUniforms(),
           },
         });
         fbx.traverse((child) => {
@@ -858,7 +790,10 @@ export default function Objects() {
 
     // Pick a deterministic but varied candidate from each region's wall-adjacent cells
     // Uses seed-based selection to ensure consistency while avoiding conflicts
-    function pickFromRegion(regionId: number, existingObjects: ObjectPlacement[] = []): ObjectPlacement | null {
+    function pickFromRegion(
+      regionId: number,
+      existingObjects: ObjectPlacement[] = [],
+    ): ObjectPlacement | null {
       const arr = candidatesByRegion.get(regionId);
       if (!arr || arr.length === 0) return null;
 
@@ -872,8 +807,8 @@ export default function Objects() {
         const tryIndex = (normalizedIndex + i) % arr.length;
         const candidate = arr[tryIndex];
 
-        const hasConflict = existingObjects.some(obj =>
-          obj.x === candidate.x && obj.z === candidate.z
+        const hasConflict = existingObjects.some(
+          (obj) => obj.x === candidate.x && obj.z === candidate.z,
         );
 
         if (!hasConflict) {
@@ -923,27 +858,67 @@ export default function Objects() {
       // equidistant from opposite walls.
       const marginX = Math.max(1, Math.floor(w / 4));
       const marginY = Math.max(1, Math.floor(h / 4));
-      const leftX  = x + marginX;
+      const leftX = x + marginX;
       const rightX = x + (w - 1 - marginX);
-      const topZ   = y + marginY;
-      const botZ   = y + (h - 1 - marginY);
-      const midX   = x + Math.floor(w / 2);
-      const midZ   = y + Math.floor(h / 2);
+      const topZ = y + marginY;
+      const botZ = y + (h - 1 - marginY);
+      const midX = x + Math.floor(w / 2);
+      const midZ = y + Math.floor(h / 2);
 
       if (w >= 6 && h >= 6) {
         // Large room: 4-column quad, symmetric on both axes.
-        result.objects.push({ type: "column", x: leftX,  z: topZ,  scale: colScale });
-        result.objects.push({ type: "column", x: rightX, z: topZ,  scale: colScale });
-        result.objects.push({ type: "column", x: leftX,  z: botZ,  scale: colScale });
-        result.objects.push({ type: "column", x: rightX, z: botZ,  scale: colScale });
+        result.objects.push({
+          type: "column",
+          x: leftX,
+          z: topZ,
+          scale: colScale,
+        });
+        result.objects.push({
+          type: "column",
+          x: rightX,
+          z: topZ,
+          scale: colScale,
+        });
+        result.objects.push({
+          type: "column",
+          x: leftX,
+          z: botZ,
+          scale: colScale,
+        });
+        result.objects.push({
+          type: "column",
+          x: rightX,
+          z: botZ,
+          scale: colScale,
+        });
       } else if (w >= 6 && h >= 4) {
         // Wide room: 2 columns side by side across the width.
-        result.objects.push({ type: "column", x: leftX,  z: midZ, scale: colScale });
-        result.objects.push({ type: "column", x: rightX, z: midZ, scale: colScale });
+        result.objects.push({
+          type: "column",
+          x: leftX,
+          z: midZ,
+          scale: colScale,
+        });
+        result.objects.push({
+          type: "column",
+          x: rightX,
+          z: midZ,
+          scale: colScale,
+        });
       } else if (h >= 6 && w >= 4) {
         // Tall room: 2 columns along the depth.
-        result.objects.push({ type: "column", x: midX, z: topZ, scale: colScale });
-        result.objects.push({ type: "column", x: midX, z: botZ, scale: colScale });
+        result.objects.push({
+          type: "column",
+          x: midX,
+          z: topZ,
+          scale: colScale,
+        });
+        result.objects.push({
+          type: "column",
+          x: midX,
+          z: botZ,
+          scale: colScale,
+        });
       }
     }
 
@@ -1025,7 +1000,8 @@ export default function Objects() {
 
       const candidates = content.candidatesByRegion.get(roomId) ?? [];
       for (let ci = 0; ci < candidates.length; ci++) {
-        const idx = (Math.floor(candidates.length / 2) + ci) % candidates.length;
+        const idx =
+          (Math.floor(candidates.length / 2) + ci) % candidates.length;
         const c = candidates[idx];
         const cKey = `${c.x}_${c.z}`;
         if (occupiedKeys.has(cKey)) continue;
@@ -1091,21 +1067,33 @@ export default function Objects() {
       visibleObjects,
       adventurers,
     );
-  }, [solidData, camera, maskOverlay, overlayData, visibleObjects, adventurers]);
+  }, [
+    solidData,
+    camera,
+    maskOverlay,
+    overlayData,
+    visibleObjects,
+    adventurers,
+  ]);
 
   // Chest record system - tracks individual chest states
-  const [chestRecords, setChestRecords] = useState<Record<string, InventorySlot[]>>({});
+  const [chestRecords, setChestRecords] = useState<
+    Record<string, InventorySlot[]>
+  >({});
 
   const possibleChestItems = [
-      ItemName.GoldCoins,
-      ItemName.HealthPotion,
-      ItemName.ManaPotion,
-      ItemName.Torch,
-      ItemName.Scroll,
-    ];
+    ItemName.GoldCoins,
+    ItemName.HealthPotion,
+    ItemName.ManaPotion,
+    ItemName.Torch,
+    ItemName.Scroll,
+  ];
 
   // Generate chest content when chest is first opened
-  const generateChestContent = (chestX: number, chestZ: number): InventorySlot[] => {
+  const generateChestContent = (
+    chestX: number,
+    chestZ: number,
+  ): InventorySlot[] => {
     const chestId = `${chestX},${chestZ}`;
 
     // If chest already has a record, return existing content
@@ -1119,19 +1107,19 @@ export default function Objects() {
 
     possibleChestItems
       .filter(() => Math.random() > 0.3) // 70% chance for each item type
-      .forEach(itemName => {
+      .forEach((itemName) => {
         const quantity = ItemTypeRegistry[itemName].initializeQuantity?.() || 1;
         chestSlots.push({
           index: slotIndex++,
           item: { name: itemName },
-          quantity
+          quantity,
         });
       });
 
     // Store in chest records
-    setChestRecords(prev => ({
+    setChestRecords((prev) => ({
       ...prev,
-      [chestId]: chestSlots
+      [chestId]: chestSlots,
     }));
 
     return chestSlots;
@@ -1141,79 +1129,83 @@ export default function Objects() {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   };
 
-// Global item type registry - game data centralized here
-const ItemTypeRegistry: Record<ItemName, ItemType> = {
-  [ItemName.GoldCoins]: { 
-    maxStack: 999,
-    initializeQuantity: () => initRandomQuantity(10, 50)
-  },
-  [ItemName.HealthPotion]: {
-    maxStack: 20,
-    onUse: (item, quantity) => {
-      console.log(`Healed ${quantity * 20} HP with ${item.name}`);
+  // Global item type registry - game data centralized here
+  const ItemTypeRegistry: Record<ItemName, ItemType> = {
+    [ItemName.GoldCoins]: {
+      maxStack: 999,
+      initializeQuantity: () => initRandomQuantity(10, 50),
     },
-    initializeQuantity: () => initRandomQuantity(1, 3)
-  },
-  [ItemName.ManaPotion]: {
-    maxStack: 20,
-    onUse: (item, quantity) => {
-      console.log(`Restored ${quantity * 15} MP with ${item.name}`);
+    [ItemName.HealthPotion]: {
+      maxStack: 20,
+      onUse: (item, quantity) => {
+        console.log(`Healed ${quantity * 20} HP with ${item.name}`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 3),
     },
-    initializeQuantity: () => initRandomQuantity(1, 3)
-  },
-  [ItemName.Torch]: {
-    maxStack: 10,
-    onUse: (item, quantity) => {
-      console.log(`Lit ${item.name} for ${quantity * 60} seconds`);
+    [ItemName.ManaPotion]: {
+      maxStack: 20,
+      onUse: (item, quantity) => {
+        console.log(`Restored ${quantity * 15} MP with ${item.name}`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 3),
     },
-    initializeQuantity: () => initRandomQuantity(1, 4)
-  },
-  [ItemName.Scroll]: {
-    maxStack: 5,
-    onUse: (item, quantity) => {
-      console.log(`Read ${item.name} (level ${item.state?.level || 1})`);
+    [ItemName.Torch]: {
+      maxStack: 10,
+      onUse: (item, quantity) => {
+        console.log(`Lit ${item.name} for ${quantity * 60} seconds`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 4),
     },
-    initializeQuantity: () => initRandomQuantity(1, 2)
-  },
-  [ItemName.Key]: { 
-    maxStack: 1,
-    initializeQuantity: () => 1
-  },
-  [ItemName.Rations]: {
-    maxStack: 50,
-    onUse: (item, quantity) => {
-      console.log(`Ate ${quantity}x ${item.name}`);
+    [ItemName.Scroll]: {
+      maxStack: 5,
+      onUse: (item, quantity) => {
+        console.log(`Read ${item.name} (level ${item.state?.level || 1})`);
+      },
+      initializeQuantity: () => initRandomQuantity(1, 2),
     },
-    initializeQuantity: () => initRandomQuantity(2, 5)
-  }
-};
+    [ItemName.Key]: {
+      maxStack: 1,
+      initializeQuantity: () => 1,
+    },
+    [ItemName.Rations]: {
+      maxStack: 50,
+      onUse: (item, quantity) => {
+        console.log(`Ate ${quantity}x ${item.name}`);
+      },
+      initializeQuantity: () => initRandomQuantity(2, 5),
+    },
+  };
 
-const [sampleInventory, setSampleInventory] = useState<InventorySlot[]>([
-  { index: 0, item: { name: ItemName.Torch }, quantity: 3 },
-  { index: 1, item: { name: ItemName.HealthPotion }, quantity: 2 },
-  { index: 2, item: { name: ItemName.Key }, quantity: 1 },
-  { index: 3, item: { name: ItemName.GoldCoins }, quantity: 50 },
-  { index: 4, item: { name: ItemName.Rations }, quantity: 5 },
-  { index: 5, item: null, quantity: 0 }
-]);
+  const [sampleInventory, setSampleInventory] = useState<InventorySlot[]>([
+    { index: 0, item: { name: ItemName.Torch }, quantity: 3 },
+    { index: 1, item: { name: ItemName.HealthPotion }, quantity: 2 },
+    { index: 2, item: { name: ItemName.Key }, quantity: 1 },
+    { index: 3, item: { name: ItemName.GoldCoins }, quantity: 50 },
+    { index: 4, item: { name: ItemName.Rations }, quantity: 5 },
+    { index: 5, item: null, quantity: 0 },
+  ]);
 
-const [showChestInventory, setShowChestInventory] = useState(false);
-const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
+  const [showChestInventory, setShowChestInventory] = useState(false);
+  const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>(
+    [],
+  );
 
   // Handle using items from inventory
   const handleUseItem = (slot: InventorySlot) => {
     if (!slot.item) return;
-    
-    setSampleInventory(prev => {
-      const existingSlot = prev.find(invSlot => invSlot.index === slot.index);
+
+    setSampleInventory((prev) => {
+      const existingSlot = prev.find((invSlot) => invSlot.index === slot.index);
       if (existingSlot && existingSlot.quantity >= 1) {
-        const updatedInventory = prev.map(invSlot =>
-          invSlot.index === slot.index
-            ? { ...invSlot, quantity: invSlot.quantity - 1 }
-            : invSlot
-        ).map(invSlot => 
-          invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot
-        );
+        const updatedInventory = prev
+          .map((invSlot) =>
+            invSlot.index === slot.index
+              ? { ...invSlot, quantity: invSlot.quantity - 1 }
+              : invSlot,
+          )
+          .map((invSlot) =>
+            invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot,
+          );
 
         console.log(`Used 1x ${slot.item!.name}`);
         return updatedInventory;
@@ -1225,17 +1217,19 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
   // Handle removing items from inventory
   const handleRemoveItem = (slot: InventorySlot) => {
     if (!slot.item) return;
-    
-    setSampleInventory(prev => {
-      const existingSlot = prev.find(invSlot => invSlot.index === slot.index);
+
+    setSampleInventory((prev) => {
+      const existingSlot = prev.find((invSlot) => invSlot.index === slot.index);
       if (existingSlot && existingSlot.quantity >= 1) {
-        const updatedInventory = prev.map(invSlot =>
-          invSlot.index === slot.index
-            ? { ...invSlot, quantity: invSlot.quantity - 1 }
-            : invSlot
-        ).map(invSlot => 
-          invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot
-        );
+        const updatedInventory = prev
+          .map((invSlot) =>
+            invSlot.index === slot.index
+              ? { ...invSlot, quantity: invSlot.quantity - 1 }
+              : invSlot,
+          )
+          .map((invSlot) =>
+            invSlot.quantity === 0 ? { ...invSlot, item: null } : invSlot,
+          );
 
         console.log(`Removed 1x ${slot.item!.name} from inventory`);
         return updatedInventory;
@@ -1249,9 +1243,9 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
     const itemType = ItemTypeRegistry[itemName];
 
     // Add item to player inventory
-    setSampleInventory(prev => {
+    setSampleInventory((prev) => {
       // Find existing slot with same item type
-      const existingSlot = prev.find(slot => slot.item?.name === itemName);
+      const existingSlot = prev.find((slot) => slot.item?.name === itemName);
 
       let transferAmount = 0;
       let targetSlotIndex = -1;
@@ -1259,7 +1253,10 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
       if (existingSlot) {
         // Stack with existing item
         const currentStack = existingSlot.quantity;
-        const canAdd = Math.min(requestedQuantity, itemType.maxStack - currentStack);
+        const canAdd = Math.min(
+          requestedQuantity,
+          itemType.maxStack - currentStack,
+        );
 
         if (canAdd > 0) {
           transferAmount = canAdd;
@@ -1267,7 +1264,7 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
         }
       } else {
         // Find first empty slot
-        const emptySlot = prev.find(slot => slot.item === null);
+        const emptySlot = prev.find((slot) => slot.item === null);
         if (emptySlot) {
           targetSlotIndex = emptySlot.index;
           transferAmount = Math.min(requestedQuantity, itemType.maxStack);
@@ -1276,42 +1273,50 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
 
       // If no space, don't transfer anything
       if (transferAmount === 0 || targetSlotIndex === -1) {
-        console.log(`Cannot take ${requestedQuantity}x ${itemName} - no available space`);
+        console.log(
+          `Cannot take ${requestedQuantity}x ${itemName} - no available space`,
+        );
         return prev;
       }
 
       // Update the target slot
-      const updatedInventory = prev.map(slot =>
+      const updatedInventory = prev.map((slot) =>
         slot.index === targetSlotIndex
-          ? { 
-              ...slot, 
-              item: { name: itemName }, 
-              quantity: existingSlot ? slot.quantity + transferAmount : transferAmount 
+          ? {
+              ...slot,
+              item: { name: itemName },
+              quantity: existingSlot
+                ? slot.quantity + transferAmount
+                : transferAmount,
             }
-          : slot
+          : slot,
       );
 
       // Update chest records and remove item from chest
-      setCurrentChestItems(chestPrev => {
+      setCurrentChestItems((chestPrev) => {
         // Find the slot in chest and reduce its quantity
-        const chestSlot = chestPrev.find(slot => slot.item?.name === itemName);
+        const chestSlot = chestPrev.find(
+          (slot) => slot.item?.name === itemName,
+        );
         if (chestSlot) {
           const remainingQuantity = chestSlot.quantity - transferAmount;
-          
-          const updatedChest = chestPrev.map(slot =>
-            slot.item?.name === itemName
-              ? { ...slot, quantity: remainingQuantity }
-              : slot
-          ).filter(slot => slot.quantity > 0);
+
+          const updatedChest = chestPrev
+            .map((slot) =>
+              slot.item?.name === itemName
+                ? { ...slot, quantity: remainingQuantity }
+                : slot,
+            )
+            .filter((slot) => slot.quantity > 0);
 
           // Update chest records with new content
           const playerTileX = Math.floor(camera.x);
           const playerTileZ = Math.floor(camera.z);
           const chestId = `${playerTileX},${playerTileZ}`;
 
-          setChestRecords(prev => ({
+          setChestRecords((prev) => ({
             ...prev,
-            [chestId]: updatedChest
+            [chestId]: updatedChest,
           }));
 
           return updatedChest;
@@ -1329,7 +1334,7 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "KeyI") {
         e.preventDefault();
-        setShowInventory(prev => !prev);
+        setShowInventory((prev) => !prev);
       } else if (e.code === "KeyE") {
         e.preventDefault();
 
@@ -1343,8 +1348,11 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
         const playerTileX = Math.floor(camera.x);
         const playerTileZ = Math.floor(camera.z);
 
-        const chest = content.objects.find(obj =>
-          obj.type === 'chest' && obj.x === playerTileX && obj.z === playerTileZ
+        const chest = content.objects.find(
+          (obj) =>
+            obj.type === "chest" &&
+            obj.x === playerTileX &&
+            obj.z === playerTileZ,
         );
 
         if (chest) {
@@ -1367,8 +1375,9 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
     const playerTileX = Math.floor(camera.x);
     const playerTileZ = Math.floor(camera.z);
 
-    const chest = content.objects.find(obj =>
-      obj.type === 'chest' && obj.x === playerTileX && obj.z === playerTileZ
+    const chest = content.objects.find(
+      (obj) =>
+        obj.type === "chest" && obj.x === playerTileX && obj.z === playerTileZ,
     );
 
     if (!chest) {
@@ -1382,7 +1391,9 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
       <div className={styles.uiHeaderBar}>
         <span className={styles.title}>Object Spawning</span>
         <span className={styles.seed}>seed: {DUNGEON_SEED}</span>
-        <button className={styles.backBtn} onClick={() => navigate("/")}>← Menu</button>
+        <button className={styles.backBtn} onClick={() => navigate("/")}>
+          ← Menu
+        </button>
       </div>
 
       {/* ── Main area ── */}
@@ -1468,7 +1479,7 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
               inventoryName={"Inventory"}
               itemTypeRegistry={ItemTypeRegistry}
               isOpen={showInventory}
-              onToggle={() => setShowInventory(prev => !prev)}
+              onToggle={() => setShowInventory((prev) => !prev)}
               onUseItem={handleUseItem}
               onRemoveItem={handleRemoveItem}
             />
@@ -1481,19 +1492,31 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
                 </div>
                 <div className={styles.chestPanelContent}>
                   {currentChestItems.length === 0 ? (
-                    <p className={styles.chestPanelEmpty}>This chest is empty.</p>
+                    <p className={styles.chestPanelEmpty}>
+                      This chest is empty.
+                    </p>
                   ) : (
                     <div className={styles.chestInventoryGrid}>
                       {currentChestItems.map((slot, index) => (
                         <div key={index} className={styles.chestInventoryItem}>
                           <div className={styles.chestItemInfo}>
-                            <span className={styles.itemName}>{slot.item?.name}</span>
-                            <span className={styles.itemQuantity}>×{slot.quantity}</span>
+                            <span className={styles.itemName}>
+                              {slot.item?.name}
+                            </span>
+                            <span className={styles.itemQuantity}>
+                              ×{slot.quantity}
+                            </span>
                           </div>
                           <div className={styles.chestItemActions}>
                             <button
                               className={styles.chestTakeButton}
-                              onClick={() => slot.item && handleTakeItem(slot.item.name as ItemName, slot.quantity)}
+                              onClick={() =>
+                                slot.item &&
+                                handleTakeItem(
+                                  slot.item.name as ItemName,
+                                  slot.quantity,
+                                )
+                              }
                             >
                               Take
                             </button>
@@ -1516,7 +1539,8 @@ const [currentChestItems, setCurrentChestItems] = useState<InventorySlot[]>([]);
           {cardinalDir(camera.yaw)}
         </span>
         <span className={styles.controls}>
-          W/S — move &nbsp;|&nbsp; A/D — turn 90° &nbsp;|&nbsp; I — inventory &nbsp;|&nbsp; E — open chest
+          W/S — move &nbsp;|&nbsp; A/D — turn 90° &nbsp;|&nbsp; I — inventory
+          &nbsp;|&nbsp; E — open chest
         </span>
       </div>
     </div>

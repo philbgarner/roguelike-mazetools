@@ -4,7 +4,7 @@ import EotB from "./examples/EotB/EotB";
 import Hidden from "./examples/hidden/Hidden";
 import Mobs from "./examples/Mobs/Mobs";
 import Objects from "./examples/Objects/Objects";
-import Targeting from "./examples/Targeting/Targeting";
+import Targeting from "./examples/Objects/Targeting/Targeting";
 import Ecs from "./examples/ECS/ECS";
 import AppMenu from "./AppMenu";
 
