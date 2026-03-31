@@ -822,6 +822,8 @@ type SceneProps = {
   highlightMask?: Uint8Array;
   /** Per-cell passage mask: 0=none, 1=disabled, 2=enabled. Applied to wall faces. */
   passageMask?: Uint8Array;
+  /** Tile IDs for passage overlays: [untoggled, toggled, open-door]. */
+  passageOverlayIds?: [number, number, number];
   /** Active speech bubbles to render above speakers in 3-D space. */
   speechBubbles?: SpeechBubbleData[];
   /** Four torchlight tint band colours as CSS hex strings (bands 0–3, near→far). */
@@ -873,6 +875,7 @@ function DungeonScene({
   mobileFlash,
   highlightMask,
   passageMask,
+  passageOverlayIds,
   speechBubbles,
   tintColors,
   torchColor,
@@ -1010,6 +1013,7 @@ function DungeonScene({
         fogColor={fogColorObj}
         debugEdges={debugEdges}
         passageData={passageMask}
+        passageOverlayIds={passageOverlayIds}
         gridWidth={width}
         tintColors={tintColorObjs}
         torchColor={torchColorObj}

@@ -79,10 +79,14 @@ const BUMP_DEPTH = 0.3;
 const fragmentShader = /* glsl */ `
 uniform sampler2D uAtlas;
 uniform vec2  uTileSize;      // (tileW/sheetW, tileH/sheetH)
+uniform float uColumns;       // tiles per row in the atlas
 uniform vec3  uFogColor;
 uniform float uFlickerRadius; // fraction of fog range the radius breathes
 uniform vec2  uTexelSize;     // (1/sheetWidth, 1/sheetHeight)
 uniform float uDebugEdges;    // 1.0 = draw tile-edge debug border, 0.0 = off
+uniform float uPassageOvUnpressed; // tile ID for untoggled hidden passage overlay
+uniform float uPassageOvPressed;   // tile ID for toggled hidden passage overlay
+uniform float uPassageOvOpen;      // tile ID for open-door overlay (toggled only)
 ${TORCH_UNIFORMS_GLSL}
 
 varying vec2  vAtlasUv;
@@ -159,12 +163,28 @@ void main() {
 
   // Passage overlay (applied after highlights so it shows on wall faces)
   float pa = floor(vPassage + 0.5);
-  if (pa > 1.5) {
-    // Enabled passage: bright cyan
-    lit = mix(lit, vec3(0.0, 0.9, 0.9), 0.35);
-  } else if (pa > 0.5) {
-    // Disabled passage: faint cyan hint
-    lit = mix(lit, vec3(0.0, 0.4, 0.5), 0.2);
+  if (pa > 0.5) {
+    float ovId = pa > 1.5 ? uPassageOvPressed : uPassageOvUnpressed;
+    float ovCol = mod(ovId, uColumns);
+    float ovRow = floor(ovId / uColumns);
+    vec2 ovOrigin = vec2(ovCol * uTileSize.x, 1.0 - (ovRow + 1.0) * uTileSize.y);
+    vec4 ovColor = texture2D(uAtlas, clamp(ovOrigin + vTileUv * uTileSize,
+                                           ovOrigin + uTexelSize * 0.5,
+                                           ovOrigin + uTileSize - uTexelSize * 0.5));
+    vec3 ovLit = applyTorchLighting(ovColor.rgb, band);
+    lit = mix(lit, ovLit, step(0.01, ovColor.a));
+
+    if (pa > 1.5) {
+      float ov2Id = uPassageOvOpen;
+      float ov2Col = mod(ov2Id, uColumns);
+      float ov2Row = floor(ov2Id / uColumns);
+      vec2 ov2Origin = vec2(ov2Col * uTileSize.x, 1.0 - (ov2Row + 1.0) * uTileSize.y);
+      vec4 ov2Color = texture2D(uAtlas, clamp(ov2Origin + vTileUv * uTileSize,
+                                              ov2Origin + uTexelSize * 0.5,
+                                              ov2Origin + uTileSize - uTexelSize * 0.5));
+      vec3 ov2Lit = applyTorchLighting(ov2Color.rgb, band);
+      lit = mix(lit, ov2Lit, step(0.01, ov2Color.a));
+    }
   }
 
   gl_FragColor = vec4(mix(lit, uFogColor, step(4.0, band)), color.a);
@@ -185,6 +205,8 @@ type Props = {
   debugEdges?: boolean;
   highlightData?: Uint8Array;
   passageData?: Uint8Array;
+  /** Tile IDs for passage overlays: [untoggled, toggled, open-door]. */
+  passageOverlayIds?: [number, number, number];
   gridWidth?: number;
   tintColors?: THREE.Color[];
   torchColor?: THREE.Color;
@@ -201,6 +223,7 @@ export function InstancedTileMesh({
   debugEdges = false,
   highlightData,
   passageData,
+  passageOverlayIds,
   gridWidth,
   tintColors,
   torchColor,
@@ -253,6 +276,9 @@ export function InstancedTileMesh({
             ),
           },
           uDebugEdges: { value: debugEdges ? 1.0 : 0.0 },
+          uPassageOvUnpressed: { value: passageOverlayIds?.[0] ?? 0 },
+          uPassageOvPressed: { value: passageOverlayIds?.[1] ?? 0 },
+          uPassageOvOpen: { value: passageOverlayIds?.[2] ?? 0 },
           ...makeTorchUniforms(tintColors),
         },
         side: THREE.FrontSide,
@@ -267,6 +293,14 @@ export function InstancedTileMesh({
   useEffect(() => {
     material.uniforms.uDebugEdges.value = debugEdges ? 1.0 : 0.0;
   }, [debugEdges, material]);
+
+  useEffect(() => {
+    if (passageOverlayIds) {
+      material.uniforms.uPassageOvUnpressed.value = passageOverlayIds[0];
+      material.uniforms.uPassageOvPressed.value = passageOverlayIds[1];
+      material.uniforms.uPassageOvOpen.value = passageOverlayIds[2];
+    }
+  }, [passageOverlayIds, material]);
 
   useEffect(() => {
     if (tintColors?.[0]) material.uniforms.uTint0.value = tintColors[0];
